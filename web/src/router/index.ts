@@ -1,0 +1,30 @@
+import { createRouter, createWebHistory } from 'vue-router'
+
+export const router = createRouter({
+  history: createWebHistory(),
+  scrollBehavior: () => ({ top: 0 }),
+  routes: [
+    { path: '/', redirect: '/discover' },
+    { path: '/discover', name: 'discover', component: () => import('../pages/DiscoverPage.vue') },
+    { path: '/search', name: 'search', component: () => import('../pages/SearchPage.vue') },
+    { path: '/create/:mode?', name: 'create', component: () => import('../pages/CreatePage.vue') },
+    { path: '/works/:id', name: 'work', component: () => import('../pages/WorkPage.vue') },
+    { path: '/creators/:handle', name: 'creator', component: () => import('../pages/CreatorPage.vue') },
+    { path: '/market', name: 'marketplace', component: () => import('../pages/MarketplacePage.vue') },
+    { path: '/market/assets/:id', name: 'product', component: () => import('../pages/MarketplacePage.vue') },
+    { path: '/market/demands', name: 'demands', component: () => import('../pages/TaskMarketplacePage.vue') },
+    { path: '/market/demands/:id', name: 'demand', component: () => import('../pages/TaskMarketplacePage.vue') },
+    { path: '/community', name: 'community', component: () => import('../pages/CommunityPage.vue') },
+    { path: '/workspace/assets/:assetId', name: 'asset', component: () => import('../pages/WorkspacePage.vue') },
+    { path: '/workspace/:section?', name: 'workspace', component: () => import('../pages/WorkspacePage.vue') },
+    { path: '/publish', name: 'publish', component: () => import('../pages/PublishPage.vue') },
+    { path: '/notifications', name: 'notifications', component: () => import('../pages/NotificationsPage.vue') },
+    { path: '/support/:caseId?', name: 'support', component: () => import('../pages/SupportPage.vue') },
+    { path: '/settings', name: 'settings', component: () => import('../pages/AccountPage.vue') },
+    { path: '/verify-email', name: 'verify-email', component: () => import('../pages/EmailActionPage.vue') },
+    { path: '/reset-password', name: 'reset-password', component: () => import('../pages/EmailActionPage.vue') },
+    { path: '/admin', name: 'admin', component: () => import('../pages/AdminPage.vue') },
+    { path: '/policies/:policy?', name: 'policies', component: () => import('../pages/LegalPage.vue') },
+    { path: '/:pathMatch(.*)*', redirect: '/discover' },
+  ],
+})

@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: hcai
+      POSTGRES_USER: hcai
+      POSTGRES_PASSWORD: hcai
+    ports:
+      - "5432:5432"
+    volumes:
+      - hcai_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hcai -d hcai"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  hcai_postgres:

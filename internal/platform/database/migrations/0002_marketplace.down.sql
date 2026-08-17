@@ -1,0 +1,11 @@
+DROP INDEX IF EXISTS entitlements_user_idx;
+DROP INDEX IF EXISTS entitlements_active_product_buyer_idx;
+DROP TABLE IF EXISTS entitlements;
+DROP INDEX IF EXISTS order_events_order_idx;
+DROP TABLE IF EXISTS order_events;
+DROP INDEX IF EXISTS generations_source_asset_idx;
+ALTER TABLE generations DROP COLUMN IF EXISTS source_asset_id;
+DROP INDEX IF EXISTS assets_origin_idx;
+ALTER TABLE assets DROP COLUMN IF EXISTS origin_asset_id;
+ALTER TABLE products DROP CONSTRAINT IF EXISTS products_license_code_fkey;
+DROP TABLE IF EXISTS licenses;

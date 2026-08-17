@@ -1,0 +1,439 @@
+package admin_test
+
+import (
+	"context"
+	"errors"
+	"net/url"
+	"os"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/hcai-chat/hcai-chat/internal/admin"
+	"github.com/hcai-chat/hcai-chat/internal/billing"
+	"github.com/hcai-chat/hcai-chat/internal/creation"
+	"github.com/hcai-chat/hcai-chat/internal/platform/database"
+	"github.com/hcai-chat/hcai-chat/internal/risk"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+func TestControlledOperationsAndAuditEvidence(t *testing.T) {
+	pool, cleanup := testPool(t)
+	defer cleanup()
+	ctx := context.Background()
+	adminID, userID := uuid.New(), uuid.New()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO users(id,email,handle,display_name,role,status) VALUES
+		($1,$2,$3,'Operations Admin','admin','active'),
+		($4,$5,$6,'Moderated Creator','creator','active')`,
+		adminID, adminID.String()+"@test.local", "admin_"+adminID.String()[:8],
+		userID, userID.String()+"@test.local", "user_"+userID.String()[:8]); err != nil {
+		t.Fatal(err)
+	}
+	service := admin.NewService(pool, true)
+	if _, err := service.UpdateUser(ctx, adminID, adminID, admin.UserUpdate{Role: "admin", Status: "active", Reason: "Attempting an unsafe self mutation", Confirmed: true}, "request-self"); !errors.Is(err, admin.ErrSelfMutation) {
+		t.Fatalf("expected self-mutation protection, got %v", err)
+	}
+	updated, err := service.UpdateUser(ctx, adminID, userID, admin.UserUpdate{Role: "creator", Status: "suspended", Reason: "Verified account access incident in local testing", Confirmed: true}, "request-user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Status != "suspended" {
+		t.Fatalf("unexpected user state %#v", updated)
+	}
+
+	assetID, workID := uuid.New(), uuid.New()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,scan_status,source_type,license_code)
+		VALUES($1,$2,'image','Moderation source','/media/test.jpg','image/jpeg','clean','demo','demo')`, assetID, userID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO works(id,author_id,asset_id,title,summary,model_name,status,ai_disclosure,published_at)
+		VALUES($1,$2,$3,'Moderated work','Test work','Local','published','Local test disclosure',now())`, workID, userID, assetID); err != nil {
+		t.Fatal(err)
+	}
+	moderated, err := service.UpdateContent(ctx, adminID, workID, admin.ContentUpdate{Status: "hidden", Reason: "Content requires a documented rights review", Confirmed: true}, "request-content")
+	if err != nil || moderated.Status != "hidden" {
+		t.Fatalf("content moderation failed: %#v %v", moderated, err)
+	}
+
+	provider, err := service.UpdateProvider(ctx, adminID, "local-image-v1", admin.ProviderUpdate{Enabled: false, Reason: "Pausing local generation during provider review", Confirmed: true}, "request-provider")
+	if err != nil || provider.AdminEnabled {
+		t.Fatalf("provider disable failed: %#v %v", provider, err)
+	}
+	if _, err := service.UpdateProvider(ctx, adminID, "openai-image", admin.ProviderUpdate{Enabled: true, Reason: "Attempt without verified external credentials", Confirmed: true}, "request-provider-external"); !errors.Is(err, admin.ErrProviderConfig) {
+		t.Fatalf("expected fail-closed external provider, got %v", err)
+	}
+
+	adjusted, err := service.AdjustFinance(ctx, adminID, userID, admin.FinanceAdjustment{DeltaCents: 500, Currency: "USD", Reason: "Local Test support credit correction", Confirmed: true}, "request-finance")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if adjusted.BalanceCents != 250500 {
+		t.Fatalf("unexpected adjusted balance %d", adjusted.BalanceCents)
+	}
+	riskResourceID := uuid.New()
+	riskTx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	riskID, err := risk.RecordTx(ctx, riskTx, risk.SignalInput{
+		SourceKey: "test-risk:" + riskResourceID.String(), ResourceType: "order", ResourceID: riskResourceID,
+		SubjectUserID: userID, ActorUserID: &userID, SignalType: "transaction_refund", Severity: "medium", Score: 55,
+		Summary: "Test transaction requires a controlled operations review.", Evidence: map[string]any{"paymentMode": "local_test"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := riskTx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	signals, err := service.ListRiskSignals(ctx, admin.RiskSignalFilter{})
+	if err != nil || len(signals.Items) != 1 || signals.Items[0].ID != riskID || len(signals.Items[0].Events) != 1 {
+		t.Fatalf("risk inventory failed: %#v %v", signals, err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO risk_signals(source_key,resource_type,resource_id,subject_user_id,signal_type,severity,score,summary,evidence)
+		SELECT 'queue-pressure:'||value::text,'order',gen_random_uuid(),$1,'transaction_refund','critical',100,
+		       'Higher-priority queue pressure signal.','{}'::jsonb
+		FROM generate_series(1,201) value`, userID); err != nil {
+		t.Fatal(err)
+	}
+	filteredSignals, err := service.ListRiskSignals(ctx, admin.RiskSignalFilter{ResourceType: "order", ResourceID: &riskResourceID})
+	if err != nil || len(filteredSignals.Items) != 1 || filteredSignals.Items[0].ID != riskID {
+		t.Fatalf("focused risk inventory was truncated by queue pressure: %#v %v", filteredSignals, err)
+	}
+	if _, err := service.ListRiskSignals(ctx, admin.RiskSignalFilter{ResourceType: "order"}); !errors.Is(err, admin.ErrInvalidRiskFilter) {
+		t.Fatalf("unpaired risk filter was accepted: %v", err)
+	}
+	if _, err := service.ReviewRiskSignal(ctx, adminID, riskID, admin.RiskReview{Decision: "monitor", Reason: "Monitor this Local Test transaction while evidence is reviewed.", ExpectedVersion: 2, Confirmed: true}, "risk-stale"); !errors.Is(err, admin.ErrConflict) {
+		t.Fatalf("stale risk review did not conflict: %v", err)
+	}
+	monitored, err := service.ReviewRiskSignal(ctx, adminID, riskID, admin.RiskReview{Decision: "monitor", Reason: "Monitor this Local Test transaction while evidence is reviewed.", ExpectedVersion: 1, Confirmed: true}, "risk-monitor")
+	if err != nil || monitored.Status != "reviewing" || monitored.Version != 2 || len(monitored.Events) != 2 {
+		t.Fatalf("risk monitoring failed: %#v %v", monitored, err)
+	}
+	escalated, err := service.ReviewRiskSignal(ctx, adminID, riskID, admin.RiskReview{Decision: "escalated", Reason: "Escalate the reviewed transaction for a bounded operational investigation.", ExpectedVersion: 2, Confirmed: true}, "risk-escalate")
+	if err != nil || escalated.Status != "resolved" || escalated.Version != 3 || escalated.ResolvedAt == nil {
+		t.Fatalf("risk escalation failed: %#v %v", escalated, err)
+	}
+	if _, err := service.ReviewRiskSignal(ctx, adminID, riskID, admin.RiskReview{Decision: "no_action", Reason: "Attempt to overwrite a terminal review decision.", ExpectedVersion: 3, Confirmed: true}, "risk-overwrite"); !errors.Is(err, admin.ErrConflict) {
+		t.Fatalf("terminal risk decision was mutable: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE risk_events SET reason='tampered evidence' WHERE signal_id=$1`, riskID); err == nil {
+		t.Fatal("risk evidence was not append-only")
+	}
+	events, err := service.ListAudit(ctx, admin.AuditListInput{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events.Items) < 4 {
+		t.Fatalf("expected controlled operations to create audit evidence, got %d events", len(events.Items))
+	}
+	overview, err := service.Overview(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if overview.Users.Total != 2 || overview.Works.ByStatus["hidden"] != 1 {
+		t.Fatalf("unexpected operations overview %#v", overview)
+	}
+}
+
+func TestAdminTaskOperationsResolveDisputesAtomically(t *testing.T) {
+	pool, cleanup := testPool(t)
+	defer cleanup()
+	ctx := context.Background()
+	adminID, clientID, creatorID := uuid.New(), uuid.New(), uuid.New()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO users(id,email,handle,display_name,role,status) VALUES
+		($1,$2,$3,'Task Operator','admin','active'),
+		($4,$5,$6,'Task Client','publisher','active'),
+		($7,$8,$9,'Task Creator','creator','active')`,
+		adminID, adminID.String()+"@test.local", "task_admin_"+adminID.String()[:8],
+		clientID, clientID.String()+"@test.local", "task_client_"+clientID.String()[:8],
+		creatorID, creatorID.String()+"@test.local", "task_creator_"+creatorID.String()[:8]); err != nil {
+		t.Fatal(err)
+	}
+	createDispute := func(title string, amount int) (uuid.UUID, uuid.UUID) {
+		t.Helper()
+		taskID, assetID, disputeID := uuid.New(), uuid.New(), uuid.New()
+		if _, err := pool.Exec(ctx, `INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,scan_status,source_type,license_code) VALUES($1,$2,'image',$3,'/media/task-test.jpg','image/jpeg','clean','delivery','personal')`, assetID, creatorID, title+" delivery"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx, `INSERT INTO demands(id,client_id,title,brief,deliverable_type,budget_cents,currency,deadline,status,assignee_id,summary) VALUES($1,$2,$3,'A complete disputed task operations test brief.','image',$4,'USD',now()+interval '7 days','disputed',$5,'Operations test task.')`, taskID, clientID, title, amount, creatorID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx, `INSERT INTO proposals(demand_id,creator_id,approach,amount_cents,status) VALUES($1,$2,'Verified operations approach',$3,'accepted')`, taskID, creatorID, amount); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx, `INSERT INTO deliveries(demand_id,creator_id,asset_id,note,status,version) VALUES($1,$2,$3,'Disputed delivery evidence','disputed',1)`, taskID, creatorID, assetID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx, `INSERT INTO task_disputes(id,demand_id,opened_by,reason,status,idempotency_key) VALUES($1,$2,$3,'Acceptance wording requires an operations decision.','open',$4)`, disputeID, taskID, clientID, "dispute-"+taskID.String()); err != nil {
+			t.Fatal(err)
+		}
+		return taskID, disputeID
+	}
+
+	releaseTaskID, releaseDisputeID := createDispute("Release creator task", 32_000)
+	cancelTaskID, cancelDisputeID := createDispute("Cancel without settlement task", 21_000)
+	service := admin.NewService(pool, true)
+	page, err := service.ListTaskOperations(ctx, admin.TaskOperationListInput{})
+	if err != nil || len(page.Items) != 2 || page.Items[0].DisputeVersion == nil {
+		t.Fatalf("task operations inventory mismatch: %#v %v", page, err)
+	}
+	if _, err := service.ResolveTaskDispute(ctx, adminID, releaseTaskID, admin.TaskDisputeResolution{
+		Decision: "release_creator", Reason: "Stale operations decision must fail before any Local Test movement.", ExpectedVersion: 2, Confirmed: true,
+	}, "task-stale"); !errors.Is(err, admin.ErrConflict) {
+		t.Fatalf("stale task decision did not conflict: %v", err)
+	}
+	released, err := service.ResolveTaskDispute(ctx, adminID, releaseTaskID, admin.TaskDisputeResolution{
+		Decision: "release_creator", Reason: "The submitted delivery satisfies the recorded acceptance evidence.", ExpectedVersion: 1, Confirmed: true,
+	}, "task-release")
+	if err != nil || released.Status != "accepted" || released.DisputeStatus == nil || *released.DisputeStatus != "resolved_creator" || released.SettlementID == nil || released.DisputeVersion == nil || *released.DisputeVersion != 2 {
+		t.Fatalf("creator release mismatch: %#v %v", released, err)
+	}
+	if _, err := service.ResolveTaskDispute(ctx, adminID, releaseTaskID, admin.TaskDisputeResolution{
+		Decision: "release_creator", Reason: "A terminal dispute cannot be paid a second time.", ExpectedVersion: 2, Confirmed: true,
+	}, "task-replay"); !errors.Is(err, admin.ErrConflict) {
+		t.Fatalf("terminal task dispute remained actionable: %v", err)
+	}
+	cancelled, err := service.ResolveTaskDispute(ctx, adminID, cancelTaskID, admin.TaskDisputeResolution{
+		Decision: "cancel_without_settlement", Reason: "The evidence does not support release of the Local Test task amount.", ExpectedVersion: 1, Confirmed: true,
+	}, "task-cancel")
+	if err != nil || cancelled.Status != "cancelled" || cancelled.DisputeStatus == nil || *cancelled.DisputeStatus != "resolved_client" || cancelled.SettlementID != nil {
+		t.Fatalf("client resolution mismatch: %#v %v", cancelled, err)
+	}
+	var settlements, legacyEntries, auditCount, notificationCount int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM task_settlements WHERE demand_id=ANY($1)`, []uuid.UUID{releaseTaskID, cancelTaskID}).Scan(&settlements); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM ledger_entries WHERE operation_id=(SELECT id FROM task_settlements WHERE demand_id=$1)`, releaseTaskID).Scan(&legacyEntries); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM audit_events WHERE action='admin.task_dispute_resolved' AND resource_id=ANY($1)`, []uuid.UUID{releaseTaskID, cancelTaskID}).Scan(&auditCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM notifications WHERE source_key LIKE 'admin-task-resolution:%'`).Scan(&notificationCount); err != nil {
+		t.Fatal(err)
+	}
+	if settlements != 1 || legacyEntries != 2 || auditCount != 2 || notificationCount != 4 {
+		t.Fatalf("task operations evidence mismatch: settlements=%d ledger=%d audit=%d notifications=%d", settlements, legacyEntries, auditCount, notificationCount)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE task_events SET note='tampered task evidence' WHERE demand_id=$1`, releaseTaskID); err == nil {
+		t.Fatal("task event evidence was mutable")
+	}
+	var releaseStatus, cancelStatus string
+	if err := pool.QueryRow(ctx, `SELECT status FROM task_disputes WHERE id=$1`, releaseDisputeID).Scan(&releaseStatus); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT status FROM task_disputes WHERE id=$1`, cancelDisputeID).Scan(&cancelStatus); err != nil {
+		t.Fatal(err)
+	}
+	if releaseStatus != "resolved_creator" || cancelStatus != "resolved_client" {
+		t.Fatalf("unexpected dispute states %s %s", releaseStatus, cancelStatus)
+	}
+}
+
+func TestRankingPolicyCreatesImmutableAuditedRevisions(t *testing.T) {
+	pool, cleanup := testPool(t)
+	defer cleanup()
+	ctx := context.Background()
+	adminID := uuid.New()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO users(id,email,handle,display_name,role,status)
+		VALUES($1,$2,$3,'Ranking Admin','admin','active')`, adminID, adminID.String()+"@test.local", "rank_"+adminID.String()[:8]); err != nil {
+		t.Fatal(err)
+	}
+	service := admin.NewService(pool, true)
+	initial, err := service.GetRankingPolicy(ctx)
+	if err != nil || initial.Current.Version != 1 || len(initial.History) != 1 {
+		t.Fatalf("initial ranking policy mismatch: %#v %v", initial, err)
+	}
+	input := admin.RankingUpdate{
+		Name: initial.Current.Name, TitleExactWeight: initial.Current.TitleExactWeight,
+		TitlePrefixWeight: initial.Current.TitlePrefixWeight, TitleContainsWeight: initial.Current.TitleContainsWeight,
+		CreatorExactWeight: initial.Current.CreatorExactWeight, CreatorMatchWeight: initial.Current.CreatorMatchWeight,
+		BodyMatchWeight: initial.Current.BodyMatchWeight, SecondaryMatchWeight: initial.Current.SecondaryMatchWeight,
+		RecencyWeight: initial.Current.RecencyWeight, CreatorActivityWeight: initial.Current.CreatorActivityWeight,
+		WorkTypeBoost: initial.Current.WorkTypeBoost, CreatorTypeBoost: initial.Current.CreatorTypeBoost,
+		ProductTypeBoost: initial.Current.ProductTypeBoost + 7, DemandTypeBoost: initial.Current.DemandTypeBoost,
+		Reason: "Increase product relevance by a bounded amount for verified search testing.", ExpectedVersion: 2, Confirmed: true,
+	}
+	if _, err := service.UpdateRankingPolicy(ctx, adminID, input, "ranking-stale"); !errors.Is(err, admin.ErrConflict) {
+		t.Fatalf("stale ranking update did not conflict: %v", err)
+	}
+	input.ExpectedVersion = 1
+	updated, err := service.UpdateRankingPolicy(ctx, adminID, input, "ranking-update")
+	if err != nil || updated.Current.Version != 2 || updated.Current.ParentRevisionID == nil ||
+		updated.Current.ProductTypeBoost != initial.Current.ProductTypeBoost+7 || len(updated.History) != 2 {
+		t.Fatalf("ranking revision failed: %#v %v", updated, err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE discovery_ranking_revisions SET reason='tampered revision' WHERE id=$1`, initial.Current.ID); err == nil {
+		t.Fatal("ranking revision was not immutable")
+	}
+	var auditCount int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM audit_events WHERE action='admin.discovery_ranking_updated' AND resource_id=$1`, updated.Current.ID).Scan(&auditCount); err != nil || auditCount != 1 {
+		t.Fatalf("ranking audit mismatch: count=%d err=%v", auditCount, err)
+	}
+}
+
+func TestDiscoveryCandidateEvaluationRolloutAndIndexEvidence(t *testing.T) {
+	pool, cleanup := testPool(t)
+	defer cleanup()
+	ctx := context.Background()
+	adminID, creatorID, assetID, productID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO users(id,email,handle,display_name,role,status) VALUES
+		($1,$2,$3,'Discovery Operator','admin','active'),
+		($4,$5,$6,'Indexed Creator','creator','active')`,
+		adminID, adminID.String()+"@test.local", "operator_"+adminID.String()[:8],
+		creatorID, creatorID.String()+"@test.local", "indexed_"+creatorID.String()[:8]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,scan_status,source_type,license_code)
+		VALUES($1,$2,'image','Indexed product source','/media/indexed.jpg','image/jpeg','clean','demo','hcai-commercial-standard-v1')`, assetID, creatorID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO products(id,seller_id,asset_id,title,description,product_type,price_cents,currency,license_code,status,ai_disclosure,included_files,compatibility)
+		VALUES($1,$2,$3,'Exact indexed workflow','Offline evaluation fixture','workflow',900,'USD','hcai-commercial-standard-v1','active','Local Test fixture.','[]','HCAI')`, productID, creatorID, assetID); err != nil {
+		t.Fatal(err)
+	}
+	service := admin.NewService(pool, true)
+	initial, err := service.GetRankingPolicy(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidateInput := admin.RankingUpdate{
+		Name: "Candidate product calibration", TitleExactWeight: initial.Current.TitleExactWeight,
+		TitlePrefixWeight: initial.Current.TitlePrefixWeight, TitleContainsWeight: initial.Current.TitleContainsWeight,
+		CreatorExactWeight: initial.Current.CreatorExactWeight, CreatorMatchWeight: initial.Current.CreatorMatchWeight,
+		BodyMatchWeight: initial.Current.BodyMatchWeight, SecondaryMatchWeight: initial.Current.SecondaryMatchWeight,
+		RecencyWeight: initial.Current.RecencyWeight, CreatorActivityWeight: initial.Current.CreatorActivityWeight,
+		WorkTypeBoost: initial.Current.WorkTypeBoost, CreatorTypeBoost: initial.Current.CreatorTypeBoost,
+		ProductTypeBoost: initial.Current.ProductTypeBoost + 3, DemandTypeBoost: initial.Current.DemandTypeBoost,
+		Reason: "Create a bounded candidate for offline and staged verification.", ExpectedVersion: initial.Current.Version, Confirmed: true,
+	}
+	policy, err := service.CreateRankingCandidate(ctx, adminID, candidateInput, "candidate-create")
+	if err != nil || policy.Candidate == nil || policy.Current.Version != 1 || policy.Candidate.Version != 2 || policy.Rollout.Version != 2 {
+		t.Fatalf("candidate creation mismatch: %#v %v", policy, err)
+	}
+	if _, err := service.UpdateRankingRollout(ctx, adminID, admin.RankingRolloutUpdate{Percent: 25, ExpectedVersion: policy.Rollout.Version, Reason: "Attempt rollout before required offline evidence.", Confirmed: true}, "rollout-without-eval"); !errors.Is(err, admin.ErrConflict) {
+		t.Fatalf("unevaluated rollout did not fail closed: %v", err)
+	}
+	evaluation, err := service.RunRankingEvaluation(ctx, adminID, admin.ConfirmedReason{Reason: "Compare the candidate against deterministic public exact-match cases.", Confirmed: true}, "candidate-eval")
+	if err != nil || evaluation.Status != "passed" || evaluation.CaseCount < 1 || evaluation.CandidateMRR < evaluation.BaselineMRR {
+		t.Fatalf("offline evaluation mismatch: %#v %v", evaluation, err)
+	}
+	policy, err = service.UpdateRankingRollout(ctx, adminID, admin.RankingRolloutUpdate{Percent: 25, ExpectedVersion: policy.Rollout.Version, Reason: "Stage the evaluated candidate to a bounded traffic cohort.", Confirmed: true}, "rollout-25")
+	if err != nil || policy.Rollout.Percent != 25 || policy.Rollout.Version != 3 || policy.Current.Version != 1 {
+		t.Fatalf("staged rollout mismatch: %#v %v", policy, err)
+	}
+	indexRun, err := service.RunDiscoveryIndexAnalyze(ctx, adminID, admin.ConfirmedReason{Reason: "Refresh planner evidence after the indexed discovery fixture changed.", Confirmed: true}, "index-analyze")
+	if err != nil || indexRun.Status != "succeeded" || indexRun.DocumentCounts["products"] != 1 || len(indexRun.IndexSizes) != 5 {
+		t.Fatalf("index evidence mismatch: %#v %v", indexRun, err)
+	}
+	operations, err := service.GetDiscoveryOperations(ctx)
+	if err != nil || len(operations.IndexRuns) != 1 || len(operations.Evaluations) != 1 {
+		t.Fatalf("discovery operations mismatch: %#v %v", operations, err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE discovery_ranking_evaluations SET status='failed' WHERE id=$1`, evaluation.ID); err == nil {
+		t.Fatal("ranking evaluation evidence was mutable")
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM discovery_index_runs WHERE id=$1`, indexRun.ID); err == nil {
+		t.Fatal("index run evidence was mutable")
+	}
+	policy, err = service.UpdateRankingRollout(ctx, adminID, admin.RankingRolloutUpdate{Percent: 100, ExpectedVersion: policy.Rollout.Version, Reason: "Promote the evaluated candidate after the bounded stage completed.", Confirmed: true}, "rollout-promote")
+	if err != nil || policy.Current.Version != 2 || policy.Candidate != nil || policy.Rollout.Percent != 0 || policy.Rollout.Version != 4 {
+		t.Fatalf("candidate promotion mismatch: %#v %v", policy, err)
+	}
+}
+
+func TestAdminGenerationCancellationReleasesCredits(t *testing.T) {
+	pool, cleanup := testPool(t)
+	defer cleanup()
+	ctx := context.Background()
+	adminID, ownerID, generationID := uuid.New(), uuid.New(), uuid.New()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO users(id,email,handle,display_name,role,status) VALUES
+		($1,$2,$3,'Operations Admin','admin','active'),($4,$5,$6,'Generation Owner','creator','active')`,
+		adminID, adminID.String()+"@test.local", "admin_"+adminID.String()[:8],
+		ownerID, ownerID.String()+"@test.local", "owner_"+ownerID.String()[:8]); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := billing.ReserveTx(ctx, tx, ownerID, generationID, 5, "USD"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO generations(id,owner_id,mode,provider,model_name,prompt,status,estimated_cost_cents)
+		VALUES($1,$2,'image','local_test','hcai-local-image-v1','Cancelable admin generation','queued',5)`, generationID, ownerID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO jobs(kind,payload) VALUES($1,jsonb_build_object('generationId',$2::text))`, creation.JobKind, generationID); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	item, err := admin.NewService(pool, true).CancelGeneration(ctx, adminID, generationID, "Operator stopped a verified runaway request", "request-admin-cancel")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if item.Status != "cancelled" {
+		t.Fatalf("unexpected generation status %s", item.Status)
+	}
+	var balance, reserved int64
+	if err := pool.QueryRow(ctx, `SELECT balance_cents,reserved_cents FROM billing_accounts WHERE user_id=$1`, ownerID).Scan(&balance, &reserved); err != nil {
+		t.Fatal(err)
+	}
+	if balance != 250000 || reserved != 0 {
+		t.Fatalf("admin cancellation did not release credits: balance=%d reserved=%d", balance, reserved)
+	}
+}
+
+func testPool(t *testing.T) (*pgxpool.Pool, func()) {
+	t.Helper()
+	ctx := context.Background()
+	baseURL := os.Getenv("TEST_DATABASE_URL")
+	if baseURL == "" {
+		baseURL = "postgres://hcai:hcai@localhost:5432/hcai?sslmode=disable"
+	}
+	root, err := pgxpool.New(ctx, baseURL)
+	if err != nil {
+		t.Skipf("PostgreSQL integration database unavailable: %v", err)
+	}
+	if err := root.Ping(ctx); err != nil {
+		root.Close()
+		t.Skipf("PostgreSQL integration database unavailable: %v", err)
+	}
+	schema := "test_admin_" + uuid.NewString()[:8]
+	if _, err := root.Exec(ctx, "CREATE SCHEMA "+pgx.Identifier{schema}.Sanitize()); err != nil {
+		t.Fatal(err)
+	}
+	parsed, _ := url.Parse(baseURL)
+	query := parsed.Query()
+	query.Set("search_path", schema)
+	parsed.RawQuery = query.Encode()
+	pool, err := database.Open(ctx, parsed.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Migrate(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	return pool, func() {
+		pool.Close()
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, _ = root.Exec(cleanupCtx, "DROP SCHEMA "+pgx.Identifier{schema}.Sanitize()+" CASCADE")
+		root.Close()
+	}
+}

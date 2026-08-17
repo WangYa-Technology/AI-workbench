@@ -1,0 +1,126 @@
+package httpapi_test
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"io"
+	"log/slog"
+	"mime/multipart"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/hcai-chat/hcai-chat/internal/admin"
+	"github.com/hcai-chat/hcai-chat/internal/assets"
+	"github.com/hcai-chat/hcai-chat/internal/platform/config"
+	"github.com/hcai-chat/hcai-chat/internal/platform/jobs"
+	"github.com/hcai-chat/hcai-chat/internal/transport/httpapi"
+)
+
+func TestAssetUploadScanAndAdminMediaHTTPContract(t *testing.T) {
+	pool, cleanup := httpTestPool(t)
+	defer cleanup()
+	mediaRoot := t.TempDir()
+	server := httptest.NewServer(httpapi.New(config.Config{
+		Environment: "test", MediaRoot: mediaRoot, WebOrigin: "http://localhost:5173", LocalProviderEnabled: true,
+	}, pool, slog.New(slog.NewTextHandler(io.Discard, nil))))
+	defer server.Close()
+	client := testHTTPClient(t)
+	owner := registerGovernanceUser(t, client, server.URL, "upload_owner")
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	if err := writer.WriteField("title", "HTTP uploaded note"); err != nil {
+		t.Fatal(err)
+	}
+	part, err := writer.CreateFormFile("file", "http-upload.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write([]byte("A safe HTTP upload for deterministic local scan verification.")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	request, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/assets/uploads", &body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var uploaded assets.Asset
+	if err := json.NewDecoder(response.Body).Decode(&uploaded); err != nil {
+		response.Body.Close()
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusCreated || uploaded.ScanStatus != "pending" || uploaded.SourceType != "upload" {
+		t.Fatalf("upload contract failed: status=%d asset=%#v", response.StatusCode, uploaded)
+	}
+	response = requestJSON(t, client, http.MethodGet, server.URL+uploaded.MediaURL, nil, nil)
+	if response.StatusCode != http.StatusNotFound {
+		t.Fatalf("pending upload content was exposed: %d", response.StatusCode)
+	}
+
+	jobRepository := jobs.NewRepository(pool)
+	job := claimHTTPJobKind(t, context.Background(), pool, "http-asset-worker", assets.ScanJobKind)
+	assetService := assets.NewService(pool, mediaRoot)
+	if err := assetService.HandleScanJob(context.Background(), job); err != nil {
+		t.Fatal(err)
+	}
+	if err := jobRepository.Complete(context.Background(), job, "http-asset-worker"); err != nil {
+		t.Fatal(err)
+	}
+	response = requestJSON(t, client, http.MethodGet, server.URL+"/api/v1/assets/"+uploaded.ID.String(), nil, &uploaded)
+	if response.StatusCode != http.StatusOK || uploaded.ScanStatus != "clean" {
+		t.Fatalf("scanned Asset contract failed: status=%d asset=%#v", response.StatusCode, uploaded)
+	}
+	response = requestJSON(t, client, http.MethodGet, server.URL+uploaded.MediaURL, nil, nil)
+	if response.StatusCode != http.StatusOK || response.Header.Get("Content-Type") != "text/plain; charset=utf-8" {
+		t.Fatalf("clean upload content unavailable: status=%d type=%s", response.StatusCode, response.Header.Get("Content-Type"))
+	}
+	response = requestJSON(t, client, http.MethodGet, server.URL+"/api/v1/admin/media", nil, nil)
+	if response.StatusCode != http.StatusForbidden {
+		t.Fatalf("member accessed Admin media queue: %d", response.StatusCode)
+	}
+
+	adminClient := testHTTPClient(t)
+	administrator := registerGovernanceUser(t, adminClient, server.URL, "upload_admin")
+	if _, err := pool.Exec(context.Background(), `UPDATE users SET role='admin' WHERE id=$1`, administrator.ID); err != nil {
+		t.Fatal(err)
+	}
+	var inventory struct {
+		Items []admin.MediaItem `json:"items"`
+	}
+	response = requestJSON(t, adminClient, http.MethodGet, server.URL+"/api/v1/admin/media", nil, &inventory)
+	if response.StatusCode != http.StatusOK || len(inventory.Items) != 1 || inventory.Items[0].OwnerID != owner.ID {
+		t.Fatalf("Admin media inventory failed: status=%d items=%#v", response.StatusCode, inventory.Items)
+	}
+	var reviewed admin.MediaItem
+	response = requestJSON(t, adminClient, http.MethodPost, server.URL+"/api/v1/admin/media/"+uploaded.ID.String()+"/review", map[string]any{
+		"status": "rejected", "reason": "Administrator rejected this Local Test upload for contract verification.", "confirmed": true,
+	}, &reviewed)
+	if response.StatusCode != http.StatusOK || reviewed.ScanStatus != "rejected" {
+		t.Fatalf("Admin media review failed: status=%d item=%#v", response.StatusCode, reviewed)
+	}
+	var mediaSignalCount, mediaScore int
+	if err := pool.QueryRow(context.Background(), `SELECT count(*),COALESCE(max(score),0) FROM risk_signals WHERE source_key=$1 AND signal_type='media_rejection' AND subject_user_id=$2`, "media_rejection:"+uploaded.ID.String(), owner.ID).Scan(&mediaSignalCount, &mediaScore); err != nil || mediaSignalCount != 1 || mediaScore != 75 {
+		t.Fatalf("media rejection risk evidence mismatch: count=%d score=%d err=%v", mediaSignalCount, mediaScore, err)
+	}
+	var riskQueue struct {
+		Items []admin.RiskSignal `json:"items"`
+	}
+	response = requestJSON(t, adminClient, http.MethodGet, server.URL+"/api/v1/admin/risk/signals", nil, &riskQueue)
+	if response.StatusCode != http.StatusOK || len(riskQueue.Items) != 1 || riskQueue.Items[0].SignalType != "media_rejection" || riskQueue.Items[0].TargetPath != "/workspace/assets/"+uploaded.ID.String() {
+		t.Fatalf("media rejection risk queue mismatch: status=%d items=%#v", response.StatusCode, riskQueue.Items)
+	}
+	response = requestJSON(t, client, http.MethodGet, server.URL+uploaded.MediaURL, nil, nil)
+	if response.StatusCode != http.StatusNotFound {
+		t.Fatalf("rejected upload content remained exposed: %d", response.StatusCode)
+	}
+}

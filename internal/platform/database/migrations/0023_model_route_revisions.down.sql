@@ -1,0 +1,10 @@
+DELETE FROM role_permissions WHERE permission_id='admin:models';
+DELETE FROM permissions WHERE id='admin:models';
+ALTER TABLE generations DROP CONSTRAINT IF EXISTS generations_model_route_evidence;
+ALTER TABLE generations DROP CONSTRAINT IF EXISTS generations_model_route_revision_fk;
+DROP TRIGGER IF EXISTS model_route_revisions_immutable ON model_route_revisions;
+DROP FUNCTION IF EXISTS reject_model_route_revision_mutation();
+DROP TABLE IF EXISTS model_route_state;
+DROP TABLE IF EXISTS model_route_revisions;
+ALTER TABLE generations DROP COLUMN IF EXISTS model_route_version;
+ALTER TABLE generations DROP COLUMN IF EXISTS model_route_revision_id;

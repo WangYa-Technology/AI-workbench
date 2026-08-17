@@ -1,0 +1,9 @@
+DROP TRIGGER IF EXISTS developer_webhook_delivery_attempts_immutable ON developer_webhook_delivery_attempts;
+DROP TRIGGER IF EXISTS developer_webhook_events_immutable ON developer_webhook_events;
+DROP TRIGGER IF EXISTS developer_webhook_secret_revisions_immutable ON developer_webhook_secret_revisions;
+DROP FUNCTION IF EXISTS reject_webhook_evidence_mutation();
+DROP TABLE IF EXISTS developer_webhook_delivery_attempts;
+DROP TABLE IF EXISTS developer_webhook_deliveries;
+DROP TABLE IF EXISTS developer_webhook_events;
+DROP TABLE IF EXISTS developer_webhook_secret_revisions;
+DROP TABLE IF EXISTS developer_webhook_endpoints;
