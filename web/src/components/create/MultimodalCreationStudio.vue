@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { useIntervalFn } from '@vueuse/core'
 import {
-  AlertCircle, Ban, Bookmark, BriefcaseBusiness, Check, Download, Eraser, History,
-  Image as ImageIcon, LoaderCircle, MessageSquare, MessageSquareText,
-  Music, Paperclip, Plus, RefreshCw, RotateCcw, Send, SlidersHorizontal,
+  AlertCircle, Ban, Bookmark, BriefcaseBusiness, Check, Cloud, Download, Eraser, FileText, FolderOpen, History,
+  Image as ImageIcon, Images, LoaderCircle, MessageSquare, MessageSquareText,
+  Music, Paperclip, Plus, RefreshCw, RotateCcw, Send, Share2, SlidersHorizontal, SquarePlus,
   Sparkles, Upload, Video, WalletCards, X,
 } from 'lucide-vue-next'
 import { computed, onMounted, ref, watch } from 'vue'
@@ -641,20 +641,41 @@ watch(() => props.mode, async (mode, previousMode) => {
 
       <Transition name="mode-menu">
         <section v-if="modeMenuOpen" class="studio-mode-menu" role="menu" :aria-label="t('create.studio.chooseCreationType')">
-          <header><strong>{{ t('create.studio.createMenuTitle') }}</strong><small>{{ t('create.studio.createMenuSummary') }}</small></header>
-          <div class="mode-menu-grid">
-            <button v-for="item in modes" :key="item.id" type="button" role="menuitem" :class="{ active: mode === item.id }" @click="selectCreationMode(item.id)">
-              <span><component :is="item.icon" :size="19" /></span><span><strong>{{ item.label }}</strong><small>{{ t(`create.studio.modeMenuDescriptions.${item.id}`) }}</small></span><Check v-if="mode === item.id" :size="15" />
+          <div class="mode-menu-section">
+            <button type="button" role="menuitem" class="mode-menu-row mode-menu-primary" @click="openAssetPicker('references')">
+              <span class="mode-menu-icon"><FileText :size="21" /></span><span class="mode-menu-label">{{ t('create.studio.menuItems.file') }}</span>
+            </button>
+            <button type="button" class="mode-menu-row" @click="openAssetPicker('references')">
+              <span class="mode-menu-icon"><Cloud :size="21" /></span><span class="mode-menu-label">{{ t('create.studio.menuItems.library') }}</span>
+            </button>
+            <button type="button" class="mode-menu-row" @click="openAssetPicker('references')">
+              <span class="mode-menu-icon"><Images :size="21" /></span><span class="mode-menu-label">{{ t('create.studio.menuItems.album') }}</span>
+            </button>
+            <button type="button" class="mode-menu-row" @click="router.push('/market/demands')">
+              <span class="mode-menu-icon"><FolderOpen :size="21" /></span><span class="mode-menu-label">{{ t('create.studio.menuItems.taskContext') }}</span>
             </button>
           </div>
-          <footer>
-            <button v-if="referenceKinds.length" type="button" @click="openAssetPicker('references')">
-              <Paperclip :size="16" />{{ t('create.studio.addReference') }}
+          <div class="mode-menu-divider" aria-hidden="true"></div>
+          <div class="mode-menu-section">
+            <button type="button" class="mode-menu-row" @click="openAssetPicker('references')">
+              <span class="mode-menu-icon"><Share2 :size="21" /></span><span class="mode-menu-label">{{ t('create.studio.menuItems.referenceWindow') }}</span>
             </button>
-            <button v-if="mode === 'image' && supportsMask" type="button" @click="openAssetPicker('mask')">
-              <Eraser :size="16" />{{ t('create.studio.addMask') }}
+            <button v-if="mode === 'image' && supportsMask" type="button" class="mode-menu-row" @click="openAssetPicker('mask')">
+              <span class="mode-menu-icon"><Eraser :size="21" /></span><span class="mode-menu-label">{{ t('create.studio.menuItems.mask') }}</span>
             </button>
-          </footer>
+            <button v-else type="button" class="mode-menu-row" @click="openAssetPicker('references')">
+              <span class="mode-menu-icon"><Paperclip :size="21" /></span><span class="mode-menu-label">{{ t('create.studio.menuItems.reference') }}</span>
+            </button>
+          </div>
+          <div class="mode-menu-divider" aria-hidden="true"></div>
+          <div class="mode-menu-section mode-menu-generation">
+            <button v-for="item in modes" :key="item.id" type="button" role="menuitem" class="mode-menu-row" :class="{ active: mode === item.id }" @click="selectCreationMode(item.id)">
+              <span class="mode-menu-icon"><component :is="item.icon" :size="21" /></span><span class="mode-menu-label">{{ t(`create.studio.menuItems.${item.id}`) }}</span><Check v-if="mode === item.id" class="mode-menu-check" :size="18" />
+            </button>
+            <button type="button" role="menuitem" class="mode-menu-row mode-menu-disabled" disabled :title="t('create.studio.menuItems.canvasSoon')">
+              <span class="mode-menu-icon"><SquarePlus :size="21" /></span><span class="mode-menu-label">{{ t('create.studio.menuItems.canvas') }}</span>
+            </button>
+          </div>
         </section>
       </Transition>
 
@@ -946,7 +967,7 @@ watch(() => props.mode, async (mode, previousMode) => {
 
 .studio-composer {
   position: absolute;
-  z-index: 12;
+  z-index: 30;
   right: 46px;
   bottom: 16px;
   left: 26px;
@@ -1347,21 +1368,19 @@ watch(() => props.mode, async (mode, previousMode) => {
 .creation-mode-chip { min-height: 28px; display: inline-flex; align-items: center; gap: 6px; padding: 0 7px 0 9px; border: 1px solid rgb(79 140 255 / 45%); border-radius: 9px; background: var(--studio-blue-soft); color: #d8e6ff; font-size: 11px; font-weight: 600; }
 .creation-mode-chip button { width: 20px; height: 20px; display: grid; place-items: center; border-radius: 50%; color: #a9c3f4; }
 .creation-mode-chip button:hover { background: rgb(255 255 255 / 11%); color: #fff; }
-.studio-mode-menu { position: absolute; right: 0; bottom: calc(100% + 10px); left: 0; z-index: 20; padding: 14px; border: 1px solid var(--studio-border); border-radius: 18px; background: #12161e; box-shadow: 0 18px 50px rgb(0 0 0 / 45%); }
-.studio-mode-menu > header { display: grid; gap: 3px; margin-bottom: 11px; }
-.studio-mode-menu > header strong { color: var(--studio-text); font-size: 12px; }
-.studio-mode-menu > header small { color: #8992a2; font-size: 10px; }
-.mode-menu-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px; }
-.mode-menu-grid > button { min-width: 0; display: grid; grid-template-columns: 34px minmax(0, 1fr) 15px; gap: 8px; align-items: center; padding: 9px; border: 1px solid transparent; border-radius: 11px; color: #cdd6e4; text-align: left; }
-.mode-menu-grid > button:hover, .mode-menu-grid > button.active { border-color: rgb(79 140 255 / 34%); background: var(--studio-blue-soft); }
-.mode-menu-grid > button > span:first-child { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 9px; background: rgb(255 255 255 / 8%); color: #a9c5ff; }
-.mode-menu-grid > button > span:nth-child(2) { min-width: 0; display: grid; gap: 3px; }
-.mode-menu-grid strong { font-size: 11px; }
-.mode-menu-grid small { overflow: hidden; color: #8993a3; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
-.mode-menu-grid > button > svg { color: #a9c5ff; }
-.studio-mode-menu > footer { display: flex; gap: 7px; margin-top: 11px; padding-top: 11px; border-top: 1px solid var(--studio-border); }
-.studio-mode-menu > footer button { min-height: 30px; display: inline-flex; align-items: center; gap: 6px; padding: 0 9px; border-radius: 8px; background: rgb(255 255 255 / 7%); color: #aeb9c8; font-size: 10px; }
-.studio-mode-menu > footer button:hover { background: rgb(255 255 255 / 11%); color: #fff; }
+.studio-mode-menu { position: absolute; right: auto; bottom: calc(100% + 11px); left: 0; z-index: 20; width: min(332px, calc(100vw - 34px)); padding: 8px; border: 1px solid rgb(255 255 255 / 21%); border-radius: 19px; background: rgb(35 37 43 / 97%); box-shadow: 0 22px 65px rgb(0 0 0 / 58%), inset 0 1px 0 rgb(255 255 255 / 9%); backdrop-filter: blur(26px) saturate(1.12); }
+.mode-menu-section { display: grid; gap: 2px; }
+.mode-menu-row { min-height: 53px; display: grid; grid-template-columns: 42px minmax(0, 1fr) 20px; gap: 12px; align-items: center; padding: 0 12px; border: 0; border-radius: 13px; background: transparent; color: #e7e9ed; text-align: left; transition: background 140ms ease, color 140ms ease, transform 140ms ease; }
+.mode-menu-row:hover { background: rgb(255 255 255 / 9%); color: #fff; transform: translateX(1px); }
+.mode-menu-row.active, .mode-menu-primary { background: #087cf2; color: #fff; box-shadow: inset 0 1px 0 rgb(255 255 255 / 18%); }
+.mode-menu-primary:hover, .mode-menu-row.active:hover { background: #1685f4; }
+.mode-menu-icon { width: 38px; height: 38px; display: grid; place-items: center; color: #e4e8ee; }
+.mode-menu-primary .mode-menu-icon, .mode-menu-row.active .mode-menu-icon { color: #fff; }
+.mode-menu-label { overflow: hidden; font-size: 16px; font-weight: 520; letter-spacing: 0; text-overflow: ellipsis; white-space: nowrap; }
+.mode-menu-check { justify-self: end; color: #dcecff; }
+.mode-menu-divider { height: 1px; margin: 8px 10px; background: rgb(255 255 255 / 20%); }
+.mode-menu-disabled { color: #a1a5ac; cursor: not-allowed; opacity: .72; }
+.mode-menu-disabled:hover { background: transparent; color: #a1a5ac; transform: none; }
 .mode-menu-enter-active, .mode-menu-leave-active { transition: opacity 140ms ease, transform 140ms ease; }
 .mode-menu-enter-from, .mode-menu-leave-to { opacity: 0; transform: translateY(5px); }
 @keyframes studio-shimmer { to { background-position: -200% 0; } }
@@ -1369,7 +1388,6 @@ watch(() => props.mode, async (mode, previousMode) => {
 @media (max-width: 1100px) {
   .studio-topbar { grid-template-columns: auto minmax(0, 1fr) auto; }
   .studio-search { width: 150px; }
-  .mode-menu-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 767px) {
@@ -1384,6 +1402,7 @@ watch(() => props.mode, async (mode, previousMode) => {
   .studio-identity p { display: none; }
   .studio-conversation { margin-top: 34px; }
   .conversation-user { width: 92%; }
-  .mode-menu-grid { grid-template-columns: 1fr 1fr; }
+  .studio-mode-menu { width: min(332px, calc(100vw - 28px)); }
+  .mode-menu-label { font-size: 15px; }
 }
 </style>
