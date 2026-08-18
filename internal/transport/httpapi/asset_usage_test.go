@@ -31,7 +31,7 @@ func TestOwnedAssetUsageHTTPContract(t *testing.T) {
 	assetID, generationID, workID, productID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,scan_status,source_type,license_code,family_id,version_number)
-		VALUES($1,$2,'image','HTTP usage source','/media/http-usage.jpg','image/jpeg','clean','upload','hcai-personal-v1',$1,1)`, assetID, owner.ID); err != nil {
+		VALUES($1,$2,'image','HTTP usage source','/media/http-usage.jpg','image/jpeg','clean','demo','hcai-personal-v1',$1,1)`, assetID, owner.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `

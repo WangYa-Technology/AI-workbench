@@ -41,8 +41,9 @@ test('licenses a product, reuses the Asset, inspects provenance, and records a L
   await expect(page).toHaveURL(/\/create\/image\?sourceAssetId=/)
   await expect(page.locator('.source-reference').getByText(productTitle, { exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Generate image', exact: true }).click()
-  await expect(page.getByText('Saved to Assets', { exact: false })).toBeVisible()
-  await page.getByRole('link', { name: 'Inspect provenance', exact: true }).click()
+  await expect(page.locator('.studio-task').first().locator('.studio-task-status')).toContainText('Saved to Assets')
+  await page.locator('.studio-task').first().locator('.studio-task-copy').click()
+  await page.getByRole('dialog', { name: 'Generation details' }).getByRole('link', { name: 'Inspect provenance', exact: true }).click()
 
   await expect(page).toHaveURL(/\/workspace\/assets\/[0-9a-f-]+$/)
   await expect(page.getByRole('heading', { name: 'Generated with', exact: true })).toBeVisible()

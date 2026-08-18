@@ -29,6 +29,10 @@ const taskCreateModal = ref<InstanceType<typeof globalThis.HTMLElement> | null>(
 const proposalOpen = ref(false)
 const disputeOpen = ref(false)
 const cancelOpen = ref(false)
+const paymentEnabled = ref(false)
+const paymentLiveMode = ref(false)
+const fundingPollAttempts = ref(0)
+let fundingPollTimer: number | undefined
 
 const search = ref(String(route.query.q || ''))
 const deliverableType = ref(String(route.query.type || ''))
@@ -37,7 +41,13 @@ const sort = ref(String(route.query.sort || 'newest'))
 const taskID = computed(() => String(route.params.id || ''))
 const isDetail = computed(() => Boolean(taskID.value))
 const canPropose = computed(() => Boolean(session.user) && detail.value?.viewerRole === 'viewer' && detail.value.status === 'open' && !detail.value.proposals.length)
-const canClaim = computed(() => canPropose.value && detail.value?.allowDirectAccept)
+const fundingConfirmed = computed(() => Boolean(detail.value?.funding && ['paid', 'transfer_pending', 'transferred'].includes(detail.value.funding.status)))
+const directFundingConfirmed = computed(() => fundingConfirmed.value && !detail.value?.funding?.proposalId)
+const canClaim = computed(() => canPropose.value && detail.value?.allowDirectAccept && (!paymentEnabled.value || directFundingConfirmed.value))
+const canFundDirect = computed(() => Boolean(
+  paymentEnabled.value && detail.value?.viewerRole === 'client' && detail.value.status === 'open' && detail.value.allowDirectAccept
+  && canStartFundingFor(),
+))
 const canDeliver = computed(() => detail.value?.viewerRole === 'assignee' && ['assigned', 'revision'].includes(detail.value.status))
 const canReview = computed(() => detail.value?.viewerRole === 'client' && detail.value.status === 'submitted')
 const canDispute = computed(() => detail.value && ['submitted', 'revision'].includes(detail.value.status) && ['client', 'assignee'].includes(detail.value.viewerRole))
@@ -93,7 +103,9 @@ async function load() {
   error.value = ''
   success.value = ''
   try {
-    await session.ensure()
+    const [, runtime] = await Promise.all([session.ensure(), api.meta()])
+    paymentEnabled.value = runtime.paymentProvider.enabled
+    paymentLiveMode.value = runtime.paymentProvider.liveMode
     if (taskID.value) {
       detail.value = await api.getTask(taskID.value)
       if (detail.value.viewerRole === 'assignee') {
@@ -101,6 +113,7 @@ async function load() {
         assets.value = response.items.filter((item) => item.scanStatus === 'clean')
         if (!delivery.assetId && assets.value.length) delivery.assetId = assets.value[0].id
       }
+      applyPaymentReturnState()
     } else {
       const response = await api.listTasks({ q: search.value, type: deliverableType.value, status: status.value, sort: sort.value })
       tasks.value = response.items
@@ -111,6 +124,90 @@ async function load() {
   } finally {
     loading.value = false
   }
+}
+
+function fundingMatches(proposalId?: string) {
+  if (!detail.value?.funding) return false
+  return proposalId ? detail.value.funding.proposalId === proposalId : !detail.value.funding.proposalId
+}
+
+function canStartFundingFor(proposalId?: string) {
+  const funding = detail.value?.funding
+  if (!funding || ['payment_failed', 'cancelled', 'refunded'].includes(funding.status)) return true
+  return fundingMatches(proposalId) && ['checkout_pending', 'checkout_open'].includes(funding.status)
+}
+
+function canFundProposal(proposalId: string) {
+  return Boolean(paymentEnabled.value && detail.value?.viewerRole === 'client' && detail.value.status === 'open' && canStartFundingFor(proposalId))
+}
+
+function canAcceptProposal(proposalId: string) {
+  if (detail.value?.viewerRole !== 'client' || detail.value.status !== 'open') return false
+  return !paymentEnabled.value || (fundingConfirmed.value && fundingMatches(proposalId))
+}
+
+function fundingActionLabel(proposalId?: string) {
+  if (fundingMatches(proposalId) && detail.value?.funding?.status === 'checkout_open') return t('tasks.resumeFunding')
+  if (fundingMatches(proposalId) && detail.value?.funding?.status === 'checkout_pending') return t('tasks.retryFunding')
+  return proposalId ? t('tasks.fundProposal') : t('tasks.fundTask')
+}
+
+function fundingRequestKey(proposalId?: string) {
+  const base = `task-funding-${detail.value?.id}-${proposalId || 'direct'}`
+  if (detail.value?.funding && ['payment_failed', 'cancelled', 'refunded'].includes(detail.value.funding.status)) {
+    return `${base}-${globalThis.crypto.randomUUID().slice(0, 8)}`
+  }
+  return base
+}
+
+async function fundTask(proposalId?: string) {
+  if (!detail.value) return
+  const current = detail.value.funding
+  if (fundingMatches(proposalId) && current?.status === 'checkout_open' && current.checkoutUrl) {
+    globalThis.location.assign(current.checkoutUrl)
+    return
+  }
+  actionLoading.value = true
+  error.value = ''
+  try {
+    const checkout = await api.checkoutTask(
+      detail.value.id,
+      proposalId ? { proposalId } : {},
+      fundingRequestKey(proposalId),
+    )
+    globalThis.location.assign(checkout.checkoutUrl)
+  } catch (reason) {
+    error.value = messageFrom(reason)
+    detail.value = await api.getTask(detail.value.id)
+  } finally {
+    actionLoading.value = false
+  }
+}
+
+function applyPaymentReturnState() {
+  if (!detail.value || !paymentEnabled.value) return
+  const paymentReturn = String(route.query.payment || '')
+  if (paymentReturn === 'cancelled') {
+    success.value = t('tasks.fundingCheckoutCancelled')
+    return
+  }
+  if (paymentReturn !== 'success') return
+  if (fundingConfirmed.value) {
+    success.value = t('tasks.fundingConfirmed')
+    return
+  }
+  success.value = t('tasks.fundingAwaitingConfirmation')
+  if (fundingPollAttempts.value >= 5 || fundingPollTimer !== undefined) return
+  fundingPollTimer = globalThis.window.setTimeout(async () => {
+    fundingPollTimer = undefined
+    fundingPollAttempts.value += 1
+    try {
+      detail.value = await api.getTask(taskID.value)
+      applyPaymentReturnState()
+    } catch (reason) {
+      error.value = messageFrom(reason)
+    }
+  }, 1500)
 }
 
 async function applyFilters() {
@@ -182,7 +279,10 @@ async function submitDelivery() {
 
 async function review(decision: 'accept' | 'request_revision') {
   if (!detail.value) return
-  await mutate(() => api.reviewTask(detail.value!.id, { decision, note: reviewNote.value.trim() }), decision === 'accept' ? t('tasks.accepted') : t('tasks.revisionSent'))
+  await mutate(
+    () => api.reviewTask(detail.value!.id, { decision, note: reviewNote.value.trim() }),
+    decision === 'accept' ? t(paymentEnabled.value ? 'tasks.acceptedProvider' : 'tasks.accepted') : t('tasks.revisionSent'),
+  )
 }
 
 async function openDispute() {
@@ -226,6 +326,9 @@ async function publishTask() {
 }
 
 watch(() => route.fullPath, () => {
+  if (fundingPollTimer !== undefined) globalThis.window.clearTimeout(fundingPollTimer)
+  fundingPollTimer = undefined
+  fundingPollAttempts.value = 0
   search.value = String(route.query.q || '')
   deliverableType.value = String(route.query.type || '')
   status.value = String(route.query.status ?? 'open')
@@ -276,7 +379,10 @@ onMounted(() => {
   globalThis.window.addEventListener('keydown', handleWindowKeydown)
   void load()
 })
-onBeforeUnmount(() => globalThis.window.removeEventListener('keydown', handleWindowKeydown))
+onBeforeUnmount(() => {
+  globalThis.window.removeEventListener('keydown', handleWindowKeydown)
+  if (fundingPollTimer !== undefined) globalThis.window.clearTimeout(fundingPollTimer)
+})
 </script>
 
 <template>
@@ -284,7 +390,7 @@ onBeforeUnmount(() => globalThis.window.removeEventListener('keydown', handleWin
     <template v-if="!isDetail">
       <header class="task-market-header">
         <div>
-          <span class="status-label"><ShieldCheck :size="14" />{{ t('tasks.localTestShort') }}</span>
+          <span class="status-label"><ShieldCheck :size="14" />{{ paymentEnabled ? t(paymentLiveMode ? 'tasks.providerLiveShort' : 'tasks.providerTestShort') : t('tasks.localTestShort') }}</span>
           <h1>{{ t('tasks.title') }}</h1>
           <p>{{ t('tasks.summary') }}</p>
         </div>
@@ -329,7 +435,7 @@ onBeforeUnmount(() => globalThis.window.removeEventListener('keydown', handleWin
         <RouterLink v-for="item in tasks" :key="item.id" class="task-row" :to="`/market/demands/${item.id}`">
           <span class="task-type"><component :is="item.deliverableType === 'image' ? WandSparkles : FileCheck2" :size="17" />{{ t(`tasks.types.${item.deliverableType}`) }}</span>
           <span class="task-row-copy"><strong>{{ item.title }}</strong><small>{{ item.summary }}</small><span>@{{ item.client.handle }}<template v-if="item.allowDirectAccept && item.status === 'open'"> / {{ t('tasks.direct') }}</template></span></span>
-          <span class="task-row-data"><small>{{ t('tasks.reward') }}</small><strong>{{ money(item.budgetCents, item.currency) }}</strong></span>
+          <span class="task-row-data"><small>{{ paymentEnabled ? t('tasks.providerReward') : t('tasks.reward') }}</small><strong>{{ money(item.budgetCents, item.currency) }}</strong></span>
           <span class="task-row-data"><small>{{ t('tasks.deadline') }}</small><strong>{{ date(item.deadline, item.clientTimezone) }}</strong></span>
           <span class="task-row-data"><small>{{ t('tasks.proposalCount') }}</small><strong>{{ item.proposalCount }}</strong></span>
           <span class="task-status" :data-status="item.status">{{ t(`tasks.status.${item.status}`) }}</span><ChevronRight :size="18" />
@@ -338,6 +444,15 @@ onBeforeUnmount(() => globalThis.window.removeEventListener('keydown', handleWin
           <span><Search :size="20" /></span><strong>{{ t('tasks.noResults') }}</strong><button class="text-link" type="button" @click="clearFilters">
             {{ t('tasks.clearFilters') }}
           </button>
+          <p>{{ t('tasks.emptySummary') }}</p>
+          <div class="task-empty-actions">
+            <RouterLink class="command-button secondary" to="/create/image">
+              <WandSparkles :size="17" />{{ t('tasks.createInstead') }}
+            </RouterLink>
+            <button v-if="session.user" class="command-button primary" type="button" @click="createOpen = true">
+              <Plus :size="17" />{{ t('tasks.publishBrief') }}
+            </button>
+          </div>
         </div>
       </div>
     </template>
@@ -358,7 +473,7 @@ onBeforeUnmount(() => globalThis.window.removeEventListener('keydown', handleWin
         <article class="task-brief">
           <header class="task-brief-header">
             <div class="task-brief-signals">
-              <span class="task-status" :data-status="detail.status">{{ t(`tasks.status.${detail.status}`) }}</span><span v-if="detail.allowDirectAccept && detail.status === 'open'" class="task-direct-signal"><BriefcaseBusiness :size="14" />{{ t('tasks.direct') }}</span>
+              <span class="task-status" :data-status="detail.status">{{ t(`tasks.status.${detail.status}`) }}</span><span v-if="detail.allowDirectAccept && detail.status === 'open' && (!paymentEnabled || directFundingConfirmed || detail.viewerRole === 'client')" class="task-direct-signal"><BriefcaseBusiness :size="14" />{{ t(paymentEnabled && !directFundingConfirmed ? 'tasks.directFundingRequired' : 'tasks.direct') }}</span>
             </div><h1>{{ detail.title }}</h1><p>{{ detail.summary }}</p>
           </header>
           <section><h2>{{ t('tasks.brief') }}</h2><p>{{ detail.brief }}</p></section>
@@ -390,9 +505,13 @@ onBeforeUnmount(() => globalThis.window.removeEventListener('keydown', handleWin
 
           <section v-if="detail.proposals.length" class="task-proposals">
             <h2>{{ detail.viewerRole === 'client' ? t('tasks.proposals') : t('tasks.yourProposal') }}</h2><article v-for="item in detail.proposals" :key="item.id">
-              <div><strong>{{ item.creator.displayName }}</strong><span>@{{ item.creator.handle }}</span></div><p>{{ item.approach }}</p><p>{{ item.deliverables }}</p><dl><div><dt>{{ t('tasks.reward') }}</dt><dd>{{ money(item.amountCents) }}</dd></div><div><dt>{{ t('tasks.timelineDays') }}</dt><dd>{{ item.timelineDays }}</dd></div></dl><button v-if="item.status === 'submitted' && detail.status === 'open'" class="command-button primary" type="button" :disabled="actionLoading" @click="acceptProposal(item.id)">
-                {{ t('tasks.acceptProposal') }}
-              </button><span v-else class="task-status" :data-status="item.status">{{ t(`tasks.proposalStatus.${item.status}`) }}</span>
+              <div><strong>{{ item.creator.displayName }}</strong><span>@{{ item.creator.handle }}</span></div><p>{{ item.approach }}</p><p>{{ item.deliverables }}</p><dl><div><dt>{{ paymentEnabled ? t('tasks.providerReward') : t('tasks.reward') }}</dt><dd>{{ money(item.amountCents) }}</dd></div><div><dt>{{ t('tasks.timelineDays') }}</dt><dd>{{ item.timelineDays }}</dd></div></dl><div v-if="item.status === 'submitted' && detail.status === 'open' && detail.viewerRole === 'client'" class="task-proposal-actions">
+                <button v-if="canFundProposal(item.id)" class="command-button secondary" type="button" :disabled="actionLoading" @click="fundTask(item.id)">
+                  <CircleDollarSign :size="17" />{{ fundingActionLabel(item.id) }}
+                </button><button v-if="canAcceptProposal(item.id)" class="command-button primary" type="button" :disabled="actionLoading" @click="acceptProposal(item.id)">
+                  {{ t('tasks.acceptProposal') }}
+                </button>
+              </div><span v-else class="task-status" :data-status="item.status">{{ t(`tasks.proposalStatus.${item.status}`) }}</span>
             </article>
           </section>
 
@@ -421,7 +540,7 @@ onBeforeUnmount(() => globalThis.window.removeEventListener('keydown', handleWin
 
         <aside id="task-actions" class="task-action-rail">
           <div class="task-reward">
-            <span>{{ t('tasks.reward') }}</span><strong>{{ money(detail.budgetCents, detail.currency) }}</strong><small>{{ t('tasks.localTest') }}</small>
+            <span>{{ paymentEnabled ? t('tasks.providerReward') : t('tasks.reward') }}</span><strong>{{ money(detail.budgetCents, detail.currency) }}</strong><small>{{ paymentEnabled ? t(paymentLiveMode ? 'tasks.providerLive' : 'tasks.providerTest') : t('tasks.localTest') }}</small>
           </div>
           <dl class="task-facts">
             <div><dt><UserRound :size="16" />{{ t('tasks.commissioner') }}</dt><dd>{{ detail.client.displayName }}<small>@{{ detail.client.handle }}</small></dd></div><div><dt><CalendarDays :size="16" />{{ t('tasks.deadline') }}</dt><dd>{{ date(detail.deadline, detail.clientTimezone) }}<small>{{ detail.clientTimezone }}</small></dd></div><div v-if="detail.assignee">
@@ -445,6 +564,14 @@ onBeforeUnmount(() => globalThis.window.removeEventListener('keydown', handleWin
           <div v-if="error" class="task-feedback error" role="alert">
             <AlertTriangle :size="17" />{{ error }}
           </div>
+
+          <div v-if="detail.funding" class="task-settlement task-funding">
+            <CircleDollarSign :size="19" /><div><strong>{{ t(`tasks.fundingStatus.${detail.funding.status}`) }}</strong><span>{{ money(detail.funding.amountCents, detail.funding.currency) }} / {{ t(detail.funding.liveMode ? 'tasks.providerLiveMode' : 'tasks.providerTestMode') }}</span></div>
+          </div>
+
+          <button v-if="canFundDirect" class="command-button primary wide" type="button" :disabled="actionLoading" @click="fundTask()">
+            <CircleDollarSign :size="17" />{{ fundingActionLabel() }}
+          </button>
 
           <button v-if="canClaim" class="command-button primary wide" type="button" :disabled="actionLoading" @click="claimTask">
             <BriefcaseBusiness :size="17" />{{ t('tasks.acceptTask') }}
@@ -503,9 +630,9 @@ onBeforeUnmount(() => globalThis.window.removeEventListener('keydown', handleWin
             </div>
           </form>
           <div v-if="detail.settlement" class="task-settlement">
-            <CircleDollarSign :size="19" /><div><strong>{{ t('tasks.settlement') }}</strong><span>{{ money(detail.settlement.amountCents, detail.settlement.currency) }} / {{ t('tasks.localSettlementMode') }}</span></div>
+            <CircleDollarSign :size="19" /><div><strong>{{ t('tasks.settlement') }}</strong><span>{{ money(detail.settlement.amountCents, detail.settlement.currency) }} / {{ t(`tasks.settlementMode.${detail.settlement.mode}`) }}</span></div>
           </div><p v-else class="task-payment-note">
-            {{ t('tasks.unsettled') }}
+            {{ t(paymentEnabled ? 'tasks.providerUnsettled' : 'tasks.unsettled') }}
           </p>
 
           <div v-if="session.user" class="demo-actor-switch">

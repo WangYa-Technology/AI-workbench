@@ -1,0 +1,63 @@
+name: hcai-chat
+
+services:
+  migrate:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.runtime
+      args: { APP: migrate }
+    env_file: ${HCAI_PRODUCTION_ENV_FILE:-../.env.production}
+    restart: "no"
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.runtime
+      args: { APP: api }
+    env_file: ${HCAI_PRODUCTION_ENV_FILE:-../.env.production}
+    environment:
+      HTTP_ADDR: :8080
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    restart: unless-stopped
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    healthcheck:
+      test: [CMD-SHELL, "wget -q -O /dev/null http://127.0.0.1:8080/ready"]
+      interval: 10s
+      timeout: 3s
+      start_period: 15s
+      retries: 5
+
+  worker:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.runtime
+      args: { APP: worker }
+    env_file: ${HCAI_PRODUCTION_ENV_FILE:-../.env.production}
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    restart: unless-stopped
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+
+  web:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.web
+    depends_on:
+      api: { condition: service_healthy }
+    ports: ["${HCAI_WEB_PORT:-8080}:8080"]
+    restart: unless-stopped
+    read_only: true
+    tmpfs: [/tmp, /var/cache/nginx, /var/run]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]

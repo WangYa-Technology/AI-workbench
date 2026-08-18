@@ -9,15 +9,15 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"path"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/hcai-chat/hcai-chat/internal/notifications"
+	"github.com/hcai-chat/hcai-chat/internal/platform/config"
 	"github.com/hcai-chat/hcai-chat/internal/platform/jobs"
+	"github.com/hcai-chat/hcai-chat/internal/platform/media"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -192,12 +192,24 @@ type SourceAssetRef struct {
 }
 
 type Service struct {
-	pool      *pgxpool.Pool
-	mediaRoot string
+	pool    *pgxpool.Pool
+	stores  *media.Catalog
+	scanner media.Scanner
 }
 
 func NewService(pool *pgxpool.Pool, mediaRoot string) *Service {
-	return &Service{pool: pool, mediaRoot: mediaRoot}
+	return NewServiceWithMedia(pool, media.NewCatalog(media.NewLocalStore(mediaRoot)), deterministicScanner{})
+}
+
+func NewServiceWithMedia(pool *pgxpool.Pool, stores *media.Catalog, scanner media.Scanner) *Service {
+	return &Service{pool: pool, stores: stores, scanner: scanner}
+}
+
+func NewScannerFromConfig(cfg config.Config) media.Scanner {
+	if cfg.MediaScannerAdapter == "http" {
+		return media.NewHTTPScanner(cfg.MediaScannerURL, cfg.MediaScannerToken, time.Duration(cfg.MediaScannerTimeoutSeconds)*time.Second)
+	}
+	return deterministicScanner{}
 }
 
 func (s *Service) Upload(ctx context.Context, ownerID uuid.UUID, input UploadInput) (Asset, error) {
@@ -218,56 +230,41 @@ func (s *Service) storeUpload(ctx context.Context, ownerID uuid.UUID, input Uplo
 	if ownerID == uuid.Nil || len(input.Title) < 3 || len(input.Title) > 120 || input.Filename == "." || len(input.Filename) > 180 || input.Reader == nil {
 		return Asset{}, ErrInvalid
 	}
-	if err := os.MkdirAll(s.mediaRoot, 0o750); err != nil {
-		return Asset{}, fmt.Errorf("prepare upload storage: %w", err)
-	}
 	assetID := uuid.New()
-	temporary, err := os.CreateTemp(s.mediaRoot, ".upload-*")
-	if err != nil {
-		return Asset{}, fmt.Errorf("create upload staging file: %w", err)
-	}
-	temporaryPath := temporary.Name()
-	committed := false
-	defer func() {
-		_ = temporary.Close()
-		if !committed {
-			_ = os.Remove(temporaryPath)
-		}
-	}()
-
 	limited := io.LimitReader(input.Reader, MaxUploadSize+1)
-	first := make([]byte, 512)
-	read, readErr := io.ReadFull(limited, first)
-	if readErr != nil && !errors.Is(readErr, io.ErrUnexpectedEOF) {
+	data, err := io.ReadAll(limited)
+	if err != nil {
+		return Asset{}, fmt.Errorf("read uploaded asset: %w", err)
+	}
+	if len(data) == 0 {
 		return Asset{}, ErrInvalid
 	}
-	first = first[:read]
-	mimeType := normalizeMIME(http.DetectContentType(first))
+	if len(data) > MaxUploadSize {
+		return Asset{}, ErrTooLarge
+	}
+	first := data[:min(len(data), 512)]
+	mimeType := detectUploadMIME(first)
 	kind, extension, ok := uploadType(mimeType)
 	if !ok {
 		return Asset{}, ErrInvalid
 	}
-	written, err := io.Copy(temporary, io.MultiReader(bytes.NewReader(first), limited))
+	store := s.stores.Primary()
+	storageKey, err := store.ObjectKey(assetID.String() + extension)
 	if err != nil {
+		return Asset{}, fmt.Errorf("create upload storage key: %w", err)
+	}
+	if err := store.Put(ctx, storageKey, data, mimeType); errors.Is(err, media.ErrConflict) {
+		return Asset{}, ErrConflict
+	} else if err != nil {
 		return Asset{}, fmt.Errorf("store uploaded asset: %w", err)
 	}
-	if written == 0 {
-		return Asset{}, ErrInvalid
-	}
-	if written > MaxUploadSize {
-		return Asset{}, ErrTooLarge
-	}
-	if err := temporary.Sync(); err != nil {
-		return Asset{}, fmt.Errorf("sync uploaded asset: %w", err)
-	}
-	if err := temporary.Close(); err != nil {
-		return Asset{}, fmt.Errorf("close uploaded asset: %w", err)
-	}
-	finalPath := filepath.Join(s.mediaRoot, assetID.String()+extension)
-	if err := os.Rename(temporaryPath, finalPath); err != nil {
-		return Asset{}, fmt.Errorf("commit uploaded asset: %w", err)
-	}
-	temporaryPath = finalPath
+	committed := false
+	defer func() {
+		if !committed {
+			_ = store.Delete(context.WithoutCancel(ctx), storageKey)
+		}
+	}()
+	written := int64(len(data))
 
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -308,10 +305,10 @@ func (s *Service) storeUpload(ctx context.Context, ownerID uuid.UUID, input Uplo
 	}
 	if err := tx.QueryRow(ctx, `
 			INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,scan_status,source_type,license_code,uploaded_filename,size_bytes,
-			 family_id,version_number,version_note,supersedes_asset_id)
-			VALUES($1,$2,$3,$4,$5,$6,'pending','upload',$7,$8,$9,$10,$11,NULLIF($12,''),$13)
+			 family_id,version_number,version_note,supersedes_asset_id,storage_backend,storage_key)
+			VALUES($1,$2,$3,$4,$5,$6,'pending','upload',$7,$8,$9,$10,$11,NULLIF($12,''),$13,$14,$15)
 			RETURNING created_at`, item.ID, ownerID, item.Kind, item.Title, item.MediaURL, item.MimeType, item.LicenseCode,
-		input.Filename, written, item.FamilyID, item.VersionNumber, versionNote, item.SupersedesAssetID).Scan(&item.CreatedAt); err != nil {
+		input.Filename, written, item.FamilyID, item.VersionNumber, versionNote, item.SupersedesAssetID, store.Backend(), storageKey).Scan(&item.CreatedAt); err != nil {
 		if isUniqueViolation(err) {
 			return Asset{}, ErrConflict
 		}
@@ -321,7 +318,7 @@ func (s *Service) storeUpload(ctx context.Context, ownerID uuid.UUID, input Uplo
 	if _, err := tx.Exec(ctx, `INSERT INTO jobs(kind,payload,max_attempts) VALUES($1,$2,3)`, ScanJobKind, payload); err != nil {
 		return Asset{}, fmt.Errorf("queue asset scan: %w", err)
 	}
-	action, reason := "asset.uploaded", "User uploaded an Asset for deterministic local scanning"
+	action, reason := "asset.uploaded", "User uploaded an Asset for asynchronous scanning"
 	if baseAssetID != nil {
 		action, reason = "asset.version_uploaded", versionNote
 		if _, err := tx.Exec(ctx, `INSERT INTO asset_version_events(family_id,asset_id,actor_id,previous_asset_id,event_type,reason) VALUES($1,$2,$3,$4,'version_created',$5)`, familyID, assetID, ownerID, *baseAssetID, versionNote); err != nil {
@@ -346,8 +343,8 @@ func (s *Service) HandleScanJob(ctx context.Context, job jobs.Job) error {
 		return ErrInvalid
 	}
 	var ownerID uuid.UUID
-	var mimeType, scanStatus string
-	if err := s.pool.QueryRow(ctx, `SELECT owner_id,mime_type,scan_status FROM assets WHERE id=$1 AND source_type='upload'`, payload.AssetID).Scan(&ownerID, &mimeType, &scanStatus); errors.Is(err, pgx.ErrNoRows) {
+	var mimeType, scanStatus, storageBackend, storageKey string
+	if err := s.pool.QueryRow(ctx, `SELECT owner_id,mime_type,scan_status,storage_backend,storage_key FROM assets WHERE id=$1 AND source_type='upload'`, payload.AssetID).Scan(&ownerID, &mimeType, &scanStatus, &storageBackend, &storageKey); errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	} else if err != nil {
 		return err
@@ -355,47 +352,65 @@ func (s *Service) HandleScanJob(ctx context.Context, job jobs.Job) error {
 	if scanStatus != "pending" {
 		return nil
 	}
-	extension, ok := extensionForMIME(mimeType)
-	if !ok {
-		return s.finishScan(ctx, payload.AssetID, ownerID, "rejected", "Stored MIME type is not supported by the local scanner.")
-	}
-	data, err := os.ReadFile(filepath.Join(s.mediaRoot, payload.AssetID.String()+extension))
+	store, err := s.stores.Get(storageBackend)
 	if err != nil {
 		if job.Attempts >= job.MaxAttempts {
-			return s.finishScan(ctx, payload.AssetID, ownerID, "review", "Stored file could not be read after repeated local scan attempts.")
+			return s.finishScan(ctx, payload.AssetID, ownerID, media.ScanResult{Status: "review", ReasonCode: "storage_backend_unavailable", Engine: s.scanner.Adapter(), Version: "1"})
+		}
+		return err
+	}
+	object, err := store.Open(ctx, storageKey, nil)
+	if err != nil {
+		if job.Attempts >= job.MaxAttempts {
+			return s.finishScan(ctx, payload.AssetID, ownerID, media.ScanResult{Status: "review", ReasonCode: "storage_read_failed", Engine: s.scanner.Adapter(), Version: "1"})
 		}
 		return fmt.Errorf("read uploaded asset for scan: %w", err)
 	}
-	status, reason := classifyUpload(mimeType, data)
-	return s.finishScan(ctx, payload.AssetID, ownerID, status, reason)
+	data, readErr := io.ReadAll(io.LimitReader(object.Body, MaxUploadSize+1))
+	closeErr := object.Body.Close()
+	if readErr != nil || closeErr != nil || len(data) > MaxUploadSize {
+		if job.Attempts >= job.MaxAttempts {
+			return s.finishScan(ctx, payload.AssetID, ownerID, media.ScanResult{Status: "review", ReasonCode: "storage_read_failed", Engine: s.scanner.Adapter(), Version: "1"})
+		}
+		return fmt.Errorf("read uploaded asset for scan: read=%v close=%v", readErr, closeErr)
+	}
+	result, err := s.scanner.Scan(ctx, storageKey, mimeType, data)
+	if err != nil {
+		if job.Attempts >= job.MaxAttempts {
+			return s.finishScan(ctx, payload.AssetID, ownerID, media.ScanResult{Status: "review", ReasonCode: "scanner_failed_after_retries", Engine: s.scanner.Adapter(), Version: "1"})
+		}
+		return err
+	}
+	return s.finishScan(ctx, payload.AssetID, ownerID, result)
 }
 
-func (s *Service) finishScan(ctx context.Context, assetID, ownerID uuid.UUID, status, reason string) error {
+func (s *Service) finishScan(ctx context.Context, assetID, ownerID uuid.UUID, result media.ScanResult) error {
+	reason := scanReason(result)
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	result, err := tx.Exec(ctx, `UPDATE assets SET scan_status=$2,scan_reason=$3,scanned_at=now() WHERE id=$1 AND scan_status='pending'`, assetID, status, reason)
+	updated, err := tx.Exec(ctx, `UPDATE assets SET scan_status=$2,scan_reason=$3,scanned_at=now() WHERE id=$1 AND scan_status='pending'`, assetID, result.Status, reason)
 	if err != nil {
 		return err
 	}
-	if result.RowsAffected() == 0 {
+	if updated.RowsAffected() == 0 {
 		return tx.Commit(ctx)
 	}
 	title := "Asset scan completed"
 	body := "Your uploaded Asset passed deterministic local scanning and is ready to use."
-	if status != "clean" {
+	if result.Status != "clean" {
 		title = "Asset needs review"
 		body = "Your uploaded Asset is not available because deterministic local scanning requires review."
 	}
 	if err := notifications.CreateTx(ctx, tx, notifications.CreateInput{
 		UserID: ownerID, Kind: "asset.scan_completed", Title: title, Body: body, TargetPath: "/workspace/assets/" + assetID.String(),
-		ResourceType: "asset", ResourceID: &assetID, SourceKey: "asset-scan:" + assetID.String() + ":" + status,
+		ResourceType: "asset", ResourceID: &assetID, SourceKey: "asset-scan:" + assetID.String() + ":" + result.Status,
 	}); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `INSERT INTO audit_events(action,resource_type,resource_id,reason,request_id,metadata) VALUES('asset.scan_completed','asset',$1,$2,'asset-scanner',jsonb_build_object('status',$3::text))`, assetID, reason, status); err != nil {
+	if _, err := tx.Exec(ctx, `INSERT INTO audit_events(action,resource_type,resource_id,reason,request_id,metadata) VALUES('asset.scan_completed','asset',$1,$2,'asset-scanner',jsonb_build_object('status',$3::text,'reasonCode',$4::text,'scannerAdapter',$5::text,'engine',$6::text,'version',$7::text))`, assetID, reason, result.Status, result.ReasonCode, s.scanner.Adapter(), result.Engine, result.Version); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -692,34 +707,47 @@ func (s *Service) versions(ctx context.Context, familyID uuid.UUID) ([]AssetVers
 	return items, rows.Err()
 }
 
-func (s *Service) Content(ctx context.Context, viewerID, assetID uuid.UUID) (string, string, error) {
-	var ownerID, storageID uuid.UUID
-	var mimeType, storageSourceType string
+type Content struct {
+	MimeType string
+	Name     string
+	store    media.Store
+	key      string
+}
+
+func (c Content) Stat(ctx context.Context) (media.ObjectInfo, error) { return c.store.Stat(ctx, c.key) }
+func (c Content) Open(ctx context.Context, requested *media.ByteRange) (media.Object, error) {
+	return c.store.Open(ctx, c.key, requested)
+}
+
+func (s *Service) Content(ctx context.Context, viewerID, assetID uuid.UUID) (Content, error) {
+	var ownerID uuid.UUID
+	var mimeType, storageSourceType, storageBackend, storageKey string
 	var publiclyVisible, purchaseActive bool
 	err := s.pool.QueryRow(ctx, `
-		SELECT a.owner_id,a.mime_type,COALESCE(a.origin_asset_id,a.id),COALESCE(origin.source_type,a.source_type),
-		       EXISTS(SELECT 1 FROM works w WHERE w.asset_id IN (a.id,a.origin_asset_id) AND w.status='published'),
-		       a.source_type<>'purchase' OR EXISTS(SELECT 1 FROM entitlements e WHERE e.asset_id=a.id AND e.user_id=a.owner_id AND e.status='active')
-		FROM assets a
-		LEFT JOIN assets origin ON origin.id=a.origin_asset_id
-		WHERE a.id=$1 AND a.scan_status='clean'`, assetID).Scan(&ownerID, &mimeType, &storageID, &storageSourceType, &publiclyVisible, &purchaseActive)
+			SELECT a.owner_id,a.mime_type,COALESCE(origin.source_type,a.source_type),
+			       COALESCE(origin.storage_backend,a.storage_backend),COALESCE(origin.storage_key,a.storage_key),
+			       EXISTS(SELECT 1 FROM works w WHERE w.asset_id IN (a.id,a.origin_asset_id) AND w.status='published'),
+			       a.source_type<>'purchase' OR EXISTS(SELECT 1 FROM entitlements e WHERE e.asset_id=a.id AND e.user_id=a.owner_id AND e.status='active')
+			FROM assets a
+			LEFT JOIN assets origin ON origin.id=a.origin_asset_id
+			WHERE a.id=$1 AND a.scan_status='clean'`, assetID).Scan(&ownerID, &mimeType, &storageSourceType, &storageBackend, &storageKey, &publiclyVisible, &purchaseActive)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", "", ErrNotFound
+		return Content{}, ErrNotFound
 	}
 	if err != nil {
-		return "", "", fmt.Errorf("get asset content: %w", err)
+		return Content{}, fmt.Errorf("get asset content: %w", err)
 	}
 	if !purchaseActive || (ownerID != viewerID && !publiclyVisible) {
-		return "", "", ErrForbidden
+		return Content{}, ErrForbidden
 	}
 	if storageSourceType != "generation" && storageSourceType != "upload" {
-		return "", "", ErrNotFound
+		return Content{}, ErrNotFound
 	}
-	extension, ok := extensionForMIME(mimeType)
-	if !ok {
-		return "", "", ErrNotFound
+	store, err := s.stores.Get(storageBackend)
+	if err != nil {
+		return Content{}, fmt.Errorf("get asset storage backend: %w", err)
 	}
-	return filepath.Join(s.mediaRoot, storageID.String()+extension), mimeType, nil
+	return Content{MimeType: mimeType, Name: assetID.String(), store: store, key: storageKey}, nil
 }
 
 func (s *Service) generationProvenance(ctx context.Context, assetID uuid.UUID) (*GenerationProvenance, error) {
@@ -757,21 +785,22 @@ func (s *Service) generationProvenance(ctx context.Context, assetID uuid.UUID) (
 func (s *Service) purchaseProvenance(ctx context.Context, assetID uuid.UUID) (*PurchaseProvenance, error) {
 	var result PurchaseProvenance
 	err := s.pool.QueryRow(ctx, `
-		SELECT e.order_id,p.id,o.product_title_snapshot,u.id,u.display_name,u.handle,e.license_code,o.license_name_snapshot,o.status,e.granted_at
+		SELECT e.order_id,p.id,o.product_title_snapshot,u.id,u.display_name,u.handle,e.license_code,o.license_name_snapshot,o.status,e.granted_at,
+		       CASE WHEN pi.provider='stripe' THEN 'stripe' ELSE 'test' END
 		FROM entitlements e
 		JOIN orders o ON o.id=e.order_id
 		JOIN products p ON p.id=e.product_id
 		JOIN users u ON u.id=p.seller_id
+		LEFT JOIN payment_intents pi ON pi.order_id=o.id
 		WHERE e.asset_id=$1`, assetID).Scan(
 		&result.OrderID, &result.ProductID, &result.ProductTitle, &result.SellerID, &result.SellerName,
-		&result.SellerHandle, &result.LicenseCode, &result.LicenseName, &result.OrderStatus, &result.GrantedAt)
+		&result.SellerHandle, &result.LicenseCode, &result.LicenseName, &result.OrderStatus, &result.GrantedAt, &result.PaymentMode)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get purchase provenance: %w", err)
 	}
-	result.PaymentMode = "test"
 	return &result, nil
 }
 
@@ -806,6 +835,8 @@ func extensionForMIME(mimeType string) (string, bool) {
 		return ".mp4", true
 	case "audio/wav":
 		return ".wav", true
+	case "audio/mpeg":
+		return ".mp3", true
 	case "text/plain; charset=utf-8", "text/plain":
 		return ".txt", true
 	default:
@@ -823,7 +854,7 @@ func uploadType(mimeType string) (string, string, bool) {
 		return "image", extension, true
 	case "video/mp4":
 		return "video", extension, true
-	case "audio/wav":
+	case "audio/wav", "audio/mpeg":
 		return "audio", extension, true
 	case "text/plain; charset=utf-8", "text/plain":
 		return "document", extension, true
@@ -842,18 +873,57 @@ func normalizeMIME(value string) string {
 	return value
 }
 
-func classifyUpload(mimeType string, data []byte) (string, string) {
-	detected := normalizeMIME(http.DetectContentType(data[:min(len(data), 512)]))
+func detectUploadMIME(data []byte) string {
+	if looksLikeMP3(data) {
+		return "audio/mpeg"
+	}
+	return normalizeMIME(http.DetectContentType(data))
+}
+
+func looksLikeMP3(data []byte) bool {
+	if len(data) >= 3 && string(data[:3]) == "ID3" {
+		return true
+	}
+	return len(data) >= 2 && data[0] == 0xff && (data[1]&0xe0) == 0xe0
+}
+
+type deterministicScanner struct{}
+
+func (deterministicScanner) Adapter() string { return "local_deterministic" }
+
+func (deterministicScanner) Scan(_ context.Context, _ string, mimeType string, data []byte) (media.ScanResult, error) {
+	detected := detectUploadMIME(data[:min(len(data), 512)])
 	if detected != mimeType {
-		return "rejected", "File signature does not match the stored MIME type."
+		return media.ScanResult{Status: "rejected", ReasonCode: "mime_signature_mismatch", Engine: "hcai-local", Version: "1"}, nil
 	}
 	if bytes.Contains(data, []byte("HCAI_LOCAL_TEST_BLOCK_UPLOAD")) {
-		return "rejected", "Deterministic local blocked-content marker detected."
+		return media.ScanResult{Status: "rejected", ReasonCode: "local_block_marker", Engine: "hcai-local", Version: "1"}, nil
 	}
 	if bytes.Contains(data, []byte("HCAI_LOCAL_TEST_REVIEW_UPLOAD")) {
-		return "review", "Deterministic local review marker detected."
+		return media.ScanResult{Status: "review", ReasonCode: "local_review_marker", Engine: "hcai-local", Version: "1"}, nil
 	}
-	return "clean", "Deterministic local signature and policy checks passed."
+	return media.ScanResult{Status: "clean", ReasonCode: "local_checks_passed", Engine: "hcai-local", Version: "1"}, nil
+}
+
+func scanReason(result media.ScanResult) string {
+	switch result.ReasonCode {
+	case "mime_signature_mismatch":
+		return "File signature does not match the stored MIME type."
+	case "local_block_marker":
+		return "Deterministic local blocked-content marker detected."
+	case "local_review_marker":
+		return "Deterministic local review marker detected."
+	case "local_checks_passed":
+		return "Deterministic local signature and policy checks passed."
+	case "storage_backend_unavailable":
+		return "Stored media backend was unavailable after repeated scan attempts."
+	case "storage_read_failed":
+		return "Stored media could not be read after repeated scan attempts."
+	case "scanner_failed_after_retries":
+		return "The configured media scanner failed after repeated attempts."
+	default:
+		return "Media scanner returned " + result.Status + " with reason code " + result.ReasonCode + "."
+	}
 }
 
 func requestID(value string) string {

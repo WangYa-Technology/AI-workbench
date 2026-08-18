@@ -6,6 +6,7 @@ import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { api, messageFrom, type Asset, type ContentDraft, type ContentDraftSave } from '../api/client'
 import { useSessionStore } from '../stores/session'
 import AssetMedia from '../components/domain/AssetMedia.vue'
+import AuthRequiredState from '../components/domain/AuthRequiredState.vue'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -31,12 +32,16 @@ const saving = ref(false)
 const discarding = ref(false)
 const selectedAsset = computed(() => assets.value.find((asset) => asset.id === assetId.value))
 const activeDraft = computed(() => drafts.value.find((draft) => draft.id === draftId.value))
+const needsAuthentication = computed(() => session.initialized && !session.user && !session.error)
 
 async function load() {
   loading.value = true
   try {
     const user = await session.ensure()
-    if (!user) throw new Error(session.error || t('status.authenticationFailed'))
+    if (!user) {
+      if (session.error) throw new Error(session.error)
+      return
+    }
     const [assetResponse, draftResponse] = await Promise.all([api.listAssets(), api.listContentDrafts()])
     assets.value = assetResponse.items
     drafts.value = draftResponse.items
@@ -187,7 +192,13 @@ onMounted(() => void load())
         <ArrowLeft :size="17" />{{ t('workspace.assets') }}
       </RouterLink>
     </header>
-    <div v-if="loading" class="page-state">
+    <AuthRequiredState
+      v-if="!loading && needsAuthentication"
+      :title="t('authRequired.publishTitle')"
+      :summary="t('authRequired.publishSummary')"
+      :return-to="route.fullPath"
+    />
+    <div v-else-if="loading" class="page-state">
       {{ t('status.loadingAssets') }}
     </div>
     <form v-else class="publish-layout" @submit.prevent="submit">

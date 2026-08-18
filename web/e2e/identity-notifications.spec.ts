@@ -49,9 +49,9 @@ test('manages identity, session evidence, notification deep links, and preferenc
   await expect(page.getByRole('heading', { name: updatedName, exact: true })).toBeVisible()
 
   await page.goto('/create/image')
-  await page.getByLabel('Prompt', { exact: true }).fill(`A precise notification study with a single focal structure, ${runID}`)
+  await page.locator('.studio-composer textarea').fill(`A precise notification study with a single focal structure, ${runID}`)
   await page.getByRole('button', { name: 'Generate image', exact: true }).click()
-  await expect(page.getByText('Saved to Assets', { exact: false })).toBeVisible()
+  await expect(page.locator('.studio-task').first().locator('.studio-task-status')).toContainText('Saved to Assets')
 
   await page.getByRole('link', { name: 'Notifications', exact: true }).click()
   await expect(page).toHaveURL(/\/notifications$/)
@@ -73,18 +73,42 @@ test('manages identity, session evidence, notification deep links, and preferenc
   await expect(deliveredEvidence).toContainText('Attempts: 1')
   const generationPreference = page.getByRole('checkbox', { name: /Generation completed/ })
   await expect(generationPreference).toBeChecked()
+  const preferenceSaved = page.waitForResponse(response =>
+    response.request().method() === 'PUT' && /\/api\/v1\/notification-preferences\/generation\.completed$/.test(response.url()) && response.status() === 200,
+  )
   await generationPreference.uncheck()
+  await preferenceSaved
   await expect(generationPreference).not.toBeChecked()
 
   await page.goto('/create/image')
-  await page.getByLabel('Prompt', { exact: true }).fill(`A second notification suppression study with clean geometry, ${runID}`)
+  const secondPrompt = `A second notification suppression study with clean geometry, ${runID}`
+  await page.locator('.studio-composer textarea').fill(secondPrompt)
   await page.getByRole('button', { name: 'Generate image', exact: true }).click()
-  await expect(page.getByText('Saved to Assets', { exact: false })).toBeVisible()
+  await expect(page.locator('.studio-task').filter({ hasText: secondPrompt }).first().locator('.studio-task-status')).toContainText('Saved to Assets')
   await page.goto('/notifications?readState=unread&kind=generation.completed')
   await expect(page.getByRole('heading', { name: 'Nothing needs your attention.', exact: true })).toBeVisible()
   await page.getByRole('link', { name: 'Preferences', exact: true }).click()
-  const suppressedEvidence = page.locator('.delivery-evidence article').filter({ hasText: 'Generation completed' }).first()
+  const suppressedEvidence = page.locator('.delivery-evidence article').filter({ hasText: 'Generation completed' }).filter({ hasText: 'Suppressed' }).first()
   await expect(suppressedEvidence).toContainText('Suppressed')
   await expect(suppressedEvidence).toContainText('Preference disabled')
   await expect(suppressedEvidence).toContainText('Attempts: 1')
+})
+
+test('keeps the disabled creator payout boundary clear and usable on mobile', async ({ page }) => {
+  test.setTimeout(60_000)
+  await page.setViewportSize({ width: 390, height: 844 })
+  const runID = Date.now().toString(36)
+  const registration = await page.request.post('/api/v1/auth/register', { data: {
+    email: `payout-ui-${runID}@test.local`, password: `correct-horse-${runID}`,
+    handle: `payout_ui_${runID}`, displayName: `Payout UI ${runID}`, locale: 'en-US', timezone: 'UTC',
+  } })
+  expect(registration.ok()).toBeTruthy()
+
+  await page.goto('/settings?section=payouts')
+  await expect(page.getByRole('heading', { name: 'Creator payouts', exact: true })).toBeVisible()
+  await expect(page.getByText('Not started', { exact: true })).toBeVisible()
+  await expect(page.getByText('Unavailable', { exact: true })).toBeVisible()
+  await expect(page.getByText('Stripe Connect is disabled in this environment. Local Test transactions remain available and no bank account or real payout is used.', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: /Stripe onboarding/, exact: false })).toHaveCount(0)
+  await expect(page.evaluate(() => document.documentElement.scrollWidth)).resolves.toBe(390)
 })

@@ -24,8 +24,8 @@ func TestPersistedContentDraftLifecycle(t *testing.T) {
 	cleanAssetID, pendingAssetID := uuid.New(), uuid.New()
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,scan_status,source_type,license_code) VALUES
-		($1,$2,'image','Draft source','/media/draft-source.jpg','image/jpeg','clean','upload','personal'),
-		($3,$2,'image','Pending source','/media/pending-source.jpg','image/jpeg','pending','upload','personal')`,
+		($1,$2,'image','Draft source','/media/draft-source.jpg','image/jpeg','clean','demo','personal'),
+		($3,$2,'image','Pending source','/media/pending-source.jpg','image/jpeg','pending','demo','personal')`,
 		cleanAssetID, ownerID, pendingAssetID); err != nil {
 		t.Fatal(err)
 	}

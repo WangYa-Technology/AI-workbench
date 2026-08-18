@@ -28,7 +28,7 @@ func TestPublicMarketplaceReadAndAuthenticatedMutationBoundary(t *testing.T) {
 	assetID, productID, taskID := uuid.New(), uuid.New(), uuid.New()
 	if _, err := pool.Exec(context.Background(), `
 		INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,scan_status,source_type,license_code)
-		VALUES($1,$2,'image','Public market Asset','/media/public-market.jpg','image/jpeg','clean','upload','hcai-commercial-standard-v1')`, assetID, seller.ID); err != nil {
+		VALUES($1,$2,'image','Public market Asset','/media/public-market.jpg','image/jpeg','clean','demo','hcai-commercial-standard-v1')`, assetID, seller.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(context.Background(), `

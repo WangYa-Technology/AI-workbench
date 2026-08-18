@@ -68,6 +68,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/payments/webhooks/stripe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Receives a bounded, signed Stripe event. The endpoint is disabled unless the payment Provider is explicitly configured. */
+        post: operations["receiveStripeWebhook"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auth/session": {
         parameters: {
             query?: never;
@@ -212,6 +229,40 @@ export interface paths {
         options?: never;
         head?: never;
         patch: operations["updateProfile"];
+        trace?: never;
+    };
+    "/account/payouts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Returns minimized owner-scoped Stripe Connect payout onboarding evidence. Identity, bank, and requirement details are never returned. */
+        get: operations["getPayoutStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/account/payouts/onboarding": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Creates a short-lived, single-use Stripe-hosted Connect onboarding link for the authenticated creator. */
+        post: operations["beginPayoutOnboarding"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/account/email-actions": {
@@ -778,6 +829,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/creation/capabilities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getCreationCapabilities"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/generations/{generationId}": {
         parameters: {
             query?: never;
@@ -788,6 +855,22 @@ export interface paths {
         get: operations["getGeneration"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/generations/batch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["batchGenerations"];
         delete?: never;
         options?: never;
         head?: never;
@@ -820,6 +903,22 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["retryGeneration"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/generations/{generationId}/favorite": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["favoriteGeneration"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -884,7 +983,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** @description Stores one file locally and queues durable deterministic scanning. Content remains unavailable until the scan status is clean. */
+        /** @description Stores one file through the configured private media backend and queues durable scanning. Content remains unavailable until the scan status is clean. */
         post: operations["uploadAsset"];
         delete?: never;
         options?: never;
@@ -1000,6 +1099,23 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["purchaseProduct"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/products/{productId}/checkout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Creates or resumes a default-off Stripe hosted checkout. Entitlement is granted only after a signed payment event is processed. */
+        post: operations["checkoutProduct"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1256,6 +1372,23 @@ export interface paths {
         get: operations["getTask"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{taskId}/checkout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Creates or resumes default-off Stripe funding for a direct-claim task or one exact submitted proposal. Assignment remains unavailable until a signed payment event confirms the funds. */
+        post: operations["checkoutTask"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1656,6 +1789,102 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["adjustAdminFinanceAccount"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/provider-cost-reconciliations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listAdminProviderCostReconciliations"];
+        put?: never;
+        post: operations["requestAdminProviderCostReconciliation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/payments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listAdminPayments"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/payments/{paymentId}/recover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["recoverAdminPayment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/payments/events/{eventId}/replay": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["replayAdminPaymentEvent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/payment-destinations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listAdminPaymentDestinations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/payment-destinations/{userId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["updateAdminPaymentDestination"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2174,6 +2403,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/metrics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getMetrics"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -2188,6 +2433,12 @@ export interface components {
             localProvider: {
                 enabled: boolean;
                 label: string;
+            };
+            paymentProvider: {
+                enabled: boolean;
+                /** @enum {string} */
+                provider: "stripe";
+                liveMode: boolean;
             };
         };
         RegisterRequest: {
@@ -2221,6 +2472,38 @@ export interface components {
             /** @enum {string} */
             locale: "en-US" | "zh-CN";
             timezone: string;
+        };
+        PayoutStatus: {
+            providerAvailable: boolean;
+            /** @enum {string} */
+            provider: "stripe";
+            liveMode: boolean;
+            /** @enum {string} */
+            status: "not_started" | "pending_onboarding" | "pending_verification" | "verified" | "restricted" | "disabled";
+            destinationId?: string;
+            /** @enum {string} */
+            accountType?: "manual" | "express";
+            chargesEnabled: boolean;
+            payoutsEnabled: boolean;
+            detailsSubmitted: boolean;
+            requirementsDue: boolean;
+            canStartOnboarding: boolean;
+            version: number;
+            /** Format: date-time */
+            verifiedAt?: string;
+            /** Format: date-time */
+            onboardingStartedAt?: string;
+            /** Format: date-time */
+            onboardingCompletedAt?: string;
+            /** Format: date-time */
+            updatedAt?: string;
+        };
+        PayoutOnboardingLink: {
+            /** Format: uri */
+            url: string;
+            /** Format: date-time */
+            expiresAt: string;
+            status: components["schemas"]["PayoutStatus"];
         };
         User: {
             /** Format: uuid */
@@ -2651,16 +2934,51 @@ export interface components {
             works: components["schemas"]["Work"][];
             products: components["schemas"]["CreatorProduct"][];
         };
+        GenerationParameters: {
+            /** @enum {string} */
+            aspectRatio?: "auto" | "1:1" | "4:5" | "16:9";
+            /** @enum {string} */
+            quality?: "auto" | "standard" | "high";
+            /** @enum {string} */
+            outputFormat?: "txt" | "jpeg" | "png" | "mp4" | "wav";
+            /** @enum {integer} */
+            durationSeconds?: 5 | 10 | 30 | 60;
+            /** @enum {string} */
+            responseLength?: "short" | "balanced" | "detailed";
+        };
+        CreationCapability: {
+            /** @enum {string} */
+            mode: "chat" | "image" | "video" | "music";
+            available: boolean;
+            provider?: string;
+            modelName?: string;
+            aspectRatios: string[];
+            qualities: string[];
+            durationSeconds: (5 | 10 | 30 | 60)[];
+            outputFormats: ("txt" | "jpeg" | "png" | "mp4" | "wav")[];
+            resultFormats: ("txt" | "jpeg" | "png" | "mp4" | "wav" | "mp3")[];
+            referenceKinds: ("image" | "video" | "audio" | "document")[];
+            supportsMask: boolean;
+        };
+        CreationCapabilities: {
+            items: components["schemas"]["CreationCapability"][];
+        };
         GenerationCreate: {
             /** @enum {string} */
             mode: "chat" | "image" | "video" | "music";
             prompt: string;
+            parameters?: components["schemas"]["GenerationParameters"];
             /** Format: uuid */
             sourceWorkId?: string | null;
             /** Format: uuid */
             sourceAssetId?: string | null;
+            sourceAssetIds?: string[];
+            /** Format: uuid */
+            maskAssetId?: string | null;
             /** Format: uuid */
             sourceTaskId?: string | null;
+            /** Format: uuid */
+            parentGenerationId?: string | null;
         };
         Generation: {
             /** Format: uuid */
@@ -2669,11 +2987,13 @@ export interface components {
             provider: string;
             modelName: string;
             prompt: string;
+            parameters: components["schemas"]["GenerationParameters"];
             /** @enum {string} */
             status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
             progress: number;
             estimatedCostCents: number;
             chargedCostCents: number;
+            providerUsage?: components["schemas"]["ProviderUsageEvidence"];
             /** Format: uuid */
             outputAssetId?: string;
             outputMediaUrl?: string;
@@ -2684,8 +3004,13 @@ export interface components {
             sourceWorkId?: string;
             /** Format: uuid */
             sourceAssetId?: string;
+            sourceAssetIds: string[];
+            /** Format: uuid */
+            maskAssetId?: string;
             /** Format: uuid */
             sourceTaskId?: string;
+            /** Format: uuid */
+            parentGenerationId?: string;
             /** Format: uuid */
             retryOfGenerationId?: string;
             errorCode?: string;
@@ -2693,11 +3018,24 @@ export interface components {
             /** Format: date-time */
             cancelledAt?: string;
             cancelReason?: string;
+            isFavorite: boolean;
             /** Format: date-time */
             createdAt: string;
             /** Format: date-time */
             updatedAt: string;
             actions: components["schemas"]["GenerationActions"];
+        };
+        /** @description Minimized usage reported with a successful Provider response; this is not a final Provider invoice or monetary charge. */
+        ProviderUsageEvidence: {
+            /** @enum {string} */
+            status: "reported" | "not_reported";
+            inputTokens?: number;
+            cachedInputTokens?: number;
+            outputTokens?: number;
+            reasoningTokens?: number;
+            totalTokens?: number;
+            /** Format: date-time */
+            recordedAt: string;
         };
         GenerationActions: {
             canView: boolean;
@@ -2755,6 +3093,22 @@ export interface components {
         AssetPage: {
             items: components["schemas"]["Asset"][];
             nextCursor?: string;
+        };
+        GenerationBatchInput: {
+            generationIds: string[];
+            /** @enum {string} */
+            action: "favorite" | "unfavorite" | "cancel";
+            reason?: string;
+        };
+        GenerationBatchFailure: {
+            /** Format: uuid */
+            generationId: string;
+            /** @enum {string} */
+            code: "not_found" | "state_conflict" | "invalid_command" | "operation_failed";
+        };
+        GenerationBatchResult: {
+            items: components["schemas"]["Generation"][];
+            failures: components["schemas"]["GenerationBatchFailure"][];
         };
         /** @description Reference-only Community bookmark; it is not an owned Asset or a license grant. */
         SavedWork: {
@@ -2837,7 +3191,7 @@ export interface components {
             /** Format: date-time */
             grantedAt: string;
             /** @enum {string} */
-            paymentMode: "test";
+            paymentMode: "test" | "stripe";
         };
         SourceAssetReference: {
             /** Format: uuid */
@@ -2933,20 +3287,19 @@ export interface components {
             productId: string;
             productTitle: string;
             /** Format: uuid */
-            assetId: string;
+            assetId?: string;
             amountCents: number;
             currency: string;
             /** @enum {string} */
-            status: "fulfilled" | "test_refunded";
+            status: "test_pending" | "test_paid" | "payment_pending" | "payment_paid" | "payment_failed" | "fulfilled" | "refund_requested" | "test_refunded" | "refunded" | "cancelled";
             licenseCode: string;
             licenseName: string;
             licenseVersion: string;
             licenseTerms: string;
             refundWindowDays: number;
             /** @enum {string} */
-            paymentMode: "test";
-            /** @constant */
-            realCharge: false;
+            paymentMode: "test" | "stripe";
+            realCharge: boolean;
             /** Format: date-time */
             refundRequestedAt?: string;
             /** Format: date-time */
@@ -2954,6 +3307,31 @@ export interface components {
             /** Format: date-time */
             createdAt: string;
             events: components["schemas"]["OrderEvent"][];
+        };
+        PaymentCheckout: {
+            /** Format: uuid */
+            paymentId: string;
+            /** Format: uuid */
+            orderId: string;
+            /** Format: uuid */
+            resourceId: string;
+            /** @enum {string} */
+            purpose: "product";
+            /** @enum {string} */
+            status: "checkout_open";
+            /** Format: uri */
+            checkoutUrl: string;
+            /** Format: date-time */
+            expiresAt: string;
+            amountCents: number;
+            /** @enum {string} */
+            currency: "USD";
+            /** @enum {string} */
+            paymentMode: "stripe";
+            /** @description True only when explicitly approved Stripe live mode is active */
+            realCharge: boolean;
+            liveMode: boolean;
+            alreadyCreated: boolean;
         };
         OrderPage: {
             items: components["schemas"]["Order"][];
@@ -3212,9 +3590,59 @@ export interface components {
             amountCents: number;
             currency: string;
             /** @enum {string} */
-            mode: "local_test";
+            mode: "local_test" | "stripe_pending" | "stripe_transferred";
             /** Format: date-time */
             createdAt: string;
+        };
+        TaskFunding: {
+            /** @enum {string} */
+            status: "checkout_pending" | "checkout_open" | "paid" | "payment_failed" | "transfer_pending" | "transferred" | "refund_pending" | "refund_failed" | "refunded" | "cancelled";
+            amountCents: number;
+            /** @enum {string} */
+            currency: "USD";
+            /** @enum {string} */
+            paymentMode: "stripe";
+            liveMode: boolean;
+            /** Format: uuid */
+            proposalId?: string;
+            /**
+             * Format: uri
+             * @description Present only to the commissioner while the hosted checkout remains open
+             */
+            checkoutUrl?: string;
+            /** Format: date-time */
+            checkoutExpiresAt?: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        TaskCheckoutRequest: {
+            /** Format: uuid */
+            proposalId?: string;
+        };
+        TaskPaymentCheckout: {
+            /** Format: uuid */
+            paymentId: string;
+            /** Format: uuid */
+            taskId: string;
+            /** Format: uuid */
+            proposalId?: string;
+            /** @enum {string} */
+            purpose: "task";
+            /** @enum {string} */
+            status: "checkout_open";
+            /** Format: uri */
+            checkoutUrl: string;
+            /** Format: date-time */
+            expiresAt: string;
+            amountCents: number;
+            /** @enum {string} */
+            currency: "USD";
+            /** @enum {string} */
+            paymentMode: "stripe";
+            /** @description True only when explicitly approved Stripe live mode is active */
+            realCharge: boolean;
+            liveMode: boolean;
+            alreadyCreated: boolean;
         };
         TaskDetail: components["schemas"]["TaskSummary"] & {
             brief: string;
@@ -3227,6 +3655,7 @@ export interface components {
             proposals: components["schemas"]["TaskProposal"][];
             deliveries: components["schemas"]["TaskDelivery"][];
             events: components["schemas"]["TaskEvent"][];
+            funding?: components["schemas"]["TaskFunding"];
             settlement?: components["schemas"]["TaskSettlement"];
         };
         TaskCreate: {
@@ -3583,6 +4012,200 @@ export interface components {
             currency: "USD";
             reason: string;
             confirmed: boolean;
+        };
+        AdminProviderCostReconciliation: {
+            /** Format: uuid */
+            id: string;
+            /** @enum {string} */
+            provider: "openai";
+            /** Format: date-time */
+            periodStart: string;
+            /** Format: date-time */
+            periodEnd: string;
+            /** @enum {string} */
+            currency?: "USD";
+            /** @description Provider aggregate cost in USD micros; not a per-generation invoice. */
+            providerCostMicros?: number;
+            /** @description Sum of successful local estimates in USD micros. */
+            localEstimatedCostMicros?: number;
+            reportedInputTokens?: number;
+            reportedTotalTokens?: number;
+            /** @description Provider aggregate cost minus local estimated cost in USD micros. */
+            varianceMicros?: number;
+            overageThresholdMicros: number;
+            /** @enum {string} */
+            status: "queued" | "running" | "matched" | "overage" | "failed";
+            requestReason: string;
+            /** Format: uuid */
+            requestedBy: string;
+            /** Format: uuid */
+            jobId?: string;
+            errorCode?: string;
+            /** Format: date-time */
+            startedAt?: string;
+            /** Format: date-time */
+            completedAt?: string;
+            version: number;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        AdminProviderCostReconciliationPage: {
+            items: components["schemas"]["AdminProviderCostReconciliation"][];
+            nextCursor?: string;
+        };
+        AdminProviderCostReconciliationRequest: {
+            /** @enum {string} */
+            provider: "openai";
+            /**
+             * Format: date-time
+             * @description Exact 00:00:00 UTC start of the inclusive daily period.
+             */
+            periodStart: string;
+            /**
+             * Format: date-time
+             * @description Exact 00:00:00 UTC exclusive end
+             */
+            periodEnd: string;
+            reason: string;
+            confirmed: boolean;
+        };
+        AdminPaymentWorkerJob: {
+            /** Format: uuid */
+            id: string;
+            kind: string;
+            /** @enum {string} */
+            status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
+            attempts: number;
+            maxAttempts: number;
+            lastErrorCode?: string;
+            /** Format: date-time */
+            availableAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        AdminPaymentProviderEvent: {
+            /** Format: uuid */
+            id: string;
+            providerEventId: string;
+            eventType: string;
+            /** @enum {string} */
+            processingState: "received" | "processing" | "retry_scheduled" | "processed" | "ignored" | "failed";
+            attemptCount: number;
+            replayCount: number;
+            version: number;
+            errorCode?: string;
+            lastErrorCode?: string;
+            /** Format: date-time */
+            occurredAt: string;
+            /** Format: date-time */
+            receivedAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+            job?: components["schemas"]["AdminPaymentWorkerJob"];
+        };
+        AdminPaymentDestination: {
+            /** Format: uuid */
+            id: string;
+            destinationId: string;
+            /** @enum {string} */
+            status: "pending_onboarding" | "pending_verification" | "verified" | "restricted" | "disabled";
+            chargesEnabled: boolean;
+            payoutsEnabled: boolean;
+            version: number;
+            /** Format: date-time */
+            verifiedAt?: string;
+            /** Format: uuid */
+            userId?: string;
+            /** Format: email */
+            email?: string;
+            handle?: string;
+            displayName?: string;
+            /** Format: date-time */
+            createdAt?: string;
+            /** Format: date-time */
+            updatedAt?: string;
+        };
+        AdminPaymentOperation: {
+            /** Format: uuid */
+            id: string;
+            /** @enum {string} */
+            purpose: "product" | "task";
+            /** @enum {string} */
+            status: "checkout_pending" | "checkout_open" | "paid" | "payment_failed" | "transfer_pending" | "transferred" | "refund_pending" | "refund_failed" | "refunded" | "cancelled";
+            amountCents: number;
+            /** @enum {string} */
+            currency: "USD";
+            liveMode: boolean;
+            /** Format: uuid */
+            payerId: string;
+            /** Format: email */
+            payerEmail: string;
+            payerHandle: string;
+            payerDisplayName: string;
+            /** Format: uuid */
+            payeeId?: string;
+            payeeHandle?: string;
+            payeeDisplayName?: string;
+            /** Format: uuid */
+            resourceId: string;
+            resourceTitle: string;
+            targetPath: string;
+            /** Format: uuid */
+            orderId?: string;
+            /** Format: uuid */
+            proposalId?: string;
+            providerCheckoutId?: string;
+            providerPaymentId?: string;
+            providerChargeId?: string;
+            providerRefundId?: string;
+            providerTransferId?: string;
+            /** @enum {string} */
+            attentionCode: "none" | "refund_failed" | "event_processing_failed" | "destination_missing" | "transfer_job_failed" | "transfer_job_missing" | "refund_job_failed" | "refund_job_missing" | "checkout_expired";
+            version: number;
+            /** Format: date-time */
+            paidAt?: string;
+            /** Format: date-time */
+            transferredAt?: string;
+            /** Format: date-time */
+            refundedAt?: string;
+            /** Format: date-time */
+            checkoutExpiresAt?: string;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+            destination?: components["schemas"]["AdminPaymentDestination"];
+            job?: components["schemas"]["AdminPaymentWorkerJob"];
+            providerEvent?: components["schemas"]["AdminPaymentProviderEvent"];
+        };
+        AdminPaymentOperationPage: {
+            items: components["schemas"]["AdminPaymentOperation"][];
+            nextCursor?: string;
+        };
+        AdminPaymentRecovery: {
+            /** @enum {string} */
+            action: "retry_transfer" | "retry_refund";
+            expectedVersion: number;
+            reason: string;
+            confirmed: boolean;
+        };
+        AdminPaymentEventReplay: {
+            expectedVersion: number;
+            reason: string;
+            confirmed: boolean;
+        };
+        AdminPaymentDestinationUpdate: {
+            destinationId: string;
+            enabled: boolean;
+            expectedVersion: number;
+            reason: string;
+            confirmed: boolean;
+        };
+        AdminPaymentDestinationPage: {
+            items: components["schemas"]["AdminPaymentDestination"][];
+            nextCursor?: string;
         };
         AdminRiskEvent: {
             /** Format: uuid */
@@ -4121,6 +4744,15 @@ export interface components {
             url: string;
             eventTypes: ("developer.webhook.test" | "generation.completed" | "work.published" | "marketplace.order.fulfilled" | "marketplace.order.refunded")[];
         };
+        PaymentWebhookReceipt: {
+            /** Format: uuid */
+            eventId: string;
+            providerEventId: string;
+            eventType: string;
+            /** @enum {string} */
+            status: "received" | "processing" | "retry_scheduled" | "processed" | "ignored" | "failed";
+            duplicate: boolean;
+        };
         APIError: {
             code: string;
             message: string;
@@ -4296,6 +4928,49 @@ export interface operations {
                     "application/json": components["schemas"]["Meta"];
                 };
             };
+        };
+    };
+    receiveStripeWebhook: {
+        parameters: {
+            query?: never;
+            header: {
+                "Stripe-Signature": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Duplicate event safely acknowledged */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaymentWebhookReceipt"];
+                };
+            };
+            /** @description Signed event accepted for idempotent processing */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaymentWebhookReceipt"];
+                };
+            };
+            400: components["responses"]["ValidationFailed"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["ValidationFailed"];
+            415: components["responses"]["ValidationFailed"];
+            422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["Unavailable"];
         };
     };
     getSession: {
@@ -4527,6 +5202,50 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             422: components["responses"]["ValidationFailed"];
+        };
+    };
+    getPayoutStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current creator payout onboarding state */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PayoutStatus"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    beginPayoutOnboarding: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Hosted onboarding link created; the URL is returned only to the authenticated owner. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PayoutOnboardingLink"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            409: components["responses"]["Conflict"];
+            503: components["responses"]["Unavailable"];
         };
     };
     listAccountEmailActions: {
@@ -5539,6 +6258,26 @@ export interface operations {
             503: components["responses"]["Unavailable"];
         };
     };
+    getCreationCapabilities: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Public capability projection for the active creation routes */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreationCapabilities"];
+                };
+            };
+        };
+    };
     getGeneration: {
         parameters: {
             query?: never;
@@ -5562,6 +6301,33 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+        };
+    };
+    batchGenerations: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GenerationBatchInput"];
+            };
+        };
+        responses: {
+            /** @description Per-item results for a generation batch command */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GenerationBatchResult"];
+                };
+            };
+            422: components["responses"]["ValidationFailed"];
         };
     };
     cancelGeneration: {
@@ -5628,6 +6394,35 @@ export interface operations {
                 };
             };
             409: components["responses"]["Conflict"];
+        };
+    };
+    favoriteGeneration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                generationId: components["parameters"]["GenerationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    active: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description Updated generation favorite state */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Generation"];
+                };
+            };
+            404: components["responses"]["NotFound"];
         };
     };
     getBillingStatement: {
@@ -5807,7 +6602,10 @@ export interface operations {
     getAssetContent: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description One RFC 9110 byte range. Multiple ranges are rejected. */
+                Range?: string;
+            };
             path: {
                 assetId: components["parameters"]["AssetId"];
             };
@@ -5815,17 +6613,54 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Asset media. Private assets require their owner session; published assets are public. */
+            /** @description Complete Asset media. Private assets require their owner session; published assets are public. Only scan-clean content is delivered. */
             200: {
                 headers: {
+                    "Accept-Ranges"?: "bytes";
+                    "Content-Length"?: number;
+                    ETag?: string;
+                    "Last-Modified"?: string;
                     [name: string]: unknown;
                 };
                 content: {
                     "image/jpeg": string;
+                    "image/png": string;
+                    "video/mp4": string;
+                    "audio/wav": string;
+                    "audio/mpeg": string;
+                    "text/plain": string;
+                };
+            };
+            /** @description One authorized byte range from scan-clean Asset media. */
+            206: {
+                headers: {
+                    "Accept-Ranges"?: "bytes";
+                    "Content-Range"?: string;
+                    "Content-Length"?: number;
+                    ETag?: string;
+                    "Last-Modified"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/jpeg": string;
+                    "image/png": string;
+                    "video/mp4": string;
+                    "audio/wav": string;
+                    "audio/mpeg": string;
+                    "text/plain": string;
                 };
             };
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            /** @description Invalid, unsatisfiable, or multiple byte ranges. */
+            416: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     uploadAssetVersion: {
@@ -5964,6 +6799,48 @@ export interface operations {
             422: components["responses"]["ValidationFailed"];
         };
     };
+    checkoutProduct: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                productId: components["parameters"]["ProductId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    licenseAccepted: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description Existing idempotent checkout returned */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaymentCheckout"];
+                };
+            };
+            /** @description Hosted checkout created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaymentCheckout"];
+                };
+            };
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
     listOrders: {
         parameters: {
             query?: {
@@ -6001,7 +6878,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Owned Local Test order */
+            /** @description Owned order with immutable license and payment-mode evidence */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -6030,7 +6907,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Entitlement revoked and balanced Local Test refund recorded atomically */
+            /** @description Local Test refund completed atomically, or Provider refund accepted pending a signed confirmation event */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -6042,6 +6919,7 @@ export interface operations {
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
             422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["Unavailable"];
         };
     };
     publishWork: {
@@ -6542,6 +7420,46 @@ export interface operations {
                 };
             };
             404: components["responses"]["NotFound"];
+        };
+    };
+    checkoutTask: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                taskId: components["parameters"]["TaskId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TaskCheckoutRequest"];
+            };
+        };
+        responses: {
+            /** @description Existing idempotent task-funding checkout returned */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskPaymentCheckout"];
+                };
+            };
+            /** @description Hosted task-funding checkout created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskPaymentCheckout"];
+                };
+            };
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["Unavailable"];
         };
     };
     proposeTask: {
@@ -7290,6 +8208,213 @@ export interface operations {
                     "application/json": components["schemas"]["AdminFinanceAccount"];
                 };
             };
+        };
+    };
+    listAdminProviderCostReconciliations: {
+        parameters: {
+            query?: {
+                status?: "queued" | "running" | "matched" | "overage" | "failed";
+                limit?: number;
+                /** @description Opaque stable reconciliation history cursor */
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Provider aggregate-cost reconciliations. These are period-level financial facts */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminProviderCostReconciliationPage"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    requestAdminProviderCostReconciliation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminProviderCostReconciliationRequest"];
+            };
+        };
+        responses: {
+            /** @description Reconciliation job queued with immutable threshold and request evidence */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminProviderCostReconciliation"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    listAdminPayments: {
+        parameters: {
+            query?: {
+                /** @description Payment ID */
+                q?: string;
+                purpose?: "product" | "task";
+                status?: "checkout_pending" | "checkout_open" | "paid" | "payment_failed" | "transfer_pending" | "transferred" | "refund_pending" | "refund_failed" | "refunded" | "cancelled";
+                mode?: "test" | "live";
+                attention?: "needs_attention" | "healthy";
+                limit?: number;
+                /** @description Opaque stable attention-first cursor */
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Payment intents with Provider */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminPaymentOperationPage"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    recoverAdminPayment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                paymentId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminPaymentRecovery"];
+            };
+        };
+        responses: {
+            /** @description Payment recovery job queued with optimistic version and audit evidence */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminPaymentOperation"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    replayAdminPaymentEvent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                eventId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminPaymentEventReplay"];
+            };
+        };
+        responses: {
+            /** @description Provider event replay queued while retaining prior processing evidence */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminPaymentOperation"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    listAdminPaymentDestinations: {
+        parameters: {
+            query?: {
+                /** @description Creator or Stripe Account search */
+                q?: string;
+                status?: "pending_onboarding" | "pending_verification" | "verified" | "restricted" | "disabled";
+                limit?: number;
+                /** @description Opaque stable cursor */
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Creator payout destinations across Connect onboarding */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminPaymentDestinationPage"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    updateAdminPaymentDestination: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                userId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminPaymentDestinationUpdate"];
+            };
+        };
+        responses: {
+            /** @description Creator payout destination updated with optimistic version and audit evidence */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminPaymentDestination"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
         };
     };
     listAdminRiskSignals: {
@@ -8274,6 +9399,33 @@ export interface operations {
                 content?: never;
             };
             /** @description A required dependency is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getMetrics: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Low-cardinality Prometheus text metrics for an internal scraper */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
+                };
+            };
+            /** @description Metrics dependencies are unavailable */
             503: {
                 headers: {
                     [name: string]: unknown;

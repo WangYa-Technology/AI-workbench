@@ -8,6 +8,7 @@ import (
 
 	"github.com/hcai-chat/hcai-chat/internal/billing"
 	"github.com/hcai-chat/hcai-chat/internal/marketplace"
+	"github.com/hcai-chat/hcai-chat/internal/payments"
 	"github.com/hcai-chat/hcai-chat/internal/platform/httputil"
 	"github.com/hcai-chat/hcai-chat/internal/systemsettings"
 )
@@ -83,6 +84,54 @@ func (s *Server) purchaseProduct(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *Server) checkoutProduct(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.requireUser(w, r)
+	if !ok {
+		return
+	}
+	productID, ok := pathUUID(w, r, "productID")
+	if !ok {
+		return
+	}
+	var input struct {
+		LicenseAccepted bool `json:"licenseAccepted"`
+	}
+	if !httputil.DecodeJSON(w, r, &input) {
+		return
+	}
+	origin := strings.TrimRight(s.config.WebOrigin, "/")
+	item, created, err := s.payments.BeginProductCheckout(
+		r.Context(), user.ID, productID, idempotencyKey(r), httputil.RequestID(r.Context()),
+		origin+"/workspace/orders?payment=success", origin+"/market/products/"+productID.String()+"?payment=cancelled", input.LicenseAccepted,
+	)
+	switch {
+	case errors.Is(err, payments.ErrDisabled), errors.Is(err, payments.ErrProviderUnavailable):
+		httputil.WriteError(w, r, http.StatusServiceUnavailable, "payment_provider_unavailable", "Payment checkout is not enabled.", false)
+	case errors.Is(err, payments.ErrInvalidCheckout):
+		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "payment_checkout_invalid", "Review the product, license acceptance, amount, and request key.", false)
+	case errors.Is(err, payments.ErrAlreadyOwned):
+		httputil.WriteError(w, r, http.StatusConflict, "product_already_owned", "This account already owns an active license for the product.", false)
+	case errors.Is(err, payments.ErrCheckoutConflict):
+		httputil.WriteError(w, r, http.StatusConflict, "payment_checkout_conflict", "The request key belongs to another checkout or the checkout changed.", false)
+	case errors.Is(err, systemsettings.ErrDisabled):
+		httputil.WriteError(w, r, http.StatusServiceUnavailable, "feature_disabled", "Marketplace checkout is temporarily unavailable by an audited platform setting.", false)
+	case err != nil:
+		var classified interface{ Retryable() bool }
+		if errors.As(err, &classified) {
+			httputil.WriteError(w, r, http.StatusServiceUnavailable, "payment_checkout_unavailable", "The payment Provider could not create checkout.", classified.Retryable())
+			return
+		}
+		s.internalError(w, r, "create product payment checkout", err)
+	default:
+		status := http.StatusOK
+		if created {
+			status = http.StatusCreated
+			w.Header().Set("Location", "/api/v1/orders/"+item.OrderID.String())
+		}
+		httputil.JSON(w, status, item)
+	}
+}
+
 func (s *Server) listOrders(w http.ResponseWriter, r *http.Request) {
 	user, ok := s.requireUser(w, r)
 	if !ok {
@@ -137,8 +186,43 @@ func (s *Server) refundOrder(w http.ResponseWriter, r *http.Request) {
 	if !httputil.DecodeJSON(w, r, &input) {
 		return
 	}
+	current, err := s.marketplace.GetOrder(r.Context(), user.ID, id)
+	if err != nil {
+		s.writeOrderResult(w, r, current, err)
+		return
+	}
+	if current.PaymentMode == "stripe" {
+		_, err = s.payments.BeginProductRefund(r.Context(), user.ID, id, idempotencyKey(r), httputil.RequestID(r.Context()), input.Reason)
+		if err != nil {
+			s.writeProviderRefundError(w, r, err)
+			return
+		}
+		item, err := s.marketplace.GetOrder(r.Context(), user.ID, id)
+		s.writeOrderResult(w, r, item, err)
+		return
+	}
 	item, err := s.marketplace.RequestRefund(r.Context(), user.ID, id, idempotencyKey(r), httputil.RequestID(r.Context()), input.Reason)
 	s.writeOrderResult(w, r, item, err)
+}
+
+func (s *Server) writeProviderRefundError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, payments.ErrDisabled), errors.Is(err, payments.ErrProviderUnavailable):
+		httputil.WriteError(w, r, http.StatusServiceUnavailable, "payment_provider_unavailable", "Payment refunds are not enabled.", false)
+	case errors.Is(err, payments.ErrInvalidRefund):
+		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_refund", "Provide a refund reason between 10 and 500 characters and a valid request key.", false)
+	case errors.Is(err, payments.ErrRefundExpired):
+		httputil.WriteError(w, r, http.StatusConflict, "refund_window_expired", "The displayed refund window has ended.", false)
+	case errors.Is(err, payments.ErrRefundConflict):
+		httputil.WriteError(w, r, http.StatusConflict, "refund_unavailable", "This order is not eligible for a refund in its current state.", false)
+	default:
+		var classified interface{ Retryable() bool }
+		if errors.As(err, &classified) {
+			httputil.WriteError(w, r, http.StatusServiceUnavailable, "payment_refund_unavailable", "The payment Provider could not start the refund.", classified.Retryable())
+			return
+		}
+		s.internalError(w, r, "create product payment refund", err)
+	}
 }
 
 func (s *Server) writeOrderResult(w http.ResponseWriter, r *http.Request, item marketplace.Order, err error) {

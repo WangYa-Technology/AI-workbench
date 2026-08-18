@@ -17,6 +17,7 @@ import (
 	"github.com/hcai-chat/hcai-chat/internal/identity"
 	"github.com/hcai-chat/hcai-chat/internal/notifications"
 	"github.com/hcai-chat/hcai-chat/internal/platform/jobs"
+	"github.com/hcai-chat/hcai-chat/internal/platform/media"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -135,10 +136,15 @@ type holdCursor struct {
 type Service struct {
 	pool      *pgxpool.Pool
 	mediaRoot string
+	stores    *media.Catalog
 }
 
 func NewService(pool *pgxpool.Pool, mediaRoot string) *Service {
-	return &Service{pool: pool, mediaRoot: mediaRoot}
+	return NewServiceWithMedia(pool, mediaRoot, media.NewCatalog(media.NewLocalStore(mediaRoot)))
+}
+
+func NewServiceWithMedia(pool *pgxpool.Pool, mediaRoot string, stores *media.Catalog) *Service {
+	return &Service{pool: pool, mediaRoot: mediaRoot, stores: stores}
 }
 
 func (s *Service) Create(ctx context.Context, userID uuid.UUID, sessionToken string, input CreateInput, requestID string) (Request, error) {
@@ -930,22 +936,21 @@ func redactIdentityEmailActions(ctx context.Context, tx pgx.Tx, userID uuid.UUID
 }
 
 func (s *Service) removeOwnedMedia(ctx context.Context, tx pgx.Tx, userID uuid.UUID) error {
-	rows, err := tx.Query(ctx, `SELECT id,mime_type FROM assets WHERE owner_id=$1 AND source_type IN ('generation','upload')`, userID)
+	rows, err := tx.Query(ctx, `SELECT storage_backend,storage_key FROM assets WHERE owner_id=$1 AND source_type IN ('generation','upload')`, userID)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var id uuid.UUID
-		var mimeType string
-		if err := rows.Scan(&id, &mimeType); err != nil {
+		var backend, key string
+		if err := rows.Scan(&backend, &key); err != nil {
 			return err
 		}
-		extension := extensionForMIME(mimeType)
-		if extension == "" {
-			continue
+		store, err := s.stores.Get(backend)
+		if err != nil {
+			return fmt.Errorf("resolve owned media storage: %w", err)
 		}
-		if err := os.Remove(filepath.Join(s.mediaRoot, id.String()+extension)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := store.Delete(ctx, key); err != nil {
 			return fmt.Errorf("remove owned media: %w", err)
 		}
 	}
@@ -1030,21 +1035,4 @@ func oneOf(value string, values ...string) bool {
 		}
 	}
 	return false
-}
-
-func extensionForMIME(mimeType string) string {
-	switch mimeType {
-	case "image/jpeg":
-		return ".jpg"
-	case "image/png":
-		return ".png"
-	case "video/mp4":
-		return ".mp4"
-	case "audio/wav":
-		return ".wav"
-	case "text/plain", "text/plain; charset=utf-8":
-		return ".txt"
-	default:
-		return ""
-	}
 }

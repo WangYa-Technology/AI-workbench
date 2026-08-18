@@ -383,9 +383,14 @@ onMounted(async () => {
                 <Sparkles :size="15" :stroke-width="1.75" aria-hidden="true" />
                 <span>{{ post.aiDisclosure }}</span>
               </p>
-              <RouterLink class="text-link" :to="`/works/${post.workId}`">
-                {{ t('actions.viewWork') }}<ArrowRight :size="16" :stroke-width="1.75" />
-              </RouterLink>
+              <div class="post-footer-actions">
+                <RouterLink class="text-link" :to="`/create/image?sourceWorkId=${post.workId}`">
+                  <Sparkles :size="15" :stroke-width="1.75" />{{ t('actions.useInCreate') }}
+                </RouterLink>
+                <RouterLink class="text-link" :to="`/works/${post.workId}`">
+                  {{ t('actions.viewWork') }}<ArrowRight :size="16" :stroke-width="1.75" />
+                </RouterLink>
+              </div>
             </footer>
           </div>
         </article>
@@ -393,9 +398,21 @@ onMounted(async () => {
       <button v-if="postNextCursor" class="command-button secondary community-feed-load-more" type="button" :disabled="postLoadingMore" @click="loadMorePosts">
         <LoaderCircle v-if="postLoadingMore" class="spin" :size="16" />{{ t('actions.loadMore') }}
       </button>
-      <div v-if="!posts.length" class="inline-empty">
-        <p>{{ t('community.empty') }}</p>
-      </div>
+      <section v-if="!posts.length" class="community-empty" :aria-label="t('community.emptyTitle')">
+        <div>
+          <span class="status-label">{{ t('community.emptyTitle') }}</span>
+          <h2>{{ t('community.empty') }}</h2>
+          <p>{{ t('community.emptySummary') }}</p>
+        </div>
+        <nav class="community-empty-actions" :aria-label="t('community.emptyActionsLabel')">
+          <RouterLink class="command-button primary" to="/publish">
+            <Upload :size="17" :stroke-width="1.75" />{{ t('actions.publishWork') }}
+          </RouterLink>
+          <RouterLink class="command-button secondary" to="/discover">
+            <Sparkles :size="17" :stroke-width="1.75" />{{ t('actions.browseWorks') }}
+          </RouterLink>
+        </nav>
+      </section>
     </div>
   </section>
 </template>

@@ -18,6 +18,7 @@ tags:
   - name: Notifications
   - name: Support
   - name: Billing
+  - name: Payments
   - name: Developer
   - name: Admin
 paths:
@@ -57,6 +58,30 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Meta'
+  /payments/webhooks/stripe:
+    post:
+      tags: [Payments]
+      operationId: receiveStripeWebhook
+      description: Receives a bounded, signed Stripe event. The endpoint is disabled unless the payment Provider is explicitly configured.
+      parameters:
+        - name: Stripe-Signature
+          in: header
+          required: true
+          schema: { type: string, maxLength: 4096 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        '200': { description: Duplicate event safely acknowledged, content: { application/json: { schema: { $ref: '#/components/schemas/PaymentWebhookReceipt' } } } }
+        '202': { description: Signed event accepted for idempotent processing, content: { application/json: { schema: { $ref: '#/components/schemas/PaymentWebhookReceipt' } } } }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/ValidationFailed' }
+        '415': { $ref: '#/components/responses/ValidationFailed' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '503': { $ref: '#/components/responses/Unavailable' }
   /auth/session:
     get:
       tags: [Identity]
@@ -184,6 +209,30 @@ paths:
                 properties: { user: { $ref: '#/components/schemas/User' } }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
+  /account/payouts:
+    get:
+      tags: [Payments]
+      operationId: getPayoutStatus
+      security: [{ sessionCookie: [] }]
+      description: Returns minimized owner-scoped Stripe Connect payout onboarding evidence. Identity, bank, and requirement details are never returned.
+      responses:
+        '200':
+          description: Current creator payout onboarding state
+          content: { application/json: { schema: { $ref: '#/components/schemas/PayoutStatus' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /account/payouts/onboarding:
+    post:
+      tags: [Payments]
+      operationId: beginPayoutOnboarding
+      security: [{ sessionCookie: [] }]
+      description: Creates a short-lived, single-use Stripe-hosted Connect onboarding link for the authenticated creator.
+      responses:
+        '201':
+          description: Hosted onboarding link created; the URL is returned only to the authenticated owner.
+          content: { application/json: { schema: { $ref: '#/components/schemas/PayoutOnboardingLink' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/Unavailable' }
   /account/email-actions:
     get:
       tags: [Identity]
@@ -740,6 +789,16 @@ paths:
           $ref: '#/components/responses/ValidationFailed'
         '503':
           $ref: '#/components/responses/Unavailable'
+  /creation/capabilities:
+    get:
+      tags: [Creation]
+      operationId: getCreationCapabilities
+      responses:
+        '200':
+          description: Public capability projection for the active creation routes
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CreationCapabilities' }
   /generations/{generationId}:
     get:
       tags: [Creation]
@@ -761,6 +820,22 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+  /generations/batch:
+    post:
+      tags: [Creation]
+      operationId: batchGenerations
+      security: [{ sessionCookie: [] }]
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GenerationBatchInput' }
+      responses:
+        '200':
+          description: Per-item results for a generation batch command
+          content: { application/json: { schema: { $ref: '#/components/schemas/GenerationBatchResult' } } }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
   /generations/{generationId}/cancel:
     post:
       tags: [Creation]
@@ -790,6 +865,24 @@ paths:
         '202': { description: New generation queued with lineage to the failed or cancelled attempt, content: { application/json: { schema: { $ref: '#/components/schemas/Generation' } } } }
         '402': { description: Insufficient Local Test credits, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } } }
         '409': { $ref: '#/components/responses/Conflict' }
+  /generations/{generationId}/favorite:
+    put:
+      tags: [Creation]
+      operationId: favoriteGeneration
+      security: [{ sessionCookie: [] }]
+      parameters: [{ $ref: '#/components/parameters/GenerationId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [active]
+              properties: { active: { type: boolean } }
+      responses:
+        '200': { description: Updated generation favorite state, content: { application/json: { schema: { $ref: '#/components/schemas/Generation' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
   /billing/statement:
     get:
       tags: [Billing]
@@ -858,7 +951,7 @@ paths:
     post:
       tags: [Assets]
       operationId: uploadAsset
-      description: Stores one file locally and queues durable deterministic scanning. Content remains unavailable until the scan status is clean.
+      description: Stores one file through the configured private media backend and queues durable scanning. Content remains unavailable until the scan status is clean.
       security: [{ sessionCookie: [] }]
       requestBody:
         required: true
@@ -873,7 +966,7 @@ paths:
                 file: { type: string, format: binary }
             encoding:
               file:
-                contentType: image/jpeg, image/png, video/mp4, audio/wav, text/plain
+                contentType: image/jpeg, image/png, video/mp4, audio/wav, audio/mpeg, text/plain
       responses:
         '201': { description: Uploaded Asset persisted with pending scan status and durable scan job, content: { application/json: { schema: { $ref: '#/components/schemas/Asset' } } } }
         '413': { description: Upload exceeds 10 MiB, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } } }
@@ -912,18 +1005,48 @@ paths:
       operationId: getAssetContent
       parameters:
         - $ref: '#/components/parameters/AssetId'
+        - name: Range
+          in: header
+          required: false
+          description: One RFC 9110 byte range. Multiple ranges are rejected.
+          schema: { type: string, pattern: '^bytes=[0-9]*-[0-9]*$' }
       responses:
         '200':
-          description: Asset media. Private assets require their owner session; published assets are public.
+          description: Complete Asset media. Private assets require their owner session; published assets are public. Only scan-clean content is delivered.
+          headers:
+            Accept-Ranges: { schema: { type: string, const: bytes } }
+            Content-Length: { schema: { type: integer, minimum: 0 } }
+            ETag: { schema: { type: string } }
+            Last-Modified: { schema: { type: string } }
           content:
-            image/jpeg:
-              schema:
-                type: string
-                contentEncoding: binary
+            image/jpeg: { schema: { type: string, contentEncoding: binary } }
+            image/png: { schema: { type: string, contentEncoding: binary } }
+            video/mp4: { schema: { type: string, contentEncoding: binary } }
+            audio/wav: { schema: { type: string, contentEncoding: binary } }
+            audio/mpeg: { schema: { type: string, contentEncoding: binary } }
+            text/plain: { schema: { type: string, contentEncoding: binary } }
+        '206':
+          description: One authorized byte range from scan-clean Asset media.
+          headers:
+            Accept-Ranges: { schema: { type: string, const: bytes } }
+            Content-Range: { schema: { type: string, pattern: '^bytes [0-9]+-[0-9]+/[0-9]+$' } }
+            Content-Length: { schema: { type: integer, minimum: 1 } }
+            ETag: { schema: { type: string } }
+            Last-Modified: { schema: { type: string } }
+          content:
+            image/jpeg: { schema: { type: string, contentEncoding: binary } }
+            image/png: { schema: { type: string, contentEncoding: binary } }
+            video/mp4: { schema: { type: string, contentEncoding: binary } }
+            audio/wav: { schema: { type: string, contentEncoding: binary } }
+            audio/mpeg: { schema: { type: string, contentEncoding: binary } }
+            text/plain: { schema: { type: string, contentEncoding: binary } }
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '416':
+          description: Invalid, unsatisfiable, or multiple byte ranges.
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
   /assets/{assetId}/versions:
     post:
       tags: [Assets]
@@ -945,7 +1068,7 @@ paths:
                 file: { type: string, format: binary }
             encoding:
               file:
-                contentType: image/jpeg, image/png, video/mp4, audio/wav, text/plain
+                contentType: image/jpeg, image/png, video/mp4, audio/wav, audio/mpeg, text/plain
       responses:
         '201': { description: New pending Asset version and durable scan job created, content: { application/json: { schema: { $ref: '#/components/schemas/Asset' } } } }
         '403': { $ref: '#/components/responses/Forbidden' }
@@ -1008,6 +1131,28 @@ paths:
           content: { application/json: { schema: { $ref: '#/components/schemas/Purchase' } } }
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
+  /products/{productId}/checkout:
+    post:
+      tags: [Payments]
+      operationId: checkoutProduct
+      description: Creates or resumes a default-off Stripe hosted checkout. Entitlement is granted only after a signed payment event is processed.
+      security: [{ sessionCookie: [] }]
+      parameters: [{ $ref: '#/components/parameters/ProductId' }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [licenseAccepted]
+              properties: { licenseAccepted: { type: boolean } }
+      responses:
+        '201': { description: Hosted checkout created, content: { application/json: { schema: { $ref: '#/components/schemas/PaymentCheckout' } } } }
+        '200': { description: Existing idempotent checkout returned, content: { application/json: { schema: { $ref: '#/components/schemas/PaymentCheckout' } } } }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '503': { $ref: '#/components/responses/Unavailable' }
   /orders:
     get:
       tags: [Marketplace]
@@ -1031,7 +1176,7 @@ paths:
       security: [{ sessionCookie: [] }]
       parameters: [{ $ref: '#/components/parameters/OrderId' }]
       responses:
-        '200': { description: Owned Local Test order, content: { application/json: { schema: { $ref: '#/components/schemas/Order' } } } }
+        '200': { description: Owned order with immutable license and payment-mode evidence, content: { application/json: { schema: { $ref: '#/components/schemas/Order' } } } }
         '404': { $ref: '#/components/responses/NotFound' }
   /orders/{orderId}/refund:
     post:
@@ -1044,11 +1189,12 @@ paths:
         content: { application/json: { schema: { $ref: '#/components/schemas/RefundRequest' } } }
       responses:
         '200':
-          description: Entitlement revoked and balanced Local Test refund recorded atomically
+          description: Local Test refund completed atomically, or Provider refund accepted pending a signed confirmation event
           content: { application/json: { schema: { $ref: '#/components/schemas/Order' } } }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
+        '503': { $ref: '#/components/responses/Unavailable' }
   /publications:
     post:
       tags: [Community]
@@ -1299,6 +1445,24 @@ paths:
           description: Public task brief and history with role-aware private proposal evidence when authenticated
           content: { application/json: { schema: { $ref: '#/components/schemas/TaskDetail' } } }
         '404': { $ref: '#/components/responses/NotFound' }
+  /tasks/{taskId}/checkout:
+    post:
+      tags: [Payments]
+      operationId: checkoutTask
+      description: Creates or resumes default-off Stripe funding for a direct-claim task or one exact submitted proposal. Assignment remains unavailable until a signed payment event confirms the funds.
+      security: [{ sessionCookie: [] }]
+      parameters: [{ $ref: '#/components/parameters/TaskId' }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TaskCheckoutRequest' }
+      responses:
+        '201': { description: Hosted task-funding checkout created, content: { application/json: { schema: { $ref: '#/components/schemas/TaskPaymentCheckout' } } } }
+        '200': { description: Existing idempotent task-funding checkout returned, content: { application/json: { schema: { $ref: '#/components/schemas/TaskPaymentCheckout' } } } }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '503': { $ref: '#/components/responses/Unavailable' }
   /tasks/{taskId}/proposals:
     post:
       tags: [Tasks]
@@ -1618,6 +1782,101 @@ paths:
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/AdminFinanceAdjustment' } } } }
       responses:
         '200': { description: Local Test credit balance adjusted with audit evidence, content: { application/json: { schema: { $ref: '#/components/schemas/AdminFinanceAccount' } } } }
+  /admin/provider-cost-reconciliations:
+    get:
+      tags: [Admin]
+      operationId: listAdminProviderCostReconciliations
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [queued, running, matched, overage, failed] } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
+        - { name: cursor, in: query, schema: { type: string }, description: Opaque stable reconciliation history cursor }
+      responses:
+        '200': { description: Provider aggregate-cost reconciliations. These are period-level financial facts, not per-generation invoices., content: { application/json: { schema: { $ref: '#/components/schemas/AdminProviderCostReconciliationPage' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+    post:
+      tags: [Admin]
+      operationId: requestAdminProviderCostReconciliation
+      security: [{ sessionCookie: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/AdminProviderCostReconciliationRequest' } } } }
+      responses:
+        '201': { description: Reconciliation job queued with immutable threshold and request evidence, content: { application/json: { schema: { $ref: '#/components/schemas/AdminProviderCostReconciliation' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /admin/payments:
+    get:
+      tags: [Admin]
+      operationId: listAdminPayments
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: q, in: query, schema: { type: string, maxLength: 120 }, description: Payment ID, resource title, payer, or creator search }
+        - { name: purpose, in: query, schema: { type: string, enum: [product, task] } }
+        - { name: status, in: query, schema: { type: string, enum: [checkout_pending, checkout_open, paid, payment_failed, transfer_pending, transferred, refund_pending, refund_failed, refunded, cancelled] } }
+        - { name: mode, in: query, schema: { type: string, enum: [test, live] } }
+        - { name: attention, in: query, schema: { type: string, enum: [needs_attention, healthy] } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
+        - { name: cursor, in: query, schema: { type: string }, description: Opaque stable attention-first cursor }
+      responses:
+        '200': { description: Payment intents with Provider, worker, destination, and bounded recovery evidence, content: { application/json: { schema: { $ref: '#/components/schemas/AdminPaymentOperationPage' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+  /admin/payments/{paymentId}/recover:
+    post:
+      tags: [Admin]
+      operationId: recoverAdminPayment
+      security: [{ sessionCookie: [] }]
+      parameters: [{ name: paymentId, in: path, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/AdminPaymentRecovery' } } } }
+      responses:
+        '200': { description: Payment recovery job queued with optimistic version and audit evidence, content: { application/json: { schema: { $ref: '#/components/schemas/AdminPaymentOperation' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+  /admin/payments/events/{eventId}/replay:
+    post:
+      tags: [Admin]
+      operationId: replayAdminPaymentEvent
+      security: [{ sessionCookie: [] }]
+      parameters: [{ name: eventId, in: path, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/AdminPaymentEventReplay' } } } }
+      responses:
+        '200': { description: Provider event replay queued while retaining prior processing evidence, content: { application/json: { schema: { $ref: '#/components/schemas/AdminPaymentOperation' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+  /admin/payment-destinations:
+    get:
+      tags: [Admin]
+      operationId: listAdminPaymentDestinations
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: q, in: query, schema: { type: string, maxLength: 120 }, description: Creator or Stripe Account search }
+        - { name: status, in: query, schema: { type: string, enum: [pending_onboarding, pending_verification, verified, restricted, disabled] } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
+        - { name: cursor, in: query, schema: { type: string }, description: Opaque stable cursor }
+      responses:
+        '200': { description: Creator payout destinations across Connect onboarding, verification, restriction, and Admin recovery states, content: { application/json: { schema: { $ref: '#/components/schemas/AdminPaymentDestinationPage' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+  /admin/payment-destinations/{userId}:
+    put:
+      tags: [Admin]
+      operationId: updateAdminPaymentDestination
+      security: [{ sessionCookie: [] }]
+      parameters: [{ name: userId, in: path, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/AdminPaymentDestinationUpdate' } } } }
+      responses:
+        '200': { description: Creator payout destination updated with optimistic version and audit evidence, content: { application/json: { schema: { $ref: '#/components/schemas/AdminPaymentDestination' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
   /admin/risk/signals:
     get:
       tags: [Admin]
@@ -2042,6 +2301,20 @@ paths:
           description: Dependency readiness
         '503':
           description: A required dependency is unavailable
+  /metrics:
+    get:
+      servers:
+        - url: /
+      tags: [Runtime]
+      operationId: getMetrics
+      responses:
+        '200':
+          description: Low-cardinality Prometheus text metrics for an internal scraper
+          content:
+            text/plain:
+              schema: { type: string }
+        '503':
+          description: Metrics dependencies are unavailable
 components:
   securitySchemes:
     sessionCookie:
@@ -2187,7 +2460,7 @@ components:
   schemas:
     Meta:
       type: object
-      required: [name, environment, defaultLocale, supportedLocales, defaultCurrency, localDemoAvailable, localProvider]
+      required: [name, environment, defaultLocale, supportedLocales, defaultCurrency, localDemoAvailable, localProvider, paymentProvider]
       properties:
         name:
           type: string
@@ -2211,6 +2484,13 @@ components:
               type: boolean
             label:
               type: string
+        paymentProvider:
+          type: object
+          required: [enabled, provider, liveMode]
+          properties:
+            enabled: { type: boolean }
+            provider: { type: string, enum: [stripe] }
+            liveMode: { type: boolean }
     RegisterRequest:
       type: object
       additionalProperties: false
@@ -2256,6 +2536,33 @@ components:
         displayName: { type: string, minLength: 2, maxLength: 80 }
         locale: { type: string, enum: [en-US, zh-CN] }
         timezone: { type: string, maxLength: 80 }
+    PayoutStatus:
+      type: object
+      required: [providerAvailable, provider, liveMode, status, chargesEnabled, payoutsEnabled, detailsSubmitted, requirementsDue, canStartOnboarding, version]
+      properties:
+        providerAvailable: { type: boolean }
+        provider: { type: string, enum: [stripe] }
+        liveMode: { type: boolean }
+        status: { type: string, enum: [not_started, pending_onboarding, pending_verification, verified, restricted, disabled] }
+        destinationId: { type: string, pattern: '^acct_[A-Za-z0-9_]+$' }
+        accountType: { type: string, enum: [manual, express] }
+        chargesEnabled: { type: boolean }
+        payoutsEnabled: { type: boolean }
+        detailsSubmitted: { type: boolean }
+        requirementsDue: { type: boolean }
+        canStartOnboarding: { type: boolean }
+        version: { type: integer, minimum: 0 }
+        verifiedAt: { type: string, format: date-time }
+        onboardingStartedAt: { type: string, format: date-time }
+        onboardingCompletedAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    PayoutOnboardingLink:
+      type: object
+      required: [url, expiresAt, status]
+      properties:
+        url: { type: string, format: uri, pattern: '^https://connect\.stripe\.com/' }
+        expiresAt: { type: string, format: date-time }
+        status: { $ref: '#/components/schemas/PayoutStatus' }
     User:
       type: object
       required: [id, email, handle, displayName, role, status, locale, timezone, emailVerified, permissions]
@@ -2711,6 +3018,45 @@ components:
         viewerFollowing: { type: boolean }
         works: { type: array, items: { $ref: '#/components/schemas/Work' } }
         products: { type: array, items: { $ref: '#/components/schemas/CreatorProduct' } }
+    GenerationParameters:
+      type: object
+      additionalProperties: false
+      properties:
+        aspectRatio:
+          type: string
+          enum: [auto, '1:1', '4:5', '16:9']
+        quality:
+          type: string
+          enum: [auto, standard, high]
+        outputFormat:
+          type: string
+          enum: [txt, jpeg, png, mp4, wav]
+        durationSeconds:
+          type: integer
+          enum: [5, 10, 30, 60]
+        responseLength:
+          type: string
+          enum: [short, balanced, detailed]
+    CreationCapability:
+      type: object
+      required: [mode, available, aspectRatios, qualities, durationSeconds, outputFormats, resultFormats, referenceKinds, supportsMask]
+      properties:
+        mode: { type: string, enum: [chat, image, video, music] }
+        available: { type: boolean }
+        provider: { type: string }
+        modelName: { type: string }
+        aspectRatios: { type: array, items: { type: string } }
+        qualities: { type: array, items: { type: string } }
+        durationSeconds: { type: array, items: { type: integer, enum: [5, 10, 30, 60] } }
+        outputFormats: { type: array, items: { type: string, enum: [txt, jpeg, png, mp4, wav] } }
+        resultFormats: { type: array, items: { type: string, enum: [txt, jpeg, png, mp4, wav, mp3] } }
+        referenceKinds: { type: array, items: { type: string, enum: [image, video, audio, document] } }
+        supportsMask: { type: boolean }
+    CreationCapabilities:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, minItems: 4, maxItems: 4, items: { $ref: '#/components/schemas/CreationCapability' } }
     GenerationCreate:
       type: object
       additionalProperties: false
@@ -2723,18 +3069,33 @@ components:
           type: string
           minLength: 3
           maxLength: 2000
+        parameters:
+          $ref: '#/components/schemas/GenerationParameters'
         sourceWorkId:
           type: [string, 'null']
           format: uuid
         sourceAssetId:
           type: [string, 'null']
           format: uuid
+        sourceAssetIds:
+          type: array
+          maxItems: 8
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+        maskAssetId:
+          type: [string, 'null']
+          format: uuid
         sourceTaskId:
+          type: [string, 'null']
+          format: uuid
+        parentGenerationId:
           type: [string, 'null']
           format: uuid
     Generation:
       type: object
-      required: [id, mode, provider, modelName, prompt, status, progress, estimatedCostCents, chargedCostCents, createdAt, updatedAt, actions]
+      required: [id, mode, provider, modelName, prompt, parameters, status, progress, estimatedCostCents, chargedCostCents, sourceAssetIds, isFavorite, createdAt, updatedAt, actions]
       properties:
         id:
           type: string
@@ -2747,6 +3108,8 @@ components:
           type: string
         prompt:
           type: string
+        parameters:
+          $ref: '#/components/schemas/GenerationParameters'
         status:
           type: string
           enum: [queued, running, succeeded, failed, cancelled]
@@ -2758,6 +3121,8 @@ components:
           type: integer
         chargedCostCents:
           type: integer
+        providerUsage:
+          $ref: '#/components/schemas/ProviderUsageEvidence'
         outputAssetId:
           type: string
           format: uuid
@@ -2774,7 +3139,19 @@ components:
         sourceAssetId:
           type: string
           format: uuid
+        sourceAssetIds:
+          type: array
+          maxItems: 8
+          items:
+            type: string
+            format: uuid
+        maskAssetId:
+          type: string
+          format: uuid
         sourceTaskId:
+          type: string
+          format: uuid
+        parentGenerationId:
           type: string
           format: uuid
         retryOfGenerationId:
@@ -2789,6 +3166,8 @@ components:
           format: date-time
         cancelReason:
           type: string
+        isFavorite:
+          type: boolean
         createdAt:
           type: string
           format: date-time
@@ -2797,6 +3176,32 @@ components:
           format: date-time
         actions:
           $ref: '#/components/schemas/GenerationActions'
+    ProviderUsageEvidence:
+      type: object
+      required: [status, recordedAt]
+      description: Minimized usage reported with a successful Provider response; this is not a final Provider invoice or monetary charge.
+      properties:
+        status:
+          type: string
+          enum: [reported, not_reported]
+        inputTokens:
+          type: integer
+          minimum: 0
+        cachedInputTokens:
+          type: integer
+          minimum: 0
+        outputTokens:
+          type: integer
+          minimum: 0
+        reasoningTokens:
+          type: integer
+          minimum: 0
+        totalTokens:
+          type: integer
+          minimum: 0
+        recordedAt:
+          type: string
+          format: date-time
     GenerationActions:
       type: object
       required: [canView, canCancel, canRetry, canDownload, canReuse, viewPath, workspacePath]
@@ -2889,6 +3294,31 @@ components:
           type: array
           items: { $ref: '#/components/schemas/Asset' }
         nextCursor: { type: string }
+    GenerationBatchInput:
+      type: object
+      additionalProperties: false
+      required: [generationIds, action]
+      properties:
+        generationIds:
+          type: array
+          minItems: 1
+          maxItems: 50
+          uniqueItems: true
+          items: { type: string, format: uuid }
+        action: { type: string, enum: [favorite, unfavorite, cancel] }
+        reason: { type: string, minLength: 3, maxLength: 300 }
+    GenerationBatchFailure:
+      type: object
+      required: [generationId, code]
+      properties:
+        generationId: { type: string, format: uuid }
+        code: { type: string, enum: [not_found, state_conflict, invalid_command, operation_failed] }
+    GenerationBatchResult:
+      type: object
+      required: [items, failures]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Generation' } }
+        failures: { type: array, items: { $ref: '#/components/schemas/GenerationBatchFailure' } }
     SavedWork:
       type: object
       description: Reference-only Community bookmark; it is not an owned Asset or a license grant.
@@ -2969,7 +3399,7 @@ components:
         licenseName: { type: string }
         orderStatus: { type: string }
         grantedAt: { type: string, format: date-time }
-        paymentMode: { type: string, enum: [test] }
+        paymentMode: { type: string, enum: [test, stripe] }
     SourceAssetReference:
       type: object
       required: [id, title, sourceType, licenseCode]
@@ -3053,7 +3483,7 @@ components:
         createdAt: { type: string, format: date-time }
     Order:
       type: object
-      required: [id, productId, productTitle, assetId, amountCents, currency, status, licenseCode, licenseName, licenseVersion, licenseTerms, refundWindowDays, paymentMode, realCharge, createdAt, events]
+      required: [id, productId, productTitle, amountCents, currency, status, licenseCode, licenseName, licenseVersion, licenseTerms, refundWindowDays, paymentMode, realCharge, createdAt, events]
       properties:
         id: { type: string, format: uuid }
         productId: { type: string, format: uuid }
@@ -3061,18 +3491,35 @@ components:
         assetId: { type: string, format: uuid }
         amountCents: { type: integer }
         currency: { type: string }
-        status: { type: string, enum: [fulfilled, test_refunded] }
+        status: { type: string, enum: [test_pending, test_paid, payment_pending, payment_paid, payment_failed, fulfilled, refund_requested, test_refunded, refunded, cancelled] }
         licenseCode: { type: string }
         licenseName: { type: string }
         licenseVersion: { type: string }
         licenseTerms: { type: string }
         refundWindowDays: { type: integer }
-        paymentMode: { type: string, enum: [test] }
-        realCharge: { type: boolean, const: false }
+        paymentMode: { type: string, enum: [test, stripe] }
+        realCharge: { type: boolean }
         refundRequestedAt: { type: string, format: date-time }
         refundedAt: { type: string, format: date-time }
         createdAt: { type: string, format: date-time }
         events: { type: array, items: { $ref: '#/components/schemas/OrderEvent' } }
+    PaymentCheckout:
+      type: object
+      required: [paymentId, orderId, resourceId, purpose, status, checkoutUrl, expiresAt, amountCents, currency, paymentMode, realCharge, liveMode, alreadyCreated]
+      properties:
+        paymentId: { type: string, format: uuid }
+        orderId: { type: string, format: uuid }
+        resourceId: { type: string, format: uuid }
+        purpose: { type: string, enum: [product] }
+        status: { type: string, enum: [checkout_open] }
+        checkoutUrl: { type: string, format: uri }
+        expiresAt: { type: string, format: date-time }
+        amountCents: { type: integer, minimum: 50 }
+        currency: { type: string, enum: [USD] }
+        paymentMode: { type: string, enum: [stripe] }
+        realCharge: { type: boolean, description: True only when explicitly approved Stripe live mode is active }
+        liveMode: { type: boolean }
+        alreadyCreated: { type: boolean }
     OrderPage:
       type: object
       required: [items]
@@ -3350,8 +3797,43 @@ components:
         id: { type: string, format: uuid }
         amountCents: { type: integer }
         currency: { type: string }
-        mode: { type: string, enum: [local_test] }
+        mode: { type: string, enum: [local_test, stripe_pending, stripe_transferred] }
         createdAt: { type: string, format: date-time }
+    TaskFunding:
+      type: object
+      required: [status, amountCents, currency, paymentMode, liveMode, updatedAt]
+      properties:
+        status: { type: string, enum: [checkout_pending, checkout_open, paid, payment_failed, transfer_pending, transferred, refund_pending, refund_failed, refunded, cancelled] }
+        amountCents: { type: integer, minimum: 50 }
+        currency: { type: string, enum: [USD] }
+        paymentMode: { type: string, enum: [stripe] }
+        liveMode: { type: boolean }
+        proposalId: { type: string, format: uuid }
+        checkoutUrl: { type: string, format: uri, description: Present only to the commissioner while the hosted checkout remains open }
+        checkoutExpiresAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    TaskCheckoutRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        proposalId: { type: string, format: uuid }
+    TaskPaymentCheckout:
+      type: object
+      required: [paymentId, taskId, purpose, status, checkoutUrl, expiresAt, amountCents, currency, paymentMode, realCharge, liveMode, alreadyCreated]
+      properties:
+        paymentId: { type: string, format: uuid }
+        taskId: { type: string, format: uuid }
+        proposalId: { type: string, format: uuid }
+        purpose: { type: string, enum: [task] }
+        status: { type: string, enum: [checkout_open] }
+        checkoutUrl: { type: string, format: uri }
+        expiresAt: { type: string, format: date-time }
+        amountCents: { type: integer, minimum: 50 }
+        currency: { type: string, enum: [USD] }
+        paymentMode: { type: string, enum: [stripe] }
+        realCharge: { type: boolean, description: True only when explicitly approved Stripe live mode is active }
+        liveMode: { type: boolean }
+        alreadyCreated: { type: boolean }
     TaskDetail:
       allOf:
         - $ref: '#/components/schemas/TaskSummary'
@@ -3367,6 +3849,7 @@ components:
             proposals: { type: array, items: { $ref: '#/components/schemas/TaskProposal' } }
             deliveries: { type: array, items: { $ref: '#/components/schemas/TaskDelivery' } }
             events: { type: array, items: { $ref: '#/components/schemas/TaskEvent' } }
+            funding: { $ref: '#/components/schemas/TaskFunding' }
             settlement: { $ref: '#/components/schemas/TaskSettlement' }
     TaskCreate:
       type: object
@@ -3710,6 +4193,170 @@ components:
         currency: { type: string, enum: [USD] }
         reason: { type: string, minLength: 10, maxLength: 500 }
         confirmed: { type: boolean }
+    AdminProviderCostReconciliation:
+      type: object
+      required: [id, provider, periodStart, periodEnd, overageThresholdMicros, status, requestReason, requestedBy, version, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        provider: { type: string, enum: [openai] }
+        periodStart: { type: string, format: date-time }
+        periodEnd: { type: string, format: date-time }
+        currency: { type: string, enum: [USD] }
+        providerCostMicros: { type: integer, minimum: 0, description: Provider aggregate cost in USD micros; not a per-generation invoice. }
+        localEstimatedCostMicros: { type: integer, minimum: 0, description: Sum of successful local estimates in USD micros. }
+        reportedInputTokens: { type: integer, minimum: 0 }
+        reportedTotalTokens: { type: integer, minimum: 0 }
+        varianceMicros: { type: integer, description: Provider aggregate cost minus local estimated cost in USD micros. }
+        overageThresholdMicros: { type: integer, minimum: 0 }
+        status: { type: string, enum: [queued, running, matched, overage, failed] }
+        requestReason: { type: string, minLength: 12, maxLength: 1000 }
+        requestedBy: { type: string, format: uuid }
+        jobId: { type: string, format: uuid }
+        errorCode: { type: string }
+        startedAt: { type: string, format: date-time }
+        completedAt: { type: string, format: date-time }
+        version: { type: integer, minimum: 1 }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    AdminProviderCostReconciliationPage:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/AdminProviderCostReconciliation' } }
+        nextCursor: { type: string }
+    AdminProviderCostReconciliationRequest:
+      type: object
+      additionalProperties: false
+      required: [provider, periodStart, periodEnd, reason, confirmed]
+      properties:
+        provider: { type: string, enum: [openai] }
+        periodStart: { type: string, format: date-time, description: Exact 00:00:00 UTC start of the inclusive daily period. }
+        periodEnd: { type: string, format: date-time, description: Exact 00:00:00 UTC exclusive end, at most 180 days after periodStart. }
+        reason: { type: string, minLength: 12, maxLength: 1000 }
+        confirmed: { type: boolean }
+    AdminPaymentWorkerJob:
+      type: object
+      required: [id, kind, status, attempts, maxAttempts, availableAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string }
+        status: { type: string, enum: [queued, running, succeeded, failed, cancelled] }
+        attempts: { type: integer, minimum: 0 }
+        maxAttempts: { type: integer, minimum: 1 }
+        lastErrorCode: { type: string }
+        availableAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    AdminPaymentProviderEvent:
+      type: object
+      required: [id, providerEventId, eventType, processingState, attemptCount, replayCount, version, occurredAt, receivedAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        providerEventId: { type: string }
+        eventType: { type: string }
+        processingState: { type: string, enum: [received, processing, retry_scheduled, processed, ignored, failed] }
+        attemptCount: { type: integer, minimum: 0 }
+        replayCount: { type: integer, minimum: 0 }
+        version: { type: integer, minimum: 1 }
+        errorCode: { type: string }
+        lastErrorCode: { type: string }
+        occurredAt: { type: string, format: date-time }
+        receivedAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        job: { $ref: '#/components/schemas/AdminPaymentWorkerJob' }
+    AdminPaymentDestination:
+      type: object
+      required: [id, destinationId, status, chargesEnabled, payoutsEnabled, version]
+      properties:
+        id: { type: string, format: uuid }
+        destinationId: { type: string, pattern: '^acct_[A-Za-z0-9_]+$' }
+        status: { type: string, enum: [pending_onboarding, pending_verification, verified, restricted, disabled] }
+        chargesEnabled: { type: boolean }
+        payoutsEnabled: { type: boolean }
+        version: { type: integer, minimum: 1 }
+        verifiedAt: { type: string, format: date-time }
+        userId: { type: string, format: uuid }
+        email: { type: string, format: email }
+        handle: { type: string }
+        displayName: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    AdminPaymentOperation:
+      type: object
+      required: [id, purpose, status, amountCents, currency, liveMode, payerId, payerEmail, payerHandle, payerDisplayName, resourceId, resourceTitle, targetPath, attentionCode, version, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        purpose: { type: string, enum: [product, task] }
+        status: { type: string, enum: [checkout_pending, checkout_open, paid, payment_failed, transfer_pending, transferred, refund_pending, refund_failed, refunded, cancelled] }
+        amountCents: { type: integer, minimum: 50 }
+        currency: { type: string, enum: [USD] }
+        liveMode: { type: boolean }
+        payerId: { type: string, format: uuid }
+        payerEmail: { type: string, format: email }
+        payerHandle: { type: string }
+        payerDisplayName: { type: string }
+        payeeId: { type: string, format: uuid }
+        payeeHandle: { type: string }
+        payeeDisplayName: { type: string }
+        resourceId: { type: string, format: uuid }
+        resourceTitle: { type: string }
+        targetPath: { type: string }
+        orderId: { type: string, format: uuid }
+        proposalId: { type: string, format: uuid }
+        providerCheckoutId: { type: string }
+        providerPaymentId: { type: string }
+        providerChargeId: { type: string }
+        providerRefundId: { type: string }
+        providerTransferId: { type: string }
+        attentionCode: { type: string, enum: [none, refund_failed, event_processing_failed, destination_missing, transfer_job_failed, transfer_job_missing, refund_job_failed, refund_job_missing, checkout_expired] }
+        version: { type: integer, minimum: 1 }
+        paidAt: { type: string, format: date-time }
+        transferredAt: { type: string, format: date-time }
+        refundedAt: { type: string, format: date-time }
+        checkoutExpiresAt: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        destination: { $ref: '#/components/schemas/AdminPaymentDestination' }
+        job: { $ref: '#/components/schemas/AdminPaymentWorkerJob' }
+        providerEvent: { $ref: '#/components/schemas/AdminPaymentProviderEvent' }
+    AdminPaymentOperationPage:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/AdminPaymentOperation' } }
+        nextCursor: { type: string }
+    AdminPaymentRecovery:
+      type: object
+      additionalProperties: false
+      required: [action, expectedVersion, reason, confirmed]
+      properties:
+        action: { type: string, enum: [retry_transfer, retry_refund] }
+        expectedVersion: { type: integer, minimum: 1 }
+        reason: { type: string, minLength: 10, maxLength: 1000 }
+        confirmed: { type: boolean }
+    AdminPaymentEventReplay:
+      type: object
+      additionalProperties: false
+      required: [expectedVersion, reason, confirmed]
+      properties:
+        expectedVersion: { type: integer, minimum: 1 }
+        reason: { type: string, minLength: 10, maxLength: 1000 }
+        confirmed: { type: boolean }
+    AdminPaymentDestinationUpdate:
+      type: object
+      additionalProperties: false
+      required: [destinationId, enabled, expectedVersion, reason, confirmed]
+      properties:
+        destinationId: { type: string, pattern: '^acct_[A-Za-z0-9_]+$' }
+        enabled: { type: boolean }
+        expectedVersion: { type: integer, minimum: 0 }
+        reason: { type: string, minLength: 10, maxLength: 1000 }
+        confirmed: { type: boolean }
+    AdminPaymentDestinationPage:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/AdminPaymentDestination' } }
+        nextCursor: { type: string }
     AdminRiskEvent:
       type: object
       required: [id, kind, toStatus, reason, metadata, createdAt]
@@ -4202,6 +4849,15 @@ components:
         name: { type: string, minLength: 3, maxLength: 80 }
         url: { type: string, format: uri, minLength: 8, maxLength: 2048 }
         eventTypes: { type: array, minItems: 1, maxItems: 5, uniqueItems: true, items: { type: string, enum: [developer.webhook.test, generation.completed, work.published, marketplace.order.fulfilled, marketplace.order.refunded] } }
+    PaymentWebhookReceipt:
+      type: object
+      required: [eventId, providerEventId, eventType, status, duplicate]
+      properties:
+        eventId: { type: string, format: uuid }
+        providerEventId: { type: string }
+        eventType: { type: string }
+        status: { type: string, enum: [received, processing, retry_scheduled, processed, ignored, failed] }
+        duplicate: { type: boolean }
     APIError:
       type: object
       required: [code, message, retryable]

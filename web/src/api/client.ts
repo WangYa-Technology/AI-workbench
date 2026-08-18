@@ -10,7 +10,11 @@ export type CreatorProfile = components['schemas']['CreatorProfile']
 export type CreatorProduct = components['schemas']['CreatorProduct']
 export type Generation = components['schemas']['Generation']
 export type GenerationPage = components['schemas']['GenerationPage']
+export type CreationCapability = components['schemas']['CreationCapability']
+export type CreationCapabilities = components['schemas']['CreationCapabilities']
 export type GenerationCreate = components['schemas']['GenerationCreate']
+export type GenerationBatchInput = components['schemas']['GenerationBatchInput']
+export type GenerationBatchResult = components['schemas']['GenerationBatchResult']
 export type Asset = components['schemas']['Asset']
 export type AssetPage = components['schemas']['AssetPage']
 export type SavedWork = components['schemas']['SavedWork']
@@ -43,8 +47,11 @@ export type TaskCreate = components['schemas']['TaskCreate']
 export type TaskProposalCreate = components['schemas']['TaskProposalCreate']
 export type TaskDeliveryCreate = components['schemas']['TaskDeliveryCreate']
 export type TaskReview = components['schemas']['TaskReview']
+export type TaskCheckoutRequest = components['schemas']['TaskCheckoutRequest']
+export type TaskPaymentCheckout = components['schemas']['TaskPaymentCheckout']
 export type Product = components['schemas']['Product']
 export type Purchase = components['schemas']['Purchase']
+export type PaymentCheckout = components['schemas']['PaymentCheckout']
 export type Order = components['schemas']['Order']
 export type OrderPage = components['schemas']['OrderPage']
 export type OrderQuery = NonNullable<operations['listOrders']['parameters']['query']>
@@ -52,6 +59,8 @@ export type Meta = components['schemas']['Meta']
 export type RegisterRequest = components['schemas']['RegisterRequest']
 export type LoginRequest = components['schemas']['LoginRequest']
 export type ProfileUpdate = components['schemas']['ProfileUpdate']
+export type PayoutStatus = components['schemas']['PayoutStatus']
+export type PayoutOnboardingLink = components['schemas']['PayoutOnboardingLink']
 export type AccountSession = components['schemas']['AccountSession']
 export type AccountSessionPage = components['schemas']['AccountSessionPage']
 export type AccountSessionQuery = NonNullable<operations['listAccountSessions']['parameters']['query']>
@@ -126,6 +135,18 @@ export type AdminSystemSettingHistoryQuery = NonNullable<operations['getAdminSys
 export type AdminFinanceAccount = components['schemas']['AdminFinanceAccount']
 export type AdminFinanceAdjustment = components['schemas']['AdminFinanceAdjustment']
 export type AdminFinanceQuery = NonNullable<operations['listAdminFinanceAccounts']['parameters']['query']>
+export type AdminPaymentOperation = components['schemas']['AdminPaymentOperation']
+export type AdminPaymentOperationPage = components['schemas']['AdminPaymentOperationPage']
+export type AdminPaymentRecovery = components['schemas']['AdminPaymentRecovery']
+export type AdminPaymentEventReplay = components['schemas']['AdminPaymentEventReplay']
+export type AdminPaymentDestination = components['schemas']['AdminPaymentDestination']
+export type AdminPaymentDestinationUpdate = components['schemas']['AdminPaymentDestinationUpdate']
+export type AdminProviderCostReconciliation = components['schemas']['AdminProviderCostReconciliation']
+export type AdminProviderCostReconciliationPage = components['schemas']['AdminProviderCostReconciliationPage']
+export type AdminProviderCostReconciliationRequest = components['schemas']['AdminProviderCostReconciliationRequest']
+export type AdminPaymentQuery = NonNullable<operations['listAdminPayments']['parameters']['query']>
+export type AdminPaymentDestinationQuery = NonNullable<operations['listAdminPaymentDestinations']['parameters']['query']>
+export type AdminProviderCostReconciliationQuery = NonNullable<operations['listAdminProviderCostReconciliations']['parameters']['query']>
 export type AdminRiskSignal = components['schemas']['AdminRiskSignal']
 export type AdminRiskSignalQuery = NonNullable<operations['listAdminRiskSignals']['parameters']['query']>
 export type AdminRiskReview = components['schemas']['AdminRiskReview']
@@ -195,6 +216,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   meta: () => request<Meta>('/meta'),
+  creationCapabilities: () => request<CreationCapabilities>('/creation/capabilities'),
   session: () => request<Session>('/auth/session'),
   register: (input: RegisterRequest) => request<Session>('/auth/register', {
     method: 'POST', body: JSON.stringify(input),
@@ -212,6 +234,8 @@ export const api = {
   updateProfile: (input: ProfileUpdate) => request<{ user: User }>('/account/profile', {
     method: 'PATCH', body: JSON.stringify(input),
   }),
+  getPayoutStatus: () => request<PayoutStatus>('/account/payouts'),
+  beginPayoutOnboarding: () => request<PayoutOnboardingLink>('/account/payouts/onboarding', { method: 'POST' }),
   listAccountSessions: (query: AccountSessionQuery = {}) => {
     const params = new URLSearchParams()
     if (query.cursor) params.set('cursor', query.cursor)
@@ -298,6 +322,8 @@ export const api = {
   createGeneration: (input: GenerationCreate) => request<Generation>('/generations', {
     method: 'POST', headers: { 'Idempotency-Key': crypto.randomUUID() }, body: JSON.stringify(input),
   }),
+  favoriteGeneration: (id: string, active: boolean) => request<Generation>(`/generations/${encodeURIComponent(id)}/favorite`, { method: 'PUT', body: JSON.stringify({ active }) }),
+  batchGenerations: (input: GenerationBatchInput) => generationCommand<GenerationBatchResult>('/generations/batch', input),
   getGeneration: (id: string) => request<Generation>(`/generations/${encodeURIComponent(id)}`),
   listGenerations: (query: { mode?: string; status?: string; dateFrom?: string; dateTo?: string; cursor?: string; limit?: number } = {}) => {
     const params = new URLSearchParams()
@@ -393,6 +419,7 @@ export const api = {
   },
   getProduct: (id: string) => request<Product>(`/products/${encodeURIComponent(id)}`),
   purchaseProduct: (id: string, licenseAccepted: boolean) => marketplaceCommand<Purchase>(`/products/${encodeURIComponent(id)}/purchase`, { licenseAccepted }),
+  checkoutProduct: (id: string, licenseAccepted: boolean) => marketplaceCommand<PaymentCheckout>(`/products/${encodeURIComponent(id)}/checkout`, { licenseAccepted }),
   listOrders: (query: OrderQuery = {}) => {
     const params = new URLSearchParams()
     if (query.cursor) params.set('cursor', query.cursor)
@@ -409,6 +436,9 @@ export const api = {
     return request<{ items: TaskSummary[] }>(`/tasks${params.size ? `?${params}` : ''}`)
   },
   getTask: (id: string) => request<TaskDetail>(`/tasks/${encodeURIComponent(id)}`),
+  checkoutTask: (id: string, input: TaskCheckoutRequest, idempotencyKey: string) => request<TaskPaymentCheckout>(`/tasks/${encodeURIComponent(id)}/checkout`, {
+    method: 'POST', headers: { 'Idempotency-Key': idempotencyKey }, body: JSON.stringify(input),
+  }),
   createTask: (input: TaskCreate) => taskCommand<TaskDetail>('/tasks', 'POST', input),
   proposeTask: (id: string, input: TaskProposalCreate) => taskCommand<TaskDetail>(`/tasks/${encodeURIComponent(id)}/proposals`, 'POST', input),
   claimTask: (id: string) => taskCommand<TaskDetail>(`/tasks/${encodeURIComponent(id)}/claim`, 'POST'),
@@ -458,6 +488,23 @@ export const api = {
     return request<{ items: AdminTaskOperation[]; nextCursor?: string }>(`/admin/tasks${params.size ? `?${params}` : ''}`)
   },
   adminResolveTaskDispute: (id: string, input: AdminTaskDisputeResolution) => request<AdminTaskOperation>(`/admin/tasks/${encodeURIComponent(id)}/resolve`, { method: 'POST', body: JSON.stringify(input) }),
+  adminListPayments: (query: AdminPaymentQuery = {}) => {
+    const params = new URLSearchParams()
+    Object.entries(query).forEach(([key, value]) => {
+      if (value !== undefined && value !== '') params.set(key, String(value))
+    })
+    return request<AdminPaymentOperationPage>(`/admin/payments${params.size ? `?${params}` : ''}`)
+  },
+  adminRecoverPayment: (id: string, input: AdminPaymentRecovery) => request<AdminPaymentOperation>(`/admin/payments/${encodeURIComponent(id)}/recover`, { method: 'POST', body: JSON.stringify(input) }),
+  adminReplayPaymentEvent: (id: string, input: AdminPaymentEventReplay) => request<AdminPaymentOperation>(`/admin/payments/events/${encodeURIComponent(id)}/replay`, { method: 'POST', body: JSON.stringify(input) }),
+  adminListPaymentDestinations: (query: AdminPaymentDestinationQuery = {}) => {
+    const params = new URLSearchParams()
+    Object.entries(query).forEach(([key, value]) => {
+      if (value !== undefined && value !== '') params.set(key, String(value))
+    })
+    return request<{ items: AdminPaymentDestination[]; nextCursor?: string }>(`/admin/payment-destinations${params.size ? `?${params}` : ''}`)
+  },
+  adminUpdatePaymentDestination: (userId: string, input: AdminPaymentDestinationUpdate) => request<AdminPaymentDestination>(`/admin/payment-destinations/${encodeURIComponent(userId)}`, { method: 'PUT', body: JSON.stringify(input) }),
   adminListProviders: () => request<{ items: AdminProvider[] }>('/admin/providers'),
   adminUpdateProvider: (id: string, input: AdminProviderUpdate) => request<AdminProvider>(`/admin/providers/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(input) }),
   adminGetModelRoutes: (query: AdminModelRouteQuery = {}) => {
@@ -484,6 +531,14 @@ export const api = {
     return request<{ items: AdminFinanceAccount[]; nextCursor?: string }>(`/admin/finance/accounts${params.size ? `?${params}` : ''}`)
   },
   adminAdjustFinance: (id: string, input: AdminFinanceAdjustment) => request<AdminFinanceAccount>(`/admin/finance/accounts/${encodeURIComponent(id)}/adjust`, { method: 'POST', body: JSON.stringify(input) }),
+  adminListProviderCostReconciliations: (query: AdminProviderCostReconciliationQuery = {}) => {
+    const params = new URLSearchParams()
+    Object.entries(query).forEach(([key, value]) => {
+      if (value !== undefined && value !== '') params.set(key, String(value))
+    })
+    return request<AdminProviderCostReconciliationPage>(`/admin/provider-cost-reconciliations${params.size ? `?${params}` : ''}`)
+  },
+  adminRequestProviderCostReconciliation: (input: AdminProviderCostReconciliationRequest) => request<AdminProviderCostReconciliation>('/admin/provider-cost-reconciliations', { method: 'POST', body: JSON.stringify(input) }),
   adminListRiskSignals: (query: AdminRiskSignalQuery = {}) => {
     const params = new URLSearchParams()
 	Object.entries(query).forEach(([key, value]) => {

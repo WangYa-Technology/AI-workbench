@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"strings"
 	"time"
@@ -21,7 +22,7 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 	if !httputil.DecodeJSON(w, r, &input) {
 		return
 	}
-	user, token, err := s.identity.Register(r.Context(), input, requestClientInfo(r))
+	user, token, err := s.identity.Register(r.Context(), input, requestClientInfo(r, s.config.TrustedProxyCIDRs))
 	switch {
 	case errors.Is(err, identity.ErrInvalid):
 		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_registration", "Use a valid email, a 3-30 character lowercase handle, a password of at least 10 characters, and a supported locale and IANA timezone.", false)
@@ -45,7 +46,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	if !httputil.DecodeJSON(w, r, &input) {
 		return
 	}
-	user, token, err := s.identity.Login(r.Context(), input, requestClientInfo(r))
+	user, token, err := s.identity.Login(r.Context(), input, requestClientInfo(r, s.config.TrustedProxyCIDRs))
 	switch {
 	case errors.Is(err, identity.ErrInvalidLogin):
 		httputil.WriteError(w, r, http.StatusUnauthorized, "invalid_credentials", "The email or password is incorrect.", false)
@@ -162,10 +163,10 @@ func (s *Server) startOAuth(w http.ResponseWriter, r *http.Request) {
 	httputil.WriteError(w, r, http.StatusServiceUnavailable, "oauth_provider_unavailable", "This sign-in provider is unavailable until its external credentials and staging verification are complete.", false)
 }
 
-func requestClientInfo(r *http.Request) identity.ClientInfo {
+func requestClientInfo(r *http.Request, trustedProxyCIDRs []netip.Prefix) identity.ClientInfo {
 	return identity.ClientInfo{
 		Label:       clientLabel(r.UserAgent()),
-		NetworkHash: identity.HashNetwork(clientAddress(r)),
+		NetworkHash: identity.HashNetwork(clientAddress(r, trustedProxyCIDRs)),
 		RequestID:   httputil.RequestID(r.Context()),
 	}
 }
@@ -203,16 +204,31 @@ func clientLabel(userAgent string) string {
 	return browser + " on " + platform
 }
 
-func clientAddress(r *http.Request) string {
-	value := strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-For"), ",")[0])
-	if value != "" {
-		return value
-	}
+func clientAddress(r *http.Request, trustedProxyCIDRs []netip.Prefix) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err == nil {
+	if err != nil {
+		host = strings.TrimSpace(r.RemoteAddr)
+	}
+	remote, parseErr := netip.ParseAddr(host)
+	if parseErr != nil || !isTrustedProxy(remote, trustedProxyCIDRs) {
 		return host
 	}
-	return r.RemoteAddr
+	for _, candidate := range strings.Split(r.Header.Get("X-Forwarded-For"), ",") {
+		candidate = strings.TrimSpace(candidate)
+		if parsed, err := netip.ParseAddr(candidate); err == nil {
+			return parsed.String()
+		}
+	}
+	return host
+}
+
+func isTrustedProxy(address netip.Addr, trusted []netip.Prefix) bool {
+	for _, prefix := range trusted {
+		if prefix.Contains(address) {
+			return true
+		}
+	}
+	return false
 }
 
 func setSessionCookie(w http.ResponseWriter, token string, secure bool) {

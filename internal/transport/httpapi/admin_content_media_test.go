@@ -89,13 +89,13 @@ func TestAdminContentAndMediaDirectoryHTTPContract(t *testing.T) {
 
 	oldMediaID := uuid.New()
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,scan_status,source_type,license_code,uploaded_filename,size_bytes,created_at)
-		VALUES($1,$2,'image','HTTP media target','/media/http-media-target.jpg','image/jpeg','review','upload','personal','http-media-target.jpg',128,now() - interval '2 hours')`, oldMediaID, administrator.ID); err != nil {
+		INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,scan_status,source_type,license_code,uploaded_filename,size_bytes,storage_backend,storage_key,created_at)
+		VALUES($1,$2,'image','HTTP media target','/media/http-media-target.jpg','image/jpeg','review','upload','personal','http-media-target.jpg',128,'local_file',$3,now() - interval '2 hours')`, oldMediaID, administrator.ID, oldMediaID.String()+".jpg"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO assets(owner_id,kind,title,media_url,mime_type,scan_status,source_type,license_code,uploaded_filename,size_bytes,created_at)
-		SELECT $1,'image','HTTP media pressure '||value,'/media/http-media-pressure-'||value||'.jpg','image/jpeg','review','upload','personal','http-media-pressure-'||value||'.jpg',128,now() - interval '1 hour'
+		INSERT INTO assets(owner_id,kind,title,media_url,mime_type,scan_status,source_type,license_code,uploaded_filename,size_bytes,storage_backend,storage_key,created_at)
+		SELECT $1,'image','HTTP media pressure '||value,'/media/http-media-pressure-'||value||'.jpg','image/jpeg','review','upload','personal','http-media-pressure-'||value||'.jpg',128,'local_file','http-media-pressure-'||value||'.jpg',now() - interval '1 hour'
 		FROM generate_series(1,20) value`, administrator.ID); err != nil {
 		t.Fatal(err)
 	}

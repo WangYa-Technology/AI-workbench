@@ -126,7 +126,7 @@ if [[ "$(jq -r '.id' <<<"$replay")" != "$generation_id" ]]; then
   exit 1
 fi
 
-after=$(sql "SELECT g.status||'|'||r.status||'|'||(SELECT count(*) FROM assets WHERE source_type='generation' AND source_id=g.id)||'|'||(SELECT count(*) FROM billing_entries WHERE operation_id=g.id AND entry_type='generation_charge')||'|'||j.status||'|'||j.attempts||'|'||(SELECT count(*) FROM job_attempts WHERE job_id=j.id AND status='succeeded') FROM generations g JOIN billing_reservations r ON r.operation_id=g.id AND r.operation_type='generation' JOIN jobs j ON j.kind='generation.local' AND j.payload->>'generationId'=g.id::text WHERE g.id='$generation_id'")
+after=$(sql "SELECT g.status||'|'||r.status||'|'||(SELECT count(*) FROM assets WHERE source_type='generation' AND source_id=g.id)||'|'||(SELECT count(*) FROM billing_entries WHERE operation_id=g.id AND entry_type='generation_charge')||'|'||j.status||'|'||j.attempts||'|'||(SELECT count(*) FROM job_attempts WHERE job_id=j.id AND status='succeeded') FROM generations g JOIN billing_reservations r ON r.operation_id=g.id AND r.operation_type='generation' JOIN jobs j ON j.kind='generation.generate' AND j.payload->>'generationId'=g.id::text WHERE g.id='$generation_id'")
 if [[ "$after" != "succeeded|captured|1|1|succeeded|1|1" ]]; then
   echo "Unexpected recovery evidence: $after" >&2
   exit 1

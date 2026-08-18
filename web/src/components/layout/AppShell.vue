@@ -79,10 +79,10 @@ const active = (key: string) => {
 }
 
 const quickLinks = computed(() => [
+  { label: t('create.modes.chat'), to: '/create/chat' },
   { label: t('create.modes.image'), to: '/create/image' },
-  { label: t('discover.promptLibrary'), to: '/market' },
-  { label: t('workspace.assets'), to: '/workspace/assets' },
-  { label: t('nav.community'), to: '/community' },
+  { label: t('create.modes.video'), to: '/create/video' },
+  { label: t('create.modes.music'), to: '/create/music' },
 ])
 
 watch(() => route.query.q, (value) => {

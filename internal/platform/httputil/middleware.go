@@ -64,11 +64,16 @@ func Middleware(logger *slog.Logger, allowedOrigin string, observers ...RequestO
 				}
 				observation := RequestObservation{RequestID: requestID, Method: r.Method, Route: route, Status: status, Duration: duration, ResponseBytes: int64(wrapped.BytesWritten())}
 				logger.Info("http request", "request_id", requestID, "method", r.Method, "route", route, "status", status, "response_bytes", observation.ResponseBytes, "duration_ms", duration.Milliseconds())
-				if len(observers) > 0 && observers[0] != nil && strings.HasPrefix(r.URL.Path, "/api/v1") {
+				if len(observers) > 0 && strings.HasPrefix(r.URL.Path, "/api/v1") {
 					recordContext, cancel := context.WithTimeout(context.WithoutCancel(request.Context()), 750*time.Millisecond)
 					defer cancel()
-					if err := observers[0](recordContext, observation); err != nil {
-						logger.Warn("record request observation", "request_id", requestID, "error", err)
+					for _, observer := range observers {
+						if observer == nil {
+							continue
+						}
+						if err := observer(recordContext, observation); err != nil {
+							logger.Warn("record request observation", "request_id", requestID, "error", err)
+						}
 					}
 				}
 			}()

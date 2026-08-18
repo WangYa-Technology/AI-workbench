@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/hcai-chat/hcai-chat/internal/billing"
 	"github.com/hcai-chat/hcai-chat/internal/identity"
+	"github.com/hcai-chat/hcai-chat/internal/payments"
 	"github.com/hcai-chat/hcai-chat/internal/platform/httputil"
 	"github.com/hcai-chat/hcai-chat/internal/systemsettings"
 	"github.com/hcai-chat/hcai-chat/internal/tasks"
@@ -42,6 +43,52 @@ func (s *Server) getTask(w http.ResponseWriter, r *http.Request) {
 	}
 	item, err := s.tasks.Get(r.Context(), s.optionalViewer(r), id)
 	s.writeTaskResult(w, r, http.StatusOK, item, err)
+}
+
+func (s *Server) checkoutTask(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.requireUser(w, r)
+	if !ok {
+		return
+	}
+	taskID, ok := pathUUID(w, r, "taskID")
+	if !ok {
+		return
+	}
+	var input struct {
+		ProposalID *uuid.UUID `json:"proposalId"`
+	}
+	if !httputil.DecodeJSON(w, r, &input) {
+		return
+	}
+	origin := strings.TrimRight(s.config.WebOrigin, "/")
+	item, created, err := s.payments.BeginTaskCheckout(
+		r.Context(), user.ID, taskID, input.ProposalID, idempotencyKey(r), httputil.RequestID(r.Context()),
+		origin+"/market/demands/"+taskID.String()+"?payment=success", origin+"/market/demands/"+taskID.String()+"?payment=cancelled",
+	)
+	switch {
+	case errors.Is(err, payments.ErrDisabled), errors.Is(err, payments.ErrProviderUnavailable):
+		httputil.WriteError(w, r, http.StatusServiceUnavailable, "payment_provider_unavailable", "Task funding is not enabled.", false)
+	case errors.Is(err, payments.ErrInvalidCheckout):
+		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "task_funding_invalid", "Choose an eligible task or proposal and provide a valid request key.", false)
+	case errors.Is(err, payments.ErrCheckoutConflict):
+		httputil.WriteError(w, r, http.StatusConflict, "task_funding_conflict", "This task already has active funding or the request key belongs to another checkout.", false)
+	case errors.Is(err, systemsettings.ErrDisabled):
+		httputil.WriteError(w, r, http.StatusServiceUnavailable, "feature_disabled", "Marketplace checkout is temporarily unavailable by an audited platform setting.", false)
+	case err != nil:
+		var classified interface{ Retryable() bool }
+		if errors.As(err, &classified) {
+			httputil.WriteError(w, r, http.StatusServiceUnavailable, "payment_checkout_unavailable", "The payment Provider could not create task funding checkout.", classified.Retryable())
+			return
+		}
+		s.internalError(w, r, "create task payment checkout", err)
+	default:
+		status := http.StatusOK
+		if created {
+			status = http.StatusCreated
+			w.Header().Set("Location", "/api/v1/tasks/"+taskID.String())
+		}
+		httputil.JSON(w, status, item)
+	}
 }
 
 func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {

@@ -3,6 +3,7 @@ package assets_test
 import (
 	"context"
 	"errors"
+	"io"
 	"net/url"
 	"os"
 	"strings"
@@ -36,7 +37,7 @@ func TestUploadedAssetScanningAndControlledReview(t *testing.T) {
 	if err != nil || clean.ScanStatus != "pending" {
 		t.Fatalf("create clean upload: %#v %v", clean, err)
 	}
-	if _, _, err := service.Content(ctx, ownerID, clean.ID); !errors.Is(err, assets.ErrNotFound) {
+	if _, err := service.Content(ctx, ownerID, clean.ID); !errors.Is(err, assets.ErrNotFound) {
 		t.Fatalf("pending content was readable: %v", err)
 	}
 	repository := jobs.NewRepository(pool)
@@ -51,11 +52,17 @@ func TestUploadedAssetScanningAndControlledReview(t *testing.T) {
 	if err != nil || clean.ScanStatus != "clean" || clean.ScannedAt == nil || clean.ScanReason == nil {
 		t.Fatalf("clean scan result: %#v %v", clean, err)
 	}
-	path, mimeType, err := service.Content(ctx, ownerID, clean.ID)
-	if err != nil || mimeType != "text/plain; charset=utf-8" {
-		t.Fatalf("clean content unavailable: path=%s mime=%s err=%v", path, mimeType, err)
+	content, err := service.Content(ctx, ownerID, clean.ID)
+	if err != nil || content.MimeType != "text/plain; charset=utf-8" {
+		t.Fatalf("clean content unavailable: mime=%s err=%v", content.MimeType, err)
 	}
-	if body, err := os.ReadFile(path); err != nil || !strings.Contains(string(body), "normal content") {
+	object, err := content.Open(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, readErr := io.ReadAll(object.Body)
+	closeErr := object.Body.Close()
+	if readErr != nil || closeErr != nil || !strings.Contains(string(body), "normal content") {
 		t.Fatalf("unexpected stored upload: %q %v", body, err)
 	}
 	if clean.FamilyID != clean.ID || clean.VersionNumber != 1 || !clean.IsLatestVersion || len(clean.Versions) != 1 {
@@ -112,7 +119,7 @@ func TestUploadedAssetScanningAndControlledReview(t *testing.T) {
 	if err != nil || review.ScanStatus != "review" {
 		t.Fatalf("review scan result: %#v %v", review, err)
 	}
-	if _, _, err := service.Content(ctx, ownerID, review.ID); !errors.Is(err, assets.ErrNotFound) {
+	if _, err := service.Content(ctx, ownerID, review.ID); !errors.Is(err, assets.ErrNotFound) {
 		t.Fatalf("review content was readable: %v", err)
 	}
 	reviewed, err := admin.NewService(pool, true).ReviewMedia(ctx, adminID, review.ID, admin.MediaReview{
@@ -121,7 +128,7 @@ func TestUploadedAssetScanningAndControlledReview(t *testing.T) {
 	if err != nil || reviewed.ScanStatus != "clean" {
 		t.Fatalf("controlled media review: %#v %v", reviewed, err)
 	}
-	if _, _, err := service.Content(ctx, ownerID, review.ID); err != nil {
+	if _, err := service.Content(ctx, ownerID, review.ID); err != nil {
 		t.Fatalf("reviewed content unavailable: %v", err)
 	}
 	var auditCount int

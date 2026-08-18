@@ -15,6 +15,7 @@ import (
 	"github.com/hcai-chat/hcai-chat/internal/assets"
 	"github.com/hcai-chat/hcai-chat/internal/platform/config"
 	"github.com/hcai-chat/hcai-chat/internal/platform/jobs"
+	"github.com/hcai-chat/hcai-chat/internal/platform/media"
 	"github.com/hcai-chat/hcai-chat/internal/transport/httpapi"
 )
 
@@ -38,7 +39,8 @@ func TestAssetUploadScanAndAdminMediaHTTPContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := part.Write([]byte("A safe HTTP upload for deterministic local scan verification.")); err != nil {
+	uploadedContent := []byte("A safe HTTP upload for deterministic local scan verification.")
+	if _, err := part.Write(uploadedContent); err != nil {
 		t.Fatal(err)
 	}
 	if err := writer.Close(); err != nil {
@@ -83,6 +85,40 @@ func TestAssetUploadScanAndAdminMediaHTTPContract(t *testing.T) {
 	response = requestJSON(t, client, http.MethodGet, server.URL+uploaded.MediaURL, nil, nil)
 	if response.StatusCode != http.StatusOK || response.Header.Get("Content-Type") != "text/plain; charset=utf-8" {
 		t.Fatalf("clean upload content unavailable: status=%d type=%s", response.StatusCode, response.Header.Get("Content-Type"))
+	}
+	rangeRequest, err := http.NewRequest(http.MethodGet, server.URL+uploaded.MediaURL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rangeRequest.Header.Set("Range", "bytes=2-8")
+	rangeResponse, err := client.Do(rangeRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rangeBody, readErr := io.ReadAll(rangeResponse.Body)
+	rangeResponse.Body.Close()
+	if readErr != nil || rangeResponse.StatusCode != http.StatusPartialContent || rangeResponse.Header.Get("Content-Range") != "bytes 2-8/61" || string(rangeBody) != string(uploadedContent[2:9]) {
+		t.Fatalf("asset range response mismatch: status=%d range=%q body=%q read=%v", rangeResponse.StatusCode, rangeResponse.Header.Get("Content-Range"), rangeBody, readErr)
+	}
+	invalidRangeRequest, err := http.NewRequest(http.MethodGet, server.URL+uploaded.MediaURL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	invalidRangeRequest.Header.Set("Range", "bytes=0-1,3-4")
+	invalidRangeResponse, err := client.Do(invalidRangeRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	invalidRangeResponse.Body.Close()
+	if invalidRangeResponse.StatusCode != http.StatusRequestedRangeNotSatisfiable || invalidRangeResponse.Header.Get("Content-Range") != "bytes */61" {
+		t.Fatalf("invalid asset range was accepted: status=%d range=%q", invalidRangeResponse.StatusCode, invalidRangeResponse.Header.Get("Content-Range"))
+	}
+	if err := media.NewLocalStore(mediaRoot).Delete(context.Background(), uploaded.ID.String()+".txt"); err != nil {
+		t.Fatal(err)
+	}
+	response = requestJSON(t, client, http.MethodGet, server.URL+uploaded.MediaURL, nil, nil)
+	if response.StatusCode != http.StatusNotFound {
+		t.Fatalf("missing stored object did not return 404: %d", response.StatusCode)
 	}
 	response = requestJSON(t, client, http.MethodGet, server.URL+"/api/v1/admin/media", nil, nil)
 	if response.StatusCode != http.StatusForbidden {

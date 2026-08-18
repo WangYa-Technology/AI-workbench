@@ -408,6 +408,11 @@ func TestExportAndDeletionLifecycle(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(mediaRoot, "mailbox", user.ID.String())); !os.IsNotExist(err) {
 		t.Fatalf("local identity mailbox survived deletion: %v", err)
 	}
+	for _, assetID := range []uuid.UUID{rootAsset.ID, versionAsset.ID} {
+		if _, err := os.Stat(filepath.Join(mediaRoot, assetID.String()+".txt")); !os.IsNotExist(err) {
+			t.Fatalf("owned media object %s survived deletion: %v", assetID, err)
+		}
+	}
 	var minimizedDelivery bool
 	if err := pool.QueryRow(ctx, `SELECT status='cancelled' AND secret_revision_id IS NULL FROM developer_webhook_deliveries WHERE id=$1`, webhookDelivery.ID).Scan(&minimizedDelivery); err != nil || !minimizedDelivery {
 		t.Fatalf("Webhook delivery was not safely cancelled and detached: minimized=%v err=%v", minimizedDelivery, err)

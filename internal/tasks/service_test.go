@@ -2,18 +2,70 @@ package tasks_test
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"net/url"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/hcai-chat/hcai-chat/internal/payments"
 	"github.com/hcai-chat/hcai-chat/internal/platform/database"
+	"github.com/hcai-chat/hcai-chat/internal/platform/jobs"
 	"github.com/hcai-chat/hcai-chat/internal/tasks"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+type taskPaymentRuntime struct {
+	checkoutCalls int
+	transferCalls int
+	refundCalls   int
+}
+
+func (*taskPaymentRuntime) Provider() string { return "stripe" }
+
+func (r *taskPaymentRuntime) CreateCheckout(_ context.Context, input payments.CheckoutRequest) (payments.CheckoutSession, error) {
+	r.checkoutCalls++
+	token := taskProviderToken(input.PaymentID)
+	return payments.CheckoutSession{
+		ProviderID: "cs_task_" + token, CheckoutURL: "https://checkout.stripe.com/c/pay/task-" + token, Status: "open",
+		PaymentStatus: "unpaid", ExpiresAt: time.Now().Add(time.Hour).UTC(), LiveMode: false,
+	}, nil
+}
+
+func (r *taskPaymentRuntime) CreateRefund(_ context.Context, input payments.RefundRequest) (payments.Refund, error) {
+	r.refundCalls++
+	return payments.Refund{
+		ProviderID: "re_task_" + taskProviderToken(input.PaymentID), ProviderPaymentID: input.ProviderPaymentID,
+		AmountCents: input.AmountCents, Currency: "USD", Status: "pending",
+	}, nil
+}
+
+func (r *taskPaymentRuntime) CreateTransfer(_ context.Context, input payments.TransferRequest) (payments.Transfer, error) {
+	r.transferCalls++
+	return payments.Transfer{
+		ProviderID: "tr_task_" + taskProviderToken(input.PaymentID), DestinationID: input.DestinationID, AmountCents: input.AmountCents,
+		Currency: input.Currency, TransferGroup: "hcai_" + input.PaymentID.String(),
+	}, nil
+}
+
+func (*taskPaymentRuntime) CreateConnectAccount(context.Context, payments.ConnectAccountRequest) (payments.ConnectAccount, error) {
+	return payments.ConnectAccount{}, errors.New("not expected")
+}
+
+func (*taskPaymentRuntime) CreateAccountLink(context.Context, payments.AccountLinkRequest) (payments.AccountLink, error) {
+	return payments.AccountLink{}, errors.New("not expected")
+}
+
+func taskProviderToken(paymentID uuid.UUID) string {
+	return strings.ReplaceAll(paymentID.String(), "-", "")[:12]
+}
 
 func TestTaskProposalRevisionDeliveryAndSettlement(t *testing.T) {
 	pool, cleanup := taskTestPool(t)
@@ -206,6 +258,230 @@ func TestTaskCancellationIsOwnerOnlyIdempotentAndAudited(t *testing.T) {
 	if settlementCount != 0 {
 		t.Fatalf("cancelled task created settlement records: %d", settlementCount)
 	}
+}
+
+func TestProviderFundedTaskAssignmentAndTransfer(t *testing.T) {
+	pool, cleanup := taskTestPool(t)
+	defer cleanup()
+	ctx := context.Background()
+	clientID, creatorID, outsiderID, assetID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	seedTaskUsers(t, pool, clientID, creatorID, outsiderID, assetID)
+	taskService := tasks.NewServiceWithPayments(pool, true)
+	runtime := &taskPaymentRuntime{}
+	const webhookSecret = "whsec_task_funding_contract"
+	paymentService := payments.NewServiceWithRuntimes(pool, payments.ServiceConfig{
+		Enabled: true, APIVersion: "2026-02-25.clover", WebhookSecret: webhookSecret, WebhookTolerance: 5 * time.Minute,
+	}, payments.NewRuntimeCatalog(runtime))
+
+	created, err := taskService.Create(ctx, clientID, validTaskInput(), "provider-task-create-001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	proposalInput := tasks.ProposeInput{
+		Approach: "I will deliver a controlled image system with documented provenance.", Deliverables: "Master image and production crops",
+		AmountCents: 70000, TimelineDays: 6,
+	}
+	if _, err := taskService.Propose(ctx, creatorID, created.ID, proposalInput, "provider-task-proposal-001"); err != nil {
+		t.Fatal(err)
+	}
+	clientView, err := taskService.Get(ctx, clientID, created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proposalID := clientView.Proposals[0].ID
+	if _, err := taskService.AcceptProposal(ctx, clientID, created.ID, proposalID, "provider-task-accept-before-funding"); !errors.Is(err, tasks.ErrConflict) {
+		t.Fatalf("unfunded proposal was assigned: %v", err)
+	}
+	checkout, started, err := paymentService.BeginTaskCheckout(ctx, clientID, created.ID, &proposalID, "provider-task-funding-001", "task-funding-request", "https://app.example.test/market/demands/task?payment=success", "https://app.example.test/market/demands/task?payment=cancelled")
+	if err != nil || !started || checkout.AmountCents != proposalInput.AmountCents || checkout.RealCharge || runtime.checkoutCalls != 1 {
+		t.Fatalf("task funding checkout mismatch: checkout=%#v started=%t calls=%d err=%v", checkout, started, runtime.checkoutCalls, err)
+	}
+	replayed, started, err := paymentService.BeginTaskCheckout(ctx, clientID, created.ID, &proposalID, "provider-task-funding-001", "task-funding-replay", "https://app.example.test/market/demands/task?payment=success", "https://app.example.test/market/demands/task?payment=cancelled")
+	if err != nil || started || !replayed.AlreadyCreated || runtime.checkoutCalls != 1 {
+		t.Fatalf("task funding replay mismatch: checkout=%#v started=%t calls=%d err=%v", replayed, started, runtime.checkoutCalls, err)
+	}
+	clientView, err = taskService.Get(ctx, clientID, created.ID)
+	if err != nil || clientView.Funding == nil || clientView.Funding.Status != "checkout_open" ||
+		clientView.Funding.ProposalID == nil || *clientView.Funding.ProposalID != proposalID ||
+		clientView.Funding.CheckoutURL == nil || *clientView.Funding.CheckoutURL != checkout.CheckoutURL ||
+		clientView.Funding.CheckoutExpiresAt == nil || clientView.Funding.PaymentMode != "stripe" || clientView.Funding.LiveMode {
+		t.Fatalf("commissioner funding projection mismatch: funding=%#v err=%v", clientView.Funding, err)
+	}
+	publicView, err := taskService.Get(ctx, outsiderID, created.ID)
+	if err != nil || publicView.Funding == nil || publicView.Funding.Status != "checkout_open" || publicView.Funding.CheckoutURL != nil || publicView.Funding.CheckoutExpiresAt != nil {
+		t.Fatalf("public funding projection leaked checkout evidence: funding=%#v err=%v", publicView.Funding, err)
+	}
+
+	receipt := receiveTaskPaymentEvent(t, paymentService, taskPaymentSucceededEvent(checkout.PaymentID, created.ID, proposalInput.AmountCents), webhookSecret)
+	if err := paymentService.HandlePaymentEventJob(ctx, jobs.Job{Kind: payments.PaymentEventJobKind, Payload: []byte(fmt.Sprintf(`{"eventId":%q}`, receipt.EventID.String()))}); err != nil {
+		t.Fatal(err)
+	}
+	clientView, err = taskService.Get(ctx, clientID, created.ID)
+	if err != nil || clientView.Funding == nil || clientView.Funding.Status != "paid" || clientView.Funding.CheckoutURL != nil {
+		t.Fatalf("confirmed task funding projection mismatch: funding=%#v err=%v", clientView.Funding, err)
+	}
+	assigned, err := taskService.AcceptProposal(ctx, clientID, created.ID, proposalID, "provider-task-accept-001")
+	if err != nil || assigned.Status != "assigned" || assigned.Assignee == nil || assigned.Assignee.ID != creatorID {
+		t.Fatalf("funded proposal assignment failed: task=%#v err=%v", assigned.Summary, err)
+	}
+	if _, err := taskService.Deliver(ctx, creatorID, created.ID, tasks.DeliverInput{AssetID: assetID, Note: "Provider-funded delivery ready for review."}, "provider-task-delivery-001"); err != nil {
+		t.Fatal(err)
+	}
+	accepted, err := taskService.Review(ctx, clientID, created.ID, tasks.ReviewInput{Decision: "accept", Note: "All funded acceptance rules are satisfied."}, "provider-task-review-001")
+	if err != nil || accepted.Settlement == nil || accepted.Settlement.Mode != "stripe_pending" || accepted.Funding == nil || accepted.Funding.Status != "transfer_pending" {
+		t.Fatalf("Provider settlement was not queued: settlement=%#v funding=%#v err=%v", accepted.Settlement, accepted.Funding, err)
+	}
+	transferJob := jobs.Job{Kind: payments.TaskTransferJobKind, Payload: []byte(fmt.Sprintf(`{"paymentId":%q}`, checkout.PaymentID.String()))}
+	if err := paymentService.HandleTaskTransferJob(ctx, transferJob); err == nil {
+		t.Fatal("task transfer succeeded without a verified destination")
+	}
+	var localEntries int
+	if err := pool.QueryRow(ctx, `
+		SELECT (SELECT count(*) FROM billing_entries WHERE user_id IN ($1,$2)) +
+		       (SELECT count(*) FROM ledger_entries WHERE account_id IN ($1,$2))`, clientID, creatorID).Scan(&localEntries); err != nil {
+		t.Fatal(err)
+	}
+	if localEntries != 0 {
+		t.Fatalf("Provider-funded task wrote Local Test entries: %d", localEntries)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO payment_destinations(provider,user_id,destination_id,status,charges_enabled,payouts_enabled,details_submitted,verified_at)
+		VALUES('stripe',$1,'acct_task_contract','verified',true,true,true,now())`, creatorID); err != nil {
+		t.Fatal(err)
+	}
+	if err := paymentService.HandleTaskTransferJob(ctx, transferJob); err != nil {
+		t.Fatal(err)
+	}
+	if err := paymentService.HandleTaskTransferJob(ctx, transferJob); err != nil {
+		t.Fatalf("transfer replay failed: %v", err)
+	}
+	var intentStatus, settlementMode string
+	if err := pool.QueryRow(ctx, `
+		SELECT pi.status,ts.mode FROM payment_intents pi JOIN task_settlements ts ON ts.demand_id=pi.resource_id WHERE pi.id=$1`, checkout.PaymentID).Scan(&intentStatus, &settlementMode); err != nil {
+		t.Fatal(err)
+	}
+	if intentStatus != "transferred" || settlementMode != "stripe_transferred" || runtime.transferCalls != 1 {
+		t.Fatalf("task transfer mismatch: intent=%s settlement=%s calls=%d", intentStatus, settlementMode, runtime.transferCalls)
+	}
+	transferred, err := taskService.Get(ctx, creatorID, created.ID)
+	if err != nil || transferred.Funding == nil || transferred.Funding.Status != "transferred" || transferred.Settlement == nil || transferred.Settlement.Mode != "stripe_transferred" {
+		t.Fatalf("transferred task projection mismatch: funding=%#v settlement=%#v err=%v", transferred.Funding, transferred.Settlement, err)
+	}
+}
+
+func TestProviderFundedDirectClaim(t *testing.T) {
+	pool, cleanup := taskTestPool(t)
+	defer cleanup()
+	ctx := context.Background()
+	clientID, creatorID, outsiderID, assetID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	seedTaskUsers(t, pool, clientID, creatorID, outsiderID, assetID)
+	taskService := tasks.NewServiceWithPayments(pool, true)
+	runtime := &taskPaymentRuntime{}
+	const webhookSecret = "whsec_direct_task_contract"
+	paymentService := payments.NewServiceWithRuntimes(pool, payments.ServiceConfig{
+		Enabled: true, APIVersion: "2026-02-25.clover", WebhookSecret: webhookSecret, WebhookTolerance: 5 * time.Minute,
+	}, payments.NewRuntimeCatalog(runtime))
+	input := validTaskInput()
+	input.AllowDirectAccept = true
+	created, err := taskService.Create(ctx, clientID, input, "provider-direct-create-001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskService.Claim(ctx, creatorID, created.ID, "provider-direct-unfunded-claim"); !errors.Is(err, tasks.ErrConflict) {
+		t.Fatalf("unfunded direct task was claimed: %v", err)
+	}
+	checkout, started, err := paymentService.BeginTaskCheckout(ctx, clientID, created.ID, nil, "provider-direct-funding-001", "direct-funding-request", "https://app.example.test/market/demands/task?payment=success", "https://app.example.test/market/demands/task?payment=cancelled")
+	if err != nil || !started || checkout.ProposalID != nil || checkout.AmountCents != input.BudgetCents {
+		t.Fatalf("direct task checkout mismatch: checkout=%#v started=%t err=%v", checkout, started, err)
+	}
+	receipt := receiveTaskPaymentEvent(t, paymentService, taskPaymentSucceededEvent(checkout.PaymentID, created.ID, input.BudgetCents), webhookSecret)
+	if err := paymentService.HandlePaymentEventJob(ctx, jobs.Job{Kind: payments.PaymentEventJobKind, Payload: []byte(fmt.Sprintf(`{"eventId":%q}`, receipt.EventID.String()))}); err != nil {
+		t.Fatal(err)
+	}
+	assigned, err := taskService.Claim(ctx, creatorID, created.ID, "provider-direct-funded-claim")
+	if err != nil || assigned.Status != "assigned" || assigned.Assignee == nil || assigned.Assignee.ID != creatorID || assigned.Funding == nil || assigned.Funding.Status != "paid" || assigned.Funding.ProposalID != nil {
+		t.Fatalf("funded direct task assignment mismatch: detail=%#v err=%v", assigned, err)
+	}
+	var payeeID *uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT payee_id FROM payment_intents WHERE id=$1`, checkout.PaymentID).Scan(&payeeID); err != nil || payeeID == nil || *payeeID != creatorID {
+		t.Fatalf("direct task payment payee mismatch: payee=%v err=%v", payeeID, err)
+	}
+}
+
+func TestProviderFundedOpenTaskCancellationRefund(t *testing.T) {
+	pool, cleanup := taskTestPool(t)
+	defer cleanup()
+	ctx := context.Background()
+	clientID, creatorID, outsiderID, assetID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	seedTaskUsers(t, pool, clientID, creatorID, outsiderID, assetID)
+	taskService := tasks.NewServiceWithPayments(pool, true)
+	runtime := &taskPaymentRuntime{}
+	const webhookSecret = "whsec_cancelled_task_contract"
+	paymentService := payments.NewServiceWithRuntimes(pool, payments.ServiceConfig{
+		Enabled: true, APIVersion: "2026-02-25.clover", WebhookSecret: webhookSecret, WebhookTolerance: 5 * time.Minute,
+	}, payments.NewRuntimeCatalog(runtime))
+	input := validTaskInput()
+	input.AllowDirectAccept = true
+	created, err := taskService.Create(ctx, clientID, input, "provider-cancel-create-001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkout, _, err := paymentService.BeginTaskCheckout(ctx, clientID, created.ID, nil, "provider-cancel-funding-001", "cancel-funding-request", "https://app.example.test/market/demands/task?payment=success", "https://app.example.test/market/demands/task?payment=cancelled")
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt := receiveTaskPaymentEvent(t, paymentService, taskPaymentSucceededEvent(checkout.PaymentID, created.ID, input.BudgetCents), webhookSecret)
+	if err := paymentService.HandlePaymentEventJob(ctx, jobs.Job{Kind: payments.PaymentEventJobKind, Payload: []byte(fmt.Sprintf(`{"eventId":%q}`, receipt.EventID.String()))}); err != nil {
+		t.Fatal(err)
+	}
+	cancelled, err := taskService.Cancel(ctx, clientID, created.ID, "Campaign scope was withdrawn before a creator accepted the funded brief.", "provider-funded-cancel-001")
+	if err != nil || cancelled.Status != "cancelled" || cancelled.Funding == nil || cancelled.Funding.Status != "refund_pending" {
+		t.Fatalf("funded task cancellation mismatch: detail=%#v err=%v", cancelled, err)
+	}
+	refundJob := jobs.Job{Kind: payments.TaskRefundJobKind, Payload: []byte(fmt.Sprintf(`{"paymentId":%q}`, checkout.PaymentID.String()))}
+	if err := paymentService.HandleTaskRefundJob(ctx, refundJob); err != nil || runtime.refundCalls != 1 {
+		t.Fatalf("task refund request mismatch: calls=%d err=%v", runtime.refundCalls, err)
+	}
+	if err := paymentService.HandleTaskRefundJob(ctx, refundJob); err != nil || runtime.refundCalls != 1 {
+		t.Fatalf("task refund replay mismatch: calls=%d err=%v", runtime.refundCalls, err)
+	}
+	refundReceipt := receiveTaskPaymentEvent(t, paymentService, taskRefundSucceededEvent(checkout.PaymentID, created.ID, input.BudgetCents), webhookSecret)
+	if err := paymentService.HandlePaymentEventJob(ctx, jobs.Job{Kind: payments.PaymentEventJobKind, Payload: []byte(fmt.Sprintf(`{"eventId":%q}`, refundReceipt.EventID.String()))}); err != nil {
+		t.Fatal(err)
+	}
+	refunded, err := taskService.Get(ctx, clientID, created.ID)
+	if err != nil || refunded.Funding == nil || refunded.Funding.Status != "refunded" || refunded.Status != "cancelled" {
+		t.Fatalf("task refund completion mismatch: detail=%#v err=%v", refunded, err)
+	}
+	var localEntries int
+	if err := pool.QueryRow(ctx, `
+		SELECT (SELECT count(*) FROM billing_entries WHERE user_id IN ($1,$2)) +
+		       (SELECT count(*) FROM ledger_entries WHERE account_id IN ($1,$2))`, clientID, creatorID).Scan(&localEntries); err != nil || localEntries != 0 {
+		t.Fatalf("Provider task refund wrote Local Test entries: count=%d err=%v", localEntries, err)
+	}
+}
+
+func receiveTaskPaymentEvent(t *testing.T, service *payments.Service, body []byte, secret string) payments.Receipt {
+	t.Helper()
+	now := time.Now().UTC().Unix()
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = fmt.Fprintf(mac, "%d.", now)
+	_, _ = mac.Write(body)
+	receipt, err := service.ReceiveStripeWebhook(context.Background(), body, "t="+fmt.Sprint(now)+",v1="+hex.EncodeToString(mac.Sum(nil)))
+	if err != nil || receipt.Status != "received" {
+		t.Fatalf("receive task payment event: receipt=%#v err=%v", receipt, err)
+	}
+	return receipt
+}
+
+func taskPaymentSucceededEvent(paymentID, taskID uuid.UUID, amount int) []byte {
+	token := taskProviderToken(paymentID)
+	return []byte(fmt.Sprintf(`{"id":"evt_task_funded_%s","object":"event","api_version":"2026-02-25.clover","created":%d,"livemode":false,"type":"payment_intent.succeeded","data":{"object":{"id":"pi_task_%s","object":"payment_intent","status":"succeeded","amount_received":%d,"currency":"usd","latest_charge":"ch_task_%s","metadata":{"hcai_payment_id":%q,"hcai_resource_id":%q,"hcai_purpose":"task"}}}}`, token, time.Now().UTC().Unix(), token, amount, token, paymentID.String(), taskID.String()))
+}
+
+func taskRefundSucceededEvent(paymentID, taskID uuid.UUID, amount int) []byte {
+	token := taskProviderToken(paymentID)
+	return []byte(fmt.Sprintf(`{"id":"evt_task_refunded_%s","object":"event","api_version":"2026-02-25.clover","created":%d,"livemode":false,"type":"refund.updated","data":{"object":{"id":"re_task_%s","object":"refund","status":"succeeded","amount":%d,"currency":"usd","payment_intent":"pi_task_%s","metadata":{"hcai_payment_id":%q,"hcai_resource_id":%q,"hcai_purpose":"task"}}}}`, token, time.Now().UTC().Unix(), token, amount, token, paymentID.String(), taskID.String()))
 }
 
 func validTaskInput() tasks.CreateInput {

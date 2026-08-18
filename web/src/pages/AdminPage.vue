@@ -7,15 +7,15 @@ import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import {
-  api, messageFrom, type AdminAuditEvent, type AdminContent, type AdminFinanceAccount, type AdminOperationalDiagnostics,
+  api, messageFrom, type AdminAuditEvent, type AdminContent, type AdminFinanceAccount, type AdminOperationalDiagnostics, type AdminPaymentDestination, type AdminPaymentOperation,
   type AdminGeneration, type AdminGovernanceAppeal, type AdminGovernanceReport, type AdminMediaItem, type AdminModelRoutePolicy, type AdminModelRouteUpdate, type AdminOverview, type AdminProvider, type AdminUser,
-  type AdminDiscoveryOperations, type AdminRankingPolicy, type AdminRankingUpdate, type AdminRiskRulePolicy, type AdminRiskRuleUpdate, type AdminRiskSignal, type AdminSystemSettingPolicy, type AdminSystemSettingUpdate, type AdminTaskOperation, type DataRightsLegalHold, type DataRightsRequest, type DeveloperAccess, type DeveloperControlUpdate, type DeveloperWebhookDelivery, type IdentityEmailAction, type SupportCase,
+  type AdminDiscoveryOperations, type AdminProviderCostReconciliation, type AdminRankingPolicy, type AdminRankingUpdate, type AdminRiskRulePolicy, type AdminRiskRuleUpdate, type AdminRiskSignal, type AdminSystemSettingPolicy, type AdminSystemSettingUpdate, type AdminTaskOperation, type DataRightsLegalHold, type DataRightsRequest, type DeveloperAccess, type DeveloperControlUpdate, type DeveloperWebhookDelivery, type IdentityEmailAction, type SupportCase,
 } from '../api/client'
 import { formatCurrency, formatDateTime } from '../lib/format'
 import { useSessionStore } from '../stores/session'
 
 type Tab = 'overview' | 'users' | 'content' | 'media' | 'governance' | 'support' | 'generations' | 'tasks' | 'providers' | 'models' | 'settings' | 'developer' | 'finance' | 'risk' | 'riskRules' | 'ranking' | 'dataRights' | 'diagnostics' | 'audit'
-type CommandKind = 'user' | 'content' | 'media' | 'report' | 'appeal' | 'generation' | 'task' | 'provider' | 'finance' | 'risk' | 'dataRightsHold' | 'holdRelease'
+type CommandKind = 'user' | 'content' | 'media' | 'report' | 'appeal' | 'generation' | 'task' | 'provider' | 'finance' | 'payment' | 'paymentEvent' | 'paymentDestination' | 'risk' | 'dataRightsHold' | 'holdRelease'
 type OverviewKey = 'users' | 'works' | 'generations' | 'orders' | 'tasks' | 'risks' | 'providers'
 
 const { t, locale } = useI18n()
@@ -26,6 +26,7 @@ const loading = ref(true)
 const actionLoading = ref(false)
 const error = ref('')
 const success = ref('')
+const localDemoAvailable = ref(false)
 const overview = ref<AdminOverview | null>(null)
 const users = ref<AdminUser[]>([])
 const userQuery = ref('')
@@ -63,6 +64,20 @@ const financeQuery = ref('')
 const financeState = ref('')
 const financeNextCursor = ref<string | null>(null)
 const financeLoadingMore = ref(false)
+const paymentOperations = ref<AdminPaymentOperation[]>([])
+const paymentQuery = ref('')
+const paymentPurpose = ref('')
+const paymentStatus = ref('')
+const paymentMode = ref('')
+const paymentAttention = ref('needs_attention')
+const paymentNextCursor = ref<string | null>(null)
+const paymentLoadingMore = ref(false)
+const paymentDestinations = ref<AdminPaymentDestination[]>([])
+const paymentDestinationNextCursor = ref<string | null>(null)
+const providerCostReconciliations = ref<AdminProviderCostReconciliation[]>([])
+const providerCostReconciliationAvailable = ref(false)
+const providerCostReconciliationLoading = ref(false)
+const providerCostReconciliationForm = reactive({ periodStart: '', periodEnd: '', reason: '', confirmed: false })
 const riskSignals = ref<AdminRiskSignal[]>([])
 const riskQuery = ref('')
 const riskStatus = ref('')
@@ -136,7 +151,7 @@ const supportLoadingMore = ref(false)
 const selectedSupport = ref<SupportCase | null>(null)
 const supportReply = reactive({ body: '', reason: '', confirmed: false })
 const supportDecision = reactive({ status: 'in_review', resolutionCode: '', reason: '', confirmed: false })
-const command = reactive({ kind: '' as CommandKind | '', id: '', title: '', role: '', status: '', outcome: '', decision: '', enabled: false, deltaCents: 0, authorityReference: '', reason: '', confirmed: false })
+const command = reactive({ kind: '' as CommandKind | '', id: '', title: '', role: '', status: '', outcome: '', decision: '', action: '', destinationID: '', enabled: false, deltaCents: 0, authorityReference: '', reason: '', confirmed: false })
 const commandPanel = ref<InstanceType<typeof globalThis.HTMLFormElement> | null>(null)
 const tabsNav = ref<InstanceType<typeof globalThis.HTMLElement> | null>(null)
 const rankingForm = reactive<AdminRankingUpdate>({
@@ -201,7 +216,7 @@ const overviewStatusKeys: Record<OverviewKey, Record<string, string>> = {
   users: { active: 'admin.states.active', suspended: 'admin.states.suspended', deleted: 'admin.states.deleted' },
   works: { draft: 'admin.states.draft', published: 'admin.states.published', hidden: 'admin.states.hidden', removed: 'admin.states.removed' },
   generations: { queued: 'generation.status.queued', running: 'generation.status.running', succeeded: 'generation.status.succeeded', failed: 'generation.status.failed', cancelled: 'generation.status.cancelled' },
-  orders: { test_pending: 'admin.orderStates.test_pending', test_paid: 'admin.orderStates.test_paid', fulfilled: 'admin.orderStates.fulfilled', refund_requested: 'admin.orderStates.refund_requested', test_refunded: 'admin.orderStates.test_refunded', cancelled: 'admin.orderStates.cancelled' },
+	orders: { test_pending: 'admin.orderStates.test_pending', test_paid: 'admin.orderStates.test_paid', payment_pending: 'admin.orderStates.payment_pending', payment_paid: 'admin.orderStates.payment_paid', payment_failed: 'admin.orderStates.payment_failed', fulfilled: 'admin.orderStates.fulfilled', refund_requested: 'admin.orderStates.refund_requested', test_refunded: 'admin.orderStates.test_refunded', refunded: 'admin.orderStates.refunded', cancelled: 'admin.orderStates.cancelled' },
   tasks: { draft: 'admin.taskStates.draft', open: 'admin.taskStates.open', assigned: 'admin.taskStates.assigned', submitted: 'admin.taskStates.submitted', revision: 'admin.taskStates.revision', accepted: 'admin.taskStates.accepted', disputed: 'admin.taskStates.disputed', cancelled: 'admin.taskStates.cancelled' },
   risks: { open: 'admin.riskStatuses.open', reviewing: 'admin.riskStatuses.reviewing', resolved: 'admin.riskStatuses.resolved', dismissed: 'admin.riskStatuses.dismissed' },
   providers: { enabled: 'admin.providerStates.enabled', disabled: 'admin.providerStates.disabled' },
@@ -550,6 +565,11 @@ async function loadMoreGenerations() {
 function syncFinanceFilters() {
   financeQuery.value = typeof route.query.financeQ === 'string' ? route.query.financeQ : ''
   financeState.value = typeof route.query.financeState === 'string' ? route.query.financeState : ''
+  paymentQuery.value = typeof route.query.paymentQ === 'string' ? route.query.paymentQ : ''
+  paymentPurpose.value = typeof route.query.paymentPurpose === 'string' ? route.query.paymentPurpose : ''
+  paymentStatus.value = typeof route.query.paymentStatus === 'string' ? route.query.paymentStatus : ''
+  paymentMode.value = typeof route.query.paymentMode === 'string' ? route.query.paymentMode : ''
+  paymentAttention.value = typeof route.query.paymentAttention === 'string' ? route.query.paymentAttention : 'needs_attention'
 }
 
 function financeListQuery(cursor = '') {
@@ -592,6 +612,102 @@ async function loadMoreFinance() {
   financeLoadingMore.value = true
   error.value = ''
   try { await loadFinanceDirectory(financeNextCursor.value) } catch (reason) { error.value = messageFrom(reason) } finally { financeLoadingMore.value = false }
+}
+
+function paymentListQuery(cursor = '') {
+  return {
+    q: paymentQuery.value || undefined,
+    purpose: paymentPurpose.value as 'product' | 'task' | undefined,
+    status: paymentStatus.value as 'checkout_pending' | 'checkout_open' | 'paid' | 'payment_failed' | 'transfer_pending' | 'transferred' | 'refund_pending' | 'refund_failed' | 'refunded' | 'cancelled' | undefined,
+    mode: paymentMode.value as 'test' | 'live' | undefined,
+    attention: paymentAttention.value as 'needs_attention' | 'healthy' | undefined,
+    cursor: cursor || undefined,
+    limit: 20,
+  }
+}
+
+async function loadPaymentOperations(cursor = '') {
+  const page = await api.adminListPayments(paymentListQuery(cursor))
+  if (cursor) {
+    const known = new Set(paymentOperations.value.map(item => item.id))
+    paymentOperations.value = [...paymentOperations.value, ...page.items.filter(item => !known.has(item.id))]
+  } else {
+    paymentOperations.value = page.items
+  }
+  paymentNextCursor.value = page.nextCursor || null
+}
+
+async function loadPaymentDestinations(cursor = '') {
+  const page = await api.adminListPaymentDestinations({ cursor: cursor || undefined, limit: 20 })
+  if (cursor) {
+    const known = new Set(paymentDestinations.value.map(item => item.id))
+    paymentDestinations.value = [...paymentDestinations.value, ...page.items.filter(item => !known.has(item.id))]
+  } else {
+    paymentDestinations.value = page.items
+  }
+  paymentDestinationNextCursor.value = page.nextCursor || null
+}
+
+async function loadProviderCostReconciliations() {
+  providerCostReconciliationLoading.value = true
+  try {
+    const page = await api.adminListProviderCostReconciliations({ limit: 20 })
+    providerCostReconciliations.value = page.items
+    providerCostReconciliationAvailable.value = true
+  } catch (reason) {
+    const message = messageFrom(reason)
+    if (!message.includes('provider_cost_reconciliation_unavailable') && !message.toLowerCase().includes('not enabled')) throw reason
+    providerCostReconciliations.value = []
+    providerCostReconciliationAvailable.value = false
+  } finally {
+    providerCostReconciliationLoading.value = false
+  }
+}
+
+async function requestProviderCostReconciliation() {
+  actionLoading.value = true
+  error.value = ''
+  success.value = ''
+  try {
+    const item = await api.adminRequestProviderCostReconciliation({
+      provider: 'openai', periodStart: `${providerCostReconciliationForm.periodStart}T00:00:00Z`, periodEnd: `${providerCostReconciliationForm.periodEnd}T00:00:00Z`,
+      reason: providerCostReconciliationForm.reason, confirmed: providerCostReconciliationForm.confirmed,
+    })
+    providerCostReconciliations.value = [item, ...providerCostReconciliations.value.filter(existing => existing.id !== item.id)]
+    Object.assign(providerCostReconciliationForm, { reason: '', confirmed: false })
+    success.value = t('admin.providerCostReconciliationQueued')
+  } catch (reason) {
+    error.value = messageFrom(reason)
+  } finally {
+    actionLoading.value = false
+  }
+}
+
+async function applyPaymentFilters() {
+  const query: Record<string, string> = { tab: 'finance' }
+  if (financeQuery.value.trim()) query.financeQ = financeQuery.value.trim()
+  if (financeState.value) query.financeState = financeState.value
+  if (paymentQuery.value.trim()) query.paymentQ = paymentQuery.value.trim()
+  if (paymentPurpose.value) query.paymentPurpose = paymentPurpose.value
+  if (paymentStatus.value) query.paymentStatus = paymentStatus.value
+  if (paymentMode.value) query.paymentMode = paymentMode.value
+  if (paymentAttention.value) query.paymentAttention = paymentAttention.value
+  await router.push({ query })
+  await load()
+}
+
+async function loadMorePayments() {
+  if (!paymentNextCursor.value || paymentLoadingMore.value) return
+  paymentLoadingMore.value = true
+  error.value = ''
+  try { await loadPaymentOperations(paymentNextCursor.value) } catch (reason) { error.value = messageFrom(reason) } finally { paymentLoadingMore.value = false }
+}
+
+async function loadMorePaymentDestinations() {
+  if (!paymentDestinationNextCursor.value || paymentLoadingMore.value) return
+  paymentLoadingMore.value = true
+  error.value = ''
+  try { await loadPaymentDestinations(paymentDestinationNextCursor.value) } catch (reason) { error.value = messageFrom(reason) } finally { paymentLoadingMore.value = false }
 }
 
 function syncAuditFilters() {
@@ -989,7 +1105,7 @@ async function load() {
     }
     if (tab === 'finance') {
       syncFinanceFilters()
-      await loadFinanceDirectory()
+      await Promise.all([loadFinanceDirectory(), loadPaymentOperations(), loadPaymentDestinations(), loadProviderCostReconciliations()])
     }
     if (tab === 'risk') {
 	  syncRiskFilters()
@@ -1035,8 +1151,14 @@ async function useAdminDemo() {
   await load()
 }
 
+async function initialize() {
+  const runtime = await api.meta().catch(() => null)
+  localDemoAvailable.value = Boolean(runtime?.localDemoAvailable)
+  await load()
+}
+
 function closeCommand() {
-  Object.assign(command, { kind: '', id: '', title: '', role: '', status: '', outcome: '', decision: '', enabled: false, deltaCents: 0, authorityReference: '', reason: '', confirmed: false })
+  Object.assign(command, { kind: '', id: '', title: '', role: '', status: '', outcome: '', decision: '', action: '', destinationID: '', enabled: false, deltaCents: 0, authorityReference: '', reason: '', confirmed: false })
 }
 
 function openUser(item: AdminUser) {
@@ -1078,6 +1200,30 @@ function openProvider(item: AdminProvider) {
 
 function openFinance(item: AdminFinanceAccount) {
   Object.assign(command, { kind: 'finance', id: item.userId, title: item.displayName, deltaCents: 0, reason: '', confirmed: false })
+}
+
+function openPaymentRecovery(item: AdminPaymentOperation, action: 'retry_transfer' | 'retry_refund') {
+  Object.assign(command, { kind: 'payment', id: item.id, title: item.resourceTitle, action, status: String(item.version), reason: '', confirmed: false })
+  focusCommandPanel()
+}
+
+function openPaymentEventReplay(item: AdminPaymentOperation) {
+  if (!item.providerEvent) return
+  Object.assign(command, { kind: 'paymentEvent', id: item.providerEvent.id, title: item.providerEvent.eventType, status: String(item.providerEvent.version), reason: '', confirmed: false })
+  focusCommandPanel()
+}
+
+function openPaymentDestination(item: AdminPaymentOperation) {
+  if (!item.payeeId) return
+  Object.assign(command, { kind: 'paymentDestination', id: item.payeeId, title: item.payeeDisplayName || item.payeeHandle || item.resourceTitle, destinationID: item.destination?.destinationId || '', status: String(item.destination?.version || 0), enabled: item.destination?.status === 'verified', reason: '', confirmed: false })
+  focusCommandPanel()
+}
+
+function focusCommandPanel() {
+  void nextTick(() => {
+    commandPanel.value?.scrollIntoView({ behavior: globalThis.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' })
+    commandPanel.value?.querySelector<InstanceType<typeof globalThis.HTMLElement>>('select, textarea, input, button')?.focus({ preventScroll: true })
+  })
 }
 
 function openRisk(item: AdminRiskSignal) {
@@ -1522,6 +1668,15 @@ async function submitCommand() {
     } else if (command.kind === 'finance') {
       await api.adminAdjustFinance(command.id, { deltaCents: command.deltaCents, currency: 'USD', reason: command.reason, confirmed: command.confirmed })
       await loadFinanceDirectory()
+    } else if (command.kind === 'payment') {
+      await api.adminRecoverPayment(command.id, { action: command.action as 'retry_transfer' | 'retry_refund', expectedVersion: Number(command.status), reason: command.reason, confirmed: command.confirmed })
+      await loadPaymentOperations()
+    } else if (command.kind === 'paymentEvent') {
+      await api.adminReplayPaymentEvent(command.id, { expectedVersion: Number(command.status), reason: command.reason, confirmed: command.confirmed })
+      await loadPaymentOperations()
+    } else if (command.kind === 'paymentDestination') {
+      await api.adminUpdatePaymentDestination(command.id, { destinationId: command.destinationID, enabled: command.enabled, expectedVersion: Number(command.status), reason: command.reason, confirmed: command.confirmed })
+      await Promise.all([loadPaymentOperations(), loadPaymentDestinations()])
     } else if (command.kind === 'risk') {
 	  await api.adminReviewRiskSignal(command.id, { decision: command.decision as 'monitor' | 'no_action' | 'escalated', reason: command.reason, expectedVersion: Number(command.status), confirmed: command.confirmed })
 	  await loadRiskDirectory()
@@ -1541,7 +1696,7 @@ async function submitCommand() {
   }
 }
 
-onMounted(() => void load())
+onMounted(() => void initialize())
 </script>
 
 <template>
@@ -1555,9 +1710,12 @@ onMounted(() => void load())
 
     <div v-if="!loading && !hasAdminAccess" class="admin-access-state">
       <ShieldAlert :size="28" /><h2>{{ t('admin.accessRequired') }}</h2><p>{{ t('admin.accessRequiredDetail') }}</p>
-      <button class="command-button primary" type="button" @click="useAdminDemo">
+      <button v-if="localDemoAvailable" class="command-button primary" type="button" @click="useAdminDemo">
         <ShieldCheck :size="17" />{{ t('admin.useAdminDemo') }}
       </button>
+      <RouterLink v-else class="command-button primary" :to="{ path: '/settings', query: { auth: 'login', returnTo: route.fullPath } }">
+        <ShieldCheck :size="17" />{{ t('account.signIn') }}
+      </RouterLink>
     </div>
 
     <template v-else-if="hasAdminAccess">
@@ -1590,10 +1748,15 @@ onMounted(() => void load())
         <label v-if="command.kind === 'appeal'">{{ t('admin.appealDecision') }}<select v-model="command.decision"><option v-for="decision in ['denied','upheld']" :key="decision" :value="decision">{{ t(`admin.appealDecisions.${decision}`) }}</option></select></label>
         <label v-if="command.kind === 'provider'" class="admin-checkbox"><input v-model="command.enabled" type="checkbox" />{{ command.enabled ? t('admin.enableProvider') : t('admin.disableProvider') }}</label>
         <label v-if="command.kind === 'finance'">{{ t('admin.adjustmentCents') }}<input v-model.number="command.deltaCents" type="number" min="-1000000" max="1000000" step="1" required /></label>
+        <label v-if="command.kind === 'payment'">{{ t('admin.paymentRecoveryAction') }}<select v-model="command.action"><option value="retry_transfer">{{ t('admin.retryTransfer') }}</option><option value="retry_refund">{{ t('admin.retryRefund') }}</option></select></label>
+        <template v-if="command.kind === 'paymentDestination'">
+          <label>{{ t('admin.paymentDestinationId') }}<input v-model.trim="command.destinationID" type="text" minlength="6" maxlength="255" pattern="acct_[A-Za-z0-9_]+" required /></label>
+          <label class="admin-checkbox"><input v-model="command.enabled" type="checkbox" />{{ t('admin.paymentDestinationVerified') }}</label>
+        </template>
         <label v-if="command.kind === 'risk'">{{ t('admin.riskDecision') }}<select v-model="command.decision"><option v-for="decision in ['monitor','no_action','escalated']" :key="decision" :value="decision">{{ t(`admin.riskDecisions.${decision}`) }}</option></select></label>
         <label v-if="command.kind === 'task'">{{ t('admin.taskDecision') }}<select v-model="command.decision"><option v-for="decision in ['cancel_without_settlement','release_creator']" :key="decision" :value="decision">{{ t(`admin.taskDecisions.${decision}`) }}</option></select></label>
         <label v-if="command.kind === 'dataRightsHold'">{{ t('admin.authorityReference') }}<input v-model.trim="command.authorityReference" minlength="6" maxlength="200" required :placeholder="t('admin.authorityReferencePlaceholder')" /></label>
-        <label>{{ t('admin.reason') }}<textarea v-model="command.reason" rows="3" minlength="10" maxlength="500" required :placeholder="t('admin.reasonPlaceholder')"></textarea></label>
+        <label>{{ t('admin.reason') }}<textarea v-model="command.reason" rows="3" minlength="10" :maxlength="['payment','paymentEvent','paymentDestination'].includes(command.kind) ? 1000 : 500" required :placeholder="t('admin.reasonPlaceholder')"></textarea></label>
         <label class="admin-checkbox"><input v-model="command.confirmed" type="checkbox" required />{{ t('admin.confirmAction') }}</label>
         <button class="command-button primary" type="submit" :disabled="actionLoading">
           <LoaderCircle v-if="actionLoading" class="spin" :size="17" /><ShieldCheck v-else :size="17" />{{ t('admin.applyAction') }}
@@ -2123,6 +2286,96 @@ onMounted(() => void load())
         <button v-if="financeNextCursor" class="command-button secondary admin-load-more" type="button" :disabled="financeLoadingMore" @click="loadMoreFinance">
           <LoaderCircle v-if="financeLoadingMore" class="spin" :size="16" /><ListFilter v-else :size="16" />{{ t('actions.loadMore') }}
         </button>
+
+        <section class="admin-finance-section provider-cost-reconciliation-admin">
+          <header><div><h2>{{ t('admin.providerCostReconciliationTitle') }}</h2><p>{{ t('admin.providerCostReconciliationSummary') }}</p></div></header>
+          <form v-if="providerCostReconciliationAvailable" class="admin-user-filters admin-finance-filters" @submit.prevent="requestProviderCostReconciliation">
+            <label>{{ t('admin.providerCostPeriodStart') }}<input v-model="providerCostReconciliationForm.periodStart" type="date" required /></label>
+            <label>{{ t('admin.providerCostPeriodEnd') }}<input v-model="providerCostReconciliationForm.periodEnd" type="date" required /></label>
+            <label>{{ t('admin.reason') }}<input v-model.trim="providerCostReconciliationForm.reason" type="text" minlength="12" maxlength="1000" required /></label>
+            <label class="admin-checkbox"><input v-model="providerCostReconciliationForm.confirmed" type="checkbox" required />{{ t('admin.providerCostReconciliationConfirm') }}</label>
+            <button class="command-button primary" type="submit" :disabled="actionLoading">
+              <LoaderCircle v-if="actionLoading" class="spin" :size="16" /><CircleDollarSign v-else :size="16" />{{ t('admin.requestProviderCostReconciliation') }}
+            </button>
+          </form>
+          <p v-else-if="!providerCostReconciliationLoading" class="inline-empty">
+            {{ t('admin.providerCostReconciliationUnavailable') }}
+          </p>
+          <div v-if="providerCostReconciliations.length" class="admin-list payment-operation-list">
+            <article v-for="item in providerCostReconciliations" :key="item.id">
+              <div><strong>{{ item.provider.toUpperCase() }} · {{ item.status }}</strong><span>{{ date(item.periodStart) }} - {{ date(item.periodEnd) }}</span></div>
+              <span>{{ item.providerCostMicros === undefined ? '—' : formatCurrency(item.providerCostMicros / 10000, item.currency || 'USD', locale) }}</span>
+              <span>{{ item.localEstimatedCostMicros === undefined ? '—' : formatCurrency(item.localEstimatedCostMicros / 10000, 'USD', locale) }}</span>
+              <span :class="{ 'status-attention': item.status === 'overage' || item.status === 'failed' }">{{ t(`admin.providerCostReconciliationStates.${item.status}`) }}</span>
+              <small>{{ t('admin.providerCostThreshold', { amount: formatCurrency(item.overageThresholdMicros / 10000, 'USD', locale) }) }} · {{ date(item.completedAt || item.createdAt) }}</small>
+            </article>
+          </div>
+          <p v-else-if="providerCostReconciliationAvailable && !providerCostReconciliationLoading" class="inline-empty">
+            {{ t('admin.noProviderCostReconciliations') }}
+          </p>
+        </section>
+
+        <section class="admin-finance-section payment-operations-admin">
+          <header><div><h2>{{ t('admin.paymentOperationsTitle') }}</h2><p>{{ t('admin.paymentOperationsSummary') }}</p></div></header>
+          <form class="admin-user-filters admin-finance-filters" @submit.prevent="applyPaymentFilters">
+            <label>{{ t('admin.paymentSearch') }}<input v-model="paymentQuery" type="search" maxlength="120" :placeholder="t('admin.paymentSearchPlaceholder')" /></label>
+            <label>{{ t('admin.paymentPurpose') }}<select v-model="paymentPurpose"><option value="">{{ t('admin.allPaymentPurposes') }}</option><option value="product">{{ t('admin.paymentPurposes.product') }}</option><option value="task">{{ t('admin.paymentPurposes.task') }}</option></select></label>
+            <label>{{ t('admin.paymentStatus') }}<select v-model="paymentStatus"><option value="">{{ t('admin.allPaymentStatuses') }}</option><option v-for="state in ['checkout_pending','checkout_open','paid','payment_failed','transfer_pending','transferred','refund_pending','refund_failed','refunded','cancelled']" :key="state" :value="state">{{ t(`admin.paymentStatuses.${state}`) }}</option></select></label>
+            <label>{{ t('admin.paymentMode') }}<select v-model="paymentMode"><option value="">{{ t('admin.allPaymentModes') }}</option><option value="test">{{ t('admin.paymentModes.test') }}</option><option value="live">{{ t('admin.paymentModes.live') }}</option></select></label>
+            <label>{{ t('admin.paymentAttention') }}<select v-model="paymentAttention"><option value="needs_attention">{{ t('admin.paymentAttentionStates.needs_attention') }}</option><option value="healthy">{{ t('admin.paymentAttentionStates.healthy') }}</option><option value="">{{ t('admin.paymentAttentionStates.all') }}</option></select></label>
+            <button class="command-button primary" type="submit">
+              <ListFilter :size="16" />{{ t('actions.applyFilters') }}
+            </button>
+          </form>
+          <div v-if="paymentOperations.length" class="admin-list payment-operation-list">
+            <article v-for="item in paymentOperations" :key="item.id">
+              <div>
+                <RouterLink :to="item.targetPath">
+                  <strong>{{ item.resourceTitle }}</strong>
+                </RouterLink><span>{{ t(`admin.paymentPurposes.${item.purpose}`) }} · @{{ item.payerHandle }}<template v-if="item.payeeHandle"> → @{{ item.payeeHandle }}</template></span>
+              </div>
+              <span>{{ formatCurrency(item.amountCents, item.currency, locale) }}</span>
+              <span>{{ t(`admin.paymentStatuses.${item.status}`) }}</span>
+              <span :class="{ 'status-attention': item.attentionCode !== 'none' }">{{ t(`admin.paymentAttentionCodes.${item.attentionCode}`) }}</span>
+              <small>{{ item.liveMode ? t('admin.paymentModes.live') : t('admin.paymentModes.test') }} · v{{ item.version }} · {{ date(item.updatedAt) }}</small>
+              <div class="admin-row-actions">
+                <button v-if="item.payeeId && item.status === 'transfer_pending'" class="command-button secondary" type="button" @click="openPaymentDestination(item)">
+                  <Settings2 :size="16" />{{ t('admin.manageDestination') }}
+                </button>
+                <button v-if="item.status === 'transfer_pending' && item.destination?.status === 'verified' && ['transfer_job_failed','transfer_job_missing'].includes(item.attentionCode)" class="command-button secondary" type="button" @click="openPaymentRecovery(item, 'retry_transfer')">
+                  <RefreshCw :size="16" />{{ t('admin.retryTransfer') }}
+                </button>
+                <button v-if="['refund_failed','refund_job_failed','refund_job_missing'].includes(item.attentionCode)" class="command-button secondary" type="button" @click="openPaymentRecovery(item, 'retry_refund')">
+                  <RefreshCw :size="16" />{{ t('admin.retryRefund') }}
+                </button>
+                <button v-if="item.providerEvent && (item.providerEvent.processingState === 'failed' || item.providerEvent.job?.status === 'failed')" class="command-button secondary" type="button" @click="openPaymentEventReplay(item)">
+                  <RefreshCw :size="16" />{{ t('admin.replayPaymentEvent') }}
+                </button>
+              </div>
+            </article>
+          </div>
+          <p v-else class="inline-empty">
+            {{ t('admin.noPaymentOperations') }}
+          </p>
+          <button v-if="paymentNextCursor" class="command-button secondary admin-load-more" type="button" :disabled="paymentLoadingMore" @click="loadMorePayments">
+            <LoaderCircle v-if="paymentLoadingMore" class="spin" :size="16" /><ListFilter v-else :size="16" />{{ t('actions.loadMore') }}
+          </button>
+        </section>
+
+        <section class="admin-finance-section payment-destinations-admin">
+          <header><div><h2>{{ t('admin.paymentDestinationsTitle') }}</h2><p>{{ t('admin.paymentDestinationsSummary') }}</p></div></header>
+          <div v-if="paymentDestinations.length" class="admin-list finance-admin-list">
+            <article v-for="item in paymentDestinations" :key="item.id">
+              <div><strong>{{ item.displayName || item.handle }}</strong><span>@{{ item.handle }} · {{ item.email }}</span></div><span>{{ item.destinationId }}</span><span>{{ t(`admin.paymentDestinationStatuses.${item.status}`) }}</span><small>v{{ item.version }} · {{ date(item.updatedAt) }}</small>
+            </article>
+          </div>
+          <p v-else class="inline-empty">
+            {{ t('admin.noPaymentDestinations') }}
+          </p>
+          <button v-if="paymentDestinationNextCursor" class="command-button secondary admin-load-more" type="button" :disabled="paymentLoadingMore" @click="loadMorePaymentDestinations">
+            <LoaderCircle v-if="paymentLoadingMore" class="spin" :size="16" /><ListFilter v-else :size="16" />{{ t('actions.loadMore') }}
+          </button>
+        </section>
       </div>
 
       <div v-else-if="activeTab === 'ranking' && rankingPolicy" class="admin-governance ranking-admin">

@@ -31,6 +31,8 @@ var (
 	ErrInvalidTaskFilter           = errors.New("invalid admin task filter")
 	ErrInvalidGenerationFilter     = errors.New("invalid admin generation filter")
 	ErrInvalidFinanceFilter        = errors.New("invalid admin finance filter")
+	ErrInvalidPaymentFilter        = errors.New("invalid admin payment filter")
+	ErrInvalidDestinationFilter    = errors.New("invalid admin payment destination filter")
 	ErrInvalidAuditFilter          = errors.New("invalid admin audit filter")
 	ErrInvalidSystemSettingHistory = errors.New("invalid admin system setting history filter")
 	ErrInvalidRiskRuleHistory      = errors.New("invalid admin risk rule history filter")
@@ -314,12 +316,19 @@ type RankingUpdate struct {
 }
 
 type Service struct {
-	pool                 *pgxpool.Pool
-	localProviderRuntime bool
+	pool     *pgxpool.Pool
+	runtimes creation.RuntimeAvailability
 }
 
 func NewService(pool *pgxpool.Pool, localProviderRuntime bool) *Service {
-	return &Service{pool: pool, localProviderRuntime: localProviderRuntime}
+	return NewServiceWithRuntimes(pool, creation.NewLocalRuntimeCatalog("", localProviderRuntime))
+}
+
+func NewServiceWithRuntimes(pool *pgxpool.Pool, runtimes creation.RuntimeAvailability) *Service {
+	if runtimes == nil {
+		runtimes = creation.NewRuntimeCatalog()
+	}
+	return &Service{pool: pool, runtimes: runtimes}
 }
 
 func (s *Service) Overview(ctx context.Context) (Overview, error) {
@@ -670,7 +679,7 @@ func (s *Service) ListProviders(ctx context.Context) ([]Provider, error) {
 			&item.EstimatedCostCents, &item.Currency, &item.LocalTest, &item.AdminEnabled, &item.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan provider: %w", err)
 		}
-		item.RuntimeAvailable = item.LocalTest && s.localProviderRuntime
+		item.RuntimeAvailable = s.runtimes.Available(item.Provider, item.Mode, item.ModelName)
 		item.EffectiveEnabled = item.AdminEnabled && item.RuntimeAvailable
 		items = append(items, item)
 	}
@@ -688,13 +697,14 @@ func (s *Service) UpdateProvider(ctx context.Context, actorID uuid.UUID, provide
 		return Provider{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var localTest, oldEnabled bool
-	if err := tx.QueryRow(ctx, `SELECT local_test,admin_enabled FROM provider_profiles WHERE id=$1 FOR UPDATE`, providerID).Scan(&localTest, &oldEnabled); errors.Is(err, pgx.ErrNoRows) {
+	var mode, provider, modelName string
+	var oldEnabled bool
+	if err := tx.QueryRow(ctx, `SELECT mode,provider,model_name,admin_enabled FROM provider_profiles WHERE id=$1 FOR UPDATE`, providerID).Scan(&mode, &provider, &modelName, &oldEnabled); errors.Is(err, pgx.ErrNoRows) {
 		return Provider{}, ErrNotFound
 	} else if err != nil {
 		return Provider{}, err
 	}
-	if input.Enabled && (!localTest || !s.localProviderRuntime) {
+	if input.Enabled && !s.runtimes.Available(provider, mode, modelName) {
 		return Provider{}, ErrProviderConfig
 	}
 	if _, err := tx.Exec(ctx, `UPDATE provider_profiles SET admin_enabled=$2,updated_by=$3,updated_at=now() WHERE id=$1`, providerID, input.Enabled, actorID); err != nil {

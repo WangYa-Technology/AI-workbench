@@ -14,7 +14,11 @@ Three local vertical workflows are operational:
 
 `Browse product -> review versioned license -> Local Test purchase -> receive entitlement and Asset -> use in Create -> inspect provenance -> refund and revoke entitlement`
 
-Chat, Image, Video, and Music use clearly labeled deterministic local providers and produce text, JPEG, MP4, and WAV Assets. The owner-scoped Generation Center provides URL-backed mode/status/UTC-date filters, stable cursor pagination, deep-linked evidence, and server-derived cancel/retry/download/reuse actions. Owned Assets, reference-only Community saves, the public Community feed, cross-version Asset-family usage, Community comments, publishing drafts, Marketplace orders, Account sessions, and notification-delivery evidence now have independent bounded stable pagination with duplicate-free continuation. Generation reservations/charges, task rewards, product checkout/refunds, and Admin adjustments use explicitly labeled Local Test USD with auditable internal ledgers; no real payment occurs. Email identity, sessions, roles, permissions, profile settings, security logout, notifications, cross-domain public search, creator profiles, persisted publishing drafts, Asset version families and downstream usage evidence, Community interaction/governance, private support/copyright intake, immutable cross-domain risk rules and privacy-minimized registration account-link review, immutable model routing, versioned platform availability gates, tamper-evident audit chaining, operational diagnostics, default-off Developer Access, signed Webhooks, deep links, local Asset upload/scanning, and the local data export/deletion lifecycle are active. Production integrations and acceptance boundaries remain in progress; see `docs/MIGRATION_MATRIX.md`.
+The four creation modes have deterministic Local Test runtimes plus default-off real Provider boundaries: OpenAI Chat/Image, BytePlus ModelArk Seedance Video, and MiniMax Music 3.0. They require explicit credentials, paid-call approval, typed output validation, and audited route activation; the default development environment never calls an external Provider. `GET /api/v1/creation/capabilities` gives the Vue studio a non-secret active-route capability projection so controls stay aligned when an Admin changes the route.
+
+Chat, Image, Video, and Music use clearly labeled deterministic local providers and produce text, JPEG, MP4, and WAV Assets. A default-off OpenAI adapter implements Chat through the Responses API and Image through the Image Generation API, but it is not registered without explicit configuration, credentials, and paid-call approval. The owner-scoped Generation Center provides URL-backed mode/status/UTC-date filters, stable cursor pagination, deep-linked evidence, and server-derived cancel/retry/download/reuse actions. Owned Assets, reference-only Community saves, the public Community feed, cross-version Asset-family usage, Community comments, publishing drafts, Marketplace orders, Account sessions, and notification-delivery evidence now have independent bounded stable pagination with duplicate-free continuation. Generation reservations/charges, task rewards, and Admin adjustments use explicitly labeled Local Test USD with auditable internal ledgers; the payment boundary additionally supports default-off Stripe Hosted Checkout, signed Webhooks, idempotent event processing, asynchronous refund/transfer recovery, creator payout-destination evidence, and permission-scoped Admin operations. Email identity, sessions, roles, permissions, profile settings, security logout, notifications, cross-domain public search, creator profiles, persisted publishing drafts, Asset version families and downstream usage evidence, Community interaction/governance, private support/copyright intake, immutable cross-domain risk rules and privacy-minimized registration account-link review, immutable model routing, versioned platform availability gates, tamper-evident audit chaining, operational diagnostics, default-off Developer Access, signed Webhooks, deep links, local Asset upload/scanning, and the local data export/deletion lifecycle are active. Production integrations and acceptance boundaries remain in progress; see `docs/MIGRATION_MATRIX.md`.
+
+The current checkpoints include default-off staging acceptance commands for all four creation modes. OpenAI Chat/Image use a two-call check; BytePlus Video and MiniMax Music use a separate one-call-per-provider check. Each requires staging configuration, an exact confirmation phrase, and an explicit call ceiling. The repository never runs these paid checks automatically.
 
 Task and product lists/details are public browsing surfaces. Authentication is required only for personal inventories and mutations such as publishing, proposing, accepting, purchasing, delivering, reviewing, or refunding; sign-in and registration return safely to the selected public item.
 
@@ -31,7 +35,7 @@ Task and product lists/details are public browsing surfaces. Authentication is r
 - `internal/identity`: bcrypt email credentials, hashed sessions, profiles, roles, persisted permissions, OAuth provider boundaries, and account audit evidence.
 - `internal/emailactions`: encrypted one-time verification/reset actions, durable delivery and expiry jobs, local mailbox delivery, and controlled dead-letter recovery.
 - `internal/notifications`: user-scoped inbox, durable delivery worker, owner-visible attempt evidence, read state, optimistic preferences, allowlisted deep links, and idempotent transactional producers.
-- `internal/creation`: durable four-mode generation commands, local Provider outputs, cancellation/retry, owner-scoped filtered cursor history, server-derived actions, provenance, and billing integration.
+- `internal/creation`: durable four-mode generation commands, an exact-capability Provider runtime catalog, route-bound timeout/retry policy, typed output validation, local Provider outputs, cancellation/retry, owner-scoped filtered cursor history, server-derived actions, provenance, and billing integration.
 - `internal/billing`: Local Test balances, reservations, immutable entries, transfers, statements, and controlled adjustments.
 - `internal/admin`: permission-gated operational overview, user/content/generation/task/Provider/finance/risk/ranking controls, immutable risk-rule/model-route/platform-setting revisions, and audit evidence.
 - `internal/observability`: bounded persistent request observations used by permission-scoped operational diagnostics.
@@ -39,14 +43,15 @@ Task and product lists/details are public browsing surfaces. Authentication is r
 - `internal/webhooks`: AES-256-GCM signing-secret revisions, closed event subscriptions, PostgreSQL outbox delivery, HMAC-SHA256 requests, bounded retry/dead-letter evidence, and controlled replay.
 - `internal/systemsettings`: transaction-local availability gates for registration, generation, publishing, checkout, and task creation.
 - `internal/risk`: idempotent transaction-local signals from tasks, transactions, Community reports, media rejection, and privacy-minimized registration account links, with exact active-rule evidence.
-- `internal/assets`: owned Asset metadata/provenance, immutable version families, owner-scoped downstream generation/Work/Product/Delivery usage evidence, reference-only saved Work projections, local multipart upload, durable deterministic scanning, clean-only content access, and controlled Admin media review.
+- `internal/assets`: owned Asset metadata/provenance, immutable version families, owner-scoped downstream generation/Work/Product/Delivery usage evidence, reference-only saved Work projections, multipart upload, durable scanning, clean-only content access, and controlled Admin media review.
+- `internal/platform/media`: local and S3-compatible immutable object storage, full/Range reads, authenticated SHA-256-bound HTTP scanning, deletion, and an explicitly authorized staging acceptance lifecycle.
 - `internal/community`: persisted content drafts, atomic publication, Community interactions, reports, appeals, and governance evidence.
 - `internal/datarights`: recent-auth export/deletion requests, durable artifact/retention/deletion jobs, Support-aware minimization, immutable receipts, and controlled legal holds.
 - `internal/support`: requester-owned support and copyright cases, optimistic versions, append-only messages/events, resource visibility checks, notifications, and controlled Admin decisions.
 - `web`: Vue 3, TypeScript, Vite, Vue Router, Pinia, and vue-i18n application.
 - PostgreSQL is the source of truth for business state and async jobs.
-- Generated media is written through the local media boundary under `MEDIA_ROOT` during development.
-- Uploaded JPEG, PNG, MP4, WAV, and plain-text files are limited to 10 MiB, detected from their bytes, stored locally, and unavailable until a durable scan job marks them clean.
+- Generated media is written through the local media boundary under `MEDIA_ROOT` during development and through private S3-compatible storage in production.
+- Uploaded JPEG, PNG, MP4, WAV, and plain-text files are limited to 10 MiB, detected from their bytes, written through the configured media backend, and unavailable until a durable scan job marks them clean.
 
 Architecture decisions are recorded under `docs/adr`. The active requirement-by-requirement completion review is tracked in `docs/COMPLETION_AUDIT.md`.
 
@@ -73,6 +78,69 @@ make dev
 
 Open [http://127.0.0.1:5173](http://127.0.0.1:5173). The API listens on `http://127.0.0.1:8080`; Vite proxies `/api`, `/health`, and `/ready`.
 
+## Production runtime baseline
+
+The repository includes non-root API, Worker, migration, and static Web container definitions under `deploy/`. They use an externally supplied PostgreSQL connection and an explicit production environment file; they do not include a production database, credentials, real Provider enablement, or a public deployment. Build all runtime images locally with:
+
+```bash
+make container-build
+```
+
+Use [deploy/README.md](deploy/README.md) for the required `.env.production` shape, proxy trust boundary, and release prerequisites. Production configuration requires the bundled private S3-compatible Asset adapter and authenticated HTTP scanner boundary; approved services, credentials, lifecycle policy, and staging acceptance remain deployment responsibilities.
+
+After the deployment secret manager has injected the production environment, validate it without connecting to PostgreSQL or any Provider:
+
+```bash
+make production-config-check
+```
+
+The command fails unless `APP_ENV=production` and every runtime configuration invariant passes. Its JSON output contains only safe mode flags and counts; it never prints database locations, encryption keys, or Provider credentials.
+
+After an isolated staging bucket/prefix and scanner have been approved, inject the same media configuration and run the one-shot external acceptance check:
+
+```bash
+MEDIA_ACCEPTANCE_CONFIRM=I_APPROVE_MEDIA_ACCEPTANCE_CALLS make media-staging-check
+```
+
+Without that exact confirmation the command exits before loading configuration or making a request. It also refuses local storage or the deterministic scanner. An approved run creates one random small text object, proves create-only writes, stat, full and Range reads, an authenticated content-bound clean scan, deletion, and post-delete absence. Failure paths attempt deletion with a cancellation-independent cleanup context. The JSON result contains adapter names, byte counts, scanner decision metadata, and a hash of the temporary key; it omits bucket, endpoint, object key, tokens, and credentials. This check does not replace private-bucket policy, encryption/lifecycle, backup, outage recovery, or cross-account application tests.
+
+After the adapter check passes, use a separately approved disposable staging database to verify the same S3/Scanner pair through the application boundary:
+
+```bash
+MEDIA_APPLICATION_DATABASE_URL='postgres://staging-acceptance-database' \
+MEDIA_APPLICATION_ACCEPTANCE_CONFIRM=I_APPROVE_MEDIA_APPLICATION_ACCEPTANCE_CALLS \
+make media-application-staging-check
+```
+
+The wrapper creates a random `hcai_media_acceptance_*` PostgreSQL schema, injects it through `search_path`, and always drops it on exit. The command refuses any other schema, non-staging mode, local media adapters, or enabled local AI Provider mode. It registers two disposable accounts through the real HTTP contract, uploads one fixed non-user text Asset to S3, proves pending-content isolation, executes and completes the durable scan Job, verifies clean state, byte-identical full delivery, `206` Range delivery, cross-account denial, exactly-once Job/audit/notification evidence, and object deletion/post-delete absence. Safe JSON contains only adapter names, byte counts, states, and verification booleans; it omits database/bucket locations, object keys, account identifiers, credentials, tokens, and response bodies. This command makes real storage/scanner requests and is never run automatically.
+
+After an approved OpenAI staging project, budget, credentials, region, and retention policy are available, inject the normal OpenAI configuration and run the bounded Provider smoke check:
+
+```bash
+APP_ENV=staging \
+PROVIDER_ACCEPTANCE_CONFIRM=I_APPROVE_OPENAI_STAGING_CALLS \
+OPENAI_ACCEPTANCE_MAX_CALLS=2 \
+make provider-staging-check
+```
+
+This command makes exactly two real paid calls: one Responses API Chat request and one Image Generation request. It refuses development or production mode, a non-official base URL, local Provider registration, disabled paid-call approval, a missing capability, and an `auto` image size. It uses fixed repository-owned prompts with no user data and prints only bounded model, media type, output byte/dimension, and usage-counter evidence. It never prints or persists the prompts, Chat output, Image bytes, credentials, organization/project identifiers, or upstream response bodies. The check has a three-minute overall deadline and is never invoked by `make test`, `make build`, CI, application startup, or the repository's loopback drills.
+
+After separate rights, budget, credentials, and retention approval for the Video and Music Providers, run their independent one-call staging check:
+
+```bash
+APP_ENV=staging \
+CREATIVE_PROVIDER_ACCEPTANCE_CONFIRM=I_APPROVE_CREATIVE_STAGING_CALLS \
+VIDEO_ACCEPTANCE_MAX_CALLS=1 \
+MUSIC_ACCEPTANCE_MAX_CALLS=1 \
+make creative-provider-staging-check
+```
+
+This command requires the exact official BytePlus and MiniMax HTTPS endpoints, both paid-call approvals, both enabled runtimes, a disabled local Provider, and non-empty staging credentials. It performs exactly one five-second Video call and one Music call, then prints only Provider/model, call count, MIME type, byte count, and Video dimensions. Prompts, media bytes, output URLs, credentials, request IDs, and upstream bodies are never printed or persisted. The six-minute deadline and exact call ceilings prevent an accidental retry loop; no external call is made unless every gate is explicitly satisfied.
+
+Database backup and restore commands are documented in [deploy/BACKUP_RESTORE.md](deploy/BACKUP_RESTORE.md). They require explicit environment-provided database URLs, write owner-only checksummed custom-format archives, and never restore implicitly to the application database.
+
+The internal metrics endpoint and executable alert thresholds are documented in [deploy/OBSERVABILITY.md](deploy/OBSERVABILITY.md). `/metrics` is intentionally not exposed through the public Web proxy; connect it to a private scraper or authenticated operations proxy before production use.
+
 Normal development starts with migrations only, never inserts demo content, and hides demo-account shortcuts. To intentionally run the seeded showcase instead:
 
 ```bash
@@ -89,6 +157,14 @@ make recovery-drill
 
 The drill uses a temporary schema, media directory, and loopback port (`DRILL_HTTP_PORT`, default `18081`). It stops only the worker process it creates, submits a generation while that worker is offline, restarts processing, verifies one Asset and one Local Test charge plus idempotent replay and Admin diagnostics, then removes all temporary state.
 
+Run the isolated Stripe payment-provider drill with PostgreSQL client tools, `jq`, `curl`, `lsof`, and `openssl` available:
+
+```bash
+make payment-drill
+```
+
+This drill builds real API and worker binaries plus a loopback-only Stripe fixture, applies migrations and demo seed data in a temporary PostgreSQL schema, and enables Stripe test mode only inside the child processes. It proves one hosted product Checkout call, signed payment and refund Webhooks, durable worker processing, entitlement grant then revocation, Checkout/Webhook/refund idempotency, one Connect Express account, two single-use Account Link renewals, signed `account.updated` synchronization to a verified payout destination, and Admin payment evidence. `PAYMENT_DRILL_HTTP_PORT` and `PAYMENT_DRILL_FIXTURE_PORT` default to `18082` and `18083`; the script rejects occupied ports and removes every process, file, and schema it creates.
+
 ## Configuration
 
 Copy values from `.env.example` into the process environment as needed. Important variables:
@@ -99,7 +175,17 @@ Copy values from `.env.example` into the process environment as needed. Importan
 | `DATABASE_URL` | PostgreSQL connection string. |
 | `HTTP_ADDR` | Go API listen address. |
 | `WEB_ORIGIN` | Single allowed browser origin for local CORS. |
+| `TRUSTED_PROXY_CIDRS` | Comma-separated non-zero CIDR prefixes for deployment proxies whose sanitized `X-Forwarded-For` value may be used for privacy-minimized network evidence. Empty means forwarded headers are ignored. |
 | `MEDIA_ROOT` | Local generated-media directory. |
+| `MEDIA_STORAGE_ADAPTER` | `local_file` for development or `s3` for production. Production fails closed unless `s3` is selected. |
+| `MEDIA_S3_BUCKET` / `MEDIA_S3_REGION` | Private object bucket and signing region used by the S3-compatible adapter. |
+| `MEDIA_S3_ENDPOINT` | Optional HTTPS S3-compatible origin; leave empty for the AWS default endpoint. Development HTTP is loopback-only. |
+| `MEDIA_S3_ACCESS_KEY_ID` / `MEDIA_S3_SECRET_ACCESS_KEY` / `MEDIA_S3_SESSION_TOKEN` | Runtime-only object-storage credentials. They are never persisted in Asset, audit, or API data. |
+| `MEDIA_S3_PATH_STYLE` / `MEDIA_S3_PREFIX` | S3 addressing mode and bounded private object-key prefix. |
+| `MEDIA_SCANNER_ADAPTER` | `local_deterministic` for development or `http` for production. Production fails closed unless `http` is selected. |
+| `MEDIA_SCANNER_URL` / `MEDIA_SCANNER_TOKEN` | HTTPS scanner endpoint and Bearer credential. The scanner receives bounded raw upload bytes plus object-key and SHA-256 headers. |
+| `MEDIA_SCANNER_TIMEOUT_SECONDS` | Scanner request deadline, bounded to 1-120 seconds; defaults to 30. |
+| `MEDIA_APPLICATION_DATABASE_URL` | One-shot application-media acceptance database. It must be an approved disposable staging database and must not include `search_path`; the wrapper creates and removes an isolated schema. |
 | `LOCAL_PROVIDER_SOURCE` | Project-owned image copied by the deterministic image provider. |
 | `LOCAL_PROVIDER_ENABLED` | Enables local test generation outside production. |
 | `COOKIE_SECURE` | Requires secure session cookies in production. |
@@ -107,8 +193,32 @@ Copy values from `.env.example` into the process environment as needed. Importan
 | `WEBHOOK_ALLOW_LOCAL` | Allows loopback HTTP receivers for local verification. Must be false in production. |
 | `EMAIL_DELIVERY_MODE` | `local_file` writes development-only `.eml` files; production must use `disabled` until an approved adapter exists. |
 | `EMAIL_ACTION_ENCRYPTION_KEY_B64` | Base64-encoded 32-byte AES key for one-time identity action tokens. Required in production; non-production has a deterministic local fallback. |
+| `STRIPE_ENABLED` | Registers the Stripe payment runtime and hosted checkout/Webhook workflow. Defaults to `false`. |
+| `STRIPE_LIVE_MODE` | Selects Stripe test or live mode. Live mode is rejected until separately approved. Defaults to `false`. |
+| `STRIPE_LIVE_MODE_APPROVED` | Explicit operational approval required before live mode. Defaults to `false`. |
+| `STRIPE_SECRET_KEY` | Stripe secret key; must match `sk_test_` or `sk_live_` mode and is never persisted in business data. |
+| `STRIPE_WEBHOOK_SECRET` | Stripe endpoint signing secret (`whsec_...`) used to verify raw event bytes. |
+| `STRIPE_BASE_URL` | Defaults to `https://api.stripe.com/v1`; development HTTP is loopback-only, production is pinned to the official endpoint. |
+| `STRIPE_API_VERSION` | Pinned Stripe API version used by request and Webhook contracts. |
+| `STRIPE_WEBHOOK_TOLERANCE_SECONDS` | Signed-event timestamp tolerance, bounded to 60-900 seconds; defaults to 300. |
+| `OPENAI_ENABLED` | Registers the OpenAI Chat/Image runtime only when explicit paid-call approval and credentials are also present. Defaults to `false`. |
+| `OPENAI_PAID_CALLS_APPROVED` | Explicit operational authorization required before `OPENAI_ENABLED=true` is accepted. Defaults to `false`. |
+| `OPENAI_API_KEY` | OpenAI API credential. Required only for enabled runtime processes and never persisted in business data. |
+| `OPENAI_BASE_URL` | Defaults to `https://api.openai.com/v1`; production accepts only that exact official HTTPS endpoint, while development HTTP is loopback-only. |
+| `OPENAI_CHAT_MODEL` / `OPENAI_IMAGE_MODEL` | Exact registered capabilities. Defaults to `gpt-5.6-terra` and `gpt-image-2`. |
+| `OPENAI_CHAT_MAX_OUTPUT_TOKENS` | Bounded Responses API output budget; default `2048`, allowed range `1`–`32768`. |
+| `OPENAI_IMAGE_SIZE` / `OPENAI_IMAGE_QUALITY` | Reviewed image output settings. Defaults to `1024x1024` and `medium`. |
+| `OPENAI_ORGANIZATION` / `OPENAI_PROJECT` | Optional OpenAI routing headers. |
+| `OPENAI_RECONCILIATION_ENABLED` | Registers only the separately gated organization Costs reader; defaults to `false` and does not enable generation traffic. |
+| `OPENAI_RECONCILIATION_APPROVED` | Explicit approval required before aggregate Provider cost reconciliation can be enabled. |
+| `OPENAI_ADMIN_API_KEY` | Separate organization-admin credential for the Costs endpoint; never reuse or persist the generation API key. |
+| `VIDEO_ENABLED` / `VIDEO_PAID_CALLS_APPROVED` | Independent gates for the default-off BytePlus ModelArk Seedance Video runtime. |
+| `VIDEO_API_KEY` / `VIDEO_BASE_URL` / `VIDEO_MODEL` | BytePlus credential, API base, and exact model capability. Production fixes the base to `https://ark.ap-southeast.bytepluses.com/api/v3`; development HTTP is loopback-only. |
+| `VIDEO_POLL_INTERVAL_SECONDS` / `VIDEO_TIMEOUT_SECONDS` | Bounded asynchronous task polling and overall Provider timeout. |
+| `MUSIC_ENABLED` / `MUSIC_PAID_CALLS_APPROVED` | Independent gates for the default-off MiniMax Music 3.0 runtime. |
+| `MUSIC_API_KEY` / `MUSIC_BASE_URL` / `MUSIC_MODEL` | MiniMax credential, API base, and exact model capability. Production fixes the base to `https://api.minimaxi.com/v1`; development HTTP is loopback-only. |
 
-Production startup fails when the local provider is enabled, secure cookies are disabled, loopback Webhook targets are allowed, either 32-byte encryption key is absent, or identity email delivery is not `disabled`. No secrets, paid-provider credentials, real payment details, or personal production data belong in the repository.
+Production startup fails when PostgreSQL does not use `sslmode=verify-full`, `WEB_ORIGIN` is not a public path-free HTTPS origin, placeholders remain, S3 storage or the authenticated HTTP scanner is not configured, the local provider is enabled, secure cookies are disabled, loopback Webhook targets are allowed, either 32-byte encryption key is absent or the two keys are reused, identity email delivery is not `disabled`, or the OpenAI endpoint is not the official HTTPS API. Stripe production enablement additionally requires approved live mode, matching live credentials, and the pinned official endpoint. OpenAI registration additionally fails without both explicit paid-call approval and a credential. Forwarded client headers are ignored unless the direct TCP peer is inside `TRUSTED_PROXY_CIDRS`; the deployment proxy must sanitize and replace them before forwarding. Network evidence is stored only as a one-way minimized hash, and retention, notice, and legal-basis acceptance remain production responsibilities. No secrets, paid-provider credentials, real payment details, or personal production data belong in the repository.
 
 ## Database and seed
 
@@ -131,6 +241,24 @@ Regenerate frontend types after changing the contract:
 ```bash
 npm --prefix web run generate:api
 ```
+
+## Stripe payment boundary
+
+Stripe is disabled by default. When `STRIPE_ENABLED=true` is explicitly configured with a matching test key and endpoint signing secret, product checkout and task funding create hosted Checkout Sessions in test mode. The API never accepts card numbers or stores payment credentials. Entitlements, task assignment, transfers, and refunds advance only after a signed Stripe event is verified against the pinned API version and configured test/live mode.
+
+`POST /api/v1/payments/webhooks/stripe` accepts only bounded JSON with a valid `Stripe-Signature`. Events are minimized before persistence, keyed by `(provider, provider_event_id)`, and queued for the worker. Replayed events are acknowledged idempotently; a changed payload for the same event ID is rejected. Worker jobs perform provider-side refunds and creator transfers with bounded retries, while Admin Finance exposes exact payment, destination, event, and recovery evidence with optimistic versions and audit requirements.
+
+Local and staging verification must use Stripe test mode (`STRIPE_LIVE_MODE=false`, `sk_test_...`) against a loopback-compatible test server or Stripe's test API. Production requires `STRIPE_LIVE_MODE=true`, separate live-mode approval, `sk_live_...`, a public HTTPS origin, the official Stripe API endpoint, a registered Webhook endpoint, merchant/legal scope, and sandbox-to-production reconciliation evidence. No real payment activity is authorized by this repository or its default configuration.
+
+`make payment-drill` is the reproducible pre-credential acceptance baseline. It never contacts Stripe and does not replace the required test-account acceptance for Connect onboarding, KYC, disputes, tax, invoices, reconciliation, or live-mode approval.
+
+Run the isolated OpenAI Chat/Image runtime drill with PostgreSQL client tools, `jq`, `curl`, and `lsof` available:
+
+```bash
+make provider-drill
+```
+
+This drill enables the configured OpenAI profiles only inside an isolated test schema, activates immutable Chat and Image routes through the Admin API, and runs real API/Worker binaries against a loopback OpenAI fixture. It verifies typed text and PNG outputs, Asset persistence, Local Test reservation/capture, generation idempotency, and exactly one fixture call per mode. `PROVIDER_DRILL_HTTP_PORT` and `PROVIDER_DRILL_FIXTURE_PORT` default to `18084` and `18085`; all child processes, media, schema, and ports are cleaned up afterward. It never contacts OpenAI or incurs a paid call.
 
 ## Billing statements
 
@@ -232,7 +360,11 @@ The default currency is USD, and timestamps are stored in UTC. User-facing trans
 
 ## Provider safety
 
-Real Chat, Image, Video, and Music integrations must remain behind provider adapters with capability metadata, price estimates, timeouts, retries, cancellation, and failure classification. Current local adapters are deterministic, mode-specific, and marked `local_test` in API and UI state.
+Every Chat, Image, Video, and Music integration remains behind `creation.ProviderRuntime`. Submission, retry, Admin enablement, and immutable model-route activation require an exact registered `(provider, mode, model)` capability. Durable jobs inherit the route revision's timeout and retry limit, while output bytes must pass the closed typed media contract before Asset creation. Local adapters are deterministic, mode-specific, and marked `local_test` in API and UI state. The bundled OpenAI Chat/Image, BytePlus Seedance Video, and MiniMax Music adapters are default-off and separately gated by process configuration, Provider Profile enablement, and audited model-route activation. Video output URLs are downloaded immediately because upstream retention is short-lived; Music output is bounded and signature-validated before Asset insertion.
+
+Use `docs/PROVIDER_INTEGRATION.md` for the implementation and staging acceptance contract. Registering code alone never enables traffic: the runtime must be configured, its Provider profile must be explicitly enabled, and an audited route revision must be activated.
+
+`make provider-staging-check` is a separately authorized two-call smoke check, not a runtime activation command. It does not enable Provider Profiles or model routes and does not replace application-level timeout, cancellation, retry, rate-limit, content-policy, cost-reconciliation, or Admin canary-disable acceptance.
 
 Do not enable production providers, issue paid calls, deploy, change DNS or cloud resources, or create real payment activity without explicit approval and credentials. Missing production configuration must fail closed.
 

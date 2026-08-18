@@ -26,13 +26,13 @@ func TestAssetListStablePaginationAppliesOwnershipVersionAndEntitlementFirst(t *
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO assets(owner_id,kind,title,media_url,mime_type,scan_status,source_type,license_code,created_at)
-		SELECT $1,'image','Paged owned Asset '||value,'/media/paged-owned-'||value||'.jpg','image/jpeg','clean','upload','hcai-personal-v1',now()-value*interval '1 second'
+		SELECT $1,'image','Paged owned Asset '||value,'/media/paged-owned-'||value||'.jpg','image/jpeg','clean','demo','hcai-personal-v1',now()-value*interval '1 second'
 		FROM generate_series(1,106) value`, ownerID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO assets(owner_id,kind,title,media_url,mime_type,scan_status,source_type,license_code,created_at)
-		SELECT $1,'image','Foreign Asset '||value,'/media/foreign-'||value||'.jpg','image/jpeg','clean','upload','hcai-personal-v1',now()+interval '1 hour'-value*interval '1 second'
+		SELECT $1,'image','Foreign Asset '||value,'/media/foreign-'||value||'.jpg','image/jpeg','clean','demo','hcai-personal-v1',now()+interval '1 hour'-value*interval '1 second'
 		FROM generate_series(1,12) value`, outsiderID); err != nil {
 		t.Fatal(err)
 	}
@@ -40,12 +40,12 @@ func TestAssetListStablePaginationAppliesOwnershipVersionAndEntitlementFirst(t *
 	rootID, versionID := uuid.New(), uuid.New()
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,scan_status,source_type,license_code,created_at)
-		VALUES($1,$2,'image','Excluded family root','/media/family-root.jpg','image/jpeg','clean','upload','hcai-personal-v1',now()+interval '3 hours')`, rootID, ownerID); err != nil {
+		VALUES($1,$2,'image','Excluded family root','/media/family-root.jpg','image/jpeg','clean','demo','hcai-personal-v1',now()+interval '3 hours')`, rootID, ownerID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,scan_status,source_type,license_code,family_id,version_number,supersedes_asset_id,created_at)
-		VALUES($3,$2,'image','Visible family revision','/media/family-v2.jpg','image/jpeg','clean','upload','hcai-personal-v1',$1,2,$1,now()+interval '2 hours')`, rootID, ownerID, versionID); err != nil {
+		VALUES($3,$2,'image','Visible family revision','/media/family-v2.jpg','image/jpeg','clean','demo','hcai-personal-v1',$1,2,$1,now()+interval '2 hours')`, rootID, ownerID, versionID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -54,7 +54,7 @@ func TestAssetListStablePaginationAppliesOwnershipVersionAndEntitlementFirst(t *
 	activeOrderID, revokedOrderID := uuid.New(), uuid.New()
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,scan_status,source_type,license_code)
-		VALUES($1,$2,'image','Licensed source','/media/licensed-source.jpg','image/jpeg','clean','upload','hcai-personal-v1')`, sourceID, sellerID); err != nil {
+		VALUES($1,$2,'image','Licensed source','/media/licensed-source.jpg','image/jpeg','clean','demo','hcai-personal-v1')`, sourceID, sellerID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -220,12 +220,12 @@ func TestAssetUsageStablePaginationSpansFamilyAndMixedKinds(t *testing.T) {
 	rootID, versionID := uuid.New(), uuid.New()
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,scan_status,source_type,license_code)
-		VALUES($1,$2,'image','Usage page root','/media/usage-page-root.jpg','image/jpeg','clean','upload','hcai-personal-v1')`, rootID, ownerID); err != nil {
+		VALUES($1,$2,'image','Usage page root','/media/usage-page-root.jpg','image/jpeg','clean','demo','hcai-personal-v1')`, rootID, ownerID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,scan_status,source_type,license_code,family_id,version_number,supersedes_asset_id)
-		VALUES($3,$2,'image','Usage page revision','/media/usage-page-v2.jpg','image/jpeg','clean','upload','hcai-personal-v1',$1,2,$1)`, rootID, ownerID, versionID); err != nil {
+		VALUES($3,$2,'image','Usage page revision','/media/usage-page-v2.jpg','image/jpeg','clean','demo','hcai-personal-v1',$1,2,$1)`, rootID, ownerID, versionID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `

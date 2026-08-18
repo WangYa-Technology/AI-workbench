@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/hcai-chat/hcai-chat/internal/billing"
 	"github.com/hcai-chat/hcai-chat/internal/notifications"
+	"github.com/hcai-chat/hcai-chat/internal/payments"
 	"github.com/hcai-chat/hcai-chat/internal/risk"
 	"github.com/hcai-chat/hcai-chat/internal/systemsettings"
 	"github.com/jackc/pgx/v5"
@@ -95,6 +96,18 @@ type Settlement struct {
 	CreatedAt   time.Time `json:"createdAt"`
 }
 
+type Funding struct {
+	Status            string     `json:"status"`
+	AmountCents       int        `json:"amountCents"`
+	Currency          string     `json:"currency"`
+	PaymentMode       string     `json:"paymentMode"`
+	LiveMode          bool       `json:"liveMode"`
+	ProposalID        *uuid.UUID `json:"proposalId,omitempty"`
+	CheckoutURL       *string    `json:"checkoutUrl,omitempty"`
+	CheckoutExpiresAt *time.Time `json:"checkoutExpiresAt,omitempty"`
+	UpdatedAt         time.Time  `json:"updatedAt"`
+}
+
 type Detail struct {
 	Summary
 	Brief                   string      `json:"brief"`
@@ -106,6 +119,7 @@ type Detail struct {
 	Proposals               []Proposal  `json:"proposals"`
 	Deliveries              []Delivery  `json:"deliveries"`
 	Events                  []Event     `json:"events"`
+	Funding                 *Funding    `json:"funding,omitempty"`
 	Settlement              *Settlement `json:"settlement,omitempty"`
 }
 
@@ -151,9 +165,16 @@ type ReviewInput struct {
 	Note     string `json:"note"`
 }
 
-type Service struct{ pool *pgxpool.Pool }
+type Service struct {
+	pool             *pgxpool.Pool
+	providerPayments bool
+}
 
 func NewService(pool *pgxpool.Pool) *Service { return &Service{pool: pool} }
+
+func NewServiceWithPayments(pool *pgxpool.Pool, providerPayments bool) *Service {
+	return &Service{pool: pool, providerPayments: providerPayments}
+}
 
 func (s *Service) List(ctx context.Context, actorID uuid.UUID, filter ListFilter) ([]Summary, error) {
 	filter.Query = strings.TrimSpace(filter.Query)
@@ -248,6 +269,23 @@ func (s *Service) Get(ctx context.Context, actorID, demandID uuid.UUID) (Detail,
 		return Detail{}, err
 	}
 	item.Events = events
+	var funding Funding
+	err = s.pool.QueryRow(ctx, `
+		SELECT status,amount_cents,currency,live_mode,proposal_id,
+		       CASE WHEN payer_id=$2 AND status='checkout_open' THEN checkout_url END,
+		       CASE WHEN payer_id=$2 AND status='checkout_open' THEN checkout_expires_at END,
+		       updated_at
+		FROM payment_intents
+		WHERE purpose='task' AND resource_id=$1
+		ORDER BY created_at DESC,id DESC LIMIT 1`, demandID, actorID).Scan(
+		&funding.Status, &funding.AmountCents, &funding.Currency, &funding.LiveMode, &funding.ProposalID,
+		&funding.CheckoutURL, &funding.CheckoutExpiresAt, &funding.UpdatedAt)
+	if err == nil {
+		funding.PaymentMode = "stripe"
+		item.Funding = &funding
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return Detail{}, fmt.Errorf("get task funding: %w", err)
+	}
 	var settlement Settlement
 	err = s.pool.QueryRow(ctx, `SELECT id,amount_cents,currency,mode,created_at FROM task_settlements WHERE demand_id=$1`, demandID).Scan(
 		&settlement.ID, &settlement.AmountCents, &settlement.Currency, &settlement.Mode, &settlement.CreatedAt)
@@ -394,6 +432,9 @@ func (s *Service) Claim(ctx context.Context, actorID, demandID uuid.UUID, key st
 	if status != "open" || !allow {
 		return Detail{}, ErrConflict
 	}
+	if err := s.requireTaskFundingTx(ctx, tx, demandID, nil, actorID, budget, "USD"); err != nil {
+		return Detail{}, err
+	}
 	_, err = tx.Exec(ctx, `INSERT INTO proposals(demand_id,creator_id,approach,deliverables,amount_cents,timeline_days,status,idempotency_key) VALUES($1,$2,'Direct acceptance','Deliver according to the published brief',$3,1,'accepted',$4)`, demandID, actorID, budget, key)
 	if err != nil {
 		return Detail{}, err
@@ -450,6 +491,13 @@ func (s *Service) AcceptProposal(ctx context.Context, actorID, demandID, proposa
 	}
 	if proposalStatus != "submitted" {
 		return Detail{}, ErrConflict
+	}
+	var proposalAmount int
+	if err = tx.QueryRow(ctx, `SELECT amount_cents FROM proposals WHERE id=$1`, proposalID).Scan(&proposalAmount); err != nil {
+		return Detail{}, err
+	}
+	if err := s.requireTaskFundingTx(ctx, tx, demandID, &proposalID, creatorID, proposalAmount, "USD"); err != nil {
+		return Detail{}, err
 	}
 	if _, err = tx.Exec(ctx, `UPDATE proposals SET status=CASE WHEN id=$2 THEN 'accepted' ELSE 'rejected' END,updated_at=now() WHERE demand_id=$1 AND status='submitted'`, demandID, proposalID); err != nil {
 		return Detail{}, err
@@ -594,20 +642,52 @@ func (s *Service) Review(ctx context.Context, actorID, demandID uuid.UUID, input
 		if _, err = tx.Exec(ctx, `UPDATE demands SET status='accepted',accepted_at=now(),updated_at=now() WHERE id=$1`, demandID); err != nil {
 			return Detail{}, err
 		}
-		if _, err = tx.Exec(ctx, `INSERT INTO task_settlements(id,demand_id,client_id,creator_id,amount_cents,currency,mode) VALUES($1,$2,$3,$4,$5,$6,'local_test')`, settlementID, demandID, clientID, *assigneeID, budget, currency); err != nil {
+		settlementMode := "local_test"
+		settlementMessage := "Your delivery for “" + taskTitle + "” was accepted and the Local Test USD settlement was recorded."
+		if s.providerPayments {
+			var paymentID uuid.UUID
+			var paymentAmount int
+			var paymentCurrency string
+			err = tx.QueryRow(ctx, `
+				SELECT id,amount_cents,currency FROM payment_intents
+				WHERE purpose='task' AND resource_id=$1 AND payer_id=$2 AND payee_id=$3 AND status='paid' FOR UPDATE`,
+				demandID, clientID, *assigneeID).Scan(&paymentID, &paymentAmount, &paymentCurrency)
+			if errors.Is(err, pgx.ErrNoRows) || paymentAmount != budget || paymentCurrency != currency {
+				return Detail{}, ErrConflict
+			}
+			if err != nil {
+				return Detail{}, err
+			}
+			settlementMode = "stripe_pending"
+			settlementMessage = "Your delivery for “" + taskTitle + "” was accepted. The verified Provider payout is pending."
+			if _, err = tx.Exec(ctx, `INSERT INTO task_settlements(id,demand_id,client_id,creator_id,amount_cents,currency,mode) VALUES($1,$2,$3,$4,$5,$6,$7)`, settlementID, demandID, clientID, *assigneeID, budget, currency, settlementMode); err != nil {
+				return Detail{}, err
+			}
+			if _, err = tx.Exec(ctx, `UPDATE payment_intents SET status='transfer_pending',updated_at=now(),version=version+1 WHERE id=$1`, paymentID); err != nil {
+				return Detail{}, err
+			}
+			if _, err = tx.Exec(ctx, `INSERT INTO payment_intent_events(payment_id,event_type,from_status,to_status,evidence) VALUES($1,'transfer.requested','paid','transfer_pending',jsonb_build_object('taskId',$2::text,'settlementId',$3::text))`, paymentID, demandID, settlementID); err != nil {
+				return Detail{}, err
+			}
+			if _, err = tx.Exec(ctx, `INSERT INTO jobs(kind,payload,max_attempts) VALUES($1,jsonb_build_object('paymentId',$2::text),20)`, payments.TaskTransferJobKind, paymentID); err != nil {
+				return Detail{}, err
+			}
+		} else {
+			if _, err = tx.Exec(ctx, `INSERT INTO task_settlements(id,demand_id,client_id,creator_id,amount_cents,currency,mode) VALUES($1,$2,$3,$4,$5,$6,$7)`, settlementID, demandID, clientID, *assigneeID, budget, currency, settlementMode); err != nil {
+				return Detail{}, err
+			}
+			if err = billing.TransferTx(ctx, tx, clientID, *assigneeID, settlementID, budget, currency,
+				"task_payment", "task_earning", "Local Test task settlement"); err != nil {
+				return Detail{}, fmt.Errorf("apply task billing transfer: %w", err)
+			}
+			if _, err = tx.Exec(ctx, `INSERT INTO ledger_entries(account_id,operation_id,direction,amount_cents,currency,reason) VALUES($1,$3,'debit',$4,$5,'task_local_test_settlement'),($2,$3,'credit',$4,$5,'task_local_test_settlement')`, clientID, *assigneeID, settlementID, budget, currency); err != nil {
+				return Detail{}, err
+			}
+		}
+		if err = insertEvent(ctx, tx, demandID, actorID, "delivery_accepted", stringPtr("submitted"), "accepted", input.Note, map[string]string{"settlementMode": settlementMode}); err != nil {
 			return Detail{}, err
 		}
-		if err = billing.TransferTx(ctx, tx, clientID, *assigneeID, settlementID, budget, currency,
-			"task_payment", "task_earning", "Local Test task settlement"); err != nil {
-			return Detail{}, fmt.Errorf("apply task billing transfer: %w", err)
-		}
-		if _, err = tx.Exec(ctx, `INSERT INTO ledger_entries(account_id,operation_id,direction,amount_cents,currency,reason) VALUES($1,$3,'debit',$4,$5,'task_local_test_settlement'),($2,$3,'credit',$4,$5,'task_local_test_settlement')`, clientID, *assigneeID, settlementID, budget, currency); err != nil {
-			return Detail{}, err
-		}
-		if err = insertEvent(ctx, tx, demandID, actorID, "delivery_accepted", stringPtr("submitted"), "accepted", input.Note, map[string]string{"settlementMode": "local_test"}); err != nil {
-			return Detail{}, err
-		}
-		if err = notifyTask(ctx, tx, *assigneeID, "task.delivery_accepted", "Delivery accepted", "Your delivery for “"+taskTitle+"” was accepted and the Local Test USD settlement was recorded.", demandID, "accepted:"+deliveryID.String()); err != nil {
+		if err = notifyTask(ctx, tx, *assigneeID, "task.delivery_accepted", "Delivery accepted", settlementMessage, demandID, "accepted:"+deliveryID.String()); err != nil {
 			return Detail{}, err
 		}
 	}
@@ -615,6 +695,44 @@ func (s *Service) Review(ctx context.Context, actorID, demandID uuid.UUID, input
 		return Detail{}, err
 	}
 	return s.Get(ctx, actorID, demandID)
+}
+
+func (s *Service) requireTaskFundingTx(ctx context.Context, tx pgx.Tx, taskID uuid.UUID, proposalID *uuid.UUID, assigneeID uuid.UUID, amount int, currency string) error {
+	if !s.providerPayments {
+		return nil
+	}
+	var paymentID uuid.UUID
+	var fundedProposalID, payeeID *uuid.UUID
+	var fundedAmount int
+	var fundedCurrency, status string
+	err := tx.QueryRow(ctx, `
+		SELECT id,proposal_id,payee_id,amount_cents,currency,status FROM payment_intents
+		WHERE purpose='task' AND resource_id=$1 AND status='paid' FOR UPDATE`, taskID).Scan(
+		&paymentID, &fundedProposalID, &payeeID, &fundedAmount, &fundedCurrency, &status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrConflict
+	}
+	if err != nil {
+		return err
+	}
+	if status != "paid" || !sameUUID(fundedProposalID, proposalID) || fundedAmount != amount || fundedCurrency != currency || (payeeID != nil && *payeeID != assigneeID) {
+		return ErrConflict
+	}
+	result, err := tx.Exec(ctx, `UPDATE payment_intents SET payee_id=$2,updated_at=now(),version=version+1 WHERE id=$1 AND (payee_id IS NULL OR payee_id=$2)`, paymentID, assigneeID)
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() != 1 {
+		return ErrConflict
+	}
+	return nil
+}
+
+func sameUUID(left, right *uuid.UUID) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
 }
 
 func (s *Service) OpenDispute(ctx context.Context, actorID, demandID uuid.UUID, reason, key string) (Detail, error) {
@@ -713,6 +831,53 @@ func (s *Service) Cancel(ctx context.Context, actorID, demandID uuid.UUID, reaso
 	if status != "open" {
 		return Detail{}, ErrConflict
 	}
+	cancellationEvidence := map[string]any{"paymentMode": "local_test"}
+	if s.providerPayments {
+		var paymentID uuid.UUID
+		var paymentStatus string
+		err = tx.QueryRow(ctx, `
+			SELECT id,status FROM payment_intents
+			WHERE purpose='task' AND resource_id=$1
+			ORDER BY created_at DESC,id DESC LIMIT 1 FOR UPDATE`, demandID).Scan(&paymentID, &paymentStatus)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return Detail{}, err
+		}
+		if err == nil {
+			cancellationEvidence = map[string]any{"paymentMode": "stripe", "paymentId": paymentID, "fundingStatus": paymentStatus}
+			switch paymentStatus {
+			case "checkout_pending", "checkout_open", "payment_failed":
+				if _, err = tx.Exec(ctx, `UPDATE payment_intents SET status='cancelled',updated_at=now(),version=version+1 WHERE id=$1`, paymentID); err != nil {
+					return Detail{}, err
+				}
+				if _, err = tx.Exec(ctx, `
+					INSERT INTO payment_intent_events(payment_id,event_type,from_status,to_status,evidence)
+					VALUES($1,'task.cancelled',$2,'cancelled',jsonb_build_object('taskId',$3::text))`, paymentID, paymentStatus, demandID); err != nil {
+					return Detail{}, err
+				}
+				cancellationEvidence["fundingStatus"] = "cancelled"
+			case "paid", "refund_failed":
+				operationID := uuid.New()
+				if _, err = tx.Exec(ctx, `
+					UPDATE payment_intents SET status='refund_pending',refund_operation_id=$2,provider_refund_id=NULL,updated_at=now(),version=version+1
+					WHERE id=$1`, paymentID, operationID); err != nil {
+					return Detail{}, err
+				}
+				if _, err = tx.Exec(ctx, `
+					INSERT INTO payment_intent_events(payment_id,event_type,from_status,to_status,evidence)
+					VALUES($1,'refund.requested',$2,'refund_pending',jsonb_build_object('taskId',$3::text,'reason','task_cancelled'))`, paymentID, paymentStatus, demandID); err != nil {
+					return Detail{}, err
+				}
+				if _, err = tx.Exec(ctx, `INSERT INTO jobs(kind,payload,max_attempts) VALUES($1,jsonb_build_object('paymentId',$2::text),20)`, payments.TaskRefundJobKind, paymentID); err != nil {
+					return Detail{}, err
+				}
+				cancellationEvidence["fundingStatus"] = "refund_pending"
+			case "refund_pending", "refunded":
+				cancellationEvidence["fundingStatus"] = paymentStatus
+			default:
+				return Detail{}, ErrConflict
+			}
+		}
+	}
 	rows, err := tx.Query(ctx, `SELECT creator_id FROM proposals WHERE demand_id=$1 AND status='submitted'`, demandID)
 	if err != nil {
 		return Detail{}, err
@@ -736,8 +901,13 @@ func (s *Service) Cancel(ctx context.Context, actorID, demandID uuid.UUID, reaso
 	if _, err = tx.Exec(ctx, `UPDATE proposals SET status='rejected',updated_at=now() WHERE demand_id=$1 AND status='submitted'`, demandID); err != nil {
 		return Detail{}, err
 	}
-	if err = insertEvent(ctx, tx, demandID, actorID, "task_cancelled", stringPtr("open"), "cancelled", reason, nil); err != nil {
+	if err = insertEvent(ctx, tx, demandID, actorID, "task_cancelled", stringPtr("open"), "cancelled", reason, cancellationEvidence); err != nil {
 		return Detail{}, err
+	}
+	if cancellationEvidence["fundingStatus"] == "refund_pending" {
+		if err = notifyTask(ctx, tx, clientID, "task.refund_requested", "Task refund requested", "The funded task \u201c"+taskTitle+"\u201d was cancelled. The Provider refund is pending signed confirmation.", demandID, "refund-requested"); err != nil {
+			return Detail{}, err
+		}
 	}
 	for _, proposerID := range proposerIDs {
 		if err = notifyTask(ctx, tx, proposerID, "task.cancelled", "Brief cancelled", "The commissioner cancelled “"+taskTitle+"”. Your proposal is now closed.", demandID, "cancelled:"+proposerID.String()); err != nil {

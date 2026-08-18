@@ -1,26 +1,43 @@
 import { expect, test } from '@playwright/test'
 
 const modes = [
-  { mode: 'chat', label: 'Chat', contentType: 'text/plain', signature: 'Deterministic Local Test response', selector: 'pre' },
-  { mode: 'image', label: 'Image', contentType: 'image/jpeg', signature: null, selector: 'img' },
-  { mode: 'video', label: 'Video', contentType: 'video/mp4', signature: null, selector: 'video' },
-  { mode: 'music', label: 'Music', contentType: 'audio/wav', signature: 'RIFF', selector: 'audio' },
+  { mode: 'chat', label: 'Chat', view: 'Responses', contentType: 'text/plain', signature: 'Deterministic Local Test response', selector: 'pre', format: 'TXT', accept: 'text/plain,.txt,.md' },
+  { mode: 'image', label: 'Image', view: 'Gallery', contentType: 'image/jpeg', signature: null, selector: 'img', format: 'JPEG', accept: 'image/jpeg,image/png' },
+  { mode: 'video', label: 'Video', view: 'Clips', contentType: 'video/mp4', signature: null, selector: 'video', format: 'MP4', accept: 'image/jpeg,image/png' },
+  { mode: 'music', label: 'Music', view: 'Tracks', contentType: 'audio/wav', signature: 'RIFF', selector: 'audio', format: 'WAV', accept: 'audio/wav,audio/x-wav,audio/wave,audio/mpeg' },
 ] as const
 
 test('creates Chat, Image, Video, and Music as typed, reusable Assets', async ({ page }) => {
+  test.setTimeout(90_000)
   await page.request.post('/api/v1/auth/demo', { data: { actor: 'creator' } })
   const publishedTitles: string[] = []
 
   for (const item of modes) {
     const prompt = `E2E ${item.label} typed asset ${Date.now().toString(36)}`
     await page.goto(`/create/${item.mode}`)
-    await expect(page.getByRole('heading', { name: new RegExp(item.label, 'i') })).toBeVisible()
-    await page.getByLabel('Prompt', { exact: true }).fill(prompt)
+    const modeNavigation = page.getByRole('navigation', { name: 'Creation mode' })
+    await expect(modeNavigation.getByRole('link', { name: item.label, exact: true })).toHaveClass(/active/)
+    await page.locator('.studio-composer textarea').fill(prompt)
     const actionLabel = item.mode === 'image' ? 'Generate image' : `Generate ${item.label}`
     await page.getByRole('button', { name: actionLabel, exact: true }).click()
-    await expect(page.getByText('Saved to Assets', { exact: false })).toBeVisible()
+    if (item.mode === 'chat') {
+      const conversation = page.locator('.studio-guide-messages')
+      await expect(conversation.getByText(prompt, { exact: true })).toBeVisible()
+      await expect(conversation.getByText('Deterministic Local Test response', { exact: false })).toBeVisible()
 
-    const publishHref = await page.getByRole('link', { name: 'Continue to publish', exact: true }).getAttribute('href')
+      const followUp = `Adapt the previous answer for product teams ${Date.now().toString(36)}`
+      await page.locator('.studio-composer textarea').fill(followUp)
+      await page.getByRole('button', { name: actionLabel, exact: true }).click()
+      await expect(conversation.getByText(followUp, { exact: true })).toBeVisible()
+      await expect(conversation.getByText('Conversation context: 1 prior turn(s).', { exact: false })).toBeVisible()
+      await page.getByRole('button', { name: 'Responses', exact: true }).click()
+    }
+    const generatedTask = page.locator('.studio-task').filter({ hasText: prompt }).first()
+    await expect(generatedTask.locator('.studio-task-status')).toContainText('Saved to Assets')
+
+    await generatedTask.locator('.studio-task-copy').click()
+    const publishLink = page.getByRole('dialog', { name: 'Generation details' }).getByRole('link', { name: 'Publish work', exact: true })
+    const publishHref = await publishLink.getAttribute('href')
     const assetID = new URL(publishHref!, 'http://127.0.0.1:5173').searchParams.get('assetId')
     expect(assetID).toBeTruthy()
 
@@ -56,5 +73,81 @@ test('creates Chat, Image, Video, and Music as typed, reusable Assets', async ({
   await page.goto('/community')
   for (const title of publishedTitles) {
     await expect(page.getByRole('heading', { name: title, exact: true })).toBeVisible()
+  }
+
+  const multiReferencePrompt = `E2E ordered multi-reference image ${Date.now().toString(36)}`
+  await page.goto('/create/image')
+  await page.getByRole('button', { name: 'Add reference', exact: true }).click()
+  const referenceOptions = page.locator('.reference-list > button')
+  await expect.poll(async () => referenceOptions.count(), { timeout: 10_000 }).toBeGreaterThanOrEqual(2)
+  await referenceOptions.nth(0).click()
+  await referenceOptions.nth(1).click()
+  await expect(page.locator('.studio-context-item')).toHaveCount(2)
+  await page.locator('.reference-mode-switch').getByRole('button', { name: 'Mask', exact: true }).click()
+  await referenceOptions.nth(0).click()
+  await expect(page.locator('.mask-context-item')).toHaveCount(1)
+  await page.locator('.studio-composer textarea').fill(multiReferencePrompt)
+  await page.getByRole('button', { name: 'Generate image', exact: true }).click()
+  const editedTask = page.locator('.studio-task').filter({ hasText: multiReferencePrompt }).first()
+  await expect(editedTask.locator('.studio-task-status')).toContainText('Saved to Assets')
+  await editedTask.getByRole('button', { name: 'Favorite generation', exact: true }).click()
+  await expect(editedTask.getByRole('button', { name: 'Remove generation favorite', exact: true })).toBeVisible()
+  const generationPage = await (await page.request.get('/api/v1/generations?mode=image&limit=1')).json() as { items: Array<{ sourceAssetIds: string[]; maskAssetId?: string; isFavorite: boolean }> }
+  expect(generationPage.items[0].sourceAssetIds).toHaveLength(2)
+  expect(generationPage.items[0].maskAssetId).toBeTruthy()
+  expect(generationPage.items[0].isFavorite).toBeTruthy()
+
+  await page.goto('/workspace/generations')
+  const selectionBoxes = page.locator('.generation-row-select input')
+  await selectionBoxes.nth(0).check()
+  await selectionBoxes.nth(1).check()
+  await page.getByRole('button', { name: 'Favorite selected', exact: true }).click()
+  await expect(page.getByText('2 generation(s) updated.', { exact: true })).toBeVisible()
+  await selectionBoxes.nth(0).check()
+  await selectionBoxes.nth(1).check()
+  await page.getByRole('button', { name: 'Remove favorites', exact: true }).click()
+  await expect(page.getByText('2 generation(s) updated.', { exact: true })).toBeVisible()
+})
+
+test('initializes every creation mode with its own controls and compatible references', async ({ page }) => {
+  await page.request.post('/api/v1/auth/logout')
+
+  for (const item of modes) {
+    await page.goto(`/create/${item.mode}`)
+    const modeNavigation = page.getByRole('navigation', { name: 'Creation mode' })
+    for (const label of modes.map(mode => mode.label)) {
+      await expect(modeNavigation.getByRole('link', { name: label, exact: true })).toBeVisible()
+    }
+    await expect(page.getByRole('button', { name: item.view, exact: true })).toBeVisible()
+    await expect(page.locator('.studio-output-summary')).toContainText(item.format)
+
+    await page.getByRole('button', { name: 'Add reference', exact: true }).click()
+    await expect(page.locator('.reference-picker input[type="file"]')).toHaveAttribute('accept', item.accept)
+  }
+})
+
+test('keeps every creation mode visible on a phone-sized viewport', async ({ page }) => {
+  await page.request.post('/api/v1/auth/logout')
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto('/create/video')
+
+  const modeNavigation = page.getByRole('navigation', { name: 'Creation mode' })
+  for (const label of modes.map(mode => mode.label)) {
+    await expect(modeNavigation.getByRole('link', { name: label, exact: true })).toBeVisible()
+  }
+  await expect(page.evaluate(() => document.documentElement.scrollWidth)).resolves.toBe(390)
+})
+
+test('switches creation modes in place and keeps the selected route active', async ({ page }) => {
+  await page.request.post('/api/v1/auth/demo', { data: { actor: 'creator' } })
+  await page.goto('/create/image')
+
+  for (const item of modes) {
+    const modeNavigation = page.getByRole('navigation', { name: 'Creation mode' })
+    await modeNavigation.getByRole('link', { name: item.label, exact: true }).click()
+    await expect(page).toHaveURL(new RegExp(`/create/${item.mode}$`))
+    await expect(page.locator(`.creation-studio[data-mode="${item.mode}"]`)).toBeVisible()
+    await expect(modeNavigation.getByRole('link', { name: item.label, exact: true })).toHaveClass(/active/)
+    await expect(page.getByRole('button', { name: item.view, exact: true })).toBeVisible()
   }
 })

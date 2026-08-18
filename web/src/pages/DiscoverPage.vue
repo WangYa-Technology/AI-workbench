@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowRight, RefreshCw } from 'lucide-vue-next'
+import { ArrowRight, BriefcaseBusiness, RefreshCw, Sparkles, UsersRound } from 'lucide-vue-next'
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink, useRoute } from 'vue-router'
@@ -37,6 +37,37 @@ onMounted(() => void load())
 
 <template>
   <section class="discover-page">
+    <header v-if="!loading && !error" class="discover-intro content-width">
+      <div>
+        <h1>{{ t('discover.title') }}</h1>
+        <p>{{ t('discover.summary') }}</p>
+      </div>
+      <nav class="discover-intro-actions" :aria-label="t('actions.quickLinks')">
+        <RouterLink class="command-button primary" to="/create/image">
+          <Sparkles :size="17" :stroke-width="1.75" />{{ t('actions.startCreating') }}
+        </RouterLink>
+        <RouterLink class="command-button secondary" to="/market/demands">
+          <BriefcaseBusiness :size="17" :stroke-width="1.75" />{{ t('actions.findBrief') }}
+        </RouterLink>
+      </nav>
+    </header>
+    <section v-if="!loading && !error" class="discover-pathways content-width" :aria-label="t('discover.pathwaysLabel')">
+      <RouterLink class="pathway-card" to="/create/image">
+        <span class="pathway-icon"><Sparkles :size="18" :stroke-width="1.75" /></span>
+        <span><strong>{{ t('discover.pathways.create.title') }}</strong><small>{{ t('discover.pathways.create.summary') }}</small></span>
+        <ArrowRight :size="17" :stroke-width="1.75" />
+      </RouterLink>
+      <RouterLink class="pathway-card" to="/community">
+        <span class="pathway-icon"><UsersRound :size="18" :stroke-width="1.75" /></span>
+        <span><strong>{{ t('discover.pathways.community.title') }}</strong><small>{{ t('discover.pathways.community.summary') }}</small></span>
+        <ArrowRight :size="17" :stroke-width="1.75" />
+      </RouterLink>
+      <RouterLink class="pathway-card" to="/market/demands">
+        <span class="pathway-icon"><BriefcaseBusiness :size="18" :stroke-width="1.75" /></span>
+        <span><strong>{{ t('discover.pathways.tasks.title') }}</strong><small>{{ t('discover.pathways.tasks.summary') }}</small></span>
+        <ArrowRight :size="17" :stroke-width="1.75" />
+      </RouterLink>
+    </section>
     <div v-if="loading" class="page-state hero-state" aria-live="polite">
       {{ t('status.loadingWorks') }}
     </div>
@@ -52,7 +83,7 @@ onMounted(() => void load())
       </RouterLink>
       <div class="hero-copy">
         <span class="hero-eyebrow">{{ featured.licenseCode.startsWith('demo') ? t('status.demo') : t('discover.featured') }}</span>
-        <h1>{{ featured.title }}</h1>
+        <h2>{{ featured.title }}</h2>
         <p>{{ featured.summary }}</p>
         <div class="work-byline">
           <RouterLink :to="`/creators/${featured.author.handle}`">
@@ -71,11 +102,13 @@ onMounted(() => void load())
         </div>
       </div>
     </div>
-    <div v-else class="page-state hero-state">
-      <h1>{{ query ? t('discover.noSearchResults') : t('discover.emptyTitle') }}</h1>
-      <p>{{ query ? t('discover.tryAnotherSearch') : t('discover.emptySummary') }}</p>
+    <div v-else class="discover-empty content-width">
+      <div>
+        <span class="hero-eyebrow">{{ query ? t('discover.noSearchResults') : t('discover.emptyTitle') }}</span>
+        <h2>{{ query ? t('discover.tryAnotherSearch') : t('discover.emptySummary') }}</h2>
+      </div>
       <RouterLink class="command-button primary" to="/create/image">
-        {{ t('actions.startCreating') }}
+        <Sparkles :size="17" :stroke-width="1.75" />{{ t('actions.startCreating') }}
       </RouterLink>
     </div>
 

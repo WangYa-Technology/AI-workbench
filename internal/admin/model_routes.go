@@ -92,7 +92,7 @@ func (s *Service) GetModelRoutePolicy(ctx context.Context, inputs ...ModelRouteH
 			rows.Close()
 			return result, err
 		}
-		item.ProviderRuntimeReady = item.LocalTest && s.localProviderRuntime
+		item.ProviderRuntimeReady = s.runtimes.Available(item.Provider, item.Mode, item.ModelName)
 		result.Routes[item.Mode] = item
 	}
 	if err := rows.Err(); err != nil {
@@ -137,7 +137,7 @@ func (s *Service) listModelRouteHistory(ctx context.Context, mode string, cursor
 			&item.Reason, &item.CreatedBy, &item.CreatedByHandle, &item.CreatedAt); err != nil {
 			return nil, "", err
 		}
-		item.ProviderRuntimeReady = item.LocalTest && s.localProviderRuntime
+		item.ProviderRuntimeReady = s.runtimes.Available(item.Provider, item.Mode, item.ModelName)
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
@@ -170,9 +170,9 @@ func (s *Service) UpdateModelRoute(ctx context.Context, actorID uuid.UUID, mode 
 	if version != input.ExpectedVersion {
 		return ModelRoutePolicy{}, ErrConflict
 	}
-	var profileMode string
-	var localTest, enabled bool
-	if err := tx.QueryRow(ctx, `SELECT mode,local_test,admin_enabled FROM provider_profiles WHERE id=$1`, input.ProviderProfileID).Scan(&profileMode, &localTest, &enabled); errors.Is(err, pgx.ErrNoRows) {
+	var profileMode, provider, modelName string
+	var enabled bool
+	if err := tx.QueryRow(ctx, `SELECT mode,provider,model_name,admin_enabled FROM provider_profiles WHERE id=$1`, input.ProviderProfileID).Scan(&profileMode, &provider, &modelName, &enabled); errors.Is(err, pgx.ErrNoRows) {
 		return ModelRoutePolicy{}, ErrNotFound
 	} else if err != nil {
 		return ModelRoutePolicy{}, err
@@ -180,7 +180,7 @@ func (s *Service) UpdateModelRoute(ctx context.Context, actorID uuid.UUID, mode 
 	if profileMode != mode {
 		return ModelRoutePolicy{}, ErrInvalid
 	}
-	if !localTest || !enabled || !s.localProviderRuntime {
+	if !enabled || !s.runtimes.Available(provider, profileMode, modelName) {
 		return ModelRoutePolicy{}, ErrProviderConfig
 	}
 	newID, newVersion := uuid.New(), version+1

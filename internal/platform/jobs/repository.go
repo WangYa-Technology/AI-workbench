@@ -153,7 +153,7 @@ func (r *Repository) Complete(ctx context.Context, job Job, owner string) error 
 }
 
 func (r *Repository) Fail(ctx context.Context, job Job, owner string, cause error) error {
-	terminal := job.Attempts >= job.MaxAttempts
+	terminal := job.Attempts >= job.MaxAttempts || !ShouldRetry(cause)
 	status := "queued"
 	if terminal {
 		status = "failed"
@@ -214,6 +214,16 @@ func (r *Repository) RecoverExpired(ctx context.Context) error {
 }
 
 type errorCoder interface{ ErrorCode() string }
+
+type retryClassifier interface{ Retryable() bool }
+
+func ShouldRetry(cause error) bool {
+	if cause == nil {
+		return false
+	}
+	var classified retryClassifier
+	return !errors.As(cause, &classified) || classified.Retryable()
+}
 
 func failureCode(cause error) string {
 	if cause == nil {

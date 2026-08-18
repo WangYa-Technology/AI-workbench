@@ -32,9 +32,9 @@ test('charges a completed generation once and exposes the personal statement', a
 
   await page.goto('/create/image')
   await expect(page.getByText('Available credits', { exact: true })).toBeVisible()
-  await page.getByLabel('Prompt', { exact: true }).fill(`Billing capture verification with precise geometry ${runID}`)
+  await page.locator('.studio-composer textarea').fill(`Billing capture verification with precise geometry ${runID}`)
   await page.getByRole('button', { name: 'Generate image', exact: true }).click()
-  await expect(page.getByText('Saved to Assets', { exact: false })).toBeVisible()
+  await expect(page.locator('.studio-task').first().locator('.studio-task-status')).toContainText('Saved to Assets')
 
   await page.getByRole('link', { name: 'View Local Test credit statement', exact: true }).click()
   await expect(page).toHaveURL(/\/workspace\/billing$/)

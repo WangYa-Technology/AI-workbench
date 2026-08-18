@@ -15,6 +15,16 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+type classifiedFailure struct {
+	retryable bool
+	delay     time.Duration
+}
+
+func (e classifiedFailure) Error() string             { return "provider_failure" }
+func (e classifiedFailure) ErrorCode() string         { return "provider_failure" }
+func (e classifiedFailure) Retryable() bool           { return e.retryable }
+func (e classifiedFailure) RetryDelay() time.Duration { return e.delay }
+
 func TestRepositoryDurableLeaseLifecycle(t *testing.T) {
 	pool, cleanup := testPool(t)
 	defer cleanup()
@@ -119,6 +129,49 @@ func TestRepositoryDurableLeaseLifecycle(t *testing.T) {
 	}
 	if err := repository.Complete(ctx, cancelledClaim, "worker-cancelled"); !errors.Is(err, jobs.ErrLeaseLost) {
 		t.Fatalf("cancelled worker completed job: %v", err)
+	}
+}
+
+func TestRepositoryFailureClassification(t *testing.T) {
+	pool, cleanup := testPool(t)
+	defer cleanup()
+	ctx := context.Background()
+	repository := jobs.NewRepository(pool)
+
+	permanentID, err := repository.Enqueue(ctx, "test.permanent", map[string]string{"value": "permanent"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	permanent, err := repository.Claim(ctx, "worker-permanent", time.Second)
+	if err != nil || permanent.ID != permanentID {
+		t.Fatalf("claim permanent failure job: job=%#v err=%v", permanent, err)
+	}
+	if err := repository.Fail(ctx, permanent, "worker-permanent", classifiedFailure{}); err != nil {
+		t.Fatal(err)
+	}
+	assertStatus(t, pool, permanentID, "failed")
+	assertAttempt(t, pool, permanentID, 1, "failed", "provider_failure", 0)
+
+	retryableID, err := repository.Enqueue(ctx, "test.retryable", map[string]string{"value": "retryable"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	retryable, err := repository.Claim(ctx, "worker-retryable", time.Second)
+	if err != nil || retryable.ID != retryableID {
+		t.Fatalf("claim retryable failure job: job=%#v err=%v", retryable, err)
+	}
+	if err := repository.Fail(ctx, retryable, "worker-retryable", classifiedFailure{retryable: true, delay: 30 * time.Second}); err != nil {
+		t.Fatal(err)
+	}
+	assertStatus(t, pool, retryableID, "queued")
+	assertAttempt(t, pool, retryableID, 1, "retry_scheduled", "provider_failure", 0)
+	var retryDelayed bool
+	if err := pool.QueryRow(ctx, `SELECT available_at >= now()+interval '20 seconds' FROM jobs WHERE id=$1`, retryableID).Scan(&retryDelayed); err != nil || !retryDelayed {
+		t.Fatalf("retry delay was not preserved: delayed=%v err=%v", retryDelayed, err)
+	}
+
+	if jobs.ShouldRetry(nil) || jobs.ShouldRetry(classifiedFailure{}) || !jobs.ShouldRetry(classifiedFailure{retryable: true}) {
+		t.Fatal("retry classification helper returned an unsafe result")
 	}
 }
 

@@ -1,0 +1,231 @@
+package payments
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/hcai-chat/hcai-chat/internal/platform/jobs"
+	"github.com/jackc/pgx/v5"
+)
+
+type productCheckoutRuntime struct {
+	calls       int
+	refundCalls int
+}
+
+func (*productCheckoutRuntime) Provider() string { return "stripe" }
+func (r *productCheckoutRuntime) CreateCheckout(_ context.Context, input CheckoutRequest) (CheckoutSession, error) {
+	r.calls++
+	return CheckoutSession{
+		ProviderID: "cs_workflow123", CheckoutURL: "https://checkout.stripe.com/c/pay/workflow123", Status: "open",
+		PaymentStatus: "unpaid", ExpiresAt: time.Now().Add(time.Hour).UTC(), LiveMode: false,
+	}, nil
+}
+func (r *productCheckoutRuntime) CreateRefund(_ context.Context, input RefundRequest) (Refund, error) {
+	r.refundCalls++
+	providerID := "re_workflow123"
+	if r.refundCalls > 1 {
+		providerID = "re_workflow456"
+	}
+	return Refund{
+		ProviderID: providerID, ProviderPaymentID: input.ProviderPaymentID, AmountCents: input.AmountCents,
+		Currency: "USD", Status: "pending",
+	}, nil
+}
+func (*productCheckoutRuntime) CreateTransfer(context.Context, TransferRequest) (Transfer, error) {
+	return Transfer{}, ErrProviderUnavailable
+}
+func (*productCheckoutRuntime) CreateConnectAccount(context.Context, ConnectAccountRequest) (ConnectAccount, error) {
+	return ConnectAccount{}, ErrProviderUnavailable
+}
+func (*productCheckoutRuntime) CreateAccountLink(context.Context, AccountLinkRequest) (AccountLink, error) {
+	return AccountLink{}, ErrProviderUnavailable
+}
+
+func TestProductCheckoutSignedFulfillmentWorkflow(t *testing.T) {
+	pool, cleanup := paymentTestPool(t)
+	defer cleanup()
+	ctx := context.Background()
+	buyerID, sellerID, sourceAssetID, productID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO users(id,email,handle,display_name,role) VALUES
+		  ($1,$2,$3,'Payment Buyer','member'),($4,$5,$6,'Payment Seller','creator')`,
+		buyerID, buyerID.String()+"@test.local", "buyer_"+buyerID.String()[:8], sellerID, sellerID.String()+"@test.local", "seller_"+sellerID.String()[:8]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,scan_status,source_type,license_code)
+		VALUES($1,$2,'image','Provider source Asset',$3,'image/jpeg','clean','demo','hcai-commercial-standard-v1')`,
+		sourceAssetID, sellerID, "/api/v1/assets/"+sourceAssetID.String()+"/content"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO products(id,seller_id,asset_id,title,description,product_type,price_cents,currency,license_code,status,ai_disclosure,included_files,compatibility)
+		VALUES($1,$2,$3,'Provider workflow','Signed fulfillment contract.','workflow',1900,'USD','hcai-commercial-standard-v1','active','AI-assisted.','[]','HCAI CHAT')`,
+		productID, sellerID, sourceAssetID); err != nil {
+		t.Fatal(err)
+	}
+	runtime := &productCheckoutRuntime{}
+	config := ServiceConfig{Enabled: true, LiveMode: false, APIVersion: testStripeAPIVersion, WebhookSecret: testStripeWebhookSecret, WebhookTolerance: 5 * time.Minute}
+	service := NewServiceWithRuntimes(pool, config, NewRuntimeCatalog(runtime))
+	checkout, created, err := service.BeginProductCheckout(ctx, buyerID, productID, "product-workflow-001", "checkout-request", "https://app.example.test/workspace/orders?payment=success", "https://app.example.test/market/products/one?payment=cancelled", true)
+	if err != nil || !created || checkout.Status != "checkout_open" || checkout.OrderID == uuid.Nil || checkout.PaymentID == uuid.Nil || runtime.calls != 1 {
+		t.Fatalf("create product checkout: checkout=%#v created=%t calls=%d err=%v", checkout, created, runtime.calls, err)
+	}
+	replayed, created, err := service.BeginProductCheckout(ctx, buyerID, productID, "product-workflow-001", "checkout-replay", "https://app.example.test/workspace/orders?payment=success", "https://app.example.test/market/products/one?payment=cancelled", true)
+	if err != nil || created || !replayed.AlreadyCreated || replayed.PaymentID != checkout.PaymentID || runtime.calls != 1 {
+		t.Fatalf("idempotent checkout mismatch: checkout=%#v created=%t calls=%d err=%v", replayed, created, runtime.calls, err)
+	}
+	var orderStatus string
+	var entitlementCount int
+	if err := pool.QueryRow(ctx, `SELECT status FROM orders WHERE id=$1`, checkout.OrderID).Scan(&orderStatus); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM entitlements WHERE order_id=$1`, checkout.OrderID).Scan(&entitlementCount); err != nil {
+		t.Fatal(err)
+	}
+	if orderStatus != "payment_pending" || entitlementCount != 0 {
+		t.Fatalf("checkout granted fulfillment before signed event: status=%s entitlements=%d", orderStatus, entitlementCount)
+	}
+
+	now := time.Now().UTC().Truncate(time.Second)
+	service.verifier.now = func() time.Time { return now }
+	body := productPaidEvent(checkout.PaymentID, productID, now.Unix(), checkout.AmountCents)
+	header := "t=" + fmt.Sprint(now.Unix()) + ",v1=" + stripeSignature(testStripeWebhookSecret, now.Unix(), body)
+	receipt, err := service.ReceiveStripeWebhook(ctx, body, header)
+	if err != nil || receipt.Status != "received" {
+		t.Fatalf("receive signed product payment: receipt=%#v err=%v", receipt, err)
+	}
+	repository := jobs.NewRepository(pool)
+	job, err := repository.Claim(ctx, "payment-workflow-worker", time.Minute)
+	if err != nil || job.Kind != PaymentEventJobKind {
+		t.Fatalf("claim payment event job: job=%#v err=%v", job, err)
+	}
+	if err := service.HandlePaymentEventJob(ctx, job); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Complete(ctx, job, "payment-workflow-worker"); err != nil {
+		t.Fatal(err)
+	}
+
+	var intentStatus, processingStatus string
+	var ownedAssetCount, localBillingCount, localLedgerCount int
+	if err := pool.QueryRow(ctx, `SELECT status FROM payment_intents WHERE id=$1`, checkout.PaymentID).Scan(&intentStatus); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT status FROM payment_provider_event_processing WHERE event_id=$1`, receipt.EventID).Scan(&processingStatus); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT status FROM orders WHERE id=$1`, checkout.OrderID).Scan(&orderStatus); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM entitlements WHERE order_id=$1 AND user_id=$2 AND status='active'`, checkout.OrderID, buyerID).Scan(&entitlementCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM assets WHERE owner_id=$1 AND source_type='purchase' AND source_id=$2`, buyerID, checkout.OrderID).Scan(&ownedAssetCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM billing_entries WHERE operation_id=$1`, checkout.OrderID).Scan(&localBillingCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM ledger_entries WHERE operation_id=$1`, checkout.OrderID).Scan(&localLedgerCount); err != nil {
+		t.Fatal(err)
+	}
+	if intentStatus != "paid" || processingStatus != "processed" || orderStatus != "fulfilled" || entitlementCount != 1 || ownedAssetCount != 1 || localBillingCount != 0 || localLedgerCount != 0 {
+		t.Fatalf("signed fulfillment mismatch: intent=%s processing=%s order=%s entitlement=%d asset=%d billing=%d ledger=%d", intentStatus, processingStatus, orderStatus, entitlementCount, ownedAssetCount, localBillingCount, localLedgerCount)
+	}
+	duplicate, err := service.ReceiveStripeWebhook(ctx, body, header)
+	if err != nil || !duplicate.Duplicate {
+		t.Fatalf("duplicate paid event was not acknowledged: %#v err=%v", duplicate, err)
+	}
+	var eventJobs int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM jobs WHERE kind=$1 AND payload->>'eventId'=$2`, PaymentEventJobKind, receipt.EventID.String()).Scan(&eventJobs); err != nil || eventJobs != 1 {
+		t.Fatalf("duplicate event created duplicate jobs: count=%d err=%v", eventJobs, err)
+	}
+
+	started, err := service.BeginProductRefund(ctx, buyerID, checkout.OrderID, "product-refund-001", "refund-request", "The licensed workflow did not fit the documented production requirement.")
+	if err != nil || !started || runtime.refundCalls != 1 {
+		t.Fatalf("start Provider refund: started=%t calls=%d err=%v", started, runtime.refundCalls, err)
+	}
+	replayedRefund, err := service.BeginProductRefund(ctx, buyerID, checkout.OrderID, "product-refund-001", "refund-replay", "The licensed workflow did not fit the documented production requirement.")
+	if err != nil || replayedRefund || runtime.refundCalls != 1 {
+		t.Fatalf("refund replay created another Provider request: started=%t calls=%d err=%v", replayedRefund, runtime.refundCalls, err)
+	}
+	if _, err := service.BeginProductRefund(ctx, buyerID, checkout.OrderID, "product-refund-conflict", "refund-conflict", "A different request key must not replace an active refund."); !errors.Is(err, ErrRefundConflict) {
+		t.Fatalf("active refund accepted a different request key: %v", err)
+	}
+	assertProductRefundState(t, pool, checkout, "refund_pending", "refund_requested", "active", 0, 0)
+	mismatchedBody := productRefundEvent("evt_refundmismatch", "re_unrelated999", "succeeded", checkout.PaymentID, productID, now.Unix(), checkout.AmountCents)
+	mismatchedReceipt := receivePaymentWorkflowEvent(t, service, mismatchedBody, now)
+	if err := service.HandlePaymentEventJob(ctx, jobs.Job{Kind: PaymentEventJobKind, Payload: []byte(fmt.Sprintf(`{"eventId":%q}`, mismatchedReceipt.EventID.String()))}); err == nil {
+		t.Fatal("mismatched Provider refund ID revoked rights")
+	}
+	assertProductRefundState(t, pool, checkout, "refund_pending", "refund_requested", "active", 0, 0)
+
+	failedBody := productRefundEvent("evt_refundfailed", "re_workflow123", "failed", checkout.PaymentID, productID, now.Unix(), checkout.AmountCents)
+	failedReceipt := receivePaymentWorkflowEvent(t, service, failedBody, now)
+	if err := service.HandlePaymentEventJob(ctx, jobs.Job{Kind: PaymentEventJobKind, Payload: []byte(fmt.Sprintf(`{"eventId":%q}`, failedReceipt.EventID.String()))}); err != nil {
+		t.Fatalf("process failed refund event: %v", err)
+	}
+	assertProductRefundState(t, pool, checkout, "paid", "fulfilled", "active", 0, 0)
+	if replayedRefund, err := service.BeginProductRefund(ctx, buyerID, checkout.OrderID, "product-refund-001", "failed-refund-replay", "The licensed workflow did not fit the documented production requirement."); err != nil || replayedRefund || runtime.refundCalls != 1 {
+		t.Fatalf("failed refund replay created another Provider request: started=%t calls=%d err=%v", replayedRefund, runtime.refundCalls, err)
+	}
+
+	started, err = service.BeginProductRefund(ctx, buyerID, checkout.OrderID, "product-refund-002", "refund-retry", "Retry after the Provider confirmed that the first refund did not complete.")
+	if err != nil || !started || runtime.refundCalls != 2 {
+		t.Fatalf("retry failed Provider refund: started=%t calls=%d err=%v", started, runtime.refundCalls, err)
+	}
+	succeededBody := productRefundEvent("evt_refundsucceeded", "re_workflow456", "succeeded", checkout.PaymentID, productID, now.Unix(), checkout.AmountCents)
+	succeededReceipt := receivePaymentWorkflowEvent(t, service, succeededBody, now)
+	refundJob := jobs.Job{Kind: PaymentEventJobKind, Payload: []byte(fmt.Sprintf(`{"eventId":%q}`, succeededReceipt.EventID.String()))}
+	if err := service.HandlePaymentEventJob(ctx, refundJob); err != nil {
+		t.Fatalf("process successful refund event: %v", err)
+	}
+	if err := service.HandlePaymentEventJob(ctx, refundJob); err != nil {
+		t.Fatalf("replay successful refund event: %v", err)
+	}
+	assertProductRefundState(t, pool, checkout, "refunded", "refunded", "refunded", 0, 0)
+}
+
+func productPaidEvent(paymentID, productID uuid.UUID, created int64, amount int) []byte {
+	return []byte(fmt.Sprintf(`{"id":"evt_productpaid","object":"event","api_version":%q,"created":%d,"livemode":false,"type":"checkout.session.completed","data":{"object":{"id":"cs_workflow123","object":"checkout.session","status":"complete","payment_status":"paid","amount_total":%d,"currency":"usd","payment_intent":"pi_workflow123","metadata":{"hcai_payment_id":%q,"hcai_resource_id":%q,"hcai_purpose":"product"}}}}`, testStripeAPIVersion, created, amount, paymentID.String(), productID.String()))
+}
+
+func productRefundEvent(eventID, refundID, status string, paymentID, productID uuid.UUID, created int64, amount int) []byte {
+	return []byte(fmt.Sprintf(`{"id":%q,"object":"event","api_version":%q,"created":%d,"livemode":false,"type":"refund.updated","data":{"object":{"id":%q,"object":"refund","status":%q,"amount":%d,"currency":"usd","payment_intent":"pi_workflow123","metadata":{"hcai_payment_id":%q,"hcai_resource_id":%q,"hcai_purpose":"product"}}}}`, eventID, testStripeAPIVersion, created, refundID, status, amount, paymentID.String(), productID.String()))
+}
+
+func receivePaymentWorkflowEvent(t *testing.T, service *Service, body []byte, now time.Time) Receipt {
+	t.Helper()
+	header := "t=" + fmt.Sprint(now.Unix()) + ",v1=" + stripeSignature(testStripeWebhookSecret, now.Unix(), body)
+	receipt, err := service.ReceiveStripeWebhook(context.Background(), body, header)
+	if err != nil || receipt.Status != "received" {
+		t.Fatalf("receive signed payment event: receipt=%#v err=%v", receipt, err)
+	}
+	return receipt
+}
+
+func assertProductRefundState(t *testing.T, pool interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}, checkout Checkout, intentStatus, orderStatus, entitlementStatus string, billingCount, ledgerCount int) {
+	t.Helper()
+	var actualIntent, actualOrder, actualEntitlement string
+	var actualBilling, actualLedger int
+	err := pool.QueryRow(context.Background(), `
+		SELECT pi.status,o.status,e.status,
+		       (SELECT count(*) FROM billing_entries WHERE user_id IN (pi.payer_id,pi.payee_id)),
+		       (SELECT count(*) FROM ledger_entries WHERE account_id IN (pi.payer_id,pi.payee_id))
+		FROM payment_intents pi JOIN orders o ON o.id=pi.order_id JOIN entitlements e ON e.order_id=o.id
+		WHERE pi.id=$1`, checkout.PaymentID).Scan(&actualIntent, &actualOrder, &actualEntitlement, &actualBilling, &actualLedger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if actualIntent != intentStatus || actualOrder != orderStatus || actualEntitlement != entitlementStatus || actualBilling != billingCount || actualLedger != ledgerCount {
+		t.Fatalf("refund state mismatch: intent=%s order=%s entitlement=%s billing=%d ledger=%d", actualIntent, actualOrder, actualEntitlement, actualBilling, actualLedger)
+	}
+}

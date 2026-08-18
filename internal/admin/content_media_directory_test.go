@@ -78,13 +78,13 @@ func TestAdminContentAndMediaInventoriesTraverseBeyondLegacyWindow(t *testing.T)
 
 	oldMediaID := uuid.New()
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,scan_status,source_type,license_code,uploaded_filename,size_bytes,created_at)
-		VALUES($1,$2,'image','Media backlog target','/media/backlog-target.jpg','image/jpeg','review','upload','personal','media-backlog-target.jpg',128,now() - interval '3 hours')`, oldMediaID, creatorID); err != nil {
+		INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,scan_status,source_type,license_code,uploaded_filename,size_bytes,storage_backend,storage_key,created_at)
+		VALUES($1,$2,'image','Media backlog target','/media/backlog-target.jpg','image/jpeg','review','upload','personal','media-backlog-target.jpg',128,'local_file',$3,now() - interval '3 hours')`, oldMediaID, creatorID, oldMediaID.String()+".jpg"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO assets(owner_id,kind,title,media_url,mime_type,scan_status,source_type,license_code,uploaded_filename,size_bytes,created_at)
-		SELECT $1,'image','Media backlog pressure '||value,'/media/backlog-pressure-'||value||'.jpg','image/jpeg','review','upload','personal','media-backlog-pressure-'||value||'.jpg',128,now() - interval '1 hour'
+		INSERT INTO assets(owner_id,kind,title,media_url,mime_type,scan_status,source_type,license_code,uploaded_filename,size_bytes,storage_backend,storage_key,created_at)
+		SELECT $1,'image','Media backlog pressure '||value,'/media/backlog-pressure-'||value||'.jpg','image/jpeg','review','upload','personal','media-backlog-pressure-'||value||'.jpg',128,'local_file','media-backlog-pressure-'||value||'.jpg',now() - interval '1 hour'
 		FROM generate_series(1,205) value`, creatorID); err != nil {
 		t.Fatal(err)
 	}

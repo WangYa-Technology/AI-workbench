@@ -21,6 +21,8 @@ const loading = ref(true)
 const purchasing = ref(false)
 const error = ref('')
 const accepted = ref(false)
+const paymentEnabled = ref(false)
+const paymentLiveMode = ref(false)
 const search = ref(String(route.query.q || ''))
 const productType = ref(String(route.query.type || ''))
 const sort = ref(String(route.query.sort || 'newest'))
@@ -38,7 +40,9 @@ async function load() {
   error.value = ''
   purchase.value = null
   try {
-    await session.ensure()
+    const [, runtime] = await Promise.all([session.ensure(), api.meta()])
+    paymentEnabled.value = runtime.paymentProvider.enabled
+    paymentLiveMode.value = runtime.paymentProvider.liveMode
     if (productID.value) {
       detail.value = await api.getProduct(productID.value)
     } else {
@@ -66,8 +70,13 @@ async function buy() {
   purchasing.value = true
   error.value = ''
   try {
-    purchase.value = await api.purchaseProduct(detail.value.id, accepted.value)
-    detail.value = await api.getProduct(detail.value.id)
+    if (paymentEnabled.value) {
+      const checkout = await api.checkoutProduct(detail.value.id, accepted.value)
+      globalThis.location.assign(checkout.checkoutUrl)
+    } else {
+      purchase.value = await api.purchaseProduct(detail.value.id, accepted.value)
+      detail.value = await api.getProduct(detail.value.id)
+    }
   } catch (reason) {
     error.value = messageFrom(reason)
   } finally {
@@ -194,7 +203,7 @@ onMounted(() => void load())
         </main>
 
         <aside class="product-purchase-rail">
-          <span>{{ t('marketplace.localTestPrice') }}</span><strong>{{ money(detail.priceCents, detail.currency) }}</strong><p>{{ t('marketplace.noRealCharge') }}</p>
+          <span>{{ paymentEnabled ? t('marketplace.providerPrice') : t('marketplace.localTestPrice') }}</span><strong>{{ money(detail.priceCents, detail.currency) }}</strong><p>{{ paymentEnabled ? t(paymentLiveMode ? 'marketplace.liveCharge' : 'marketplace.testCharge') : t('marketplace.noRealCharge') }}</p>
           <dl><div><dt>{{ t('marketplace.license') }}</dt><dd>{{ detail.license.name }}</dd></div><div><dt>{{ t('marketplace.refundWindow') }}</dt><dd>{{ t('marketplace.refundDays', { count: detail.license.refundWindowDays }) }}</dd></div></dl>
           <div v-if="purchase" class="purchase-success" role="status">
             <FileCheck2 :size="20" /><div><strong>{{ t('marketplace.purchaseSuccess') }}</strong><span>{{ t('marketplace.assetGranted') }}</span></div>
@@ -222,10 +231,10 @@ onMounted(() => void load())
               {{ error }}
             </p>
             <button class="command-button primary wide" type="submit" :disabled="!accepted || purchasing">
-              <LoaderCircle v-if="purchasing" class="spin" :size="17" /><CircleDollarSign v-else :size="17" />{{ purchasing ? t('marketplace.purchasing') : t('marketplace.purchase') }}
+              <LoaderCircle v-if="purchasing" class="spin" :size="17" /><CircleDollarSign v-else :size="17" />{{ purchasing ? t(paymentEnabled ? 'marketplace.openingCheckout' : 'marketplace.purchasing') : t(paymentEnabled ? 'marketplace.openCheckout' : 'marketplace.purchase') }}
             </button>
           </form>
-          <small>{{ t('marketplace.checkoutEvidence') }}</small>
+          <small>{{ t(paymentEnabled ? 'marketplace.providerCheckoutEvidence' : 'marketplace.checkoutEvidence') }}</small>
         </aside>
       </div>
     </template>

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -100,26 +101,34 @@ func TestAllLocalCreationModesProduceTypedAssetsAndCaptureOnce(t *testing.T) {
 			if completed.Status != "succeeded" || completed.OutputAssetID == nil || completed.ChargedCostCents != testCase.cost {
 				t.Fatalf("unexpected completed %s generation: %#v", testCase.mode, completed)
 			}
+			if completed.ProviderUsage == nil || completed.ProviderUsage.Status != "not_reported" || completed.ProviderUsage.TotalTokens != nil {
+				t.Fatalf("Local Test %s generation must retain explicit not-reported usage evidence: %#v", testCase.mode, completed.ProviderUsage)
+			}
 			if testCase.needsOutput && (completed.OutputText == nil || !strings.Contains(*completed.OutputText, prompt)) {
 				t.Fatalf("chat output text is missing its request evidence: %#v", completed.OutputText)
 			}
-			var kind, mimeType string
-			if err := pool.QueryRow(ctx, `SELECT kind,mime_type FROM assets WHERE id=$1`, completed.OutputAssetID).Scan(&kind, &mimeType); err != nil {
+			var kind, mimeType, storageBackend, storageKey string
+			if err := pool.QueryRow(ctx, `SELECT kind,mime_type,storage_backend,storage_key FROM assets WHERE id=$1`, completed.OutputAssetID).Scan(&kind, &mimeType, &storageBackend, &storageKey); err != nil {
 				t.Fatal(err)
 			}
-			if kind != testCase.kind || mimeType != testCase.mimeType {
-				t.Fatalf("unexpected %s asset contract kind=%q mime=%q", testCase.mode, kind, mimeType)
+			if kind != testCase.kind || mimeType != testCase.mimeType || storageBackend != "local_file" || filepath.Ext(storageKey) != testCase.extension {
+				t.Fatalf("unexpected %s asset contract kind=%q mime=%q backend=%q key=%q", testCase.mode, kind, mimeType, storageBackend, storageKey)
 			}
-			path, servedMIME, err := assetService.Content(ctx, ownerID, *completed.OutputAssetID)
+			contentHandle, err := assetService.Content(ctx, ownerID, *completed.OutputAssetID)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if filepath.Ext(path) != testCase.extension || servedMIME != testCase.mimeType {
-				t.Fatalf("unexpected %s content path=%q mime=%q", testCase.mode, path, servedMIME)
+			if contentHandle.MimeType != testCase.mimeType {
+				t.Fatalf("unexpected %s served mime=%q", testCase.mode, contentHandle.MimeType)
 			}
-			content, err := os.ReadFile(path)
+			object, err := contentHandle.Open(ctx, nil)
 			if err != nil {
 				t.Fatal(err)
+			}
+			content, readErr := io.ReadAll(object.Body)
+			closeErr := object.Body.Close()
+			if readErr != nil || closeErr != nil {
+				t.Fatalf("read %s stored output: read=%v close=%v", testCase.mode, readErr, closeErr)
 			}
 			testCase.validate(t, content)
 
@@ -139,6 +148,262 @@ func TestAllLocalCreationModesProduceTypedAssetsAndCaptureOnce(t *testing.T) {
 	}
 	if balance != 249965 || reserved != 0 {
 		t.Fatalf("unexpected multimode billing result balance=%d reserved=%d", balance, reserved)
+	}
+}
+
+func TestChatGenerationContinuesOwnedConversationAndPreservesBranchOnRetry(t *testing.T) {
+	pool, cleanup := testPool(t)
+	defer cleanup()
+	ctx := context.Background()
+	ownerID, otherOwnerID := uuid.New(), uuid.New()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO users(id,email,handle,display_name,role,status) VALUES
+		($1,$2,$3,'Conversation Creator','creator','active'),
+		($4,$5,$6,'Other Creator','creator','active')`,
+		ownerID, ownerID.String()+"@test.local", "conversation_"+ownerID.String()[:8],
+		otherOwnerID, otherOwnerID.String()+"@test.local", "other_"+otherOwnerID.String()[:8]); err != nil {
+		t.Fatal(err)
+	}
+	service := creation.NewService(pool, t.TempDir(), filepath.Join(t.TempDir(), "unused.jpg"), true)
+	jobRepository := jobs.NewRepository(pool)
+
+	root, err := service.SubmitCommand(ctx, ownerID, creation.SubmitInput{Mode: "chat", Prompt: "Draft a concise launch position"}, "chat-root-command", "chat-root-request")
+	if err != nil {
+		t.Fatal(err)
+	}
+	job := claimCreationJobKind(t, ctx, pool, "conversation-worker", creation.JobKind)
+	if err := service.HandleJob(ctx, job); err != nil {
+		t.Fatal(err)
+	}
+	if err := jobRepository.Complete(ctx, job, "conversation-worker"); err != nil {
+		t.Fatal(err)
+	}
+
+	followUp, err := service.SubmitCommand(ctx, ownerID, creation.SubmitInput{
+		Mode: "chat", Prompt: "Now adapt it for product teams", ParentGenerationID: &root.ID,
+	}, "chat-followup-command", "chat-followup-request")
+	if err != nil {
+		t.Fatal(err)
+	}
+	job = claimCreationJobKind(t, ctx, pool, "conversation-worker", creation.JobKind)
+	if err := service.HandleJob(ctx, job); err != nil {
+		t.Fatal(err)
+	}
+	if err := jobRepository.Complete(ctx, job, "conversation-worker"); err != nil {
+		t.Fatal(err)
+	}
+	completed, err := service.Get(ctx, ownerID, followUp.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completed.ParentGenerationID == nil || *completed.ParentGenerationID != root.ID || completed.OutputText == nil || !strings.Contains(*completed.OutputText, "1 prior turn(s)") {
+		t.Fatalf("follow-up did not retain its conversation context: %#v", completed)
+	}
+
+	if _, err := service.SubmitCommand(ctx, otherOwnerID, creation.SubmitInput{Mode: "chat", Prompt: "Cross-account follow-up", ParentGenerationID: &root.ID}, "chat-cross-owner", "chat-cross-owner-request"); !errors.Is(err, creation.ErrInvalid) {
+		t.Fatalf("expected foreign conversation parent to fail closed, got %v", err)
+	}
+	if _, err := service.SubmitCommand(ctx, ownerID, creation.SubmitInput{Mode: "video", Prompt: "Wrongly linked video", ParentGenerationID: &root.ID}, "video-chat-parent", "video-chat-parent-request"); !errors.Is(err, creation.ErrInvalid) {
+		t.Fatalf("expected non-chat conversation parent to be rejected, got %v", err)
+	}
+
+	branch, err := service.SubmitCommand(ctx, ownerID, creation.SubmitInput{Mode: "chat", Prompt: "Try an alternate ending", ParentGenerationID: &root.ID}, "chat-branch-command", "chat-branch-request")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Cancel(ctx, ownerID, branch.ID, "cancel-chat-branch", "cancel-chat-branch-request", "Testing retry branch preservation"); err != nil {
+		t.Fatal(err)
+	}
+	retried, err := service.Retry(ctx, ownerID, branch.ID, "retry-chat-branch", "retry-chat-branch-request")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retried.ParentGenerationID == nil || *retried.ParentGenerationID != root.ID {
+		t.Fatalf("retry lost the original conversation branch: %#v", retried.ParentGenerationID)
+	}
+	favorited, err := service.SetFavorite(ctx, ownerID, root.ID, true, "favorite-chat-root")
+	if err != nil || !favorited.IsFavorite {
+		t.Fatalf("favorite state was not persisted: %#v err=%v", favorited, err)
+	}
+	unfavorited, err := service.SetFavorite(ctx, ownerID, root.ID, false, "unfavorite-chat-root")
+	if err != nil || unfavorited.IsFavorite {
+		t.Fatalf("favorite state was not removed: %#v err=%v", unfavorited, err)
+	}
+}
+
+func TestGenerationPersistsOrderedCompatibleReferenceAssetsAcrossRetry(t *testing.T) {
+	pool, cleanup := testPool(t)
+	defer cleanup()
+	ctx := context.Background()
+	ownerID := uuid.New()
+	firstAssetID, secondAssetID, documentAssetID := uuid.New(), uuid.New(), uuid.New()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO users(id,email,handle,display_name,role,status)
+		VALUES($1,$2,$3,'Reference Creator','creator','active')`,
+		ownerID, ownerID.String()+"@test.local", "references_"+ownerID.String()[:8]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,scan_status,source_type,license_code,storage_backend,storage_key) VALUES
+		($2::uuid,$1,'image','First reference','/media/first.jpg','image/jpeg','clean','upload','creator-owned','local_file',($2::uuid)::text||'.jpg'),
+		($3::uuid,$1,'image','Second reference','/media/second.jpg','image/jpeg','clean','upload','creator-owned','local_file',($3::uuid)::text||'.jpg'),
+		($4::uuid,$1,'document','Wrong mode reference','/media/brief.txt','text/plain','clean','upload','creator-owned','local_file',($4::uuid)::text||'.txt')`,
+		ownerID, firstAssetID, secondAssetID, documentAssetID); err != nil {
+		t.Fatal(err)
+	}
+	service := creation.NewService(pool, t.TempDir(), filepath.Join(t.TempDir(), "unused.jpg"), true)
+	created, err := service.SubmitCommand(ctx, ownerID, creation.SubmitInput{
+		Mode: "image", Prompt: "Combine both visual references", SourceAssetIDs: []uuid.UUID{secondAssetID, firstAssetID, secondAssetID}, MaskAssetID: &firstAssetID,
+	}, "multi-reference-submit", "multi-reference-request")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.SourceAssetID == nil || *created.SourceAssetID != secondAssetID || created.MaskAssetID == nil || *created.MaskAssetID != firstAssetID || len(created.SourceAssetIDs) != 2 || created.SourceAssetIDs[0] != secondAssetID || created.SourceAssetIDs[1] != firstAssetID {
+		t.Fatalf("reference order was not preserved: %#v", created)
+	}
+	loaded, err := service.Get(ctx, ownerID, created.ID)
+	if err != nil || loaded.MaskAssetID == nil || *loaded.MaskAssetID != firstAssetID || len(loaded.SourceAssetIDs) != 2 || loaded.SourceAssetIDs[0] != secondAssetID || loaded.SourceAssetIDs[1] != firstAssetID {
+		t.Fatalf("persisted references were not returned: %#v err=%v", loaded.SourceAssetIDs, err)
+	}
+	if _, err := service.Cancel(ctx, ownerID, created.ID, "cancel-multi-reference", "cancel-multi-reference-request", "Verify reference preservation on retry"); err != nil {
+		t.Fatal(err)
+	}
+	retried, err := service.Retry(ctx, ownerID, created.ID, "retry-multi-reference", "retry-multi-reference-request")
+	if err != nil || retried.MaskAssetID == nil || *retried.MaskAssetID != firstAssetID || len(retried.SourceAssetIDs) != 2 || retried.SourceAssetIDs[0] != secondAssetID || retried.SourceAssetIDs[1] != firstAssetID {
+		t.Fatalf("retry lost ordered references: %#v err=%v", retried.SourceAssetIDs, err)
+	}
+	batch, err := service.Batch(ctx, ownerID, creation.GenerationBatchInput{
+		GenerationIDs: []uuid.UUID{created.ID, retried.ID}, Action: "favorite",
+	}, "unused-for-favorite", "batch-favorite-request")
+	if err != nil || len(batch.Items) != 2 || len(batch.Failures) != 0 || !batch.Items[0].IsFavorite || !batch.Items[1].IsFavorite {
+		t.Fatalf("batch favorite did not update every item: %#v err=%v", batch, err)
+	}
+	missingGenerationID := uuid.New()
+	batch, err = service.Batch(ctx, ownerID, creation.GenerationBatchInput{
+		GenerationIDs: []uuid.UUID{missingGenerationID, retried.ID}, Action: "cancel", Reason: "Verify partial batch cancellation",
+	}, "batch-cancel-command", "batch-cancel-request")
+	if err != nil || len(batch.Items) != 1 || batch.Items[0].ID != retried.ID || len(batch.Failures) != 1 || batch.Failures[0].GenerationID != missingGenerationID || batch.Failures[0].Code != "not_found" {
+		t.Fatalf("batch cancellation did not preserve per-item outcomes: %#v err=%v", batch, err)
+	}
+	if _, err := service.SubmitCommand(ctx, ownerID, creation.SubmitInput{
+		Mode: "image", Prompt: "Use an incompatible document", SourceAssetIDs: []uuid.UUID{documentAssetID},
+	}, "wrong-reference-kind", "wrong-reference-kind-request"); !errors.Is(err, creation.ErrInvalid) {
+		t.Fatalf("expected incompatible reference kind to fail, got %v", err)
+	}
+	if _, err := service.SubmitCommand(ctx, ownerID, creation.SubmitInput{
+		Mode: "image", Prompt: "Use a mask without a base image", MaskAssetID: &firstAssetID,
+	}, "mask-without-base", "mask-without-base-request"); !errors.Is(err, creation.ErrInvalid) {
+		t.Fatalf("expected mask without base reference to fail, got %v", err)
+	}
+	if _, err := service.SubmitCommand(ctx, ownerID, creation.SubmitInput{
+		Mode: "video", Prompt: "Use a mask in video mode", SourceAssetIDs: []uuid.UUID{firstAssetID}, MaskAssetID: &firstAssetID,
+	}, "mask-wrong-mode", "mask-wrong-mode-request"); !errors.Is(err, creation.ErrInvalid) {
+		t.Fatalf("expected non-image mask to fail, got %v", err)
+	}
+}
+
+func TestExternalRuntimeRouteProducesAssetAndInheritsRetryPolicy(t *testing.T) {
+	pool, cleanup := testPool(t)
+	defer cleanup()
+	ctx := context.Background()
+	ownerID := uuid.New()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO users(id,email,handle,display_name,role,status)
+		VALUES($1,$2,$3,'Contract Creator','creator','active')`, ownerID, ownerID.String()+"@test.local", "contract_"+ownerID.String()[:8]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO provider_profiles(id,mode,provider,model_name,display_name,description,estimated_cost_cents,currency,local_test,admin_enabled)
+		VALUES('contract-chat','chat','contract','contract-chat-v1','Contract Chat','Test-only external runtime contract.',7,'USD',false,true)`); err != nil {
+		t.Fatal(err)
+	}
+	var activeID uuid.UUID
+	var version int
+	if err := pool.QueryRow(ctx, `SELECT active_revision_id,version FROM model_route_state WHERE mode='chat'`).Scan(&activeID, &version); err != nil {
+		t.Fatal(err)
+	}
+	revisionID := uuid.New()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO model_route_revisions(id,mode,version,parent_revision_id,provider_profile_id,name,timeout_seconds,max_attempts,reason)
+		VALUES($1,'chat',$2,$3,'contract-chat','Contract route',30,2,'Verify the external Provider execution boundary.')`, revisionID, version+1, activeID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE model_route_state SET active_revision_id=$1,version=$2 WHERE mode='chat'`, revisionID, version+1); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := creation.NewServiceWithRuntimes(pool, t.TempDir(), creation.NewRuntimeCatalog()).SubmitCommand(
+		ctx, ownerID, creation.SubmitInput{Mode: "chat", Prompt: "Provider boundary prompt"}, "missing-runtime-submit", "missing-runtime-request",
+	); !errors.Is(err, creation.ErrProviderOff) {
+		t.Fatalf("expected submission without a configured runtime to fail closed, got %v", err)
+	}
+	var reservationCount int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM billing_reservations WHERE user_id=$1`, ownerID).Scan(&reservationCount); err != nil || reservationCount != 0 {
+		t.Fatalf("unavailable runtime reserved credits: count=%d err=%v", reservationCount, err)
+	}
+
+	response := "External Provider contract output"
+	usage := &creation.ProviderUsage{InputTokens: 23, CachedInputTokens: 5, OutputTokens: 17, ReasoningTokens: 4, TotalTokens: 40}
+	runtime := &contractRuntime{
+		provider: "contract", mode: "chat", model: "contract-chat-v1",
+		output: creation.ProviderOutput{
+			Kind: "document", MIMEType: "text/plain; charset=utf-8", Extension: ".txt",
+			Text: &response, Content: []byte(response), Usage: usage,
+		},
+	}
+	mediaRoot := t.TempDir()
+	service := creation.NewServiceWithRuntimes(pool, mediaRoot, creation.NewRuntimeCatalog(runtime))
+	generation, err := service.SubmitCommand(ctx, ownerID, creation.SubmitInput{Mode: "chat", Prompt: "Provider boundary prompt"}, "external-runtime-submit", "external-runtime-request")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if generation.Provider != "contract" || generation.ModelName != "contract-chat-v1" || generation.EstimatedCostCents != 7 {
+		t.Fatalf("generation did not snapshot its active Provider route: %#v", generation)
+	}
+	var maxAttempts int
+	if err := pool.QueryRow(ctx, `SELECT max_attempts FROM jobs WHERE kind=$1 AND payload->>'generationId'=$2`, creation.JobKind, generation.ID.String()).Scan(&maxAttempts); err != nil {
+		t.Fatal(err)
+	}
+	if maxAttempts != 2 {
+		t.Fatalf("generation job did not inherit route max attempts: %d", maxAttempts)
+	}
+	expectedAssetID := uuid.NewSHA1(generation.ID, []byte("hcai-generation-output"))
+	if err := os.WriteFile(filepath.Join(mediaRoot, expectedAssetID.String()+".txt"), []byte(response), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	jobRepository := jobs.NewRepository(pool)
+	job := claimCreationJobKind(t, ctx, pool, "contract-worker", creation.JobKind)
+	if err := service.HandleJob(ctx, job); err != nil {
+		t.Fatal(err)
+	}
+	if err := jobRepository.Complete(ctx, job, "contract-worker"); err != nil {
+		t.Fatal(err)
+	}
+	completed, err := service.Get(ctx, ownerID, generation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completed.Status != "succeeded" || completed.OutputAssetID == nil || *completed.OutputAssetID != expectedAssetID || completed.OutputText == nil || *completed.OutputText != response || completed.ChargedCostCents != 7 {
+		t.Fatalf("unexpected external Provider completion: %#v", completed)
+	}
+	if completed.ProviderUsage == nil || completed.ProviderUsage.Status != "reported" || completed.ProviderUsage.InputTokens == nil || *completed.ProviderUsage.InputTokens != 23 ||
+		completed.ProviderUsage.CachedInputTokens == nil || *completed.ProviderUsage.CachedInputTokens != 5 || completed.ProviderUsage.OutputTokens == nil || *completed.ProviderUsage.OutputTokens != 17 ||
+		completed.ProviderUsage.ReasoningTokens == nil || *completed.ProviderUsage.ReasoningTokens != 4 || completed.ProviderUsage.TotalTokens == nil || *completed.ProviderUsage.TotalTokens != 40 {
+		t.Fatalf("unexpected owner Provider usage evidence: %#v", completed.ProviderUsage)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE generation_provider_usage SET total_tokens=41 WHERE generation_id=$1`, generation.ID); err == nil || !strings.Contains(err.Error(), "immutable") {
+		t.Fatalf("Provider usage evidence accepted mutation: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM generation_provider_usage WHERE generation_id=$1`, generation.ID); err == nil || !strings.Contains(err.Error(), "immutable") {
+		t.Fatalf("Provider usage evidence accepted deletion: %v", err)
+	}
+	if len(runtime.requests) != 1 || runtime.requests[0].GenerationID != generation.ID || runtime.requests[0].Provider != "contract" {
+		t.Fatalf("external runtime did not receive immutable generation evidence: %#v", runtime.requests)
+	}
+	content, err := os.ReadFile(filepath.Join(mediaRoot, completed.OutputAssetID.String()+".txt"))
+	if err != nil || string(content) != response {
+		t.Fatalf("external Provider output was not persisted: content=%q err=%v", content, err)
 	}
 }
 
@@ -223,16 +488,21 @@ func TestSubmitProcessAndReadGeneratedAsset(t *testing.T) {
 		t.Fatalf("generation notification is not idempotent or deep-linked: count=%d target=%q", notificationCount, notificationTarget)
 	}
 	assetService := assets.NewService(pool, mediaRoot)
-	path, mimeType, err := assetService.Content(ctx, ownerID, *completed.OutputAssetID)
+	contentHandle, err := assetService.Content(ctx, ownerID, *completed.OutputAssetID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if mimeType != "image/jpeg" {
-		t.Fatalf("unexpected MIME type %q", mimeType)
+	if contentHandle.MimeType != "image/jpeg" {
+		t.Fatalf("unexpected MIME type %q", contentHandle.MimeType)
 	}
-	actual, err := os.ReadFile(path)
+	object, err := contentHandle.Open(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
+	}
+	actual, readErr := io.ReadAll(object.Body)
+	closeErr := object.Body.Close()
+	if readErr != nil || closeErr != nil {
+		t.Fatalf("read generated asset: read=%v close=%v", readErr, closeErr)
 	}
 	if string(actual) != string(expected) {
 		t.Fatalf("generated asset content mismatch")
@@ -327,6 +597,58 @@ func TestGenerationCancelRetryAndIdempotency(t *testing.T) {
 	}
 	if balance != 250000 || reserved != 5 {
 		t.Fatalf("retry did not create one new hold: balance=%d reserved=%d", balance, reserved)
+	}
+}
+
+func TestRetryRevalidatesTheCurrentProviderCapabilityBeforeBilling(t *testing.T) {
+	pool, cleanup := testPool(t)
+	defer cleanup()
+	ctx := context.Background()
+	ownerID := uuid.New()
+	if _, err := pool.Exec(ctx, `INSERT INTO users(id,email,handle,display_name,role,status) VALUES($1,$2,$3,'Retry Capability Creator','creator','active')`, ownerID, ownerID.String()+"@test.local", "retry_cap_"+ownerID.String()[:8]); err != nil {
+		t.Fatal(err)
+	}
+	localService := creation.NewService(pool, t.TempDir(), filepath.Join(t.TempDir(), "unused.jpg"), true)
+	created, err := localService.SubmitCommand(ctx, ownerID, creation.SubmitInput{
+		Mode: "video", Prompt: "A thirty second product story",
+		Parameters: creation.GenerationParameters{DurationSeconds: 30},
+	}, "retry-cap-submit", "retry-cap-submit-request")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := localService.Cancel(ctx, ownerID, created.ID, "retry-cap-cancel", "retry-cap-cancel-request", "Switch the active video route before retrying."); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO provider_profiles(id,mode,provider,model_name,display_name,description,estimated_cost_cents,currency,local_test,admin_enabled)
+		VALUES('retry-byteplus','video','byteplus_video','retry-video','Retry Video','Exact capability retry fixture.',9,'USD',false,true)`); err != nil {
+		t.Fatal(err)
+	}
+	var activeID uuid.UUID
+	var version int
+	if err := pool.QueryRow(ctx, `SELECT active_revision_id,version FROM model_route_state WHERE mode='video'`).Scan(&activeID, &version); err != nil {
+		t.Fatal(err)
+	}
+	revisionID := uuid.New()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO model_route_revisions(id,mode,version,parent_revision_id,provider_profile_id,name,timeout_seconds,max_attempts,reason)
+		VALUES($1,'video',$2,$3,'retry-byteplus','Retry Video route',30,2,'Verify retries honor the active Provider capability.')`, revisionID, version+1, activeID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE model_route_state SET active_revision_id=$1,version=$2 WHERE mode='video'`, revisionID, version+1); err != nil {
+		t.Fatal(err)
+	}
+	runtime := creation.NewVideoRuntime(creation.VideoRuntimeConfig{APIKey: "fixture-only", BaseURL: "http://127.0.0.1:9/v1", Model: "retry-video"})
+	externalService := creation.NewServiceWithRuntimes(pool, t.TempDir(), creation.NewRuntimeCatalog(runtime))
+	if _, err := externalService.Retry(ctx, ownerID, created.ID, "retry-cap-command", "retry-cap-request"); !errors.Is(err, creation.ErrInvalid) {
+		t.Fatalf("retry accepted a duration unsupported by the active route: %v", err)
+	}
+	var reserved int64
+	if err := pool.QueryRow(ctx, `SELECT reserved_cents FROM billing_accounts WHERE user_id=$1 AND currency='USD'`, ownerID).Scan(&reserved); err != nil {
+		t.Fatal(err)
+	}
+	if reserved != 0 {
+		t.Fatalf("invalid retry reserved credits before failing: %d", reserved)
 	}
 }
 

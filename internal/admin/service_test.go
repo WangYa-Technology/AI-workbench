@@ -12,6 +12,7 @@ import (
 	"github.com/hcai-chat/hcai-chat/internal/admin"
 	"github.com/hcai-chat/hcai-chat/internal/billing"
 	"github.com/hcai-chat/hcai-chat/internal/creation"
+	"github.com/hcai-chat/hcai-chat/internal/payments"
 	"github.com/hcai-chat/hcai-chat/internal/platform/database"
 	"github.com/hcai-chat/hcai-chat/internal/risk"
 	"github.com/jackc/pgx/v5"
@@ -237,6 +238,89 @@ func TestAdminTaskOperationsResolveDisputesAtomically(t *testing.T) {
 	}
 }
 
+func TestAdminProviderTaskDisputesQueueTransferOrRefund(t *testing.T) {
+	pool, cleanup := testPool(t)
+	defer cleanup()
+	ctx := context.Background()
+	adminID, clientID, creatorID := uuid.New(), uuid.New(), uuid.New()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO users(id,email,handle,display_name,role,status) VALUES
+		($1,$2,$3,'Provider Task Operator','admin','active'),
+		($4,$5,$6,'Provider Task Client','publisher','active'),
+		($7,$8,$9,'Provider Task Creator','creator','active')`,
+		adminID, adminID.String()+"@test.local", "provider_task_admin_"+adminID.String()[:8],
+		clientID, clientID.String()+"@test.local", "provider_task_client_"+clientID.String()[:8],
+		creatorID, creatorID.String()+"@test.local", "provider_task_creator_"+creatorID.String()[:8]); err != nil {
+		t.Fatal(err)
+	}
+	createProviderDispute := func(title string, amount int) (uuid.UUID, uuid.UUID, uuid.UUID) {
+		t.Helper()
+		taskID, assetID, disputeID, paymentID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+		if _, err := pool.Exec(ctx, `INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,scan_status,source_type,license_code) VALUES($1,$2,'image',$3,'/media/provider-task.jpg','image/jpeg','clean','delivery','personal')`, assetID, creatorID, title+" delivery"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx, `INSERT INTO demands(id,client_id,title,brief,deliverable_type,budget_cents,currency,deadline,status,assignee_id,summary) VALUES($1,$2,$3,'A complete Provider-funded disputed task brief.','image',$4,'USD',now()+interval '7 days','disputed',$5,'Provider dispute evidence.')`, taskID, clientID, title, amount, creatorID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx, `INSERT INTO proposals(demand_id,creator_id,approach,amount_cents,status) VALUES($1,$2,'Provider-funded operations approach',$3,'accepted')`, taskID, creatorID, amount); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx, `INSERT INTO deliveries(demand_id,creator_id,asset_id,note,status,version) VALUES($1,$2,$3,'Provider disputed delivery','disputed',1)`, taskID, creatorID, assetID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx, `INSERT INTO task_disputes(id,demand_id,opened_by,reason,status,idempotency_key) VALUES($1,$2,$3,'Provider settlement requires an operations decision.','open',$4)`, disputeID, taskID, clientID, "provider-dispute-"+taskID.String()); err != nil {
+			t.Fatal(err)
+		}
+		token := paymentID.String()[:8]
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO payment_intents(id,provider,purpose,payer_id,payee_id,resource_id,amount_cents,currency,status,live_mode,idempotency_key,provider_payment_id,provider_charge_id,paid_at)
+			VALUES($1,'stripe','task',$2,$3,$4,$5,'USD','paid',false,$6,$7,$8,now())`,
+			paymentID, clientID, creatorID, taskID, amount, "provider-funding-"+token, "pi_provider_"+token, "ch_provider_"+token); err != nil {
+			t.Fatal(err)
+		}
+		return taskID, disputeID, paymentID
+	}
+
+	releaseTaskID, _, releasePaymentID := createProviderDispute("Provider release task", 42_000)
+	cancelTaskID, _, cancelPaymentID := createProviderDispute("Provider refund task", 31_000)
+	service := admin.NewService(pool, true)
+	released, err := service.ResolveTaskDispute(ctx, adminID, releaseTaskID, admin.TaskDisputeResolution{
+		Decision: "release_creator", Reason: "Provider-funded delivery satisfies the recorded acceptance evidence.", ExpectedVersion: 1, Confirmed: true,
+	}, "provider-task-release")
+	if err != nil || released.Status != "accepted" || released.SettlementID == nil {
+		t.Fatalf("Provider creator release mismatch: operation=%#v err=%v", released, err)
+	}
+	cancelled, err := service.ResolveTaskDispute(ctx, adminID, cancelTaskID, admin.TaskDisputeResolution{
+		Decision: "cancel_without_settlement", Reason: "Provider-funded dispute evidence requires a full commissioner refund.", ExpectedVersion: 1, Confirmed: true,
+	}, "provider-task-cancel")
+	if err != nil || cancelled.Status != "cancelled" || cancelled.SettlementID != nil {
+		t.Fatalf("Provider commissioner resolution mismatch: operation=%#v err=%v", cancelled, err)
+	}
+	var releaseStatus, settlementMode, cancelStatus string
+	var refundOperationID *uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT pi.status,ts.mode FROM payment_intents pi JOIN task_settlements ts ON ts.demand_id=pi.resource_id WHERE pi.id=$1`, releasePaymentID).Scan(&releaseStatus, &settlementMode); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT status,refund_operation_id FROM payment_intents WHERE id=$1`, cancelPaymentID).Scan(&cancelStatus, &refundOperationID); err != nil {
+		t.Fatal(err)
+	}
+	var transferJobs, refundJobs, localEntries int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM jobs WHERE kind=$1`, payments.TaskTransferJobKind).Scan(&transferJobs); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM jobs WHERE kind=$1`, payments.TaskRefundJobKind).Scan(&refundJobs); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `
+		SELECT (SELECT count(*) FROM billing_entries WHERE user_id IN ($1,$2)) +
+		       (SELECT count(*) FROM ledger_entries WHERE account_id IN ($1,$2))`, clientID, creatorID).Scan(&localEntries); err != nil {
+		t.Fatal(err)
+	}
+	if releaseStatus != "transfer_pending" || settlementMode != "stripe_pending" || cancelStatus != "refund_pending" || refundOperationID == nil || transferJobs != 1 || refundJobs != 1 || localEntries != 0 {
+		t.Fatalf("Provider dispute evidence mismatch: release=%s settlement=%s cancel=%s operation=%v transferJobs=%d refundJobs=%d localEntries=%d", releaseStatus, settlementMode, cancelStatus, refundOperationID, transferJobs, refundJobs, localEntries)
+	}
+}
+
 func TestRankingPolicyCreatesImmutableAuditedRevisions(t *testing.T) {
 	pool, cleanup := testPool(t)
 	defer cleanup()
@@ -396,6 +480,107 @@ func TestAdminGenerationCancellationReleasesCredits(t *testing.T) {
 	}
 	if balance != 250000 || reserved != 0 {
 		t.Fatalf("admin cancellation did not release credits: balance=%d reserved=%d", balance, reserved)
+	}
+}
+
+func TestAdminPaymentOperationsRecoverAndAuditEvidence(t *testing.T) {
+	pool, cleanup := testPool(t)
+	defer cleanup()
+	ctx := context.Background()
+	adminID, clientID, creatorID := uuid.New(), uuid.New(), uuid.New()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO users(id,email,handle,display_name,role,status) VALUES
+		($1,$2,$3,'Payment Admin','admin','active'),
+		($4,$5,$6,'Payment Client','publisher','active'),
+		($7,$8,$9,'Payment Creator','creator','active')`,
+		adminID, adminID.String()+"@test.local", "payment_admin_"+adminID.String()[:8],
+		clientID, clientID.String()+"@test.local", "payment_client_"+clientID.String()[:8],
+		creatorID, creatorID.String()+"@test.local", "payment_creator_"+creatorID.String()[:8]); err != nil {
+		t.Fatal(err)
+	}
+	transferTaskID, refundTaskID := uuid.New(), uuid.New()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO demands(id,client_id,title,brief,deliverable_type,budget_cents,currency,deadline,status,assignee_id,summary) VALUES
+		($1,$2,'Transfer recovery task','A funded task requiring payout recovery.','image',12000,'USD',now()+interval '7 days','accepted',$3,'Controlled payout recovery.'),
+		($4,$2,'Refund recovery task','A cancelled funded task requiring refund recovery.','image',13000,'USD',now()+interval '7 days','cancelled',$3,'Controlled refund recovery.')`,
+		transferTaskID, clientID, creatorID, refundTaskID); err != nil {
+		t.Fatal(err)
+	}
+	transferID, refundID := uuid.New(), uuid.New()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO payment_intents(id,provider,purpose,payer_id,payee_id,resource_id,amount_cents,currency,status,live_mode,idempotency_key,provider_payment_id,provider_charge_id)
+		VALUES($1,'stripe','task',$2,$3,$4,12000,'USD','transfer_pending',false,'transfer-recovery',$5,$6),
+		      ($7,'stripe','task',$2,$3,$8,13000,'USD','refund_failed',false,'refund-recovery',$9,NULL)`,
+		transferID, clientID, creatorID, transferTaskID, "pi_transfer_recovery", "ch_transfer_recovery",
+		refundID, refundTaskID, "pi_refund_recovery"); err != nil {
+		t.Fatal(err)
+	}
+	service := admin.NewService(pool, true)
+	page, err := service.ListPaymentOperations(ctx, admin.PaymentOperationListInput{Attention: "needs_attention"})
+	if err != nil || len(page.Items) != 2 || page.Items[0].AttentionCode == "none" {
+		t.Fatalf("payment operations queue mismatch: %#v %v", page, err)
+	}
+	createdDestination, err := service.UpdatePaymentDestination(ctx, adminID, creatorID, admin.PaymentDestinationUpdate{
+		DestinationID: "acct_payment_recovery", Enabled: true, ExpectedVersion: 0, Reason: "Verified Sandbox creator payout account before transfer recovery.", Confirmed: true,
+	}, "destination-create")
+	if err != nil || createdDestination.Status != "verified" || createdDestination.Version != 1 {
+		t.Fatalf("destination creation mismatch: %#v %v", createdDestination, err)
+	}
+	disabledDestination, err := service.UpdatePaymentDestination(ctx, adminID, creatorID, admin.PaymentDestinationUpdate{
+		DestinationID: "acct_payment_recovery", Enabled: false, ExpectedVersion: 1, Reason: "Temporarily disable the payout destination while verification evidence is reviewed.", Confirmed: true,
+	}, "destination-disable")
+	if err != nil || disabledDestination.Version != 2 || disabledDestination.Status != "disabled" {
+		t.Fatalf("destination disable mismatch: %#v %v", disabledDestination, err)
+	}
+	updatedDestination, err := service.UpdatePaymentDestination(ctx, adminID, creatorID, admin.PaymentDestinationUpdate{
+		DestinationID: "acct_payment_recovery", Enabled: true, ExpectedVersion: 2, Reason: "Re-enable the verified Sandbox creator payout account for recovery.", Confirmed: true,
+	}, "destination-enable")
+	if err != nil || updatedDestination.Version != 3 || !updatedDestination.ChargesEnabled || !updatedDestination.PayoutsEnabled {
+		t.Fatalf("destination re-enable mismatch: %#v %v", updatedDestination, err)
+	}
+	transfer, err := service.RecoverPayment(ctx, adminID, transferID, admin.PaymentRecovery{
+		Action: "retry_transfer", ExpectedVersion: 1, Reason: "The verified payout destination is now available for the pending transfer.", Confirmed: true,
+	}, "transfer-recovery")
+	if err != nil || transfer.Status != "transfer_pending" || transfer.Job == nil || transfer.Job.Kind != payments.TaskTransferJobKind || transfer.Job.Status != "queued" || transfer.Version != 2 {
+		t.Fatalf("transfer recovery mismatch: %#v %v", transfer, err)
+	}
+	if _, err := service.RecoverPayment(ctx, adminID, transferID, admin.PaymentRecovery{
+		Action: "retry_transfer", ExpectedVersion: 2, Reason: "A queued transfer must not be duplicated by a second operations command.", Confirmed: true,
+	}, "transfer-duplicate"); !errors.Is(err, admin.ErrConflict) {
+		t.Fatalf("duplicate transfer recovery was accepted: %v", err)
+	}
+	refunded, err := service.RecoverPayment(ctx, adminID, refundID, admin.PaymentRecovery{
+		Action: "retry_refund", ExpectedVersion: 1, Reason: "The previous refund failed and requires a new controlled Provider request.", Confirmed: true,
+	}, "refund-recovery")
+	if err != nil || refunded.Status != "refund_pending" || refunded.Job == nil || refunded.Job.Kind != payments.TaskRefundJobKind || refunded.Version != 2 {
+		t.Fatalf("refund recovery mismatch: %#v %v", refunded, err)
+	}
+	eventID := uuid.New()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO payment_provider_events(id,provider,provider_event_id,event_type,api_version,live_mode,occurred_at,payload_sha256,object_id,object_type,payment_id,purpose)
+		VALUES($1,'stripe','evt_payment_replay','payment_intent.succeeded','2026-02-25.clover',false,now(),repeat('a',64),'pi_payment_replay','payment_intent',$2,'task')`, eventID, transferID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO payment_provider_event_processing(event_id,status) VALUES($1,'received')`, eventID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO jobs(kind,payload,status,attempts,max_attempts,last_error,last_error_code)
+		VALUES('payment.process_event',jsonb_build_object('eventId',$1::text),'failed',8,8,'payment_response_invalid','payment_response_invalid')`, eventID); err != nil {
+		t.Fatal(err)
+	}
+	replayed, err := service.ReplayPaymentEvent(ctx, adminID, eventID, admin.PaymentEventReplay{
+		ExpectedVersion: 1, Reason: "Corrected internal payment evidence requires a controlled webhook processing replay.", Confirmed: true,
+	}, "event-replay")
+	if err != nil || replayed.ProviderEvent == nil || replayed.ProviderEvent.ReplayCount != 1 || replayed.ProviderEvent.Job == nil || replayed.ProviderEvent.Job.Status != "queued" {
+		t.Fatalf("payment event replay mismatch: %#v %v", replayed, err)
+	}
+	var audits int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM audit_events WHERE action LIKE 'admin.payment_%'`).Scan(&audits); err != nil {
+		t.Fatal(err)
+	}
+	if audits != 6 {
+		t.Fatalf("payment recovery audit evidence mismatch: %d", audits)
 	}
 }
 

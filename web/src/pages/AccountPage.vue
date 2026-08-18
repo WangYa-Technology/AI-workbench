@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { CheckCircle2, Copy, Download, FileKey2, Github, Globe2, KeyRound, Laptop2, LoaderCircle, LogOut, Mail, MailCheck, Plus, RefreshCw, Send, ShieldCheck, Smartphone, Trash2, UserRound, UsersRound, Webhook } from 'lucide-vue-next'
+import { CheckCircle2, Copy, Download, FileKey2, Github, Globe2, KeyRound, Landmark, Laptop2, LoaderCircle, LogOut, Mail, MailCheck, Plus, RefreshCw, Send, ShieldCheck, Smartphone, Trash2, UserRound, UsersRound, Webhook } from 'lucide-vue-next'
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
-import { api, messageFrom, type AccountSession, type DataRightsRequest, type DeveloperAccess, type DeveloperCredential, type DeveloperServiceAccount, type DeveloperWebhookAccess, type DeveloperWebhookCreate, type DeveloperWebhookCredential, type DeveloperWebhookEndpoint, type IdentityEmailAction, type OAuthProvider } from '../api/client'
+import { api, messageFrom, type AccountSession, type DataRightsRequest, type DeveloperAccess, type DeveloperCredential, type DeveloperServiceAccount, type DeveloperWebhookAccess, type DeveloperWebhookCreate, type DeveloperWebhookCredential, type DeveloperWebhookEndpoint, type IdentityEmailAction, type OAuthProvider, type PayoutStatus } from '../api/client'
 import { formatDateTime } from '../lib/format'
 import { useNotificationsStore } from '../stores/notifications'
 import { usePreferencesStore } from '../stores/preferences'
@@ -23,6 +23,8 @@ const emailActions = ref<IdentityEmailAction[]>([])
 const emailActionNextCursor = ref<string | null>(null)
 const emailActionsLoadingMore = ref(false)
 const providers = ref<OAuthProvider[]>([])
+const payoutStatus = ref<PayoutStatus | null>(null)
+const payoutLoading = ref(false)
 const dataRightsRequests = ref<DataRightsRequest[]>([])
 const dataRightsNextCursor = ref<string | null>(null)
 const dataRightsLoadingMore = ref(false)
@@ -48,7 +50,7 @@ const webhookForm = reactive<{ name: string, url: string, eventTypes: DeveloperW
 
 const section = computed(() => {
   const value = String(route.query.section || 'profile')
-  return ['profile', 'security', 'connections', 'developer', 'privacy'].includes(value) ? value : 'profile'
+  return ['profile', 'security', 'connections', 'payouts', 'developer', 'privacy'].includes(value) ? value : 'profile'
 })
 const safeReturnTo = computed(() => {
   const value = String(route.query.returnTo || '')
@@ -188,6 +190,32 @@ async function loadDeveloperAccess() {
     webhookAccess.value = webhooks
   } catch (reason) {
     error.value = messageFrom(reason)
+  }
+}
+
+async function loadPayoutStatus() {
+  if (!session.user) return
+  payoutLoading.value = true
+  try {
+    payoutStatus.value = await api.getPayoutStatus()
+  } catch (reason) {
+    error.value = messageFrom(reason)
+  } finally {
+    payoutLoading.value = false
+  }
+}
+
+async function beginPayoutOnboarding() {
+  actionID.value = 'payout-onboarding'
+  error.value = ''
+  success.value = ''
+  try {
+    const link = await api.beginPayoutOnboarding()
+    // Account Links are single-use and short-lived; leave HCAI immediately for Stripe-hosted onboarding.
+    globalThis.location.assign(link.url)
+  } catch (reason) {
+    error.value = messageFrom(reason)
+    actionID.value = ''
   }
 }
 
@@ -483,6 +511,7 @@ watch(() => route.query.auth, value => {
 
 watch(section, value => {
   if (value === 'developer' && session.user && !developerAccess.value) void loadDeveloperAccess()
+  if (value === 'payouts' && session.user) void loadPayoutStatus()
 })
 
 onMounted(async () => {
@@ -495,7 +524,8 @@ onMounted(async () => {
   providers.value = providerResponse.items
   if (user) {
     syncProfile()
-    await Promise.all([loadEvidence(), loadDataRights(), section.value === 'developer' ? loadDeveloperAccess() : Promise.resolve()])
+    await Promise.all([loadEvidence(), loadDataRights(), section.value === 'developer' ? loadDeveloperAccess() : Promise.resolve(), section.value === 'payouts' ? loadPayoutStatus() : Promise.resolve()])
+    if (route.query.connect === 'return' || route.query.connect === 'refresh') success.value = t('account.payoutReturned')
   }
 })
 </script>
@@ -629,6 +659,9 @@ onMounted(async () => {
         <RouterLink :to="{ path: '/settings', query: { section: 'connections' } }" :class="{ active: section === 'connections' }">
           <KeyRound :size="17" />{{ t('account.signInMethods') }}
         </RouterLink>
+        <RouterLink :to="{ path: '/settings', query: { section: 'payouts' } }" :class="{ active: section === 'payouts' }">
+          <Landmark :size="17" />{{ t('account.payouts') }}
+        </RouterLink>
         <RouterLink :to="{ path: '/settings', query: { section: 'developer' } }" :class="{ active: section === 'developer' }">
           <KeyRound :size="17" />{{ t('account.developerAccess') }}
         </RouterLink>
@@ -732,6 +765,39 @@ onMounted(async () => {
           <RouterLink class="settings-command" to="/notifications?view=preferences">
             <span><strong>{{ t('account.manageNotifications') }}</strong><small>{{ t('account.manageNotificationsSummary') }}</small></span><RefreshCw :size="17" />
           </RouterLink>
+        </section>
+      </div>
+
+      <div v-else-if="section === 'payouts'" class="settings-layout payout-layout">
+        <aside><h2>{{ t('account.payouts') }}</h2><p>{{ t('account.payoutsSummary') }}</p></aside>
+        <section class="settings-panel payout-panel">
+          <div v-if="payoutLoading" class="inline-empty">
+            {{ t('account.checkingSession') }}
+          </div>
+          <template v-else-if="payoutStatus">
+            <div class="payout-heading">
+              <div>
+                <span class="status-label">{{ t('account.payoutStatus') }}</span><strong>{{ t(`account.payoutStatuses.${payoutStatus.status}`) }}</strong>
+              </div>
+              <span class="availability-label" :class="{ available: payoutStatus.status === 'verified' }">{{ payoutStatus.providerAvailable ? (payoutStatus.liveMode ? t('account.payoutLiveMode') : t('account.payoutTestMode')) : t('account.unavailable') }}</span>
+            </div>
+            <dl class="payout-evidence">
+              <div><dt>{{ t('account.payoutProvider') }}</dt><dd>{{ payoutStatus.provider }}</dd></div>
+              <div><dt>{{ t('account.payoutCapabilities') }}</dt><dd>{{ t('account.payoutCapabilitiesValue', { charges: payoutStatus.chargesEnabled ? t('account.payoutCapabilityEnabled') : t('account.payoutCapabilityPending'), payouts: payoutStatus.payoutsEnabled ? t('account.payoutCapabilityEnabled') : t('account.payoutCapabilityPending') }) }}</dd></div>
+              <div v-if="payoutStatus.destinationId">
+                <dt>{{ t('account.payoutAccount') }}</dt><dd><code>{{ payoutStatus.destinationId }}</code></dd>
+              </div>
+            </dl>
+            <button v-if="payoutStatus.canStartOnboarding" class="command-button primary" type="button" :disabled="Boolean(actionID)" @click="beginPayoutOnboarding">
+              <Landmark :size="17" />{{ payoutStatus.status === 'not_started' ? t('account.payoutStart') : t('account.payoutResume') }}
+            </button>
+            <p v-if="!payoutStatus.providerAvailable" class="retention-note">
+              {{ t('account.payoutUnavailable') }}
+            </p>
+            <p class="retention-note">
+              {{ t('account.payoutHostedBoundary') }}
+            </p>
+          </template>
         </section>
       </div>
 

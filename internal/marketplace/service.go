@@ -107,7 +107,7 @@ type Order struct {
 	ID                uuid.UUID    `json:"id"`
 	ProductID         uuid.UUID    `json:"productId"`
 	ProductTitle      string       `json:"productTitle"`
-	AssetID           uuid.UUID    `json:"assetId"`
+	AssetID           *uuid.UUID   `json:"assetId,omitempty"`
 	AmountCents       int          `json:"amountCents"`
 	Currency          string       `json:"currency"`
 	Status            string       `json:"status"`
@@ -370,8 +370,6 @@ func (s *Service) ListOrders(ctx context.Context, buyerID uuid.UUID, input Order
 		if err := scanOrder(rows, &item); err != nil {
 			return OrderPage{}, fmt.Errorf("scan order: %w", err)
 		}
-		item.PaymentMode = "test"
-		item.RealCharge = false
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
@@ -553,18 +551,19 @@ const productSelect = `
 	LEFT JOIN entitlements e ON e.product_id=p.id AND e.user_id=$1 AND e.status='active'`
 
 const orderSelect = `
-	SELECT o.id,p.id,o.product_title_snapshot,e.asset_id,o.amount_cents,o.currency,o.status,e.license_code,o.license_name_snapshot,
-	       o.license_version,o.license_terms_snapshot,o.refund_window_days_snapshot,o.refund_requested_at,o.refunded_at,o.created_at
+	SELECT o.id,p.id,o.product_title_snapshot,e.asset_id,o.amount_cents,o.currency,o.status,p.license_code,o.license_name_snapshot,
+	       o.license_version,o.license_terms_snapshot,o.refund_window_days_snapshot,o.refund_requested_at,o.refunded_at,o.created_at,
+	       CASE WHEN pi.provider='stripe' THEN 'stripe' ELSE 'test' END,COALESCE(pi.live_mode,false)
 	FROM orders o
 	JOIN products p ON p.id=o.product_id
-	JOIN entitlements e ON e.order_id=o.id`
+	LEFT JOIN entitlements e ON e.order_id=o.id
+	LEFT JOIN payment_intents pi ON pi.order_id=o.id`
 
 func scanOrder(row scanner, item *Order) error {
 	err := row.Scan(&item.ID, &item.ProductID, &item.ProductTitle, &item.AssetID, &item.AmountCents,
 		&item.Currency, &item.Status, &item.LicenseCode, &item.LicenseName, &item.LicenseVersion,
-		&item.LicenseTerms, &item.RefundWindowDays, &item.RefundRequestedAt, &item.RefundedAt, &item.CreatedAt)
-	item.PaymentMode = "test"
-	item.RealCharge = false
+		&item.LicenseTerms, &item.RefundWindowDays, &item.RefundRequestedAt, &item.RefundedAt, &item.CreatedAt,
+		&item.PaymentMode, &item.RealCharge)
 	return err
 }
 

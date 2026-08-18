@@ -51,7 +51,7 @@ func TestContentDraftAndAssetVersionHTTPContract(t *testing.T) {
 	extraAssetID := uuid.New()
 	if _, err := pool.Exec(context.Background(), `
 		INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,scan_status,source_type,license_code,created_at)
-		VALUES($1,$2,'image','HTTP paged Asset','/media/http-paged-asset.jpg','image/jpeg','clean','upload','hcai-personal-v1',now()+interval '1 hour')`, extraAssetID, owner.ID); err != nil {
+		VALUES($1,$2,'image','HTTP paged Asset','/media/http-paged-asset.jpg','image/jpeg','clean','demo','hcai-personal-v1',now()+interval '1 hour')`, extraAssetID, owner.ID); err != nil {
 		t.Fatal(err)
 	}
 	var firstPage assets.AssetPage

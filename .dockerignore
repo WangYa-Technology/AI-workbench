@@ -1,0 +1,15 @@
+.git
+.gitignore
+.DS_Store
+.env
+.env.*
+!.env.example
+data
+tmp
+coverage
+web/node_modules
+web/dist
+web/playwright-report
+web/test-results
+**/*.log
+**/*.tmp

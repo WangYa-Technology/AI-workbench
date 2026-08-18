@@ -1,0 +1,31 @@
+# syntax=docker/dockerfile:1.7
+
+FROM golang:1.26-alpine AS build
+
+ARG APP=api
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN test "$APP" = api || test "$APP" = worker || test "$APP" = migrate || test "$APP" = seed
+RUN case "$APP" in \
+      api) package=./cmd/api ;; \
+      worker) package=./cmd/worker ;; \
+      migrate) package=./cmd/migrate ;; \
+      seed) package=./cmd/seed ;; \
+      *) echo "unsupported APP=$APP" >&2; exit 1 ;; \
+    esac && \
+    CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" go build -trimpath -ldflags='-s -w' -o /out/hcai "$package"
+
+FROM alpine:3.22 AS runtime
+
+RUN apk add --no-cache ca-certificates \
+    && addgroup -S -g 10001 hcai && adduser -S -D -H -u 10001 -G hcai hcai \
+    && mkdir -p /data/media \
+    && chown -R hcai:hcai /data/media
+COPY --from=build /out/hcai /usr/local/bin/hcai
+USER hcai
+WORKDIR /data
+ENTRYPOINT ["/usr/local/bin/hcai"]

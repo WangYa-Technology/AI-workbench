@@ -13,13 +13,15 @@ test('remixes a discovered work, saves an asset, and publishes to Community', as
   await page.getByRole('link', { name: 'Remix', exact: true }).click()
 
   await expect(page).toHaveURL(new RegExp(`/create/image\\?sourceWorkId=${seededWorkID}`))
-  const promptField = page.getByLabel('Prompt', { exact: true })
+  const promptField = page.locator('.studio-composer textarea')
   await expect(promptField).toHaveValue(/Cinematic architectural photography/)
   await promptField.fill(prompt)
   await page.getByRole('button', { name: 'Generate image', exact: true }).click()
 
-  await expect(page.getByText('Saved to Assets', { exact: false })).toBeVisible()
-  await page.getByRole('link', { name: 'Continue to publish', exact: true }).click()
+  const generatedTask = page.locator('.studio-task').filter({ hasText: prompt }).first()
+  await expect(generatedTask.locator('.studio-task-status')).toContainText('Saved to Assets')
+  await generatedTask.locator('.studio-task-copy').click()
+  await page.getByRole('dialog', { name: 'Generation details' }).getByRole('link', { name: 'Publish work', exact: true }).click()
   await expect(page).toHaveURL(/\/publish\?assetId=/)
 
   await page.getByLabel('Work title', { exact: true }).fill(title)
@@ -30,7 +32,6 @@ test('remixes a discovered work, saves an asset, and publishes to Community', as
   await expect(page).toHaveURL(/\/works\/[0-9a-f-]+$/)
   await expect(page.getByRole('heading', { name: title, exact: true })).toBeVisible()
   await expect(page.locator('.prompt-text')).toContainText(prompt)
-  await expect(page.locator('.prompt-text')).toContainText('Tone: precise')
 
   await page.getByLabel('Primary navigation').getByRole('link', { name: 'Community', exact: true }).click()
   await expect(page).toHaveURL(/\/community$/)

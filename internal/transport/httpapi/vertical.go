@@ -5,8 +5,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -20,6 +18,7 @@ import (
 	"github.com/hcai-chat/hcai-chat/internal/discovery"
 	"github.com/hcai-chat/hcai-chat/internal/identity"
 	"github.com/hcai-chat/hcai-chat/internal/platform/httputil"
+	"github.com/hcai-chat/hcai-chat/internal/platform/media"
 	"github.com/hcai-chat/hcai-chat/internal/systemsettings"
 )
 
@@ -47,7 +46,7 @@ func (s *Server) demoLogin(w http.ResponseWriter, r *http.Request) {
 		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_demo_actor", "Choose creator, publisher, or admin for the local demo session.", false)
 		return
 	}
-	user, token, err := s.identity.StartDemoSession(r.Context(), input.Actor, requestClientInfo(r))
+	user, token, err := s.identity.StartDemoSession(r.Context(), input.Actor, requestClientInfo(r, s.config.TrustedProxyCIDRs))
 	if err != nil {
 		s.internalError(w, r, "start demo session", err)
 		return
@@ -156,7 +155,7 @@ func (s *Server) submitGeneration(w http.ResponseWriter, r *http.Request) {
 	generation, err := s.creation.SubmitCommand(r.Context(), user.ID, input, r.Header.Get("Idempotency-Key"), httputil.RequestID(r.Context()))
 	switch {
 	case errors.Is(err, creation.ErrInvalid), errors.Is(err, creation.ErrIdempotency):
-		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_generation", "Choose an available creation mode and enter a prompt between 3 and 2,000 characters.", false)
+		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_generation", "Choose an available creation mode, enter a prompt between 3 and 2,000 characters, and use output settings supported by that mode.", false)
 		return
 	case errors.Is(err, creation.ErrIdempotencyConflict):
 		httputil.WriteError(w, r, http.StatusConflict, "idempotency_conflict", "This request key was already used for a different generation command.", false)
@@ -165,7 +164,7 @@ func (s *Server) submitGeneration(w http.ResponseWriter, r *http.Request) {
 		httputil.WriteError(w, r, http.StatusPaymentRequired, "insufficient_credits", "Add Local Test credits before starting this generation.", false)
 		return
 	case errors.Is(err, creation.ErrProviderOff):
-		httputil.WriteError(w, r, http.StatusServiceUnavailable, "provider_unavailable", "No image provider is available in this environment.", true)
+		httputil.WriteError(w, r, http.StatusServiceUnavailable, "provider_unavailable", "No provider is available for this creation mode in the current environment.", true)
 		return
 	case errors.Is(err, systemsettings.ErrDisabled):
 		httputil.WriteError(w, r, http.StatusServiceUnavailable, "feature_disabled", "Generation submission is temporarily unavailable by an audited platform setting.", false)
@@ -176,6 +175,15 @@ func (s *Server) submitGeneration(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Location", "/api/v1/generations/"+generation.ID.String())
 	httputil.JSON(w, http.StatusAccepted, generation)
+}
+
+func (s *Server) creationCapabilities(w http.ResponseWriter, r *http.Request) {
+	capabilities, err := s.creation.Capabilities(r.Context())
+	if err != nil {
+		s.internalError(w, r, "load creation capabilities", err)
+		return
+	}
+	httputil.JSON(w, http.StatusOK, capabilities)
 }
 
 func (s *Server) cancelGeneration(w http.ResponseWriter, r *http.Request) {
@@ -215,6 +223,54 @@ func (s *Server) retryGeneration(w http.ResponseWriter, r *http.Request) {
 	writeGenerationCommandResult(w, r, s, item, err)
 }
 
+func (s *Server) favoriteGeneration(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.requireUser(w, r)
+	if !ok {
+		return
+	}
+	id, valid := pathUUID(w, r, "generationID")
+	if !valid {
+		return
+	}
+	var input struct {
+		Active bool `json:"active"`
+	}
+	if !httputil.DecodeJSON(w, r, &input) {
+		return
+	}
+	item, err := s.creation.SetFavorite(r.Context(), user.ID, id, input.Active, httputil.RequestID(r.Context()))
+	if errors.Is(err, creation.ErrNotFound) {
+		httputil.WriteError(w, r, http.StatusNotFound, "generation_not_found", "The generation was not found.", false)
+		return
+	}
+	if err != nil {
+		s.internalError(w, r, "favorite generation", err)
+		return
+	}
+	httputil.JSON(w, http.StatusOK, item)
+}
+
+func (s *Server) batchGenerations(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.requireUser(w, r)
+	if !ok {
+		return
+	}
+	var input creation.GenerationBatchInput
+	if !httputil.DecodeJSON(w, r, &input) {
+		return
+	}
+	result, err := s.creation.Batch(r.Context(), user.ID, input, r.Header.Get("Idempotency-Key"), httputil.RequestID(r.Context()))
+	if errors.Is(err, creation.ErrInvalid) || errors.Is(err, creation.ErrIdempotency) {
+		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_generation_batch", "Select 1 to 50 unique generations and choose a supported batch action.", false)
+		return
+	}
+	if err != nil {
+		s.internalError(w, r, "batch generations", err)
+		return
+	}
+	httputil.JSON(w, http.StatusOK, result)
+}
+
 func writeGenerationCommandResult(w http.ResponseWriter, r *http.Request, s *Server, item creation.Generation, err error) {
 	switch {
 	case errors.Is(err, creation.ErrNotFound):
@@ -228,7 +284,7 @@ func writeGenerationCommandResult(w http.ResponseWriter, r *http.Request, s *Ser
 	case errors.Is(err, creation.ErrInvalid), errors.Is(err, creation.ErrIdempotency):
 		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_generation_command", "Provide a valid command reason and idempotency key.", false)
 	case errors.Is(err, creation.ErrProviderOff):
-		httputil.WriteError(w, r, http.StatusServiceUnavailable, "provider_unavailable", "No image provider is available in this environment.", true)
+		httputil.WriteError(w, r, http.StatusServiceUnavailable, "provider_unavailable", "No provider is available for this creation mode in the current environment.", true)
 	case errors.Is(err, billing.ErrInsufficientFunds):
 		httputil.WriteError(w, r, http.StatusPaymentRequired, "insufficient_credits", "Add Local Test credits before retrying this generation.", false)
 	case err != nil:
@@ -551,7 +607,7 @@ func (s *Server) assetContent(w http.ResponseWriter, r *http.Request) {
 			viewerID = user.ID
 		}
 	}
-	path, mimeType, err := s.assets.Content(r.Context(), viewerID, id)
+	content, err := s.assets.Content(r.Context(), viewerID, id)
 	switch {
 	case errors.Is(err, assets.ErrNotFound):
 		httputil.WriteError(w, r, http.StatusNotFound, "asset_not_found", "The asset content was not found.", false)
@@ -563,8 +619,23 @@ func (s *Server) assetContent(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, "get asset content", err)
 		return
 	}
-	file, err := os.Open(path)
-	if errors.Is(err, os.ErrNotExist) {
+	info, err := content.Stat(r.Context())
+	if errors.Is(err, media.ErrNotFound) {
+		httputil.WriteError(w, r, http.StatusNotFound, "asset_content_missing", "The asset file is missing.", true)
+		return
+	}
+	if err != nil {
+		s.internalError(w, r, "stat asset content", err)
+		return
+	}
+	requestedRange, err := parseSingleByteRange(r.Header.Get("Range"), info.Size)
+	if err != nil {
+		w.Header().Set("Content-Range", "bytes */"+strconv.FormatInt(info.Size, 10))
+		httputil.WriteError(w, r, http.StatusRequestedRangeNotSatisfiable, "invalid_asset_range", "Request one valid byte range for this asset.", false)
+		return
+	}
+	object, err := content.Open(r.Context(), requestedRange)
+	if errors.Is(err, media.ErrNotFound) {
 		httputil.WriteError(w, r, http.StatusNotFound, "asset_content_missing", "The asset file is missing.", true)
 		return
 	}
@@ -572,15 +643,67 @@ func (s *Server) assetContent(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, "open asset content", err)
 		return
 	}
-	defer file.Close()
-	info, err := file.Stat()
-	if err != nil {
-		s.internalError(w, r, "stat asset content", err)
-		return
-	}
-	w.Header().Set("Content-Type", mimeType)
+	defer object.Body.Close()
+	w.Header().Set("Accept-Ranges", "bytes")
+	w.Header().Set("Content-Type", content.MimeType)
 	w.Header().Set("Cache-Control", "private, max-age=60")
-	http.ServeContent(w, r, filepath.Base(path), info.ModTime(), file)
+	if info.ETag != "" {
+		w.Header().Set("ETag", info.ETag)
+	}
+	if !info.LastModified.IsZero() {
+		w.Header().Set("Last-Modified", info.LastModified.UTC().Format(http.TimeFormat))
+	}
+	contentLength := info.Size
+	status := http.StatusOK
+	if requestedRange != nil {
+		contentLength = requestedRange.End - requestedRange.Start + 1
+		w.Header().Set("Content-Range", "bytes "+strconv.FormatInt(requestedRange.Start, 10)+"-"+strconv.FormatInt(requestedRange.End, 10)+"/"+strconv.FormatInt(info.Size, 10))
+		status = http.StatusPartialContent
+	}
+	w.Header().Set("Content-Length", strconv.FormatInt(contentLength, 10))
+	w.WriteHeader(status)
+	if _, err := io.Copy(w, object.Body); err != nil {
+		s.logger.Error("stream asset content", "assetId", id, "error", err)
+	}
+}
+
+func parseSingleByteRange(value string, size int64) (*media.ByteRange, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil, nil
+	}
+	if size <= 0 || !strings.HasPrefix(value, "bytes=") || strings.Contains(value, ",") {
+		return nil, errors.New("invalid byte range")
+	}
+	parts := strings.Split(strings.TrimSpace(strings.TrimPrefix(value, "bytes=")), "-")
+	if len(parts) != 2 || (parts[0] == "" && parts[1] == "") {
+		return nil, errors.New("invalid byte range")
+	}
+	if parts[0] == "" {
+		suffix, err := strconv.ParseInt(parts[1], 10, 64)
+		if err != nil || suffix <= 0 {
+			return nil, errors.New("invalid byte range")
+		}
+		if suffix > size {
+			suffix = size
+		}
+		return &media.ByteRange{Start: size - suffix, End: size - 1}, nil
+	}
+	start, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil || start < 0 || start >= size {
+		return nil, errors.New("invalid byte range")
+	}
+	end := size - 1
+	if parts[1] != "" {
+		end, err = strconv.ParseInt(parts[1], 10, 64)
+		if err != nil || end < start {
+			return nil, errors.New("invalid byte range")
+		}
+		if end >= size {
+			end = size - 1
+		}
+	}
+	return &media.ByteRange{Start: start, End: end}, nil
 }
 
 func (s *Server) publish(w http.ResponseWriter, r *http.Request) {

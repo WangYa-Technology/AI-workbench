@@ -375,6 +375,102 @@ func (s *Server) adminAdjustFinance(w http.ResponseWriter, r *http.Request) {
 	s.writeAdminResult(w, r, item, err)
 }
 
+func (s *Server) adminListPayments(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requirePermission(w, r, "admin:finance"); !ok {
+		return
+	}
+	limit, ok := adminDirectoryLimit(w, r, "invalid_admin_payment_filters", "payment operations")
+	if !ok {
+		return
+	}
+	page, err := s.admin.ListPaymentOperations(r.Context(), admin.PaymentOperationListInput{
+		Query: r.URL.Query().Get("q"), Purpose: r.URL.Query().Get("purpose"), Status: r.URL.Query().Get("status"),
+		Mode: r.URL.Query().Get("mode"), Attention: r.URL.Query().Get("attention"), Cursor: r.URL.Query().Get("cursor"), Limit: limit,
+	})
+	if errors.Is(err, admin.ErrInvalidPaymentFilter) {
+		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_admin_payment_filters", "Use supported payment filters, a page size from 1 to 50, and an unmodified cursor.", false)
+		return
+	}
+	if err != nil {
+		s.internalError(w, r, "admin list payments", err)
+		return
+	}
+	httputil.JSON(w, http.StatusOK, page)
+}
+
+func (s *Server) adminRecoverPayment(w http.ResponseWriter, r *http.Request) {
+	actor, ok := s.requirePermission(w, r, "admin:finance")
+	if !ok {
+		return
+	}
+	id, valid := pathUUID(w, r, "paymentID")
+	if !valid {
+		return
+	}
+	var input admin.PaymentRecovery
+	if !httputil.DecodeJSON(w, r, &input) {
+		return
+	}
+	item, err := s.admin.RecoverPayment(r.Context(), actor.ID, id, input, httputil.RequestID(r.Context()))
+	s.writeAdminResult(w, r, item, err)
+}
+
+func (s *Server) adminReplayPaymentEvent(w http.ResponseWriter, r *http.Request) {
+	actor, ok := s.requirePermission(w, r, "admin:finance")
+	if !ok {
+		return
+	}
+	id, valid := pathUUID(w, r, "eventID")
+	if !valid {
+		return
+	}
+	var input admin.PaymentEventReplay
+	if !httputil.DecodeJSON(w, r, &input) {
+		return
+	}
+	item, err := s.admin.ReplayPaymentEvent(r.Context(), actor.ID, id, input, httputil.RequestID(r.Context()))
+	s.writeAdminResult(w, r, item, err)
+}
+
+func (s *Server) adminListPaymentDestinations(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requirePermission(w, r, "admin:finance"); !ok {
+		return
+	}
+	limit, ok := adminDirectoryLimit(w, r, "invalid_admin_payment_destination_filters", "payment destinations")
+	if !ok {
+		return
+	}
+	page, err := s.admin.ListPaymentDestinations(r.Context(), admin.PaymentDestinationListInput{
+		Query: r.URL.Query().Get("q"), Status: r.URL.Query().Get("status"), Cursor: r.URL.Query().Get("cursor"), Limit: limit,
+	})
+	if errors.Is(err, admin.ErrInvalidDestinationFilter) {
+		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_admin_payment_destination_filters", "Use a supported destination status, a page size from 1 to 50, and an unmodified cursor.", false)
+		return
+	}
+	if err != nil {
+		s.internalError(w, r, "admin list payment destinations", err)
+		return
+	}
+	httputil.JSON(w, http.StatusOK, page)
+}
+
+func (s *Server) adminUpdatePaymentDestination(w http.ResponseWriter, r *http.Request) {
+	actor, ok := s.requirePermission(w, r, "admin:finance")
+	if !ok {
+		return
+	}
+	id, valid := pathUUID(w, r, "userID")
+	if !valid {
+		return
+	}
+	var input admin.PaymentDestinationUpdate
+	if !httputil.DecodeJSON(w, r, &input) {
+		return
+	}
+	item, err := s.admin.UpdatePaymentDestination(r.Context(), actor.ID, id, input, httputil.RequestID(r.Context()))
+	s.writeAdminResult(w, r, item, err)
+}
+
 func (s *Server) adminListRiskSignals(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requirePermission(w, r, "admin:risk"); !ok {
 		return
