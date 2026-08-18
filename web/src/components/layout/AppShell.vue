@@ -78,13 +78,6 @@ const active = (key: string) => {
   return name === key
 }
 
-const quickLinks = computed(() => [
-  { label: t('create.modes.chat'), to: '/create/chat' },
-  { label: t('create.modes.image'), to: '/create/image' },
-  { label: t('create.modes.video'), to: '/create/video' },
-  { label: t('create.modes.music'), to: '/create/music' },
-])
-
 watch(() => route.query.q, (value) => {
   searchQuery.value = String(value || '')
 })
@@ -153,12 +146,9 @@ const submitSearch = () => {
               <Search :size="18" :stroke-width="1.75" />
             </button>
           </form>
-          <nav class="quick-links" :aria-label="t('actions.quickLinks')">
-            <span>{{ t('actions.explore') }}</span>
-            <RouterLink v-for="item in quickLinks" :key="item.to" :to="item.to">
-              {{ item.label }}
-            </RouterLink>
-          </nav>
+          <p class="quick-links-context">
+            {{ t('actions.explore') }}
+          </p>
         </div>
 
         <div class="header-actions">

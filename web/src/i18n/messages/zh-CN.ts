@@ -100,6 +100,7 @@ export default {
       promptStep: '现在把角色设定转化为结果明确的制作提示词。', toolsStep: '最后选择需要编译进生成说明的工作流模块。', compiledLength: '最终制作说明 {value} / {max}', continue: '继续', openConfig: '补充细节', backToBuild: '返回简报', focusChat: '查看引导', preview: '预览结果', previewLabel: '助手预览', resultPreviewLabel: '结果预览', untitled: '未命名助手', modulesEnabled: '个模块已启用', status: '状态', ready: '就绪', draft: '草稿',
     },
     studio: {
+      unifiedTitle: 'AI 创作空间', unifiedSummary: '在一条对话里完成文字、图片、视频和音乐创作。', assistantMark: 'H', conversationLabel: '创作对话', chooseCreationType: '选择创作类型', removeCreationType: '移除创作类型', createMenuTitle: '你想创作什么？', createMenuSummary: '选择类型后，直接描述你想要的结果。', welcomeTitle: '从一个想法开始', welcomeSummary: '点击输入框左下角的加号，选择要生成的内容，再告诉 HCAI 你想看到什么。', modeMenuDescriptions: { chat: '获得文字回答或方案', image: '生成视觉图片', video: '生成动态视频', music: '生成音乐与音频' },
       viewLabel: '工作台视图', gallery: '画廊', guide: '对话助手', statusFilter: '生成状态', allStatuses: '全部状态', searchPlaceholder: '搜索提示词和模型',
       primaryViews: { chat: '回复', image: '画廊', video: '视频片段', music: '音轨' },
       emptyTitle: '还没有{mode}生成记录', emptySummary: '使用下方创作栏开始。任务提交后会留在这里，离开页面再回来也能继续查看。',

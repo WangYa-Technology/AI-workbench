@@ -1,14 +1,14 @@
 <script setup lang="ts">
 import { useIntervalFn } from '@vueuse/core'
 import {
-  AlertCircle, Ban, Bookmark, BriefcaseBusiness, Check, ChevronDown, Download, Eraser, History,
-  Image as ImageIcon, LayoutGrid, LoaderCircle, MessageSquare, MessageSquareText,
-  Music, Paperclip, Plus, RefreshCw, RotateCcw, Search, Send, SlidersHorizontal,
+  AlertCircle, Ban, Bookmark, BriefcaseBusiness, Check, Download, Eraser, History,
+  Image as ImageIcon, LoaderCircle, MessageSquare, MessageSquareText,
+  Music, Paperclip, Plus, RefreshCw, RotateCcw, Send, SlidersHorizontal,
   Sparkles, Upload, Video, WalletCards, X,
 } from 'lucide-vue-next'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { RouterLink, useRoute } from 'vue-router'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 import {
   api, messageFrom, type Asset, type BillingStatement, type CreationCapabilities, type Generation, type TaskDetail, type Work,
 } from '../../api/client'
@@ -22,23 +22,14 @@ import AssetMedia from '../domain/AssetMedia.vue'
 import AuthRequiredState from '../domain/AuthRequiredState.vue'
 
 type CreationMode = CreationDraftMode
-type GenerationFilter = 'all' | Generation['status']
-
-interface GuideMessage {
-  id: number | string
-  role: 'assistant' | 'user'
-  content: string
-}
-
 const { t, locale } = useI18n()
 const route = useRoute()
+const router = useRouter()
 const props = defineProps<{ mode: CreationMode }>()
 const session = useSessionStore()
 const draftStore = useCreationDraftStore()
 const restoredDraft = draftStore.restore(props.mode)
 const view = ref<CreationDraftView>(restoredDraft?.view || (props.mode === 'chat' ? 'guide' : 'gallery'))
-const filter = ref<GenerationFilter>('all')
-const search = ref('')
 const prompt = ref(restoredDraft?.prompt || '')
 const generations = ref<Generation[]>([])
 const billing = ref<BillingStatement | null>(null)
@@ -58,32 +49,21 @@ const actionLoading = ref('')
 const uploadLoading = ref(false)
 const assetPickerOpen = ref(false)
 const referencePickerMode = ref<'references' | 'mask'>('references')
+const modeMenuOpen = ref(false)
 const controlsOpen = ref(false)
 const error = ref('')
 const feedback = ref('')
 const fileInput = ref<InstanceType<typeof globalThis.HTMLInputElement> | null>(null)
 const settings = ref<CreationOutputSettings>(restoredDraft?.settings || defaultModeSettings(props.mode))
-const guideMessages = ref<GuideMessage[]>([
-  { id: 1, role: 'assistant', content: t(`create.studio.modeWelcome.${props.mode}`) },
-])
-
-const filteredGenerations = computed(() => {
-  const query = search.value.trim().toLocaleLowerCase()
-  return generations.value.filter((item) => {
-    if (filter.value !== 'all' && item.status !== filter.value) return false
-    if (!query) return true
-    return [item.prompt, item.modelName, item.provider].some(value => value.toLocaleLowerCase().includes(query))
-  })
-})
 const modes = computed(() => [
   { id: 'chat' as const, icon: MessageSquare, label: t('create.modes.chat') },
   { id: 'image' as const, icon: ImageIcon, label: t('create.modes.image') },
   { id: 'video' as const, icon: Video, label: t('create.modes.video') },
   { id: 'music' as const, icon: Music, label: t('create.modes.music') },
 ])
+const conversationGenerations = computed(() => [...generations.value].reverse())
 const activeCapability = computed(() => capabilities.value?.items.find(item => item.mode === props.mode) || null)
 const capabilityProjectionComplete = computed(() => isCreationCapabilityComplete(activeCapability.value))
-const mediaKind = computed(() => ({ chat: 'document', image: 'image', video: 'video', music: 'audio' })[props.mode])
 const modeIcon = computed(() => ({ chat: MessageSquare, image: ImageIcon, video: Video, music: Music })[props.mode])
 const formatOptions = computed(() => ({
   chat: ['txt'], image: ['jpeg'], video: ['mp4'], music: ['wav'],
@@ -125,36 +105,10 @@ const referenceAccept = computed(() => ({
   video: 'image/jpeg,image/png',
   music: 'audio/wav,audio/x-wav,audio/wave,audio/mpeg',
 })[props.mode])
-const primaryViewLabel = computed(() => t(`create.studio.primaryViews.${props.mode}`))
 const running = computed(() => generations.value.some(item => ['queued', 'running'].includes(item.status)))
 const activeChatGeneration = computed(() => activeChatGenerationId.value
   ? generations.value.find(item => item.id === activeChatGenerationId.value) || null
   : null)
-const chatConversationChain = computed(() => {
-  if (props.mode !== 'chat' || !activeChatGenerationId.value) return []
-  const byId = new Map(generations.value.map(item => [item.id, item]))
-  const chain: Generation[] = []
-  const visited = new Set<string>()
-  let current = byId.get(activeChatGenerationId.value)
-  while (current && !visited.has(current.id)) {
-    visited.add(current.id)
-    chain.unshift(current)
-    current = current.parentGenerationId ? byId.get(current.parentGenerationId) : undefined
-  }
-  return chain
-})
-const visibleGuideMessages = computed<GuideMessage[]>(() => {
-  if (props.mode !== 'chat') return guideMessages.value
-  const messages: GuideMessage[] = [{ id: 'chat-welcome', role: 'assistant', content: t('create.studio.modeWelcome.chat') }]
-  for (const item of chatConversationChain.value) {
-    messages.push({ id: `${item.id}:user`, role: 'user', content: item.prompt })
-    if (item.outputText) messages.push({ id: `${item.id}:assistant`, role: 'assistant', content: item.outputText })
-    else if (['queued', 'running'].includes(item.status)) messages.push({ id: `${item.id}:pending`, role: 'assistant', content: t('create.studio.waitingForReply') })
-    else if (item.status === 'failed') messages.push({ id: `${item.id}:failed`, role: 'assistant', content: item.errorMessage || t('create.studio.failedReply') })
-    else if (item.status === 'cancelled') messages.push({ id: `${item.id}:cancelled`, role: 'assistant', content: t('create.studio.cancelledReply') })
-  }
-  return messages
-})
 const canSubmit = computed(() => {
   const chatReady = props.mode !== 'chat' || !activeChatGeneration.value || activeChatGeneration.value.status === 'succeeded'
   const maskReady = !maskAsset.value || (props.mode === 'image' && sourceAssets.value.length > 0)
@@ -178,6 +132,26 @@ function generationDate(value: string) {
 
 function generationCost(item: Generation) {
   return formatCurrency(item.chargedCostCents || item.estimatedCostCents, 'USD', locale.value)
+}
+
+function generationMediaKind(item: Generation) {
+  return ({ chat: 'document', image: 'image', video: 'video', music: 'audio' } as const)[item.mode] || 'document'
+}
+
+async function selectCreationMode(mode: CreationMode) {
+  modeMenuOpen.value = false
+  assetPickerOpen.value = false
+  controlsOpen.value = false
+  if (mode === props.mode) return
+  await router.replace(`/create/${mode}`)
+}
+
+function toggleModeMenu() {
+  modeMenuOpen.value = !modeMenuOpen.value
+  if (modeMenuOpen.value) {
+    assetPickerOpen.value = false
+    controlsOpen.value = false
+  }
 }
 
 async function loadCapabilities() {
@@ -247,10 +221,10 @@ async function loadGenerations(silent = false) {
   }
   if (!silent) loading.value = true
   try {
-    const page = await api.listGenerations({ mode: props.mode, limit: 50 })
+    const page = await api.listGenerations({ limit: 50 })
     generations.value = page.items
     if (props.mode === 'chat' && !chatSelectionReady.value) {
-      activeChatGenerationId.value = page.items[0]?.id || null
+      activeChatGenerationId.value = page.items.find(item => item.mode === 'chat')?.id || null
       chatSelectionReady.value = true
     }
     if (selectedGeneration.value) {
@@ -330,6 +304,7 @@ function removeSourceAsset(assetID: string) {
 }
 
 function openAssetPicker(mode: 'references' | 'mask') {
+  modeMenuOpen.value = false
   referencePickerMode.value = mode
   assetPickerOpen.value = true
   void loadAssets()
@@ -403,9 +378,9 @@ async function submit() {
       chatSelectionReady.value = true
       view.value = 'guide'
       prompt.value = ''
-    } else if (view.value === 'guide') {
-      guideMessages.value.push({ id: Date.now(), role: 'user', content: submittedPrompt })
-      guideMessages.value.push({ id: Date.now() + 1, role: 'assistant', content: t('create.studio.guideQueued', { count: created.length }) })
+    } else {
+      view.value = 'guide'
+      prompt.value = ''
     }
     if (failed) error.value = t('create.studio.partialFailure', { count: failed })
     else feedback.value = t('create.studio.queued', { count: created.length })
@@ -467,16 +442,6 @@ function reuseGeneration(item: Generation) {
   }
   selectedGeneration.value = null
   feedback.value = t('create.studio.reused')
-}
-
-function startNewChat() {
-  activeChatGenerationId.value = null
-  chatSelectionReady.value = true
-  prompt.value = ''
-  selectedGeneration.value = null
-  view.value = 'guide'
-  error.value = ''
-  feedback.value = ''
 }
 
 function continueChat(item: Generation) {
@@ -542,12 +507,9 @@ watch(() => props.mode, async (mode, previousMode) => {
   else resetModeSettings(mode)
   sourceAssets.value = sourceAssets.value.filter(asset => referenceKinds.value.includes(asset.kind))
   if (mode !== 'image') maskAsset.value = null
-  guideMessages.value = [{ id: Date.now(), role: 'assistant', content: t(`create.studio.modeWelcome.${mode}`) }]
   activeChatGenerationId.value = null
   chatSelectionReady.value = false
   selectedGeneration.value = null
-  filter.value = 'all'
-  search.value = ''
   error.value = ''
   feedback.value = ''
   await Promise.all([loadGenerations(), loadAssets(), loadSource()])
@@ -558,38 +520,19 @@ watch(() => props.mode, async (mode, previousMode) => {
 <template>
   <section class="creation-studio" :data-mode="mode">
     <div class="studio-scroll">
-      <header class="studio-topbar">
-        <nav class="studio-modes" :aria-label="t('create.modeLabel')">
-          <RouterLink v-for="item in modes" :key="item.id" :to="`/create/${item.id}`" :class="{ active: mode === item.id }">
-            <component :is="item.icon" :size="16" /><span>{{ item.label }}</span>
-          </RouterLink>
-        </nav>
-        <nav class="studio-view-switch" :aria-label="t('create.studio.viewLabel')">
-          <button type="button" :class="{ active: view === 'gallery' }" @click="view = 'gallery'">
-            <LayoutGrid :size="16" />{{ primaryViewLabel }}
-          </button>
-          <button type="button" :class="{ active: view === 'guide' }" @click="view = 'guide'">
-            <MessageSquareText :size="16" />{{ t('create.studio.guide') }}
-          </button>
-        </nav>
-        <label class="studio-search">
-          <Search :size="16" />
-          <input v-model="search" type="search" :placeholder="t('create.studio.searchPlaceholder')" />
-        </label>
+      <header class="studio-topbar studio-unified-header">
+        <div class="studio-identity">
+          <span><Sparkles :size="18" /></span>
+          <div><h1>{{ t('create.studio.unifiedTitle') }}</h1><p>{{ t('create.studio.unifiedSummary') }}</p></div>
+        </div>
         <div class="studio-toolbar-actions">
           <RouterLink v-if="billing" class="studio-balance" to="/workspace/billing" :aria-label="t('workspace.viewStatement')">
             <WalletCards :size="15" /><span>{{ t('workspace.availableCredits') }}</span><strong>{{ formatCurrency(billing.account.availableCents, billing.account.currency, locale) }}</strong>
           </RouterLink>
-          <label class="studio-filter"><span class="sr-only">{{ t('create.studio.statusFilter') }}</span><select v-model="filter"><option value="all">{{ t('create.studio.allStatuses') }}</option><option value="queued">{{ t('generation.status.queued') }}</option><option value="running">{{ t('generation.status.running') }}</option><option value="succeeded">{{ t('generation.status.succeeded') }}</option><option value="failed">{{ t('generation.status.failed') }}</option><option value="cancelled">{{ t('generation.status.cancelled') }}</option></select><ChevronDown :size="14" /></label>
           <RouterLink class="icon-button" to="/workspace/generations" :aria-label="t('create.recentGenerations')" :title="t('create.recentGenerations')">
             <History :size="17" />
           </RouterLink>
         </div>
-      </header>
-
-      <header class="studio-heading">
-        <div><component :is="modeIcon" :size="18" /><h1>{{ t(`create.modeMeta.${mode}.title`) }}</h1></div>
-        <p>{{ t(`create.modeMeta.${mode}.summary`) }}</p>
       </header>
 
       <div v-if="capabilityUnavailable" class="studio-notice error" role="status">
@@ -615,59 +558,42 @@ watch(() => props.mode, async (mode, previousMode) => {
         </button>
       </div>
 
-      <section v-if="view === 'gallery'" class="studio-gallery" :aria-label="primaryViewLabel">
-        <div v-if="loading" class="studio-grid studio-skeleton" aria-live="polite">
-          <span v-for="index in 8" :key="index"></span>
+      <section class="studio-conversation" :aria-label="t('create.studio.conversationLabel')">
+        <div v-if="loading" class="conversation-skeleton" aria-live="polite">
+          <span></span><span></span><span></span>
         </div>
-        <div v-else-if="filteredGenerations.length" class="studio-grid">
-          <article v-for="item in filteredGenerations" :key="item.id" class="studio-task" :data-status="item.status" @click="selectedGeneration = item">
-            <div class="studio-task-media">
-              <AssetMedia v-if="item.outputMediaUrl" :src="item.outputMediaUrl" :kind="mediaKind" :alt="item.prompt" :text="item.outputText" :width="900" :height="900" :controls="mediaKind === 'video' || mediaKind === 'audio'" />
-              <div v-else class="studio-task-progress">
-                <LoaderCircle v-if="['queued', 'running'].includes(item.status)" class="spin" :size="22" />
-                <AlertCircle v-else-if="item.status === 'failed'" :size="22" />
-                <component :is="modeIcon" v-else :size="22" />
-                <strong>{{ t(`generation.status.${item.status}`) }}</strong>
-                <span>{{ item.progress }}%</span>
-              </div>
-              <span class="studio-task-status"><i></i>{{ t(`generation.status.${item.status}`) }}</span>
-              <button class="studio-task-favorite" type="button" :aria-label="item.isFavorite ? t('workspace.unfavoriteGeneration') : t('workspace.favoriteGeneration')" :title="item.isFavorite ? t('workspace.unfavoriteGeneration') : t('workspace.favoriteGeneration')" @click.stop="toggleFavorite(item)">
-                <Bookmark :size="15" :fill="item.isFavorite ? 'currentColor' : 'none'" />
-              </button>
-            </div>
-            <div class="studio-task-copy">
+        <div v-else-if="!conversationGenerations.length" class="conversation-welcome">
+          <span><Sparkles :size="24" /></span>
+          <h2>{{ t('create.studio.welcomeTitle') }}</h2>
+          <p>{{ t('create.studio.welcomeSummary') }}</p>
+        </div>
+        <div v-else class="conversation-feed">
+          <article v-for="item in conversationGenerations" :key="item.id" class="studio-task conversation-turn" :data-status="item.status">
+            <div class="conversation-user">
+              <div><span class="conversation-mode"><component :is="modes.find(option => option.id === item.mode)?.icon" :size="14" />{{ t(`create.modes.${item.mode}`) }}</span><time :datetime="item.createdAt">{{ generationDate(item.createdAt) }}</time></div>
               <p>{{ item.prompt }}</p>
-              <small>{{ parameterSummary(item) }}</small>
-              <div><span>{{ item.modelName }}</span><time :datetime="item.createdAt">{{ generationDate(item.createdAt) }}</time></div>
+            </div>
+            <div class="conversation-assistant">
+              <span class="assistant-mark">{{ t('create.studio.assistantMark') }}</span>
+              <div class="conversation-result" @click="selectedGeneration = item">
+                <header><strong>{{ t(`generation.status.${item.status}`) }}</strong><small>{{ item.modelName }}</small></header>
+                <AssetMedia v-if="item.outputMediaUrl" :src="item.outputMediaUrl || ''" :kind="generationMediaKind(item)" :alt="item.prompt || ''" :text="item.outputText || ''" :width="960" :height="720" :controls="generationMediaKind(item) === 'video' || generationMediaKind(item) === 'audio'" />
+                <div v-else class="conversation-progress">
+                  <LoaderCircle v-if="['queued', 'running'].includes(item.status)" class="spin" :size="20" />
+                  <AlertCircle v-else-if="item.status === 'failed'" :size="20" />
+                  <component :is="modes.find(option => option.id === item.mode)?.icon" v-else :size="20" />
+                  <span>{{ item.errorMessage || `${item.progress}%` }}</span>
+                </div>
+                <footer>
+                  <span>{{ parameterSummary(item) }}</span>
+                  <button type="button" :aria-label="item.isFavorite ? t('workspace.unfavoriteGeneration') : t('workspace.favoriteGeneration')" :title="item.isFavorite ? t('workspace.unfavoriteGeneration') : t('workspace.favoriteGeneration')" @click.stop="toggleFavorite(item)">
+                    <Bookmark :size="15" :fill="item.isFavorite ? 'currentColor' : 'none'" />
+                  </button>
+                </footer>
+              </div>
             </div>
           </article>
         </div>
-        <div v-else class="studio-empty">
-          <span><component :is="modeIcon" :size="24" /></span>
-          <h2>{{ t('create.studio.emptyTitle', { mode: t(`create.modes.${mode}`) }) }}</h2>
-          <p>{{ t('create.studio.emptySummary', { mode: t(`create.modes.${mode}`) }) }}</p>
-        </div>
-      </section>
-
-      <section v-else class="studio-guide">
-        <header>
-          <span><Sparkles :size="18" /></span>
-          <div><h1>{{ t('create.studio.guideTitle') }}</h1><p>{{ t('create.studio.guideSummary') }}</p></div>
-          <button v-if="mode === 'chat'" class="studio-new-chat" type="button" @click="startNewChat">
-            <Plus :size="16" />{{ t('create.studio.newChat') }}
-          </button>
-        </header>
-        <div class="studio-guide-messages">
-          <article v-for="message in visibleGuideMessages" :key="message.id" :data-role="message.role">
-            <span>{{ message.role === 'assistant' ? 'H' : t('create.builder.you').slice(0, 1) }}</span><p>{{ message.content }}</p>
-          </article>
-        </div>
-        <aside v-if="mode !== 'chat' && generations[0]" class="studio-guide-latest">
-          <AssetMedia v-if="generations[0].outputMediaUrl" :src="generations[0].outputMediaUrl" :kind="mediaKind" :alt="generations[0].prompt" :text="generations[0].outputText" :width="900" :height="900" :controls="mediaKind === 'video' || mediaKind === 'audio'" />
-          <div v-else>
-            <LoaderCircle class="spin" :size="20" /><strong>{{ t(`generation.status.${generations[0].status}`) }}</strong><span>{{ generations[0].progress }}%</span>
-          </div>
-        </aside>
       </section>
     </div>
 
@@ -696,15 +622,13 @@ watch(() => props.mode, async (mode, previousMode) => {
           </button>
         </div>
       </div>
-      <textarea v-model="prompt" rows="2" maxlength="1800" :placeholder="t(`create.builder.modePlaceholder.${mode}`)"></textarea>
+      <textarea v-model="prompt" rows="2" maxlength="1800" :placeholder="t(`create.builder.modePlaceholder.${mode}`)" @keydown.enter.exact.prevent="canSubmit && submit()"></textarea>
       <div class="studio-composer-row">
         <div class="studio-composer-tools">
-          <button v-if="referenceKinds.length" type="button" :class="{ active: assetPickerOpen && referencePickerMode === 'references' }" :aria-label="t('create.studio.addReference')" :title="t('create.studio.addReference')" @click="openAssetPicker('references')">
+          <button type="button" :class="{ active: modeMenuOpen }" :aria-label="t('create.studio.chooseCreationType')" :title="t('create.studio.chooseCreationType')" aria-haspopup="menu" :aria-expanded="modeMenuOpen" @click="toggleModeMenu">
             <Plus :size="18" />
           </button>
-          <button v-if="mode === 'image' && supportsMask" type="button" :class="{ active: assetPickerOpen && referencePickerMode === 'mask' }" :aria-label="t('create.studio.addMask')" :title="t('create.studio.addMask')" @click="openAssetPicker('mask')">
-            <Eraser :size="17" />
-          </button>
+          <span v-if="mode !== 'chat'" class="creation-mode-chip"><component :is="modeIcon" :size="15" />{{ t(`create.modes.${mode}`) }}<button type="button" :aria-label="t('create.studio.removeCreationType')" @click="selectCreationMode('chat')"><X :size="14" /></button></span>
           <button type="button" :class="{ active: controlsOpen }" :aria-label="t('create.studio.outputSettings')" :title="t('create.studio.outputSettings')" @click="controlsOpen = !controlsOpen">
             <SlidersHorizontal :size="17" />
           </button>
@@ -714,6 +638,25 @@ watch(() => props.mode, async (mode, previousMode) => {
           <LoaderCircle v-if="submitting" class="spin" :size="17" /><Send v-else :size="17" /><span>{{ submitting ? t('actions.generating') : generateLabel }}</span>
         </button>
       </div>
+
+      <Transition name="mode-menu">
+        <section v-if="modeMenuOpen" class="studio-mode-menu" role="menu" :aria-label="t('create.studio.chooseCreationType')">
+          <header><strong>{{ t('create.studio.createMenuTitle') }}</strong><small>{{ t('create.studio.createMenuSummary') }}</small></header>
+          <div class="mode-menu-grid">
+            <button v-for="item in modes" :key="item.id" type="button" role="menuitem" :class="{ active: mode === item.id }" @click="selectCreationMode(item.id)">
+              <span><component :is="item.icon" :size="19" /></span><span><strong>{{ item.label }}</strong><small>{{ t(`create.studio.modeMenuDescriptions.${item.id}`) }}</small></span><Check v-if="mode === item.id" :size="15" />
+            </button>
+          </div>
+          <footer>
+            <button v-if="referenceKinds.length" type="button" @click="openAssetPicker('references')">
+              <Paperclip :size="16" />{{ t('create.studio.addReference') }}
+            </button>
+            <button v-if="mode === 'image' && supportsMask" type="button" @click="openAssetPicker('mask')">
+              <Eraser :size="16" />{{ t('create.studio.addMask') }}
+            </button>
+          </footer>
+        </section>
+      </Transition>
 
       <section v-if="assetPickerOpen" class="studio-popover reference-picker">
         <header>
@@ -766,8 +709,8 @@ watch(() => props.mode, async (mode, previousMode) => {
           </button>
         </header>
         <div class="studio-detail-media">
-          <AssetMedia v-if="selectedGeneration.outputMediaUrl" :src="selectedGeneration.outputMediaUrl" :kind="mediaKind" :alt="selectedGeneration.prompt" :text="selectedGeneration.outputText" :width="1200" :height="1200" :controls="mediaKind === 'video' || mediaKind === 'audio'" /><div v-else>
-            <LoaderCircle v-if="['queued', 'running'].includes(selectedGeneration.status)" class="spin" :size="24" /><component :is="modeIcon" v-else :size="24" /><strong>{{ selectedGeneration.progress }}%</strong>
+          <AssetMedia v-if="selectedGeneration.outputMediaUrl" :src="selectedGeneration.outputMediaUrl || ''" :kind="generationMediaKind(selectedGeneration)" :alt="selectedGeneration.prompt || ''" :text="selectedGeneration.outputText || ''" :width="1200" :height="1200" :controls="generationMediaKind(selectedGeneration) === 'video' || generationMediaKind(selectedGeneration) === 'audio'" /><div v-else>
+            <LoaderCircle v-if="['queued', 'running'].includes(selectedGeneration.status)" class="spin" :size="24" /><component :is="modes.find(item => item.id === selectedGeneration?.mode)?.icon" v-else :size="24" /><strong>{{ selectedGeneration.progress }}%</strong>
           </div>
         </div>
         <p>{{ selectedGeneration.prompt }}</p>
@@ -1367,27 +1310,80 @@ watch(() => props.mode, async (mode, previousMode) => {
 .studio-detail > p, .studio-detail dt { color: #8a93a2; }
 .studio-detail dd { color: #e9edf3; }
 
+/* The creation surface is one conversation. Mode selection lives inside the
+   composer so the user starts with an outcome, not a navigation decision. */
+.studio-unified-header { display: flex; align-items: center; justify-content: space-between; }
+.studio-identity { display: flex; align-items: center; gap: 11px; }
+.studio-identity > span { width: 34px; height: 34px; display: grid; place-items: center; border: 1px solid var(--studio-border); border-radius: 11px; background: var(--studio-blue-soft); color: #a9c5ff; }
+.studio-identity h1 { margin: 0; color: var(--studio-text); font-size: 15px; font-weight: 600; }
+.studio-identity p { margin: 3px 0 0; color: #7f8998; font-size: 10px; }
+.studio-conversation { width: min(100%, 920px); min-height: 460px; margin: 56px auto 0; }
+.conversation-feed { display: grid; gap: 28px; }
+.conversation-turn { display: grid; gap: 12px; }
+.conversation-user { width: min(84%, 700px); margin-left: auto; }
+.conversation-user > div { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-bottom: 7px; color: #737d8e; font-size: 10px; }
+.conversation-mode { display: inline-flex; align-items: center; gap: 5px; color: #a9c5ff; }
+.conversation-user p { margin: 0; padding: 12px 15px; border: 1px solid rgb(79 140 255 / 28%); border-radius: 18px 18px 5px 18px; background: rgb(79 140 255 / 11%); color: #e9f0ff; font-size: 14px; line-height: 1.55; }
+.conversation-assistant { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 10px; align-items: start; }
+.assistant-mark { width: 28px; height: 28px; display: grid; place-items: center; border: 1px solid rgb(255 255 255 / 16%); border-radius: 50%; background: rgb(255 255 255 / 7%); color: #c7d7ff; font-size: 11px; font-weight: 700; }
+.conversation-result { min-width: 0; overflow: hidden; border: 1px solid var(--studio-border); border-radius: 17px; background: var(--studio-panel); cursor: pointer; transition: border-color 160ms ease, transform 160ms ease; }
+.conversation-result:hover { border-color: rgb(255 255 255 / 25%); transform: translateY(-1px); }
+.conversation-result > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 14px 9px; color: #dbe5f8; font-size: 11px; }
+.conversation-result > header small { color: #7f8998; font-size: 10px; }
+.conversation-result :deep(.asset-renderer), .conversation-result :deep(img), .conversation-result :deep(video) { display: block; width: 100%; max-height: 480px; object-fit: contain; background: #080a0e; }
+.conversation-result :deep(audio) { display: block; width: calc(100% - 28px); margin: 12px 14px; }
+.conversation-progress { min-height: 150px; display: grid; place-items: center; align-content: center; gap: 9px; color: #98a5b8; font-size: 12px; }
+.conversation-result > footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 14px 11px; color: #768194; font-size: 10px; }
+.conversation-result > footer button { width: 27px; height: 27px; display: grid; place-items: center; border-radius: 50%; color: inherit; }
+.conversation-result > footer button:hover { background: rgb(255 255 255 / 8%); color: #c3d5ff; }
+.conversation-welcome { min-height: 430px; display: grid; place-content: center; justify-items: center; gap: 10px; text-align: center; }
+.conversation-welcome > span { width: 54px; height: 54px; display: grid; place-items: center; border: 1px solid var(--studio-border); border-radius: 50%; background: var(--studio-blue-soft); color: #a9c5ff; }
+.conversation-welcome h2 { margin: 4px 0 0; color: var(--studio-text); font-size: 22px; font-weight: 560; }
+.conversation-welcome p { max-width: 460px; margin: 0; color: #8993a3; font-size: 13px; line-height: 1.55; }
+.conversation-skeleton { display: grid; gap: 20px; }
+.conversation-skeleton span { display: block; height: 100px; border-radius: 17px; background: linear-gradient(100deg, rgb(255 255 255 / 5%), rgb(255 255 255 / 10%), rgb(255 255 255 / 5%)); background-size: 200% 100%; animation: studio-shimmer 1.4s linear infinite; }
+.conversation-skeleton span:first-child { width: 68%; margin-left: auto; height: 70px; }
+.conversation-skeleton span:last-child { width: 82%; }
+.creation-mode-chip { min-height: 28px; display: inline-flex; align-items: center; gap: 6px; padding: 0 7px 0 9px; border: 1px solid rgb(79 140 255 / 45%); border-radius: 9px; background: var(--studio-blue-soft); color: #d8e6ff; font-size: 11px; font-weight: 600; }
+.creation-mode-chip button { width: 20px; height: 20px; display: grid; place-items: center; border-radius: 50%; color: #a9c3f4; }
+.creation-mode-chip button:hover { background: rgb(255 255 255 / 11%); color: #fff; }
+.studio-mode-menu { position: absolute; right: 0; bottom: calc(100% + 10px); left: 0; z-index: 20; padding: 14px; border: 1px solid var(--studio-border); border-radius: 18px; background: #12161e; box-shadow: 0 18px 50px rgb(0 0 0 / 45%); }
+.studio-mode-menu > header { display: grid; gap: 3px; margin-bottom: 11px; }
+.studio-mode-menu > header strong { color: var(--studio-text); font-size: 12px; }
+.studio-mode-menu > header small { color: #8992a2; font-size: 10px; }
+.mode-menu-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px; }
+.mode-menu-grid > button { min-width: 0; display: grid; grid-template-columns: 34px minmax(0, 1fr) 15px; gap: 8px; align-items: center; padding: 9px; border: 1px solid transparent; border-radius: 11px; color: #cdd6e4; text-align: left; }
+.mode-menu-grid > button:hover, .mode-menu-grid > button.active { border-color: rgb(79 140 255 / 34%); background: var(--studio-blue-soft); }
+.mode-menu-grid > button > span:first-child { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 9px; background: rgb(255 255 255 / 8%); color: #a9c5ff; }
+.mode-menu-grid > button > span:nth-child(2) { min-width: 0; display: grid; gap: 3px; }
+.mode-menu-grid strong { font-size: 11px; }
+.mode-menu-grid small { overflow: hidden; color: #8993a3; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.mode-menu-grid > button > svg { color: #a9c5ff; }
+.studio-mode-menu > footer { display: flex; gap: 7px; margin-top: 11px; padding-top: 11px; border-top: 1px solid var(--studio-border); }
+.studio-mode-menu > footer button { min-height: 30px; display: inline-flex; align-items: center; gap: 6px; padding: 0 9px; border-radius: 8px; background: rgb(255 255 255 / 7%); color: #aeb9c8; font-size: 10px; }
+.studio-mode-menu > footer button:hover { background: rgb(255 255 255 / 11%); color: #fff; }
+.mode-menu-enter-active, .mode-menu-leave-active { transition: opacity 140ms ease, transform 140ms ease; }
+.mode-menu-enter-from, .mode-menu-leave-to { opacity: 0; transform: translateY(5px); }
+@keyframes studio-shimmer { to { background-position: -200% 0; } }
+
 @media (max-width: 1100px) {
   .studio-topbar { grid-template-columns: auto minmax(0, 1fr) auto; }
   .studio-search { width: 150px; }
+  .mode-menu-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 767px) {
   .creation-studio { height: calc(100dvh - 124px); min-height: 520px; }
   .studio-scroll { padding: 8px 12px 180px; }
   .studio-topbar { grid-template-columns: minmax(0, 1fr) auto; margin-bottom: 8px; }
-  .studio-modes { overflow-x: auto; }
-  .studio-modes a { padding-inline: 10px; }
-  .studio-view-switch { display: none; }
-  .studio-search { grid-column: 1 / -1; grid-row: 2; width: 100%; margin-top: 4px; }
   .studio-toolbar-actions { justify-content: flex-end; }
   .studio-balance { display: none; }
-  .studio-heading { margin-top: 34px; }
-  .studio-grid, .creation-studio[data-mode='chat'] .studio-grid,
-  .creation-studio[data-mode='video'] .studio-grid,
-  .creation-studio[data-mode='music'] .studio-grid { grid-template-columns: 1fr; }
   .studio-composer { right: 10px; bottom: 10px; left: 10px; width: auto; padding: 9px 10px 8px; border-radius: 22px; }
   .studio-composer textarea { min-height: 58px; }
   .studio-output-summary { display: none; }
+  .studio-identity p { display: none; }
+  .studio-conversation { margin-top: 34px; }
+  .conversation-user { width: 92%; }
+  .mode-menu-grid { grid-template-columns: 1fr 1fr; }
 }
 </style>
