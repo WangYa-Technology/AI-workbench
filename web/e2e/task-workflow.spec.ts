@@ -1,9 +1,10 @@
 import { expect, test } from '@playwright/test'
 
 test('completes proposal, task creation, revision, delivery, and local test settlement', async ({ page }) => {
-	test.setTimeout(90_000)
+  test.setTimeout(90_000)
   const runID = Date.now().toString(36)
   const title = `Editorial launch image system ${runID}`
+  const brief = 'Create a coherent hero image and social crop with clear subject separation, restrained material detail, and space for editorial typography.'
   const deadline = new Date(Date.now() + 21 * 24 * 60 * 60 * 1000).toISOString().slice(0, 16)
 
   const publisherSession = await page.request.post('/api/v1/auth/demo', { data: { actor: 'publisher' } })
@@ -27,7 +28,7 @@ test('completes proposal, task creation, revision, delivery, and local test sett
   await page.getByRole('button', { name: 'Publish brief', exact: true }).click()
   await page.getByLabel('Task title', { exact: true }).fill(title)
   await page.getByLabel('Short summary', { exact: true }).fill('A disciplined image system for an international research launch.')
-  await page.getByLabel('Production brief', { exact: true }).fill('Create a coherent hero image and social crop with clear subject separation, restrained material detail, and space for editorial typography.')
+  await page.getByLabel('Production brief', { exact: true }).fill(brief)
   await page.getByLabel('Reward (USD)', { exact: true }).fill('800')
   await page.getByLabel('Deadline', { exact: true }).fill(deadline)
   await page.getByLabel('Commissioner timezone', { exact: true }).selectOption('Europe/London')
@@ -58,8 +59,9 @@ test('completes proposal, task creation, revision, delivery, and local test sett
   await page.getByRole('link', { name: 'Create for this task', exact: true }).click()
   await expect(page.locator('.source-reference').getByText(title, { exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Generate image', exact: true }).click()
-  await expect(page.locator('.studio-task').first().locator('.studio-task-status')).toContainText('Saved to Assets')
-  await page.locator('.studio-task').first().locator('.studio-task-copy').click()
+  const generatedTask = page.locator('.studio-task').filter({ hasText: brief }).first()
+  await expect(generatedTask.locator('.conversation-result')).toContainText('Saved to Assets')
+  await generatedTask.locator('.conversation-result').click()
   await page.getByRole('dialog', { name: 'Generation details' }).getByRole('link', { name: 'Submit delivery', exact: true }).click()
   await page.getByLabel('Delivery note', { exact: true }).fill('First delivery with source context and model disclosure attached.')
   await page.getByRole('button', { name: 'Submit delivery', exact: true }).click()
@@ -150,6 +152,24 @@ test('keeps the mobile task marketplace keyboard-ready with reduced motion', asy
   await page.keyboard.press('Escape')
   await expect(dialog).toBeHidden()
   await expect(publishButton).toBeFocused()
+})
+
+test('gives signed-in creators and publishers role-appropriate marketplace views', async ({ page }) => {
+  await page.request.post('/api/v1/auth/demo', { data: { actor: 'creator' } })
+  await page.goto('/market/demands')
+
+  await expect(page.getByRole('tab', { name: 'Available work', exact: true })).toHaveAttribute('aria-selected', 'true')
+  await expect(page.getByRole('tab', { name: 'My activity', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Publish brief', exact: true })).toHaveCount(0)
+
+  await page.getByRole('tab', { name: 'My activity', exact: true }).click()
+  await expect(page).toHaveURL(/\/market\/demands\?view=mine$/)
+  await expect(page.getByRole('tab', { name: 'My activity', exact: true })).toHaveAttribute('aria-selected', 'true')
+  await expect(page.locator('.task-filters select').nth(1)).toHaveValue('')
+
+  await page.request.post('/api/v1/auth/demo', { data: { actor: 'publisher' } })
+  await page.reload()
+  await expect(page.getByRole('button', { name: 'Publish brief', exact: true })).toBeVisible()
 })
 
 test('lets a commissioner cancel an open task with durable evidence', async ({ page }) => {

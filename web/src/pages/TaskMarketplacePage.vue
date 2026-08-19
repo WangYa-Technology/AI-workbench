@@ -36,10 +36,12 @@ let fundingPollTimer: number | undefined
 
 const search = ref(String(route.query.q || ''))
 const deliverableType = ref(String(route.query.type || ''))
-const status = ref(String(route.query.status ?? 'open'))
+const view = ref(route.query.view === 'mine' ? 'mine' : 'available')
+const status = ref(String(route.query.status ?? (view.value === 'mine' ? '' : 'open')))
 const sort = ref(String(route.query.sort || 'newest'))
 const taskID = computed(() => String(route.params.id || ''))
 const isDetail = computed(() => Boolean(taskID.value))
+const canPublishBrief = computed(() => Boolean(session.user && ['publisher', 'admin'].includes(session.user.role)))
 const canPropose = computed(() => Boolean(session.user) && detail.value?.viewerRole === 'viewer' && detail.value.status === 'open' && !detail.value.proposals.length)
 const fundingConfirmed = computed(() => Boolean(detail.value?.funding && ['paid', 'transfer_pending', 'transferred'].includes(detail.value.funding.status)))
 const directFundingConfirmed = computed(() => fundingConfirmed.value && !detail.value?.funding?.proposalId)
@@ -115,7 +117,13 @@ async function load() {
       }
       applyPaymentReturnState()
     } else {
-      const response = await api.listTasks({ q: search.value, type: deliverableType.value, status: status.value, sort: sort.value })
+      const response = await api.listTasks({
+        q: search.value,
+        type: deliverableType.value,
+        status: status.value,
+        sort: sort.value,
+        mine: view.value === 'mine',
+      })
       tasks.value = response.items
       detail.value = null
     }
@@ -212,6 +220,7 @@ function applyPaymentReturnState() {
 
 async function applyFilters() {
   await router.push({ path: '/market/demands', query: {
+    ...(view.value === 'mine' ? { view: 'mine' } : {}),
     ...(search.value.trim() ? { q: search.value.trim() } : {}),
     ...(deliverableType.value ? { type: deliverableType.value } : {}),
     ...(status.value ? { status: status.value } : {}),
@@ -219,10 +228,17 @@ async function applyFilters() {
   } })
 }
 
+async function selectView(nextView: 'available' | 'mine') {
+  if (view.value === nextView) return
+  view.value = nextView
+  status.value = nextView === 'mine' ? '' : 'open'
+  await applyFilters()
+}
+
 async function clearFilters() {
   search.value = ''
   deliverableType.value = ''
-  status.value = 'open'
+  status.value = view.value === 'mine' ? '' : 'open'
   sort.value = 'newest'
   await applyFilters()
 }
@@ -331,7 +347,8 @@ watch(() => route.fullPath, () => {
   fundingPollAttempts.value = 0
   search.value = String(route.query.q || '')
   deliverableType.value = String(route.query.type || '')
-  status.value = String(route.query.status ?? 'open')
+  view.value = route.query.view === 'mine' ? 'mine' : 'available'
+  status.value = String(route.query.status ?? (view.value === 'mine' ? '' : 'open'))
   sort.value = String(route.query.sort || 'newest')
   delivery.assetId = String(route.query.assetId || delivery.assetId || '')
   void load()
@@ -398,7 +415,7 @@ onBeforeUnmount(() => {
           <RouterLink v-if="session.user" class="command-button secondary" to="/workspace/tasks">
             <BriefcaseBusiness :size="17" />{{ t('tasks.myTasks') }}
           </RouterLink>
-          <button v-if="session.user" class="command-button primary" type="button" @click="createOpen = true">
+          <button v-if="canPublishBrief" class="command-button primary" type="button" @click="createOpen = true">
             <Plus :size="17" />{{ t('tasks.publishBrief') }}
           </button>
           <RouterLink v-if="!session.user" class="command-button secondary" :to="{ path: '/settings', query: { auth: 'login', returnTo: route.fullPath } }">
@@ -409,6 +426,20 @@ onBeforeUnmount(() => {
           </RouterLink>
         </div>
       </header>
+
+      <div v-if="session.user" class="task-workspace-bar">
+        <div class="task-view-tabs" role="tablist" :aria-label="t('tasks.views')">
+          <button type="button" role="tab" :aria-selected="view === 'available'" :class="{ active: view === 'available' }" @click="selectView('available')">
+            <Search :size="16" />{{ t('tasks.availableWork') }}
+          </button>
+          <button type="button" role="tab" :aria-selected="view === 'mine'" :class="{ active: view === 'mine' }" @click="selectView('mine')">
+            <BriefcaseBusiness :size="16" />{{ t('tasks.myActivity') }}
+          </button>
+        </div>
+        <div class="task-account-context">
+          <UserRound :size="16" /><span><strong>{{ session.user.displayName }}</strong><small>@{{ session.user.handle }}</small></span>
+        </div>
+      </div>
 
       <form class="task-filters" role="search" @submit.prevent="applyFilters">
         <label class="task-search"><span class="sr-only">{{ t('actions.search') }}</span><Search :size="17" /><input v-model="search" type="search" :placeholder="t('tasks.searchPlaceholder')" /></label>
@@ -430,7 +461,10 @@ onBeforeUnmount(() => {
       </div>
       <div v-else class="task-results">
         <div class="task-results-meta">
-          <strong>{{ tasks.length }} {{ t('tasks.results') }}</strong>
+          <div><strong>{{ tasks.length }} {{ t('tasks.results') }}</strong><span>{{ t(view === 'mine' ? 'tasks.myActivitySummary' : 'tasks.availableWorkSummary') }}</span></div>
+          <button v-if="search || deliverableType || status !== (view === 'mine' ? '' : 'open') || sort !== 'newest'" class="text-link" type="button" @click="clearFilters">
+            {{ t('tasks.clearFilters') }}
+          </button>
         </div>
         <RouterLink v-for="item in tasks" :key="item.id" class="task-row" :to="`/market/demands/${item.id}`">
           <span class="task-type"><component :is="item.deliverableType === 'image' ? WandSparkles : FileCheck2" :size="17" />{{ t(`tasks.types.${item.deliverableType}`) }}</span>
@@ -438,18 +472,21 @@ onBeforeUnmount(() => {
           <span class="task-row-data"><small>{{ paymentEnabled ? t('tasks.providerReward') : t('tasks.reward') }}</small><strong>{{ money(item.budgetCents, item.currency) }}</strong></span>
           <span class="task-row-data"><small>{{ t('tasks.deadline') }}</small><strong>{{ date(item.deadline, item.clientTimezone) }}</strong></span>
           <span class="task-row-data"><small>{{ t('tasks.proposalCount') }}</small><strong>{{ item.proposalCount }}</strong></span>
-          <span class="task-status" :data-status="item.status">{{ t(`tasks.status.${item.status}`) }}</span><ChevronRight :size="18" />
+          <span class="task-status" :data-status="item.status">{{ t(`tasks.status.${item.status}`) }}</span><span class="task-row-action">{{ t('tasks.reviewBrief') }}<ChevronRight :size="16" /></span>
         </RouterLink>
         <div v-if="!tasks.length" class="task-market-state task-market-empty">
-          <span><Search :size="20" /></span><strong>{{ t('tasks.noResults') }}</strong><button class="text-link" type="button" @click="clearFilters">
+          <span><component :is="view === 'mine' ? BriefcaseBusiness : Search" :size="20" /></span><strong>{{ t(view === 'mine' ? 'tasks.noMyActivity' : 'tasks.noResults') }}</strong><button v-if="view === 'available'" class="text-link" type="button" @click="clearFilters">
             {{ t('tasks.clearFilters') }}
           </button>
-          <p>{{ t('tasks.emptySummary') }}</p>
+          <p>{{ t(view === 'mine' ? 'tasks.noMyActivitySummary' : 'tasks.emptySummary') }}</p>
           <div class="task-empty-actions">
-            <RouterLink class="command-button secondary" to="/create/image">
+            <button v-if="view === 'mine'" class="command-button secondary" type="button" @click="selectView('available')">
+              <Search :size="17" />{{ t('tasks.browseTasks') }}
+            </button>
+            <RouterLink v-else class="command-button secondary" to="/create/image">
               <WandSparkles :size="17" />{{ t('tasks.createInstead') }}
             </RouterLink>
-            <button v-if="session.user" class="command-button primary" type="button" @click="createOpen = true">
+            <button v-if="canPublishBrief" class="command-button primary" type="button" @click="createOpen = true">
               <Plus :size="17" />{{ t('tasks.publishBrief') }}
             </button>
           </div>

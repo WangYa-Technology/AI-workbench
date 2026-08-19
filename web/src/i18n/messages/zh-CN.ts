@@ -115,9 +115,9 @@ export default {
   generation: { status: { queued: '已排队', running: '生成中', succeeded: '已保存到资产', failed: '失败', cancelled: '已取消' } },
   tasks: {
     title: '任务广场', summary: '寻找清晰的制作需求，先了解交付标准，再放心参与。',
-    localTest: '报酬与结算使用本地测试美元，不会发生真实扣款、转账或提现。', localTestShort: '仅使用本地测试美元，不会发生真实支付。', providerTest: 'Stripe 测试模式，不会发生真实资金流动。', providerLive: 'Stripe 正式模式，资助可能产生真实扣款和付款。', providerTestShort: 'Stripe 测试资助', providerLiveShort: 'Stripe 正式资助', publishBrief: '发布需求', myTasks: '我的任务',
+    localTest: '报酬与结算使用本地测试美元，不会发生真实扣款、转账或提现。', localTestShort: '仅使用本地测试美元，不会发生真实支付。', providerTest: 'Stripe 测试模式，不会发生真实资金流动。', providerLive: 'Stripe 正式模式，资助可能产生真实扣款和付款。', providerTestShort: 'Stripe 测试资助', providerLiveShort: 'Stripe 正式资助', publishBrief: '发布需求', myTasks: '我的任务', views: '任务广场视图', availableWork: '可接任务', myActivity: '我的进展',
     searchPlaceholder: '搜索任务需求', allTypes: '全部类型', allStatuses: '全部状态', sortNewest: '最新发布', sortDeadline: '截止时间', sortBudget: '报酬最高',
-    results: '个任务', noResults: '没有符合当前筛选条件的需求。', emptySummary: '你可以先自己完成一件作品，也可以发布需求，让社区来帮你完成。', createInstead: '开始创作', unavailable: '任务暂时不可用', clearFilters: '清除筛选', loading: '正在加载任务广场…',
+    results: '个任务', availableWorkSummary: '等待查看和参与的开放需求', myActivitySummary: '你发布、提案或接受的任务', reviewBrief: '查看需求', noResults: '没有符合当前筛选条件的需求。', emptySummary: '你可以先自己完成一件作品，也可以发布需求，让社区来帮你完成。', noMyActivity: '还没有任务进展。', noMyActivitySummary: '你发布、提案或接受的任务会与当前账户持续关联。', browseTasks: '浏览可接任务', createInstead: '开始创作', unavailable: '任务暂时不可用', clearFilters: '清除筛选', loading: '正在加载任务广场…',
     proposals: '提案', yourProposal: '我的提案', proposalCount: '个提案', reward: '本地测试报酬', providerReward: '已资助报酬', deadline: '截止时间', commissioner: '委托方', direct: '支持直接接单', directFundingRequired: '资助后可直接接单',
     back: '返回任务广场', brief: '制作说明', deliverables: '交付内容', acceptance: '验收标准', rights: '权利与授权', disclosure: 'AI 内容披露', history: '任务记录',
     submitProposal: '提交提案', acceptTask: '直接接单', createForTask: '为任务创作', submitDelivery: '提交交付', acceptProposal: '接受提案', fundTask: '资助直接接单', fundProposal: '资助此提案', resumeFunding: '继续安全结账', retryFunding: '重试安全结账', reviewOpportunity: '查看并参与', manageTask: '管理任务', continueTask: '继续任务', signInToRespond: '登录后参与', guestTitle: '准备参与这个任务？', guestSummary: '登录后可提交提案或直接接单；创建账户后可统一保留交付与结算证据。',
