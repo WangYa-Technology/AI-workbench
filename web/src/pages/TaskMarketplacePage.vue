@@ -466,7 +466,7 @@ onBeforeUnmount(() => {
             {{ t('tasks.clearFilters') }}
           </button>
         </div>
-        <RouterLink v-for="item in tasks" :key="item.id" class="task-row" :to="`/market/demands/${item.id}`">
+        <RouterLink v-for="item in tasks" :key="item.id" class="task-row" :class="{ 'is-direct': item.allowDirectAccept && item.status === 'open' }" :data-type="item.deliverableType" :to="`/market/demands/${item.id}`">
           <span class="task-type"><span><component :is="item.deliverableType === 'image' ? WandSparkles : FileCheck2" :size="18" /></span></span>
           <span class="task-row-copy">
             <span class="task-row-heading"><span>{{ t(`tasks.types.${item.deliverableType}`) }}</span><span class="task-status" :data-status="item.status">{{ t(`tasks.status.${item.status}`) }}</span></span>
