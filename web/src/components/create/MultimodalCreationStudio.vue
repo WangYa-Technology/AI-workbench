@@ -1416,19 +1416,19 @@ watch(() => props.mode, async (mode, previousMode) => {
 .creation-mode-chip { min-height: 34px; display: inline-flex; align-items: center; gap: 7px; padding: 0 8px 0 10px; border: 1px solid rgb(79 140 255 / 38%); border-radius: 999px; background: var(--studio-blue-soft); color: #d8e6ff; font-size: 11px; font-weight: 600; line-height: 1; white-space: nowrap; }
 .creation-mode-chip button { width: 18px; min-width: 18px; height: 18px; min-height: 18px; display: inline-grid; place-items: center; flex: 0 0 18px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: #a9c3f4; line-height: 0; cursor: pointer; }
 .creation-mode-chip button:hover { background: rgb(255 255 255 / 11%); color: #fff; }
-.studio-mode-menu { position: absolute; right: auto; bottom: calc(100% + 8px); left: 0; z-index: 20; width: min(244px, calc(100vw - 32px)); max-height: min(350px, calc(100dvh - 250px)); overflow-y: auto; overscroll-behavior: contain; padding: 4px; border: 1px solid rgb(255 255 255 / 21%); border-radius: 8px; background: rgb(35 37 43 / 97%); box-shadow: 0 14px 34px rgb(0 0 0 / 42%), inset 0 1px 0 rgb(255 255 255 / 9%); backdrop-filter: blur(22px) saturate(1.08); scrollbar-width: thin; }
+.studio-mode-menu { position: absolute; right: auto; bottom: calc(100% + 8px); left: 0; z-index: 20; width: min(220px, calc(100vw - 32px)); max-height: min(320px, calc(100dvh - 250px)); overflow-y: auto; overscroll-behavior: contain; padding: 5px; border: 1px solid rgb(255 255 255 / 21%); border-radius: 22px; background: rgb(35 37 43 / 97%); box-shadow: 0 14px 34px rgb(0 0 0 / 42%), inset 0 1px 0 rgb(255 255 255 / 9%); backdrop-filter: blur(22px) saturate(1.08); scrollbar-width: thin; }
 .mode-menu-section { display: grid; gap: 1px; }
-.mode-menu-row { min-height: 38px; display: grid; grid-template-columns: 24px minmax(0, 1fr) 14px; gap: 7px; align-items: center; padding: 0 7px; border: 0; border-radius: 6px; background: transparent; color: #e7e9ed; text-align: left; transition: background 140ms ease, color 140ms ease, transform 140ms ease; }
+.mode-menu-row { min-height: 35px; display: grid; grid-template-columns: 22px minmax(0, 1fr) 13px; gap: 6px; align-items: center; padding: 0 7px; border: 0; border-radius: 12px; background: transparent; color: #e7e9ed; text-align: left; transition: background 140ms ease, color 140ms ease, transform 140ms ease; }
 .mode-menu-row:hover { background: rgb(255 255 255 / 9%); color: #fff; transform: translateX(1px); }
 .mode-menu-row.active, .mode-menu-primary { background: #087cf2; color: #fff; box-shadow: inset 0 1px 0 rgb(255 255 255 / 18%); }
 .mode-menu-primary:hover, .mode-menu-row.active:hover { background: #1685f4; }
-.mode-menu-icon { width: 24px; height: 24px; display: grid; place-items: center; color: #e4e8ee; }
-.mode-menu-icon svg { width: 16px; height: 16px; }
+.mode-menu-icon { width: 22px; height: 22px; display: grid; place-items: center; color: #e4e8ee; }
+.mode-menu-icon svg { width: 15px; height: 15px; }
 .mode-menu-primary .mode-menu-icon, .mode-menu-row.active .mode-menu-icon { color: #fff; }
 .mode-menu-label { overflow: hidden; font-size: 12px; font-weight: 560; letter-spacing: 0; text-overflow: ellipsis; white-space: nowrap; }
-.mode-menu-check { width: 13px; height: 13px; }
+.mode-menu-check { width: 12px; height: 12px; }
 .mode-menu-check { justify-self: end; color: #dcecff; }
-.mode-menu-divider { height: 1px; margin: 4px 6px; background: rgb(255 255 255 / 20%); }
+.mode-menu-divider { height: 1px; margin: 3px 8px; background: rgb(255 255 255 / 20%); }
 .mode-menu-disabled { color: #a1a5ac; cursor: not-allowed; opacity: .72; }
 .mode-menu-disabled:hover { background: transparent; color: #a1a5ac; transform: none; }
 .mode-menu-enter-active, .mode-menu-leave-active { transition: opacity 140ms ease, transform 140ms ease; }
@@ -1605,7 +1605,7 @@ watch(() => props.mode, async (mode, previousMode) => {
   .creation-studio.is-guest .studio-auth :deep(.auth-required-actions) { width: 100%; }
   .creation-studio.is-guest .studio-auth :deep(.command-button) { flex: 1 1 132px; justify-content: center; }
   .conversation-user { width: 92%; }
-  .studio-mode-menu { width: min(248px, calc(100vw - 28px)); max-height: min(360px, calc(100dvh - 430px)); }
-  .mode-menu-row { min-height: 40px; }
+  .studio-mode-menu { width: min(224px, calc(100vw - 28px)); max-height: min(320px, calc(100dvh - 430px)); }
+  .mode-menu-row { min-height: 36px; }
 }
 </style>
