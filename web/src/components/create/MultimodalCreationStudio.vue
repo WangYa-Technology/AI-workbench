@@ -1442,7 +1442,8 @@ watch(() => props.mode, async (mode, previousMode) => {
 .creation-mode-chip button:hover { background: rgb(255 255 255 / 11%); color: #fff; }
 .studio-settings-control { position: relative; display: grid; place-items: center; flex: 0 0 auto; }
 .studio-settings-button { display: grid; place-items: center; border-radius: 50%; }
-.studio-mode-menu { position: absolute; right: auto; bottom: calc(100% + 8px); left: 0; z-index: 20; width: min(220px, calc(100vw - 32px)); max-height: min(320px, calc(100dvh - 250px)); overflow-y: auto; overscroll-behavior: contain; padding: 5px; border: 1px solid rgb(255 255 255 / 21%); border-radius: 22px; background: rgb(35 37 43 / 97%); box-shadow: 0 14px 34px rgb(0 0 0 / 42%), inset 0 1px 0 rgb(255 255 255 / 9%); backdrop-filter: blur(22px) saturate(1.08); scrollbar-width: thin; }
+.studio-mode-menu { position: absolute; right: auto; bottom: calc(100% + 8px); left: 0; z-index: 20; width: min(220px, calc(100vw - 32px)); max-height: min(320px, calc(100dvh - 250px)); overflow-y: auto; overscroll-behavior: contain; padding: 5px; border: 1px solid rgb(255 255 255 / 21%); border-radius: 22px; background: rgb(35 37 43 / 97%); box-shadow: 0 14px 34px rgb(0 0 0 / 42%), inset 0 1px 0 rgb(255 255 255 / 9%); backdrop-filter: blur(22px) saturate(1.08); scrollbar-width: none; -ms-overflow-style: none; }
+.studio-mode-menu::-webkit-scrollbar { display: none; width: 0; height: 0; }
 .output-controls.studio-mode-menu { right: auto; bottom: calc(100% + 12px); left: 0; width: min(220px, calc(100vw - 32px)); max-height: min(320px, calc(100dvh - 250px)); display: grid; grid-template-columns: 1fr; gap: 9px; padding: 12px; }
 .output-controls.studio-mode-menu label { display: grid; gap: 5px; color: #aab2bf; font-size: 11px; font-weight: 560; }
 .output-controls.studio-mode-menu :is(select, input) { height: 34px; border-radius: 10px; padding: 0 9px; font-size: 12px; }

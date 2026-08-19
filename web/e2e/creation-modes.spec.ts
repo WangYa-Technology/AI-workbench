@@ -133,10 +133,17 @@ test('keeps every creation mode visible on a phone-sized viewport', async ({ pag
 
   await page.getByRole('button', { name: 'Choose what to create' }).click()
   const menuBox = await page.locator('.studio-mode-menu').boundingBox()
+  const menu = page.locator('.studio-mode-menu')
   expect(menuBox).not.toBeNull()
   expect(menuBox!.width).toBeLessThanOrEqual(224)
   expect(menuBox!.height).toBeLessThanOrEqual(320)
   expect(menuBox!.y).toBeGreaterThanOrEqual(0)
+  await expect(menu).toHaveCSS('scrollbar-width', 'none')
+  await expect(menu).toHaveCSS('overflow-y', 'auto')
+  const initialScrollTop = await menu.evaluate(element => element.scrollTop)
+  await menu.hover()
+  await page.mouse.wheel(0, 500)
+  await expect.poll(() => menu.evaluate(element => element.scrollTop)).toBeGreaterThan(initialScrollTop)
   for (const label of modes.map(mode => mode.label)) {
     await expect(page.getByRole('menuitem', { name: new RegExp(label) })).toBeVisible()
   }
