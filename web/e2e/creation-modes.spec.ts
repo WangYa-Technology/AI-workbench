@@ -193,7 +193,7 @@ test('uses the compact floating style for output settings and dismisses it', asy
   const panel = page.getByRole('dialog', { name: 'Output settings' })
   await expect(panel).toBeVisible()
   await expect(panel).toHaveCSS('width', '220px')
-  await expect(panel).toHaveCSS('border-radius', '22px')
+  await expect(panel).toHaveCSS('border-radius', '24px')
   await expect(panel.locator('label')).toHaveCount(2)
 
   await page.getByRole('heading', { name: 'AI creation space', exact: true }).click()

@@ -30,6 +30,11 @@
   --shadow-sm: 0 8px 24px rgb(21 27 38 / 6%);
   --font-sans: Geist, "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
   --font-mono: "Geist Mono", "SFMono-Regular", Consolas, monospace;
+  /* Shared shape scale: controls, surfaces, and creation workspace shells. */
+  --radius-control: 8px;
+  --radius-surface: 12px;
+  --radius-workspace: 24px;
+  --radius-pill: 999px;
 }
 
 [data-theme='dark'] {

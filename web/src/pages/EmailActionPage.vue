@@ -80,10 +80,10 @@ async function submit() {
 
 <style scoped>
 .email-action-page { min-height: calc(100vh - 72px); display: grid; place-items: center; padding-block: 48px; }
-.email-action-panel { width: min(100%, 480px); display: grid; gap: 20px; padding: 28px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+.email-action-panel { width: min(100%, 480px); display: grid; gap: 20px; padding: 28px; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface); }
 .email-action-panel h1 { margin: 0 0 8px; font-size: 1.5rem; letter-spacing: 0; }
 .email-action-panel p { margin: 0; color: var(--text-secondary); line-height: 1.6; }
-.email-action-icon { width: 44px; height: 44px; display: grid; place-items: center; border-radius: 6px; background: var(--surface-muted); color: var(--accent); }
+.email-action-icon { width: 44px; height: 44px; display: grid; place-items: center; border-radius: var(--radius-control); background: var(--surface-muted); color: var(--accent); }
 .success-icon { color: var(--success); }
 .form-error { display: flex; gap: 8px; align-items: flex-start; }
 </style>
