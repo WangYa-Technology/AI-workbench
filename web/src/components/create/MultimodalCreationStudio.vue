@@ -72,10 +72,6 @@ const capabilityFormatOptions = computed(() => {
   if (!capabilities.value) return formatOptions.value
   return capabilityProjectionComplete.value ? activeCapability.value!.outputFormats : []
 })
-const resultFormatOptions = computed(() => {
-  if (!capabilities.value) return capabilityFormatOptions.value
-  return capabilityProjectionComplete.value ? activeCapability.value!.resultFormats : []
-})
 const referenceKinds = computed(() => {
   if (!capabilities.value) return ({
   chat: ['document'], image: ['image'], video: ['image'], music: ['audio'],
@@ -113,14 +109,6 @@ const canSubmit = computed(() => {
   const chatReady = props.mode !== 'chat' || !activeChatGeneration.value || activeChatGeneration.value.status === 'succeeded'
   const maskReady = !maskAsset.value || (props.mode === 'image' && sourceAssets.value.length > 0)
   return prompt.value.trim().length >= 3 && !submitting.value && Boolean(session.user) && !capabilityUnavailable.value && chatReady && maskReady
-})
-const outputSummary = computed(() => {
-  if (props.mode === 'chat') return [t(`create.studio.responseLengths.${settings.value.responseLength}`), settings.value.format.toUpperCase()].join(' · ')
-  if (props.mode === 'music') return [t('create.studio.durationValue', { value: settings.value.duration }), t(`create.studio.qualities.${settings.value.quality}`), resultFormatOptions.value[0]?.toUpperCase() || settings.value.format.toUpperCase()].join(' · ')
-  const values = [settings.value.ratio === 'auto' ? t('create.studio.autoRatio') : settings.value.ratio, t(`create.studio.qualities.${settings.value.quality}`)]
-  if (props.mode === 'video') values.push(t('create.studio.durationValue', { value: settings.value.duration }))
-  values.push(settings.value.format.toUpperCase(), t('create.studio.outputCount', { count: settings.value.count }))
-  return values.join(' · ')
 })
 const generateLabel = computed(() => props.mode === 'image'
   ? t('actions.generateImage')
@@ -637,10 +625,9 @@ watch(() => props.mode, async (mode, previousMode) => {
             <Plus :size="18" />
           </button>
           <span v-if="mode !== 'chat'" class="creation-mode-chip"><component :is="modeIcon" :size="15" />{{ t(`create.modes.${mode}`) }}<button type="button" :aria-label="t('create.studio.removeCreationType')" @click="selectCreationMode('chat')"><X :size="14" /></button></span>
-          <button type="button" :class="{ active: controlsOpen }" :aria-label="t('create.studio.outputSettings')" :title="t('create.studio.outputSettings')" @click="controlsOpen = !controlsOpen">
-            <SlidersHorizontal :size="17" />
+          <button class="studio-settings-button" type="button" :class="{ active: controlsOpen }" :aria-label="t('create.studio.outputSettings')" :title="t('create.studio.outputSettings')" @click="controlsOpen = !controlsOpen">
+            <SlidersHorizontal :size="16" />
           </button>
-          <span class="studio-output-summary">{{ outputSummary }}</span>
         </div>
         <button class="studio-submit" type="submit" :disabled="!canSubmit" :aria-label="submitting ? t('actions.generating') : generateLabel">
           <LoaderCircle v-if="submitting" class="spin" :size="17" /><Send v-else :size="17" /><span>{{ submitting ? t('actions.generating') : generateLabel }}</span>
@@ -994,7 +981,6 @@ watch(() => props.mode, async (mode, previousMode) => {
 .studio-composer-tools { min-width: 0; display: flex; align-items: center; gap: 5px; }
 .studio-composer-tools > button { width: 36px; height: 36px; display: grid; place-items: center; flex: 0 0 auto; border-radius: 50%; color: var(--text-secondary); }
 .studio-composer-tools > button:hover, .studio-composer-tools > button.active { background: var(--surface-muted); color: var(--accent-readable); }
-.studio-output-summary { overflow: hidden; margin-left: 5px; color: var(--text-tertiary); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .studio-submit { min-height: 38px; display: inline-flex; align-items: center; gap: 7px; flex: 0 0 auto; padding: 0 14px; border-radius: 999px; background: var(--text); color: var(--surface); font-size: 12px; font-weight: 650; }
 .studio-submit:hover:not(:disabled) { background: color-mix(in srgb, var(--text) 84%, var(--accent)); transform: translateY(-1px); }
 .studio-submit:disabled { opacity: .38; cursor: not-allowed; }
@@ -1084,7 +1070,6 @@ watch(() => props.mode, async (mode, previousMode) => {
   .studio-task-copy { padding: 9px; }
   .studio-task-copy > div { display: grid; }
   .studio-composer { right: 10px; bottom: 10px; left: 10px; padding: 10px; border-radius: 14px; }
-  .studio-output-summary { display: none; }
   .studio-submit span { display: none; }
   .studio-submit { width: 38px; padding: 0; justify-content: center; }
   .reference-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -1316,15 +1301,16 @@ watch(() => props.mode, async (mode, previousMode) => {
 }
 .studio-composer textarea::placeholder { color: #737b89; }
 .studio-composer-row { gap: 8px; }
-.studio-composer-tools { gap: 2px; }
+.studio-composer-tools { gap: 7px; }
 .studio-composer-tools > button {
   width: 34px;
   height: 34px;
+  border: 1px solid rgb(255 255 255 / 8%);
+  background: rgb(255 255 255 / 5%);
   color: #9ca5b2;
 }
 .studio-composer-tools > button:hover,
-.studio-composer-tools > button.active { background: rgb(255 255 255 / 9%); color: #dce6ff; }
-.studio-output-summary { max-width: 220px; color: #707887; }
+.studio-composer-tools > button.active { border-color: rgb(79 140 255 / 36%); background: var(--studio-blue-soft); color: #c8dcff; }
 .studio-submit {
   width: 38px;
   min-height: 38px;
@@ -1425,7 +1411,7 @@ watch(() => props.mode, async (mode, previousMode) => {
 .conversation-skeleton span { display: block; height: 100px; border-radius: 17px; background: linear-gradient(100deg, rgb(255 255 255 / 5%), rgb(255 255 255 / 10%), rgb(255 255 255 / 5%)); background-size: 200% 100%; animation: studio-shimmer 1.4s linear infinite; }
 .conversation-skeleton span:first-child { width: 68%; margin-left: auto; height: 70px; }
 .conversation-skeleton span:last-child { width: 82%; }
-.creation-mode-chip { min-height: 28px; display: inline-flex; align-items: center; gap: 6px; padding: 0 7px 0 9px; border: 1px solid rgb(79 140 255 / 45%); border-radius: 9px; background: var(--studio-blue-soft); color: #d8e6ff; font-size: 11px; font-weight: 600; }
+.creation-mode-chip { min-height: 34px; display: inline-flex; align-items: center; gap: 7px; padding: 0 7px 0 10px; border: 1px solid rgb(79 140 255 / 38%); border-radius: 999px; background: var(--studio-blue-soft); color: #d8e6ff; font-size: 11px; font-weight: 600; }
 .creation-mode-chip button { width: 20px; height: 20px; display: grid; place-items: center; border-radius: 50%; color: #a9c3f4; }
 .creation-mode-chip button:hover { background: rgb(255 255 255 / 11%); color: #fff; }
 .studio-mode-menu { position: absolute; right: auto; bottom: calc(100% + 11px); left: 0; z-index: 20; width: min(332px, calc(100vw - 34px)); padding: 8px; border: 1px solid rgb(255 255 255 / 21%); border-radius: 19px; background: rgb(35 37 43 / 97%); box-shadow: 0 22px 65px rgb(0 0 0 / 58%), inset 0 1px 0 rgb(255 255 255 / 9%); backdrop-filter: blur(26px) saturate(1.12); }
@@ -1458,7 +1444,6 @@ watch(() => props.mode, async (mode, previousMode) => {
   .studio-balance { display: none; }
   .studio-composer { right: 10px; bottom: 10px; left: 10px; width: auto; padding: 9px 10px 8px; border-radius: 22px; }
   .studio-composer textarea { min-height: 58px; }
-  .studio-output-summary { display: none; }
   .studio-identity p { display: none; }
   .studio-conversation { min-height: clamp(240px, calc(100dvh - 350px), 420px); margin-top: 28px; }
   .creation-studio.is-guest .studio-auth { padding: 20px 12px 46px; }

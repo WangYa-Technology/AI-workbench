@@ -1,10 +1,10 @@
 import { expect, test } from '@playwright/test'
 
 const modes = [
-  { mode: 'chat', label: 'Chat', view: 'Responses', contentType: 'text/plain', signature: 'Deterministic Local Test response', selector: 'pre', format: 'TXT', accept: 'text/plain,.txt,.md' },
-  { mode: 'image', label: 'Image', view: 'Gallery', contentType: 'image/jpeg', signature: null, selector: 'img', format: 'JPEG', accept: 'image/jpeg,image/png' },
-  { mode: 'video', label: 'Video', view: 'Clips', contentType: 'video/mp4', signature: null, selector: 'video', format: 'MP4', accept: 'image/jpeg,image/png' },
-  { mode: 'music', label: 'Music', view: 'Tracks', contentType: 'audio/wav', signature: 'RIFF', selector: 'audio', format: 'WAV', accept: 'audio/wav,audio/x-wav,audio/wave,audio/mpeg' },
+  { mode: 'chat', label: 'Chat', view: 'Responses', contentType: 'text/plain', signature: 'Deterministic Local Test response', selector: 'pre', settingsLabel: 'Response length', accept: 'text/plain,.txt,.md' },
+  { mode: 'image', label: 'Image', view: 'Gallery', contentType: 'image/jpeg', signature: null, selector: 'img', settingsLabel: 'Aspect ratio', accept: 'image/jpeg,image/png' },
+  { mode: 'video', label: 'Video', view: 'Clips', contentType: 'video/mp4', signature: null, selector: 'video', settingsLabel: 'Duration', accept: 'image/jpeg,image/png' },
+  { mode: 'music', label: 'Music', view: 'Tracks', contentType: 'audio/wav', signature: 'RIFF', selector: 'audio', settingsLabel: 'Duration', accept: 'audio/wav,audio/x-wav,audio/wave,audio/mpeg' },
 ] as const
 
 test('creates Chat, Image, Video, and Music as typed, reusable Assets', async ({ page }) => {
@@ -116,7 +116,9 @@ test('initializes every creation mode with its own controls and compatible refer
   for (const item of modes) {
     await page.goto(`/create/${item.mode}`)
     await expect(page.getByRole('button', { name: 'Choose what to create' })).toBeVisible()
-    await expect(page.locator('.studio-output-summary')).toContainText(item.format)
+    await page.getByRole('button', { name: 'Output settings' }).click()
+    await expect(page.getByText(item.settingsLabel, { exact: true })).toBeVisible()
+    await page.getByRole('button', { name: 'Output settings' }).click()
 
     await page.getByRole('button', { name: 'Choose what to create' }).click()
     await page.getByRole('button', { name: 'Add reference', exact: true }).click()
