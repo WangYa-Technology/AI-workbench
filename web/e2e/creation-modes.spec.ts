@@ -132,6 +132,11 @@ test('keeps every creation mode visible on a phone-sized viewport', async ({ pag
   await page.goto('/create/video')
 
   await page.getByRole('button', { name: 'Choose what to create' }).click()
+  const menuBox = await page.locator('.studio-mode-menu').boundingBox()
+  expect(menuBox).not.toBeNull()
+  expect(menuBox!.width).toBeLessThanOrEqual(286)
+  expect(menuBox!.height).toBeLessThanOrEqual(400)
+  expect(menuBox!.y).toBeGreaterThanOrEqual(0)
   for (const label of modes.map(mode => mode.label)) {
     await expect(page.getByRole('menuitem', { name: new RegExp(label) })).toBeVisible()
   }

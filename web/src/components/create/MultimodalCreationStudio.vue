@@ -1416,17 +1416,19 @@ watch(() => props.mode, async (mode, previousMode) => {
 .creation-mode-chip { min-height: 34px; display: inline-flex; align-items: center; gap: 7px; padding: 0 8px 0 10px; border: 1px solid rgb(79 140 255 / 38%); border-radius: 999px; background: var(--studio-blue-soft); color: #d8e6ff; font-size: 11px; font-weight: 600; line-height: 1; white-space: nowrap; }
 .creation-mode-chip button { width: 18px; min-width: 18px; height: 18px; min-height: 18px; display: inline-grid; place-items: center; flex: 0 0 18px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: #a9c3f4; line-height: 0; cursor: pointer; }
 .creation-mode-chip button:hover { background: rgb(255 255 255 / 11%); color: #fff; }
-.studio-mode-menu { position: absolute; right: auto; bottom: calc(100% + 11px); left: 0; z-index: 20; width: min(332px, calc(100vw - 34px)); padding: 8px; border: 1px solid rgb(255 255 255 / 21%); border-radius: 19px; background: rgb(35 37 43 / 97%); box-shadow: 0 22px 65px rgb(0 0 0 / 58%), inset 0 1px 0 rgb(255 255 255 / 9%); backdrop-filter: blur(26px) saturate(1.12); }
-.mode-menu-section { display: grid; gap: 2px; }
-.mode-menu-row { min-height: 53px; display: grid; grid-template-columns: 42px minmax(0, 1fr) 20px; gap: 12px; align-items: center; padding: 0 12px; border: 0; border-radius: 13px; background: transparent; color: #e7e9ed; text-align: left; transition: background 140ms ease, color 140ms ease, transform 140ms ease; }
+.studio-mode-menu { position: absolute; right: auto; bottom: calc(100% + 9px); left: 0; z-index: 20; width: min(280px, calc(100vw - 34px)); max-height: min(470px, calc(100dvh - 260px)); overflow-y: auto; overscroll-behavior: contain; padding: 6px; border: 1px solid rgb(255 255 255 / 21%); border-radius: 14px; background: rgb(35 37 43 / 97%); box-shadow: 0 18px 48px rgb(0 0 0 / 48%), inset 0 1px 0 rgb(255 255 255 / 9%); backdrop-filter: blur(26px) saturate(1.12); scrollbar-width: thin; }
+.mode-menu-section { display: grid; gap: 1px; }
+.mode-menu-row { min-height: 42px; display: grid; grid-template-columns: 30px minmax(0, 1fr) 16px; gap: 8px; align-items: center; padding: 0 9px; border: 0; border-radius: 9px; background: transparent; color: #e7e9ed; text-align: left; transition: background 140ms ease, color 140ms ease, transform 140ms ease; }
 .mode-menu-row:hover { background: rgb(255 255 255 / 9%); color: #fff; transform: translateX(1px); }
 .mode-menu-row.active, .mode-menu-primary { background: #087cf2; color: #fff; box-shadow: inset 0 1px 0 rgb(255 255 255 / 18%); }
 .mode-menu-primary:hover, .mode-menu-row.active:hover { background: #1685f4; }
-.mode-menu-icon { width: 38px; height: 38px; display: grid; place-items: center; color: #e4e8ee; }
+.mode-menu-icon { width: 30px; height: 30px; display: grid; place-items: center; color: #e4e8ee; }
+.mode-menu-icon svg { width: 18px; height: 18px; }
 .mode-menu-primary .mode-menu-icon, .mode-menu-row.active .mode-menu-icon { color: #fff; }
-.mode-menu-label { overflow: hidden; font-size: 16px; font-weight: 520; letter-spacing: 0; text-overflow: ellipsis; white-space: nowrap; }
+.mode-menu-label { overflow: hidden; font-size: 13px; font-weight: 560; letter-spacing: 0; text-overflow: ellipsis; white-space: nowrap; }
+.mode-menu-check { width: 15px; height: 15px; }
 .mode-menu-check { justify-self: end; color: #dcecff; }
-.mode-menu-divider { height: 1px; margin: 8px 10px; background: rgb(255 255 255 / 20%); }
+.mode-menu-divider { height: 1px; margin: 5px 8px; background: rgb(255 255 255 / 20%); }
 .mode-menu-disabled { color: #a1a5ac; cursor: not-allowed; opacity: .72; }
 .mode-menu-disabled:hover { background: transparent; color: #a1a5ac; transform: none; }
 .mode-menu-enter-active, .mode-menu-leave-active { transition: opacity 140ms ease, transform 140ms ease; }
@@ -1603,7 +1605,8 @@ watch(() => props.mode, async (mode, previousMode) => {
   .creation-studio.is-guest .studio-auth :deep(.auth-required-actions) { width: 100%; }
   .creation-studio.is-guest .studio-auth :deep(.command-button) { flex: 1 1 132px; justify-content: center; }
   .conversation-user { width: 92%; }
-  .studio-mode-menu { width: min(332px, calc(100vw - 28px)); }
-  .mode-menu-label { font-size: 15px; }
+  .studio-mode-menu { width: min(286px, calc(100vw - 32px)); max-height: min(400px, calc(100dvh - 444px)); }
+  .mode-menu-row { min-height: 44px; }
+  .mode-menu-label { font-size: 13px; }
 }
 </style>
