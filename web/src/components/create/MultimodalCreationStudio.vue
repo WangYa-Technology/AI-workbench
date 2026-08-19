@@ -518,7 +518,11 @@ watch(() => props.mode, async (mode, previousMode) => {
 </script>
 
 <template>
-  <section class="creation-studio" :data-mode="mode">
+  <section
+    class="creation-studio"
+    :class="{ 'is-guest': session.initialized && !session.user }"
+    :data-mode="mode"
+  >
     <div class="studio-scroll">
       <header class="studio-topbar studio-unified-header">
         <div class="studio-identity">
@@ -558,7 +562,11 @@ watch(() => props.mode, async (mode, previousMode) => {
         </button>
       </div>
 
-      <section class="studio-conversation" :aria-label="t('create.studio.conversationLabel')">
+      <section
+        v-if="!session.initialized || session.user"
+        class="studio-conversation"
+        :aria-label="t('create.studio.conversationLabel')"
+      >
         <div v-if="loading" class="conversation-skeleton" aria-live="polite">
           <span></span><span></span><span></span>
         </div>
@@ -1198,6 +1206,54 @@ watch(() => props.mode, async (mode, previousMode) => {
 .studio-notice.error { color: #ff8e9c; }
 .studio-notice.success { color: #7ce2b0; }
 
+/* Guest and signed-in empty states are mutually exclusive. The guest prompt
+   owns the available stage so it stays clear of the fixed composer. */
+.creation-studio.is-guest .studio-scroll {
+  display: flex;
+  flex-direction: column;
+}
+
+.creation-studio.is-guest .studio-auth {
+  min-height: 0;
+  flex: 1 1 auto;
+  place-content: center;
+  justify-items: center;
+  gap: 15px;
+  padding: 30px 0 60px;
+  text-align: center;
+}
+
+.creation-studio.is-guest .studio-auth :deep(.auth-required-icon) {
+  width: 48px;
+  height: 48px;
+  border: 1px solid var(--studio-border);
+  border-radius: 50%;
+  background: var(--studio-blue-soft);
+  color: #b7ceff;
+}
+
+.creation-studio.is-guest .studio-auth :deep(.auth-required-copy) {
+  justify-items: center;
+  gap: 8px;
+}
+
+.creation-studio.is-guest .studio-auth :deep(.auth-required-copy h2) {
+  color: var(--studio-text);
+  font-size: 23px;
+  font-weight: 560;
+}
+
+.creation-studio.is-guest .studio-auth :deep(.auth-required-copy p) {
+  max-width: 430px;
+  color: #8993a3;
+  font-size: 13px;
+}
+
+.creation-studio.is-guest .studio-auth :deep(.auth-required-actions) {
+  justify-content: center;
+  margin-top: 2px;
+}
+
 .studio-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
 .creation-studio[data-mode='chat'] .studio-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .creation-studio[data-mode='video'] .studio-grid,
@@ -1338,7 +1394,11 @@ watch(() => props.mode, async (mode, previousMode) => {
 .studio-identity > span { width: 34px; height: 34px; display: grid; place-items: center; border: 1px solid var(--studio-border); border-radius: 11px; background: var(--studio-blue-soft); color: #a9c5ff; }
 .studio-identity h1 { margin: 0; color: var(--studio-text); font-size: 15px; font-weight: 600; }
 .studio-identity p { margin: 3px 0 0; color: #7f8998; font-size: 10px; }
-.studio-conversation { width: min(100%, 920px); min-height: 460px; margin: 56px auto 0; }
+.studio-conversation {
+  width: min(100%, 920px);
+  min-height: clamp(300px, calc(100dvh - 390px), 500px);
+  margin: clamp(30px, 6vh, 56px) auto 0;
+}
 .conversation-feed { display: grid; gap: 28px; }
 .conversation-turn { display: grid; gap: 12px; }
 .conversation-user { width: min(84%, 700px); margin-left: auto; }
@@ -1357,7 +1417,7 @@ watch(() => props.mode, async (mode, previousMode) => {
 .conversation-result > footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 14px 11px; color: #768194; font-size: 10px; }
 .conversation-result > footer button { width: 27px; height: 27px; display: grid; place-items: center; border-radius: 50%; color: inherit; }
 .conversation-result > footer button:hover { background: rgb(255 255 255 / 8%); color: #c3d5ff; }
-.conversation-welcome { min-height: 430px; display: grid; place-content: center; justify-items: center; gap: 10px; text-align: center; }
+.conversation-welcome { min-height: inherit; display: grid; place-content: center; justify-items: center; gap: 10px; text-align: center; }
 .conversation-welcome > span { width: 54px; height: 54px; display: grid; place-items: center; border: 1px solid var(--studio-border); border-radius: 50%; background: var(--studio-blue-soft); color: #a9c5ff; }
 .conversation-welcome h2 { margin: 4px 0 0; color: var(--studio-text); font-size: 22px; font-weight: 560; }
 .conversation-welcome p { max-width: 460px; margin: 0; color: #8993a3; font-size: 13px; line-height: 1.55; }
@@ -1400,7 +1460,11 @@ watch(() => props.mode, async (mode, previousMode) => {
   .studio-composer textarea { min-height: 58px; }
   .studio-output-summary { display: none; }
   .studio-identity p { display: none; }
-  .studio-conversation { margin-top: 34px; }
+  .studio-conversation { min-height: clamp(240px, calc(100dvh - 350px), 420px); margin-top: 28px; }
+  .creation-studio.is-guest .studio-auth { padding: 20px 12px 46px; }
+  .creation-studio.is-guest .studio-auth :deep(.auth-required-copy h2) { font-size: 20px; }
+  .creation-studio.is-guest .studio-auth :deep(.auth-required-actions) { width: 100%; }
+  .creation-studio.is-guest .studio-auth :deep(.command-button) { flex: 1 1 132px; justify-content: center; }
   .conversation-user { width: 92%; }
   .studio-mode-menu { width: min(332px, calc(100vw - 28px)); }
   .mode-menu-label { font-size: 15px; }
