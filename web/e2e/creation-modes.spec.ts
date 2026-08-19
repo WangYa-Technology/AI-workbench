@@ -162,6 +162,25 @@ test('highlights only the active creation mode and dismisses the menu', async ({
   await expect(menu).toBeHidden()
 })
 
+test('uses the compact floating style for output settings and dismisses it', async ({ page }) => {
+  await page.request.post('/api/v1/auth/logout')
+  await page.goto('/create/chat')
+
+  const trigger = page.getByRole('button', { name: 'Output settings' })
+  await trigger.click()
+  const panel = page.getByRole('dialog', { name: 'Output settings' })
+  await expect(panel).toBeVisible()
+  await expect(panel).toHaveCSS('width', '220px')
+  await expect(panel).toHaveCSS('border-radius', '22px')
+  await expect(panel.locator('label')).toHaveCount(2)
+
+  await page.getByRole('heading', { name: 'AI creation space', exact: true }).click()
+  await expect(panel).toBeHidden()
+  await trigger.click()
+  await page.keyboard.press('Escape')
+  await expect(panel).toBeHidden()
+})
+
 test('keeps the creation workspace in sync with the global theme', async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem('hcai-theme', 'light'))
   await page.goto('/create/image')

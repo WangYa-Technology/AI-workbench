@@ -55,6 +55,8 @@ const modeMenuOpen = ref(false)
 const modeMenu = ref<InstanceType<typeof globalThis.HTMLElement> | null>(null)
 const modeMenuTrigger = ref<InstanceType<typeof globalThis.HTMLButtonElement> | null>(null)
 const controlsOpen = ref(false)
+const controlsPanel = ref<InstanceType<typeof globalThis.HTMLElement> | null>(null)
+const controlsTrigger = ref<InstanceType<typeof globalThis.HTMLButtonElement> | null>(null)
 const error = ref('')
 const feedback = ref('')
 const fileInput = ref<InstanceType<typeof globalThis.HTMLInputElement> | null>(null)
@@ -150,8 +152,13 @@ onClickOutside(modeMenu, () => {
   modeMenuOpen.value = false
 }, { ignore: [modeMenuTrigger] })
 
+onClickOutside(controlsPanel, () => {
+  controlsOpen.value = false
+}, { ignore: [controlsTrigger] })
+
 onKeyStroke('Escape', () => {
   modeMenuOpen.value = false
+  controlsOpen.value = false
 })
 
 async function loadCapabilities() {
@@ -637,9 +644,21 @@ watch(() => props.mode, async (mode, previousMode) => {
             <Plus :size="18" />
           </button>
           <span v-if="mode !== 'chat'" class="creation-mode-chip"><component :is="modeIcon" :size="15" />{{ t(`create.modes.${mode}`) }}<button type="button" :aria-label="t('create.studio.removeCreationType')" @click="selectCreationMode('chat')"><X :size="12" /></button></span>
-          <button class="studio-settings-button" type="button" :class="{ active: controlsOpen }" :aria-label="t('create.studio.outputSettings')" :title="t('create.studio.outputSettings')" @click="controlsOpen = !controlsOpen">
-            <SlidersHorizontal :size="16" />
-          </button>
+          <div class="studio-settings-control">
+            <button ref="controlsTrigger" class="studio-settings-button" type="button" :class="{ active: controlsOpen }" :aria-label="t('create.studio.outputSettings')" :title="t('create.studio.outputSettings')" :aria-expanded="controlsOpen" @click="controlsOpen = !controlsOpen; modeMenuOpen = false; assetPickerOpen = false">
+              <SlidersHorizontal :size="16" />
+            </button>
+            <Transition name="mode-menu">
+              <section v-if="controlsOpen" ref="controlsPanel" class="studio-mode-menu output-controls" role="dialog" :aria-label="t('create.studio.outputSettings')">
+                <label v-if="['image', 'video'].includes(mode)"><span>{{ t('create.studio.ratio') }}</span><select v-model="settings.ratio"><option v-for="ratio in ratioOptions" :key="ratio" :value="ratio">{{ ratio === 'auto' ? t('create.studio.autoRatio') : ratio }}</option></select></label>
+                <label v-if="mode !== 'chat'"><span>{{ t('create.studio.quality') }}</span><select v-model="settings.quality"><option v-for="quality in qualityOptions" :key="quality" :value="quality">{{ t(`create.studio.qualities.${quality}`) }}</option></select></label>
+                <label v-if="['video', 'music'].includes(mode)"><span>{{ t('create.studio.duration') }}</span><select v-model.number="settings.duration"><option v-for="duration in durationOptions" :key="duration" :value="duration">{{ t('create.studio.durationValue', { value: duration }) }}</option></select></label>
+                <label v-if="mode === 'chat'"><span>{{ t('create.studio.responseLength') }}</span><select v-model="settings.responseLength"><option value="short">{{ t('create.studio.responseLengths.short') }}</option><option value="balanced">{{ t('create.studio.responseLengths.balanced') }}</option><option value="detailed">{{ t('create.studio.responseLengths.detailed') }}</option></select></label>
+                <label v-if="capabilityFormatOptions.length > 1 || mode === 'chat'"><span>{{ t('create.studio.format') }}</span><select v-model="settings.format"><option v-for="item in capabilityFormatOptions" :key="item" :value="item">{{ item.toUpperCase() }}</option></select></label>
+                <label v-if="mode !== 'chat'"><span>{{ t('create.studio.count') }}</span><input v-model.number="settings.count" type="number" min="1" max="4" /></label>
+              </section>
+            </Transition>
+          </div>
         </div>
         <button class="studio-submit" type="submit" :disabled="!canSubmit" :aria-label="submitting ? t('actions.generating') : generateLabel">
           <LoaderCircle v-if="submitting" class="spin" :size="17" /><Send v-else :size="17" /><span>{{ submitting ? t('actions.generating') : generateLabel }}</span>
@@ -717,15 +736,6 @@ watch(() => props.mode, async (mode, previousMode) => {
         <p v-else>
           {{ t('create.studio.noReferences') }}
         </p>
-      </section>
-
-      <section v-if="controlsOpen" class="studio-popover output-controls">
-        <label v-if="['image', 'video'].includes(mode)"><span>{{ t('create.studio.ratio') }}</span><select v-model="settings.ratio"><option v-for="ratio in ratioOptions" :key="ratio" :value="ratio">{{ ratio === 'auto' ? t('create.studio.autoRatio') : ratio }}</option></select></label>
-        <label v-if="mode !== 'chat'"><span>{{ t('create.studio.quality') }}</span><select v-model="settings.quality"><option v-for="quality in qualityOptions" :key="quality" :value="quality">{{ t(`create.studio.qualities.${quality}`) }}</option></select></label>
-        <label v-if="['video', 'music'].includes(mode)"><span>{{ t('create.studio.duration') }}</span><select v-model.number="settings.duration"><option v-for="duration in durationOptions" :key="duration" :value="duration">{{ t('create.studio.durationValue', { value: duration }) }}</option></select></label>
-        <label v-if="mode === 'chat'"><span>{{ t('create.studio.responseLength') }}</span><select v-model="settings.responseLength"><option value="short">{{ t('create.studio.responseLengths.short') }}</option><option value="balanced">{{ t('create.studio.responseLengths.balanced') }}</option><option value="detailed">{{ t('create.studio.responseLengths.detailed') }}</option></select></label>
-        <label v-if="capabilityFormatOptions.length > 1 || mode === 'chat'"><span>{{ t('create.studio.format') }}</span><select v-model="settings.format"><option v-for="item in capabilityFormatOptions" :key="item" :value="item">{{ item.toUpperCase() }}</option></select></label>
-        <label v-if="mode !== 'chat'"><span>{{ t('create.studio.count') }}</span><input v-model.number="settings.count" type="number" min="1" max="4" /></label>
       </section>
     </form>
 
@@ -1426,7 +1436,14 @@ watch(() => props.mode, async (mode, previousMode) => {
 .creation-mode-chip { min-height: 34px; display: inline-flex; align-items: center; gap: 7px; padding: 0 8px 0 10px; border: 1px solid rgb(79 140 255 / 38%); border-radius: 999px; background: var(--studio-blue-soft); color: #d8e6ff; font-size: 11px; font-weight: 600; line-height: 1; white-space: nowrap; }
 .creation-mode-chip button { width: 18px; min-width: 18px; height: 18px; min-height: 18px; display: inline-grid; place-items: center; flex: 0 0 18px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: #a9c3f4; line-height: 0; cursor: pointer; }
 .creation-mode-chip button:hover { background: rgb(255 255 255 / 11%); color: #fff; }
+.studio-settings-control { position: relative; display: grid; place-items: center; flex: 0 0 auto; }
+.studio-settings-button { width: 34px; height: 34px; display: grid; place-items: center; border: 1px solid rgb(255 255 255 / 8%); border-radius: 50%; background: rgb(255 255 255 / 5%); color: #9ca5b2; }
+.studio-settings-button:hover,
+.studio-settings-button.active { border-color: rgb(79 140 255 / 36%); background: var(--studio-blue-soft); color: #c8dcff; }
 .studio-mode-menu { position: absolute; right: auto; bottom: calc(100% + 8px); left: 0; z-index: 20; width: min(220px, calc(100vw - 32px)); max-height: min(320px, calc(100dvh - 250px)); overflow-y: auto; overscroll-behavior: contain; padding: 5px; border: 1px solid rgb(255 255 255 / 21%); border-radius: 22px; background: rgb(35 37 43 / 97%); box-shadow: 0 14px 34px rgb(0 0 0 / 42%), inset 0 1px 0 rgb(255 255 255 / 9%); backdrop-filter: blur(22px) saturate(1.08); scrollbar-width: thin; }
+.output-controls.studio-mode-menu { right: auto; bottom: calc(100% + 12px); left: 0; width: min(220px, calc(100vw - 32px)); max-height: min(320px, calc(100dvh - 250px)); display: grid; grid-template-columns: 1fr; gap: 9px; padding: 12px; }
+.output-controls.studio-mode-menu label { display: grid; gap: 5px; color: #aab2bf; font-size: 11px; font-weight: 560; }
+.output-controls.studio-mode-menu :is(select, input) { height: 34px; border-radius: 10px; padding: 0 9px; font-size: 12px; }
 .mode-menu-section { display: grid; gap: 1px; }
 .mode-menu-row { min-height: 35px; display: grid; grid-template-columns: 22px minmax(0, 1fr) 13px; gap: 6px; align-items: center; padding: 0 7px; border: 0; border-radius: 12px; background: transparent; color: #e7e9ed; text-align: left; transition: background 140ms ease, color 140ms ease, transform 140ms ease; }
 .mode-menu-row:hover { background: rgb(255 255 255 / 9%); color: #fff; transform: translateX(1px); }
@@ -1580,6 +1597,8 @@ watch(() => props.mode, async (mode, previousMode) => {
   background: color-mix(in srgb, var(--surface-raised) 97%, transparent);
   box-shadow: 0 22px 65px rgb(27 35 52 / 18%), inset 0 1px 0 rgb(255 255 255 / 70%);
 }
+.output-controls.studio-mode-menu label { color: var(--text-secondary); }
+.output-controls.studio-mode-menu :is(select, input) { border-color: var(--border); background: var(--surface); color: var(--text); }
 .mode-menu-row { color: var(--text); }
 .mode-menu-row:hover { background: var(--surface-muted); color: var(--text); }
 .mode-menu-row.active { background: var(--accent); color: var(--accent-contrast); }
