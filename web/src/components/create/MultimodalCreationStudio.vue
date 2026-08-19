@@ -16,6 +16,7 @@ import { formatCurrency, formatDateTime } from '../../lib/format'
 import {
   useCreationDraftStore, type CreationDraftMode, type CreationDraftView, type CreationOutputSettings,
 } from '../../stores/creationDraft'
+import { usePreferencesStore } from '../../stores/preferences'
 import { useSessionStore } from '../../stores/session'
 import { isCreationCapabilityComplete } from '../../lib/creationCapabilities'
 import AssetMedia from '../domain/AssetMedia.vue'
@@ -27,6 +28,7 @@ const route = useRoute()
 const router = useRouter()
 const props = defineProps<{ mode: CreationMode }>()
 const session = useSessionStore()
+const preferences = usePreferencesStore()
 const draftStore = useCreationDraftStore()
 const restoredDraft = draftStore.restore(props.mode)
 const view = ref<CreationDraftView>(restoredDraft?.view || (props.mode === 'chat' ? 'guide' : 'gallery'))
@@ -508,7 +510,7 @@ watch(() => props.mode, async (mode, previousMode) => {
 <template>
   <section
     class="creation-studio"
-    :class="{ 'is-guest': session.initialized && !session.user }"
+    :class="{ 'is-guest': session.initialized && !session.user, 'is-light': preferences.resolvedTheme === 'light' }"
     :data-mode="mode"
   >
     <div class="studio-scroll">
@@ -1430,6 +1432,156 @@ watch(() => props.mode, async (mode, previousMode) => {
 .mode-menu-enter-active, .mode-menu-leave-active { transition: opacity 140ms ease, transform 140ms ease; }
 .mode-menu-enter-from, .mode-menu-leave-to { opacity: 0; transform: translateY(5px); }
 @keyframes studio-shimmer { to { background-position: -200% 0; } }
+
+/* The global theme owns the creation surface. Dark mode keeps the immersive
+   studio treatment above; light mode translates the same hierarchy into the
+   site's canvas, surface, text and hairline tokens. */
+.creation-studio.is-light {
+& {
+  --studio-bg: var(--canvas);
+  --studio-panel: var(--surface);
+  --studio-panel-strong: var(--surface);
+  --studio-border: var(--border);
+  --studio-muted: var(--text-secondary);
+  --studio-text: var(--text);
+  --studio-blue: var(--accent);
+  --studio-blue-soft: var(--accent-soft);
+  color-scheme: light;
+  background:
+    radial-gradient(circle at 50% 18%, color-mix(in srgb, var(--accent) 8%, transparent), transparent 38%),
+    var(--studio-bg);
+}
+
+.studio-scroll { scrollbar-color: var(--border-strong) transparent; }
+.studio-modes,
+.studio-view-switch,
+.studio-search,
+.studio-filter { background: color-mix(in srgb, var(--surface-muted) 72%, transparent); }
+.studio-modes a { color: var(--text-secondary); }
+.studio-modes a:hover,
+.studio-modes a.active { background: var(--surface); color: var(--text); box-shadow: inset 0 0 0 1px var(--border); }
+.studio-view-switch button { background: var(--surface-muted); color: var(--text-secondary); }
+.studio-view-switch button.active { background: var(--surface); color: var(--text); box-shadow: var(--shadow-xs); }
+.studio-search input,
+.studio-filter select { color: var(--text); }
+.studio-search input::placeholder { color: var(--text-tertiary); }
+.studio-balance,
+.studio-toolbar-actions > .icon-button { color: var(--text-secondary); }
+.studio-balance strong { color: var(--text); }
+.studio-balance:hover,
+.studio-toolbar-actions > .icon-button:hover { background: var(--surface-muted); color: var(--text); }
+.studio-heading p,
+.studio-identity p,
+.studio-empty,
+.studio-empty p,
+.studio-guide header p,
+.studio-guide-latest > div,
+.studio-popover > header small,
+.studio-popover > p,
+.conversation-user > div,
+.conversation-result > header small,
+.conversation-result > footer,
+.conversation-welcome p { color: var(--text-secondary); }
+.studio-notice.error { color: var(--danger); }
+.studio-notice.success { color: var(--success); }
+.creation-studio.is-guest .studio-auth :deep(.auth-required-icon) { color: var(--accent-readable); }
+.creation-studio.is-guest .studio-auth :deep(.auth-required-copy p) { color: var(--text-secondary); }
+
+.studio-task,
+.studio-task-copy,
+.studio-guide-messages p,
+.studio-guide-latest,
+.conversation-result { background: var(--surface); }
+.studio-task:hover,
+.conversation-result:hover { border-color: var(--border-strong); background: var(--surface-raised); }
+.studio-task-media,
+.conversation-result :deep(.asset-renderer),
+.conversation-result :deep(img),
+.conversation-result :deep(video) { background: var(--surface-muted); }
+.studio-task-copy p,
+.studio-guide-messages p,
+.conversation-result > header { color: var(--text); }
+.studio-task-copy > small,
+.studio-task-copy > div { color: var(--text-secondary); }
+.studio-task-status,
+.studio-task-favorite { background: rgb(255 255 255 / 88%); color: var(--text-secondary); }
+.studio-empty > span,
+.studio-guide > header > span,
+.studio-guide-messages article > span,
+.assistant-mark { background: var(--surface-muted); color: var(--accent-readable); }
+.studio-guide-messages article[data-role='user'] > p,
+.conversation-user p { border-color: color-mix(in srgb, var(--accent) 26%, var(--border)); background: var(--accent-soft); color: var(--text); }
+
+.studio-composer {
+  border-color: var(--border-strong);
+  background: color-mix(in srgb, var(--surface) 96%, transparent);
+  box-shadow: 0 18px 52px rgb(27 35 52 / 12%), 0 0 0 1px rgb(255 255 255 / 70%);
+}
+.studio-composer textarea { color: var(--text); }
+.studio-composer textarea::placeholder { color: var(--text-tertiary); }
+.studio-composer-tools > button { border-color: var(--border); background: var(--surface-muted); color: var(--text-secondary); }
+.studio-composer-tools > button:hover,
+.studio-composer-tools > button.active { border-color: color-mix(in srgb, var(--accent) 34%, var(--border)); background: var(--accent-soft); color: var(--accent-readable); }
+.studio-submit { background: var(--accent); color: var(--accent-contrast); box-shadow: 0 5px 18px color-mix(in srgb, var(--accent) 30%, transparent); }
+.studio-submit:hover:not(:disabled) { background: var(--accent-hover); }
+.studio-submit:disabled { background: var(--surface-muted); color: var(--text-tertiary); }
+.studio-context-item,
+.creation-mode-chip { border-color: color-mix(in srgb, var(--accent) 32%, var(--border)); color: var(--accent-readable); }
+.studio-context-item > svg:first-child,
+.studio-context-item > button,
+.creation-mode-chip button,
+.conversation-mode { color: var(--accent-readable); }
+.studio-context-item > button:hover,
+.creation-mode-chip button:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent-readable); }
+
+.studio-popover {
+  border-color: var(--border-strong);
+  background: color-mix(in srgb, var(--surface-raised) 97%, transparent);
+  box-shadow: 0 18px 50px rgb(27 35 52 / 16%);
+}
+.reference-mode-switch,
+.reference-actions button { background: var(--surface-muted); }
+.reference-mode-switch button,
+.reference-actions button { color: var(--text-secondary); }
+.reference-mode-switch button.active { background: var(--surface); color: var(--text); box-shadow: var(--shadow-xs); }
+.reference-list button:hover { background: var(--surface-muted); }
+.reference-list button.selected { background: var(--accent-soft); color: var(--accent-readable); }
+.output-controls select,
+.output-controls input { border-color: var(--border); background: var(--surface); color: var(--text); }
+
+.studio-detail-backdrop { background: rgb(27 35 52 / 22%); }
+.studio-detail { border-left-color: var(--border); background: var(--surface); box-shadow: -18px 0 50px rgb(27 35 52 / 14%); }
+.studio-detail-media,
+.studio-detail dl div { background: var(--surface-muted); }
+.studio-detail > p,
+.studio-detail dt { color: var(--text-secondary); }
+.studio-detail dd { color: var(--text); }
+
+.studio-identity > span,
+.conversation-welcome > span { color: var(--accent-readable); }
+.conversation-progress { color: var(--text-secondary); }
+.conversation-result > footer button:hover { background: var(--surface-muted); color: var(--accent-readable); }
+.conversation-skeleton span { background: linear-gradient(100deg, var(--surface-muted), var(--surface), var(--surface-muted)); background-size: 200% 100%; }
+
+.studio-mode-menu {
+  border-color: var(--border-strong);
+  background: color-mix(in srgb, var(--surface-raised) 97%, transparent);
+  box-shadow: 0 22px 65px rgb(27 35 52 / 18%), inset 0 1px 0 rgb(255 255 255 / 70%);
+}
+.mode-menu-row { color: var(--text); }
+.mode-menu-row:hover { background: var(--surface-muted); color: var(--text); }
+.mode-menu-row.active,
+.mode-menu-primary { background: var(--accent); color: var(--accent-contrast); }
+.mode-menu-primary:hover,
+.mode-menu-row.active:hover { background: var(--accent-hover); }
+.mode-menu-icon { color: var(--text-secondary); }
+.mode-menu-primary .mode-menu-icon,
+.mode-menu-row.active .mode-menu-icon,
+.mode-menu-check { color: var(--accent-contrast); }
+.mode-menu-divider { background: var(--border); }
+.mode-menu-disabled,
+.mode-menu-disabled:hover { color: var(--text-tertiary); }
+}
 
 @media (max-width: 1100px) {
   .studio-topbar { grid-template-columns: auto minmax(0, 1fr) auto; }

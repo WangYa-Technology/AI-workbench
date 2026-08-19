@@ -138,6 +138,19 @@ test('keeps every creation mode visible on a phone-sized viewport', async ({ pag
   await expect(page.evaluate(() => document.documentElement.scrollWidth)).resolves.toBe(390)
 })
 
+test('keeps the creation workspace in sync with the global theme', async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('hcai-theme', 'light'))
+  await page.goto('/create/image')
+
+  const studio = page.locator('.creation-studio')
+  await expect(studio).toHaveClass(/is-light/)
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light')
+
+  await page.getByRole('button', { name: /Switch color theme|切换主题/ }).click()
+  await expect(studio).not.toHaveClass(/is-light/)
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
+})
+
 test('switches creation modes in place and keeps the selected route active', async ({ page }) => {
   await page.request.post('/api/v1/auth/demo', { data: { actor: 'creator' } })
   await page.goto('/create/image')
