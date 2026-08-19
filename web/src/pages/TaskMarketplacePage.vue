@@ -467,12 +467,15 @@ onBeforeUnmount(() => {
           </button>
         </div>
         <RouterLink v-for="item in tasks" :key="item.id" class="task-row" :to="`/market/demands/${item.id}`">
-          <span class="task-type"><component :is="item.deliverableType === 'image' ? WandSparkles : FileCheck2" :size="17" />{{ t(`tasks.types.${item.deliverableType}`) }}</span>
-          <span class="task-row-copy"><strong>{{ item.title }}</strong><small>{{ item.summary }}</small><span>@{{ item.client.handle }}<template v-if="item.allowDirectAccept && item.status === 'open'"> / {{ t('tasks.direct') }}</template></span></span>
+          <span class="task-type"><span><component :is="item.deliverableType === 'image' ? WandSparkles : FileCheck2" :size="18" /></span></span>
+          <span class="task-row-copy">
+            <span class="task-row-heading"><span>{{ t(`tasks.types.${item.deliverableType}`) }}</span><span class="task-status" :data-status="item.status">{{ t(`tasks.status.${item.status}`) }}</span></span>
+            <strong>{{ item.title }}</strong><small>{{ item.summary }}</small>
+            <span class="task-row-byline"><span>@{{ item.client.handle }}</span><span>{{ item.proposalCount }} {{ t('tasks.proposalCount') }}</span><span v-if="item.allowDirectAccept && item.status === 'open'">{{ t('tasks.direct') }}</span></span>
+          </span>
           <span class="task-row-data"><small>{{ paymentEnabled ? t('tasks.providerReward') : t('tasks.reward') }}</small><strong>{{ money(item.budgetCents, item.currency) }}</strong></span>
           <span class="task-row-data"><small>{{ t('tasks.deadline') }}</small><strong>{{ date(item.deadline, item.clientTimezone) }}</strong></span>
-          <span class="task-row-data"><small>{{ t('tasks.proposalCount') }}</small><strong>{{ item.proposalCount }}</strong></span>
-          <span class="task-status" :data-status="item.status">{{ t(`tasks.status.${item.status}`) }}</span><span class="task-row-action">{{ t('tasks.reviewBrief') }}<ChevronRight :size="16" /></span>
+          <span class="task-row-action">{{ t('tasks.reviewBrief') }}<ChevronRight :size="16" /></span>
         </RouterLink>
         <div v-if="!tasks.length" class="task-market-state task-market-empty">
           <span><component :is="view === 'mine' ? BriefcaseBusiness : Search" :size="20" /></span><strong>{{ t(view === 'mine' ? 'tasks.noMyActivity' : 'tasks.noResults') }}</strong><button v-if="view === 'available'" class="text-link" type="button" @click="clearFilters">
