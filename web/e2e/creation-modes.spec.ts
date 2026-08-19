@@ -224,6 +224,14 @@ test('keeps the creation workspace in sync with the global theme', async ({ page
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
 })
 
+test('keeps the creation workspace free of the global footer', async ({ page }) => {
+  await page.goto('/create/chat')
+  await expect(page.locator('.site-footer')).toHaveCount(0)
+
+  await page.goto('/discover')
+  await expect(page.locator('.site-footer')).toBeVisible()
+})
+
 test('switches creation modes in place and keeps the selected route active', async ({ page }) => {
   await page.request.post('/api/v1/auth/demo', { data: { actor: 'creator' } })
   await page.goto('/create/image')

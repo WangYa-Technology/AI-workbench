@@ -181,7 +181,7 @@ const submitSearch = () => {
         </RouterView>
       </main>
 
-      <footer class="site-footer">
+      <footer v-if="route.name !== 'create'" class="site-footer">
         <nav :aria-label="t('legal.footerLabel')">
           <RouterLink v-for="item in trustLinks" :key="item.to" :to="item.to">
             {{ item.label }}
