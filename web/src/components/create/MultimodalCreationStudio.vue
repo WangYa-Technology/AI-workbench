@@ -1141,33 +1141,33 @@ watch(() => props.mode, async (mode, previousMode) => {
   gap: 3px;
   padding: 4px;
   border: 1px solid var(--studio-border);
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-control);
   background: rgb(255 255 255 / 4%);
 
   a {
     min-height: 34px;
     padding: 0 12px;
-    border-radius: var(--radius-pill);
+    border-radius: var(--radius-control);
     color: var(--studio-muted);
     font-size: 11px;
-    transition: color 160ms ease, background 160ms ease, transform 160ms ease;
+    transition: color 160ms ease, background 160ms ease;
   }
 
-  a:hover { background: rgb(255 255 255 / 8%); color: var(--studio-text); transform: translateY(-1px); }
-  a.active { background: rgb(255 255 255 / 14%); color: #fff; box-shadow: inset 0 0 0 1px rgb(255 255 255 / 8%); }
+  a:hover { background: rgb(255 255 255 / 8%); color: var(--studio-text); }
+  a.active { background: rgb(255 255 255 / 14%); color: #fff; }
 }
 
 .studio-view-switch {
   justify-self: center;
   padding: 3px;
   border: 1px solid var(--studio-border);
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-control);
   background: rgb(255 255 255 / 3%);
 
   button {
     min-height: 30px;
     padding: 0 12px;
-    border-radius: var(--radius-pill);
+    border-radius: var(--radius-control);
     background: #171b23;
     color: #d8e0ec;
     font-size: 10px;
@@ -1345,11 +1345,11 @@ watch(() => props.mode, async (mode, previousMode) => {
   border-radius: 50%;
   background: var(--studio-blue);
   color: #fff;
-  box-shadow: 0 5px 18px rgb(79 140 255 / 35%);
-  transition: transform 160ms ease, background 160ms ease, opacity 160ms ease;
+  box-shadow: none;
+  transition: background 160ms ease, opacity 160ms ease;
 }
 .studio-submit span { display: none; }
-.studio-submit:hover:not(:disabled) { background: #6b9fff; transform: translateY(-1px); }
+.studio-submit:hover:not(:disabled) { background: #6b9fff; }
 .studio-submit:disabled { background: #3a4456; color: #8993a3; opacity: .72; box-shadow: none; }
 
 .studio-context {
@@ -1448,9 +1448,9 @@ watch(() => props.mode, async (mode, previousMode) => {
 .output-controls.studio-mode-menu label { display: grid; gap: 5px; color: #aab2bf; font-size: 11px; font-weight: 560; }
 .output-controls.studio-mode-menu :is(select, input) { height: 34px; border-radius: var(--radius-surface); padding: 0 9px; font-size: 12px; }
 .mode-menu-section { display: grid; gap: 1px; }
-.mode-menu-row { min-height: 35px; display: grid; grid-template-columns: 22px minmax(0, 1fr) 13px; gap: 6px; align-items: center; padding: 0 7px; border: 0; border-radius: var(--radius-surface); background: transparent; color: #e7e9ed; text-align: left; transition: background 140ms ease, color 140ms ease, transform 140ms ease; }
-.mode-menu-row:hover { background: rgb(255 255 255 / 9%); color: #fff; transform: translateX(1px); }
-.mode-menu-row.active { background: #087cf2; color: #fff; box-shadow: inset 0 1px 0 rgb(255 255 255 / 18%); }
+.mode-menu-row { min-height: 35px; display: grid; grid-template-columns: 22px minmax(0, 1fr) 13px; gap: 6px; align-items: center; padding: 0 7px; border: 0; border-radius: var(--radius-surface); background: transparent; color: #e7e9ed; text-align: left; transition: background 140ms ease, color 140ms ease; }
+.mode-menu-row:hover { background: rgb(255 255 255 / 9%); color: #fff; }
+.mode-menu-row.active { background: #087cf2; color: #fff; }
 .mode-menu-row.active:hover { background: #1685f4; }
 .mode-menu-icon { width: 22px; height: 22px; display: grid; place-items: center; color: #e4e8ee; }
 .mode-menu-icon svg { width: 15px; height: 15px; }
@@ -1491,9 +1491,9 @@ watch(() => props.mode, async (mode, previousMode) => {
 .studio-filter { background: color-mix(in srgb, var(--surface-muted) 72%, transparent); }
 .studio-modes a { color: var(--text-secondary); }
 .studio-modes a:hover,
-.studio-modes a.active { background: var(--surface); color: var(--text); box-shadow: inset 0 0 0 1px var(--border); }
+.studio-modes a.active { background: var(--surface); color: var(--text); }
 .studio-view-switch button { background: var(--surface-muted); color: var(--text-secondary); }
-.studio-view-switch button.active { background: var(--surface); color: var(--text); box-shadow: var(--shadow-xs); }
+.studio-view-switch button.active { background: var(--surface); color: var(--text); }
 .studio-search input,
 .studio-filter select { color: var(--text); }
 .studio-search input::placeholder { color: var(--text-tertiary); }
@@ -1557,7 +1557,7 @@ watch(() => props.mode, async (mode, previousMode) => {
 .studio-composer-tools > button.active,
 .studio-settings-button:hover,
 .studio-settings-button.active { border-color: color-mix(in srgb, var(--accent) 34%, var(--border)); background: var(--accent-soft); color: var(--accent-readable); }
-.studio-submit { background: var(--accent); color: var(--accent-contrast); box-shadow: 0 5px 18px color-mix(in srgb, var(--accent) 30%, transparent); }
+.studio-submit { background: var(--accent); color: var(--accent-contrast); box-shadow: none; }
 .studio-submit:hover:not(:disabled) { background: var(--accent-hover); }
 .studio-submit:disabled { background: var(--surface-muted); color: var(--text-tertiary); }
 .studio-context-item,
@@ -1578,7 +1578,7 @@ watch(() => props.mode, async (mode, previousMode) => {
 .reference-actions button { background: var(--surface-muted); }
 .reference-mode-switch button,
 .reference-actions button { color: var(--text-secondary); }
-.reference-mode-switch button.active { background: var(--surface); color: var(--text); box-shadow: var(--shadow-xs); }
+.reference-mode-switch button.active { background: var(--surface); color: var(--text); }
 .reference-list button:hover { background: var(--surface-muted); }
 .reference-list button.selected { background: var(--accent-soft); color: var(--accent-readable); }
 .output-controls select,

@@ -175,6 +175,7 @@ test('uses the compact floating style for output settings and dismisses it', asy
 
   const trigger = page.getByRole('button', { name: 'Output settings' })
   const modeTrigger = page.getByRole('button', { name: 'Choose what to create' })
+  await expect(page.locator('.studio-submit')).toHaveCSS('box-shadow', 'none')
   const buttonVisuals = async (button: typeof trigger) => button.evaluate((element) => {
     const style = globalThis.getComputedStyle(element)
     return {

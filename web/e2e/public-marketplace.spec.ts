@@ -6,7 +6,9 @@ test('lets a visitor browse a task and return after creating an account', async 
   await page.goto('/market/demands')
 
   await expect(page.getByRole('heading', { name: 'Task marketplace', exact: true })).toBeVisible()
-  await expect(page.getByRole('link', { name: 'Sign in', exact: true }).first()).toHaveCSS('border-radius', '24px')
+  const signIn = page.getByRole('link', { name: 'Sign in', exact: true }).first()
+  await expect(signIn).toHaveCSS('border-radius', '24px')
+  await expect(signIn).toHaveCSS('box-shadow', 'none')
   const firstTask = page.locator('.task-row').first()
   await expect(firstTask).toBeVisible()
   await firstTask.click()
