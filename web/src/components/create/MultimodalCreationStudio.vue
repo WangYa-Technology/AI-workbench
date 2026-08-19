@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { useIntervalFn } from '@vueuse/core'
+import { onClickOutside, onKeyStroke, useIntervalFn } from '@vueuse/core'
 import {
   AlertCircle, Ban, Bookmark, BriefcaseBusiness, Check, Cloud, Download, Eraser, FileText, FolderOpen, History,
   Image as ImageIcon, Images, LoaderCircle, MessageSquare, MessageSquareText,
@@ -52,6 +52,8 @@ const uploadLoading = ref(false)
 const assetPickerOpen = ref(false)
 const referencePickerMode = ref<'references' | 'mask'>('references')
 const modeMenuOpen = ref(false)
+const modeMenu = ref<InstanceType<typeof globalThis.HTMLElement> | null>(null)
+const modeMenuTrigger = ref<InstanceType<typeof globalThis.HTMLButtonElement> | null>(null)
 const controlsOpen = ref(false)
 const error = ref('')
 const feedback = ref('')
@@ -143,6 +145,14 @@ function toggleModeMenu() {
     controlsOpen.value = false
   }
 }
+
+onClickOutside(modeMenu, () => {
+  modeMenuOpen.value = false
+}, { ignore: [modeMenuTrigger] })
+
+onKeyStroke('Escape', () => {
+  modeMenuOpen.value = false
+})
 
 async function loadCapabilities() {
   try {
@@ -623,7 +633,7 @@ watch(() => props.mode, async (mode, previousMode) => {
       <textarea v-model="prompt" rows="2" maxlength="1800" :placeholder="t(`create.builder.modePlaceholder.${mode}`)" @keydown.enter.exact.prevent="canSubmit && submit()"></textarea>
       <div class="studio-composer-row">
         <div class="studio-composer-tools">
-          <button type="button" :class="{ active: modeMenuOpen }" :aria-label="t('create.studio.chooseCreationType')" :title="t('create.studio.chooseCreationType')" aria-haspopup="menu" :aria-expanded="modeMenuOpen" @click="toggleModeMenu">
+          <button ref="modeMenuTrigger" type="button" :class="{ active: modeMenuOpen }" :aria-label="t('create.studio.chooseCreationType')" :title="t('create.studio.chooseCreationType')" aria-haspopup="menu" :aria-expanded="modeMenuOpen" @click="toggleModeMenu">
             <Plus :size="18" />
           </button>
           <span v-if="mode !== 'chat'" class="creation-mode-chip"><component :is="modeIcon" :size="15" />{{ t(`create.modes.${mode}`) }}<button type="button" :aria-label="t('create.studio.removeCreationType')" @click="selectCreationMode('chat')"><X :size="12" /></button></span>
@@ -637,9 +647,9 @@ watch(() => props.mode, async (mode, previousMode) => {
       </div>
 
       <Transition name="mode-menu">
-        <section v-if="modeMenuOpen" class="studio-mode-menu" role="menu" :aria-label="t('create.studio.chooseCreationType')">
+        <section v-if="modeMenuOpen" ref="modeMenu" class="studio-mode-menu" role="menu" :aria-label="t('create.studio.chooseCreationType')">
           <div class="mode-menu-section">
-            <button type="button" role="menuitem" class="mode-menu-row mode-menu-primary" @click="openAssetPicker('references')">
+            <button type="button" role="menuitem" class="mode-menu-row" @click="openAssetPicker('references')">
               <span class="mode-menu-icon"><FileText :size="21" /></span><span class="mode-menu-label">{{ t('create.studio.menuItems.file') }}</span>
             </button>
             <button type="button" class="mode-menu-row" @click="openAssetPicker('references')">
@@ -1420,11 +1430,11 @@ watch(() => props.mode, async (mode, previousMode) => {
 .mode-menu-section { display: grid; gap: 1px; }
 .mode-menu-row { min-height: 35px; display: grid; grid-template-columns: 22px minmax(0, 1fr) 13px; gap: 6px; align-items: center; padding: 0 7px; border: 0; border-radius: 12px; background: transparent; color: #e7e9ed; text-align: left; transition: background 140ms ease, color 140ms ease, transform 140ms ease; }
 .mode-menu-row:hover { background: rgb(255 255 255 / 9%); color: #fff; transform: translateX(1px); }
-.mode-menu-row.active, .mode-menu-primary { background: #087cf2; color: #fff; box-shadow: inset 0 1px 0 rgb(255 255 255 / 18%); }
-.mode-menu-primary:hover, .mode-menu-row.active:hover { background: #1685f4; }
+.mode-menu-row.active { background: #087cf2; color: #fff; box-shadow: inset 0 1px 0 rgb(255 255 255 / 18%); }
+.mode-menu-row.active:hover { background: #1685f4; }
 .mode-menu-icon { width: 22px; height: 22px; display: grid; place-items: center; color: #e4e8ee; }
 .mode-menu-icon svg { width: 15px; height: 15px; }
-.mode-menu-primary .mode-menu-icon, .mode-menu-row.active .mode-menu-icon { color: #fff; }
+.mode-menu-row.active .mode-menu-icon { color: #fff; }
 .mode-menu-label { overflow: hidden; font-size: 12px; font-weight: 560; letter-spacing: 0; text-overflow: ellipsis; white-space: nowrap; }
 .mode-menu-check { width: 12px; height: 12px; }
 .mode-menu-check { justify-self: end; color: #dcecff; }
@@ -1572,12 +1582,9 @@ watch(() => props.mode, async (mode, previousMode) => {
 }
 .mode-menu-row { color: var(--text); }
 .mode-menu-row:hover { background: var(--surface-muted); color: var(--text); }
-.mode-menu-row.active,
-.mode-menu-primary { background: var(--accent); color: var(--accent-contrast); }
-.mode-menu-primary:hover,
+.mode-menu-row.active { background: var(--accent); color: var(--accent-contrast); }
 .mode-menu-row.active:hover { background: var(--accent-hover); }
 .mode-menu-icon { color: var(--text-secondary); }
-.mode-menu-primary .mode-menu-icon,
 .mode-menu-row.active .mode-menu-icon,
 .mode-menu-check { color: var(--accent-contrast); }
 .mode-menu-divider { background: var(--border); }

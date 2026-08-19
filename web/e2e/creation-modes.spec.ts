@@ -143,6 +143,25 @@ test('keeps every creation mode visible on a phone-sized viewport', async ({ pag
   await expect(page.evaluate(() => document.documentElement.scrollWidth)).resolves.toBe(390)
 })
 
+test('highlights only the active creation mode and dismisses the menu', async ({ page }) => {
+  await page.request.post('/api/v1/auth/logout')
+  await page.goto('/create/chat')
+
+  const trigger = page.getByRole('button', { name: 'Choose what to create' })
+  const menu = page.getByRole('menu', { name: 'Choose what to create' })
+  await trigger.click()
+  await expect(page.getByRole('menuitem', { name: 'Files', exact: true })).not.toHaveClass(/active/)
+  await expect(page.getByRole('menuitem', { name: 'Chat', exact: true })).toHaveClass(/active/)
+
+  await page.getByRole('heading', { name: 'AI creation space', exact: true }).click()
+  await expect(menu).toBeHidden()
+  await expect(trigger).toHaveAttribute('aria-expanded', 'false')
+
+  await trigger.click()
+  await page.keyboard.press('Escape')
+  await expect(menu).toBeHidden()
+})
+
 test('keeps the creation workspace in sync with the global theme', async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem('hcai-theme', 'light'))
   await page.goto('/create/image')
