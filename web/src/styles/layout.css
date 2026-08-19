@@ -521,8 +521,8 @@
 .task-row-data strong { font-family: var(--font-mono); font-size: 12px; font-weight: 550; }
 .task-status { width: fit-content; min-height: 24px; display: inline-flex; align-items: center; padding: 2px 7px; border-radius: var(--radius-control); background: var(--surface-muted); color: var(--text-secondary); font-size: 11px; font-weight: 650; white-space: nowrap; }
 .task-row-heading .task-status { min-height: 20px; padding: 1px 6px; font-size: 10px; }
-.task-row-action { grid-area: action; min-height: 34px; display: inline-flex; justify-content: center; align-items: center; gap: 5px; padding: 0 9px; border: 1px solid transparent; border-radius: var(--radius-control); background: var(--surface-muted); color: var(--text-secondary); font-size: 12px; font-weight: 600; white-space: nowrap; transition: border-color 140ms ease, background 140ms ease, color 140ms ease; }
-.task-row:hover .task-row-action { border-color: var(--task-tone); background: var(--task-tone); color: #fff; }
+.task-row-action { grid-area: action; min-height: 40px; min-width: 112px; padding-inline: 14px; border-radius: var(--radius-workspace); color: var(--text-secondary); font-size: 12px; }
+.task-row-action:hover, .task-row:hover .task-row-action { border-color: var(--border-strong); background: var(--surface-muted); color: var(--text); }
 .task-status[data-status='open'], .task-status[data-status='accepted'] { background: color-mix(in srgb, var(--success) 10%, var(--surface)); color: var(--success); }
 .task-status[data-status='submitted'], .task-status[data-status='assigned'] { background: color-mix(in srgb, var(--accent) 10%, var(--surface)); color: var(--accent-readable); }
 .task-status[data-status='revision'] { background: color-mix(in srgb, var(--warning) 10%, var(--surface)); color: var(--warning); }

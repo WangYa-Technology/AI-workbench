@@ -475,7 +475,7 @@ onBeforeUnmount(() => {
           </span>
           <span class="task-row-data"><small>{{ paymentEnabled ? t('tasks.providerReward') : t('tasks.reward') }}</small><strong>{{ money(item.budgetCents, item.currency) }}</strong></span>
           <span class="task-row-data"><small>{{ t('tasks.deadline') }}</small><strong>{{ date(item.deadline, item.clientTimezone) }}</strong></span>
-          <span class="task-row-action">{{ t('tasks.reviewBrief') }}<ChevronRight :size="16" /></span>
+          <span class="command-button secondary task-row-action">{{ t('tasks.reviewBrief') }}<ChevronRight :size="16" /></span>
         </RouterLink>
         <div v-if="!tasks.length" class="task-market-state task-market-empty">
           <span><component :is="view === 'mine' ? BriefcaseBusiness : Search" :size="20" /></span><strong>{{ t(view === 'mine' ? 'tasks.noMyActivity' : 'tasks.noResults') }}</strong><button v-if="view === 'available'" class="text-link" type="button" @click="clearFilters">
