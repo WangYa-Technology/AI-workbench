@@ -167,6 +167,21 @@ test('uses the compact floating style for output settings and dismisses it', asy
   await page.goto('/create/chat')
 
   const trigger = page.getByRole('button', { name: 'Output settings' })
+  const modeTrigger = page.getByRole('button', { name: 'Choose what to create' })
+  const buttonVisuals = async (button: typeof trigger) => button.evaluate((element) => {
+    const style = globalThis.getComputedStyle(element)
+    return {
+      width: style.width,
+      height: style.height,
+      padding: style.padding,
+      borderRadius: style.borderRadius,
+      borderColor: style.borderColor,
+      backgroundColor: style.backgroundColor,
+      color: style.color,
+    }
+  })
+  expect(await buttonVisuals(trigger)).toEqual(await buttonVisuals(modeTrigger))
+
   await trigger.click()
   const panel = page.getByRole('dialog', { name: 'Output settings' })
   await expect(panel).toBeVisible()
@@ -176,6 +191,14 @@ test('uses the compact floating style for output settings and dismisses it', asy
 
   await page.getByRole('heading', { name: 'AI creation space', exact: true }).click()
   await expect(panel).toBeHidden()
+
+  await trigger.click()
+  const settingsActiveVisuals = await buttonVisuals(trigger)
+  await trigger.click()
+  await modeTrigger.click()
+  expect(await buttonVisuals(modeTrigger)).toEqual(settingsActiveVisuals)
+  await modeTrigger.click()
+
   await trigger.click()
   await page.keyboard.press('Escape')
   await expect(panel).toBeHidden()

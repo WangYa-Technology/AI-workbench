@@ -1324,15 +1324,19 @@ watch(() => props.mode, async (mode, previousMode) => {
 .studio-composer textarea::placeholder { color: #737b89; }
 .studio-composer-row { gap: 8px; }
 .studio-composer-tools { gap: 7px; }
-.studio-composer-tools > button {
+.studio-composer-tools > button,
+.studio-settings-button {
   width: 34px;
   height: 34px;
+  padding: 0;
   border: 1px solid rgb(255 255 255 / 8%);
   background: rgb(255 255 255 / 5%);
   color: #9ca5b2;
 }
 .studio-composer-tools > button:hover,
-.studio-composer-tools > button.active { border-color: rgb(79 140 255 / 36%); background: var(--studio-blue-soft); color: #c8dcff; }
+.studio-composer-tools > button.active,
+.studio-settings-button:hover,
+.studio-settings-button.active { border-color: rgb(79 140 255 / 36%); background: var(--studio-blue-soft); color: #c8dcff; }
 .studio-submit {
   width: 38px;
   min-height: 38px;
@@ -1437,9 +1441,7 @@ watch(() => props.mode, async (mode, previousMode) => {
 .creation-mode-chip button { width: 18px; min-width: 18px; height: 18px; min-height: 18px; display: inline-grid; place-items: center; flex: 0 0 18px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: #a9c3f4; line-height: 0; cursor: pointer; }
 .creation-mode-chip button:hover { background: rgb(255 255 255 / 11%); color: #fff; }
 .studio-settings-control { position: relative; display: grid; place-items: center; flex: 0 0 auto; }
-.studio-settings-button { width: 34px; height: 34px; display: grid; place-items: center; border: 1px solid rgb(255 255 255 / 8%); border-radius: 50%; background: rgb(255 255 255 / 5%); color: #9ca5b2; }
-.studio-settings-button:hover,
-.studio-settings-button.active { border-color: rgb(79 140 255 / 36%); background: var(--studio-blue-soft); color: #c8dcff; }
+.studio-settings-button { display: grid; place-items: center; border-radius: 50%; }
 .studio-mode-menu { position: absolute; right: auto; bottom: calc(100% + 8px); left: 0; z-index: 20; width: min(220px, calc(100vw - 32px)); max-height: min(320px, calc(100dvh - 250px)); overflow-y: auto; overscroll-behavior: contain; padding: 5px; border: 1px solid rgb(255 255 255 / 21%); border-radius: 22px; background: rgb(35 37 43 / 97%); box-shadow: 0 14px 34px rgb(0 0 0 / 42%), inset 0 1px 0 rgb(255 255 255 / 9%); backdrop-filter: blur(22px) saturate(1.08); scrollbar-width: thin; }
 .output-controls.studio-mode-menu { right: auto; bottom: calc(100% + 12px); left: 0; width: min(220px, calc(100vw - 32px)); max-height: min(320px, calc(100dvh - 250px)); display: grid; grid-template-columns: 1fr; gap: 9px; padding: 12px; }
 .output-controls.studio-mode-menu label { display: grid; gap: 5px; color: #aab2bf; font-size: 11px; font-weight: 560; }
@@ -1548,9 +1550,12 @@ watch(() => props.mode, async (mode, previousMode) => {
 }
 .studio-composer textarea { color: var(--text); }
 .studio-composer textarea::placeholder { color: var(--text-tertiary); }
-.studio-composer-tools > button { border-color: var(--border); background: var(--surface-muted); color: var(--text-secondary); }
+.studio-composer-tools > button,
+.studio-settings-button { border-color: var(--border); background: var(--surface-muted); color: var(--text-secondary); }
 .studio-composer-tools > button:hover,
-.studio-composer-tools > button.active { border-color: color-mix(in srgb, var(--accent) 34%, var(--border)); background: var(--accent-soft); color: var(--accent-readable); }
+.studio-composer-tools > button.active,
+.studio-settings-button:hover,
+.studio-settings-button.active { border-color: color-mix(in srgb, var(--accent) 34%, var(--border)); background: var(--accent-soft); color: var(--accent-readable); }
 .studio-submit { background: var(--accent); color: var(--accent-contrast); box-shadow: 0 5px 18px color-mix(in srgb, var(--accent) 30%, transparent); }
 .studio-submit:hover:not(:disabled) { background: var(--accent-hover); }
 .studio-submit:disabled { background: var(--surface-muted); color: var(--text-tertiary); }
