@@ -626,7 +626,7 @@ watch(() => props.mode, async (mode, previousMode) => {
           <button type="button" :class="{ active: modeMenuOpen }" :aria-label="t('create.studio.chooseCreationType')" :title="t('create.studio.chooseCreationType')" aria-haspopup="menu" :aria-expanded="modeMenuOpen" @click="toggleModeMenu">
             <Plus :size="18" />
           </button>
-          <span v-if="mode !== 'chat'" class="creation-mode-chip"><component :is="modeIcon" :size="15" />{{ t(`create.modes.${mode}`) }}<button type="button" :aria-label="t('create.studio.removeCreationType')" @click="selectCreationMode('chat')"><X :size="14" /></button></span>
+          <span v-if="mode !== 'chat'" class="creation-mode-chip"><component :is="modeIcon" :size="15" />{{ t(`create.modes.${mode}`) }}<button type="button" :aria-label="t('create.studio.removeCreationType')" @click="selectCreationMode('chat')"><X :size="12" /></button></span>
           <button class="studio-settings-button" type="button" :class="{ active: controlsOpen }" :aria-label="t('create.studio.outputSettings')" :title="t('create.studio.outputSettings')" @click="controlsOpen = !controlsOpen">
             <SlidersHorizontal :size="16" />
           </button>
@@ -1413,8 +1413,8 @@ watch(() => props.mode, async (mode, previousMode) => {
 .conversation-skeleton span { display: block; height: 100px; border-radius: 17px; background: linear-gradient(100deg, rgb(255 255 255 / 5%), rgb(255 255 255 / 10%), rgb(255 255 255 / 5%)); background-size: 200% 100%; animation: studio-shimmer 1.4s linear infinite; }
 .conversation-skeleton span:first-child { width: 68%; margin-left: auto; height: 70px; }
 .conversation-skeleton span:last-child { width: 82%; }
-.creation-mode-chip { min-height: 34px; display: inline-flex; align-items: center; gap: 7px; padding: 0 7px 0 10px; border: 1px solid rgb(79 140 255 / 38%); border-radius: 999px; background: var(--studio-blue-soft); color: #d8e6ff; font-size: 11px; font-weight: 600; }
-.creation-mode-chip button { width: 20px; height: 20px; display: grid; place-items: center; border-radius: 50%; color: #a9c3f4; }
+.creation-mode-chip { min-height: 34px; display: inline-flex; align-items: center; gap: 7px; padding: 0 8px 0 10px; border: 1px solid rgb(79 140 255 / 38%); border-radius: 999px; background: var(--studio-blue-soft); color: #d8e6ff; font-size: 11px; font-weight: 600; line-height: 1; white-space: nowrap; }
+.creation-mode-chip button { width: 18px; min-width: 18px; height: 18px; min-height: 18px; display: inline-grid; place-items: center; flex: 0 0 18px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: #a9c3f4; line-height: 0; cursor: pointer; }
 .creation-mode-chip button:hover { background: rgb(255 255 255 / 11%); color: #fff; }
 .studio-mode-menu { position: absolute; right: auto; bottom: calc(100% + 11px); left: 0; z-index: 20; width: min(332px, calc(100vw - 34px)); padding: 8px; border: 1px solid rgb(255 255 255 / 21%); border-radius: 19px; background: rgb(35 37 43 / 97%); box-shadow: 0 22px 65px rgb(0 0 0 / 58%), inset 0 1px 0 rgb(255 255 255 / 9%); backdrop-filter: blur(26px) saturate(1.12); }
 .mode-menu-section { display: grid; gap: 2px; }

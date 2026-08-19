@@ -164,6 +164,11 @@ test('switches creation modes in place and keeps the selected route active', asy
       await expect(page.locator('.creation-mode-chip')).toHaveCount(0)
     } else {
       await expect(page.locator('.creation-mode-chip')).toContainText(item.label)
+      const closeButton = page.locator('.creation-mode-chip button')
+      await expect(closeButton).toHaveCSS('width', '18px')
+      await expect(closeButton).toHaveCSS('height', '18px')
+      await expect(closeButton).toHaveCSS('padding', '0px')
+      await expect(closeButton).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
     }
   }
 })
