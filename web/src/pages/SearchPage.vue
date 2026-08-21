@@ -6,6 +6,9 @@ import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { api, messageFrom, type SearchPage } from '../api/client'
 import AssetMedia from '../components/domain/AssetMedia.vue'
 import { formatCurrency } from '../lib/format'
+import UiButton from '../components/ui/UiButton.vue'
+import UiIconButton from '../components/ui/UiIconButton.vue'
+import UiInput from '../components/ui/UiInput.vue'
 
 const { t, locale } = useI18n()
 const route = useRoute()
@@ -75,10 +78,8 @@ watch(() => route.fullPath, () => void load(), { immediate: true })
       <p>{{ t('search.summary') }}</p>
       <form role="search" @submit.prevent="submit">
         <Search :size="20" :stroke-width="1.75" aria-hidden="true" />
-        <input v-model="draft" type="search" minlength="2" maxlength="120" required :placeholder="t('search.placeholder')" :aria-label="t('actions.search')" />
-        <button class="command-button primary" type="submit">
-          {{ t('actions.search') }}<ArrowRight :size="17" />
-        </button>
+        <UiInput v-model="draft" type="search" minlength="2" maxlength="120" required :placeholder="t('search.placeholder')" :aria-label="t('actions.search')" />
+        <UiButton class="command-button primary" variant="primary" type="submit">{{ t('actions.search') }}<template #end><ArrowRight :size="17" /></template></UiButton>
       </form>
     </header>
 
@@ -95,9 +96,7 @@ watch(() => route.fullPath, () => void load(), { immediate: true })
       {{ t('search.loading') }}
     </div>
     <div v-else-if="error" class="page-state" role="alert">
-      <p>{{ error }}</p><button class="command-button secondary" type="button" @click="load">
-        <RefreshCw :size="17" />{{ t('actions.retry') }}
-      </button>
+      <p>{{ error }}</p><UiButton class="command-button secondary" variant="secondary" @click="load"><template #start><RefreshCw :size="17" /></template>{{ t('actions.retry') }}</UiButton>
     </div>
     <div v-else-if="query.length < 2" class="search-start-state">
       <FileSearch :size="26" :stroke-width="1.5" /><h2>{{ t('search.startTitle') }}</h2><p>{{ t('search.startSummary') }}</p>
@@ -129,13 +128,13 @@ watch(() => route.fullPath, () => void load(), { immediate: true })
         <FileSearch :size="26" /><h2>{{ t('search.emptyTitle') }}</h2><p>{{ t('search.emptySummary') }}</p>
       </div>
       <nav v-if="result.total > result.limit" class="search-pagination" :aria-label="t('search.pagination')">
-        <button class="icon-button" type="button" :disabled="result.page <= 1" :aria-label="t('search.previous')" @click="changePage(result.page - 1)">
+        <UiIconButton class="icon-button" :disabled="result.page <= 1" :label="t('search.previous')" @click="changePage(result.page - 1)">
           <ArrowLeft :size="18" />
-        </button>
+        </UiIconButton>
         <span>{{ t('search.page', { page: result.page, total: Math.ceil(result.total / result.limit) }) }}</span>
-        <button class="icon-button" type="button" :disabled="!result.hasMore" :aria-label="t('search.next')" @click="changePage(result.page + 1)">
+        <UiIconButton class="icon-button" :disabled="!result.hasMore" :label="t('search.next')" @click="changePage(result.page + 1)">
           <ArrowRight :size="18" />
-        </button>
+        </UiIconButton>
       </nav>
     </template>
   </section>

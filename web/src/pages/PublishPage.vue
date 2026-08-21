@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowLeft, LoaderCircle, Save, Send, ShieldCheck, Trash2 } from 'lucide-vue-next'
+import { ArrowLeft, Save, Send, ShieldCheck, Trash2 } from 'lucide-vue-next'
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
@@ -7,6 +7,10 @@ import { api, messageFrom, type Asset, type ContentDraft, type ContentDraftSave 
 import { useSessionStore } from '../stores/session'
 import AssetMedia from '../components/domain/AssetMedia.vue'
 import AuthRequiredState from '../components/domain/AuthRequiredState.vue'
+import UiButton from '../components/ui/UiButton.vue'
+import UiInput from '../components/ui/UiInput.vue'
+import UiSelect from '../components/ui/UiSelect.vue'
+import UiTextarea from '../components/ui/UiTextarea.vue'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -188,9 +192,7 @@ onMounted(() => void load())
   <section class="publish-page content-width">
     <header class="publish-header">
       <div><span class="status-label">{{ t('publish.workflowLabel') }}</span><h1>{{ t('publish.title') }}</h1><p>{{ t('publish.summary') }}</p></div>
-      <RouterLink class="command-button secondary" to="/workspace/assets">
-        <ArrowLeft :size="17" />{{ t('workspace.assets') }}
-      </RouterLink>
+      <UiButton as="RouterLink" class="command-button secondary" variant="secondary" to="/workspace/assets"><template #start><ArrowLeft :size="17" /></template>{{ t('workspace.assets') }}</UiButton>
     </header>
     <AuthRequiredState
       v-if="!loading && needsAuthentication"
@@ -217,48 +219,44 @@ onMounted(() => void load())
         <fieldset class="publish-form-section">
           <legend>{{ t('publish.draftSection') }}</legend>
           <label for="publish-draft">{{ t('publish.savedDrafts') }}</label>
-          <select id="publish-draft" v-model="draftId" @change="selectDraft">
+          <UiSelect id="publish-draft" v-model="draftId" @change="selectDraft">
             <option value="">
               {{ t('publish.newDraft') }}
             </option>
             <option v-for="draft in drafts" :key="draft.id" :value="draft.id">
               {{ draft.title || draft.assetTitle }} · v{{ draft.version }}
             </option>
-          </select>
-          <button v-if="draftNextCursor" class="command-button secondary" type="button" :disabled="draftsLoadingMore" @click="loadMoreDrafts">
-            <LoaderCircle v-if="draftsLoadingMore" class="spin" :size="16" />{{ t('actions.loadMore') }}
-          </button>
-          <button v-if="activeDraft" class="command-button secondary" type="button" :disabled="discarding" @click="discardDraft">
-            <Trash2 :size="16" />{{ t('publish.discardDraft') }}
-          </button>
+          </UiSelect>
+          <UiButton v-if="draftNextCursor" class="command-button secondary" variant="secondary" :loading="draftsLoadingMore" @click="loadMoreDrafts">{{ t('actions.loadMore') }}</UiButton>
+          <UiButton v-if="activeDraft" class="command-button secondary" variant="secondary" :disabled="discarding" @click="discardDraft"><template #start><Trash2 :size="16" /></template>{{ t('publish.discardDraft') }}</UiButton>
         </fieldset>
         <fieldset class="publish-form-section">
           <legend>{{ t('publish.assetSection') }}</legend>
           <label for="publish-asset">{{ t('publish.asset') }}</label>
-          <select id="publish-asset" v-model="assetId" required @change="syncTitle">
+          <UiSelect id="publish-asset" v-model="assetId" required @change="syncTitle">
             <option value="" disabled>
               {{ t('publish.chooseAsset') }}
             </option>
             <option v-for="asset in assets" :key="asset.id" :value="asset.id">
               {{ asset.title }} · {{ asset.sourceType }}
             </option>
-          </select>
+          </UiSelect>
         </fieldset>
         <fieldset class="publish-form-section">
           <legend>{{ t('publish.detailsSection') }}</legend>
           <label for="publish-title">{{ t('publish.titleLabel') }}</label>
-          <input id="publish-title" v-model="title" required minlength="3" maxlength="120" />
+          <UiInput id="publish-title" v-model="title" required minlength="3" maxlength="120" />
           <label for="publish-summary">{{ t('publish.summaryLabel') }}</label>
-          <textarea id="publish-summary" v-model="summary" rows="3" maxlength="500"></textarea>
+          <UiTextarea id="publish-summary" v-model="summary" rows="3" maxlength="500" />
           <label for="publish-body">{{ t('publish.postLabel') }}</label>
-          <textarea id="publish-body" v-model="body" rows="3" maxlength="2000"></textarea>
+          <UiTextarea id="publish-body" v-model="body" rows="3" maxlength="2000" />
         </fieldset>
         <fieldset class="publish-form-section">
           <legend>{{ t('publish.disclosureSection') }}</legend>
           <label for="publish-prompt">{{ t('publish.promptLabel') }}</label>
-          <textarea id="publish-prompt" v-model="prompt" rows="4" maxlength="2000"></textarea>
+          <UiTextarea id="publish-prompt" v-model="prompt" rows="4" maxlength="2000" />
           <label for="prompt-visibility">{{ t('publish.visibilityLabel') }}</label>
-          <select id="prompt-visibility" v-model="promptVisibility">
+          <UiSelect id="prompt-visibility" v-model="promptVisibility">
             <option value="public">
               {{ t('publish.visibility.public') }}
             </option>
@@ -268,9 +266,9 @@ onMounted(() => void load())
             <option value="private">
               {{ t('publish.visibility.private') }}
             </option>
-          </select>
+          </UiSelect>
           <label for="publish-disclosure">{{ t('publish.disclosureLabel') }}</label>
-          <textarea id="publish-disclosure" v-model="disclosure" required minlength="10" rows="3" maxlength="500"></textarea>
+          <UiTextarea id="publish-disclosure" v-model="disclosure" required minlength="10" rows="3" maxlength="500" />
         </fieldset>
         <p v-if="error" class="form-error" role="alert">
           {{ error }}
@@ -279,12 +277,8 @@ onMounted(() => void load())
           {{ success }}
         </p>
         <div class="publish-command-row">
-          <button class="command-button secondary" type="button" :disabled="saving || !assets.length" @click="saveDraft">
-            <LoaderCircle v-if="saving" class="spin" :size="17" /><Save v-else :size="17" />{{ t('publish.saveDraft') }}
-          </button>
-          <button class="command-button primary" type="submit" :disabled="submitting || saving || !assets.length">
-            <Send :size="17" />{{ submitting ? t('actions.publishing') : t('actions.publishWork') }}
-          </button>
+          <UiButton class="command-button secondary" variant="secondary" :disabled="!assets.length" :loading="saving" @click="saveDraft"><template #start><Save v-if="!saving" :size="17" /></template>{{ t('publish.saveDraft') }}</UiButton>
+          <UiButton class="command-button primary" variant="primary" type="submit" :disabled="saving || !assets.length" :loading="submitting"><template #start><Send v-if="!submitting" :size="17" /></template>{{ submitting ? t('actions.publishing') : t('actions.publishWork') }}</UiButton>
         </div>
       </div>
     </form>
