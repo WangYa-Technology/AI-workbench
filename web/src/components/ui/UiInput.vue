@@ -1,9 +1,20 @@
 <script setup lang="ts">
 defineOptions({ inheritAttrs: false })
-withDefaults(defineProps<{ modelValue?: string | number; size?: 'sm' | 'md' | 'lg'; invalid?: boolean }>(), { modelValue: '', size: 'md', invalid: false })
+const props = withDefaults(defineProps<{ modelValue?: string | number; modelModifiers?: { trim?: boolean; number?: boolean }; size?: 'sm' | 'md' | 'lg'; invalid?: boolean }>(), { modelValue: '', modelModifiers: undefined, size: 'md', invalid: false })
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
+
+function update(event: { target: unknown }) {
+  let value = (event.target as globalThis.HTMLInputElement).value
+  if (props.modelModifiers?.trim) value = value.trim()
+  if (props.modelModifiers?.number || (event.target as globalThis.HTMLInputElement).type === 'number') {
+    const numeric = value === '' ? '' : Number(value)
+    emit('update:modelValue', numeric as string)
+    return
+  }
+  emit('update:modelValue', value)
+}
 </script>
 
 <template>
-  <input v-bind="$attrs" class="ui-input" :class="{ 'ui-input--invalid': invalid }" :data-size="size" :value="modelValue" @input="emit('update:modelValue', ($event.target as HTMLInputElement).value)" />
+  <input v-bind="$attrs" class="ui-input" :class="{ 'ui-input--invalid': invalid }" :data-size="size" :value="modelValue" @input="update" />
 </template>

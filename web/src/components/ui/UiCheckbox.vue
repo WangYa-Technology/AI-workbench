@@ -2,9 +2,9 @@
 import { computed } from 'vue'
 
 defineOptions({ inheritAttrs: false })
-const props = withDefaults(defineProps<{ modelValue?: boolean | string[]; value?: string }>(), { modelValue: false, value: undefined })
-const emit = defineEmits<{ 'update:modelValue': [value: boolean | string[]] }>()
-const checked = computed(() => Array.isArray(props.modelValue) ? props.value !== undefined && props.modelValue.includes(props.value) : Boolean(props.modelValue))
+const props = withDefaults(defineProps<{ modelValue?: boolean | string[]; value?: string; checked?: boolean }>(), { modelValue: false, value: undefined, checked: undefined })
+const emit = defineEmits<{ 'update:modelValue': [value: boolean | string[]]; change: [event: globalThis.Event] }>()
+const checked = computed(() => Array.isArray(props.modelValue) ? props.value !== undefined && props.modelValue.includes(props.value) : props.checked !== undefined ? props.checked : Boolean(props.modelValue))
 
 function update(event: { target: unknown }) {
   const nextChecked = (event.target as { checked: boolean }).checked
@@ -13,9 +13,11 @@ function update(event: { target: unknown }) {
     if (nextChecked) next.add(props.value)
     else next.delete(props.value)
     emit('update:modelValue', [...next])
+    emit('change', event as globalThis.Event)
     return
   }
   emit('update:modelValue', nextChecked)
+  emit('change', event as globalThis.Event)
 }
 </script>
 

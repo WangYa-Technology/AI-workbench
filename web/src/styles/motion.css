@@ -2,9 +2,14 @@
 :root {
   --duration-stagger: 40ms;
   --duration-micro: 80ms;
+  --duration-compact: 120ms;
   --duration-quick: 150ms;
+  --duration-standard: 180ms;
+  --duration-relaxed: 240ms;
   --duration-fast: 250ms;
   --duration-medium: 350ms;
+  --duration-emphasis: 300ms;
+  --duration-reveal: 650ms;
   --duration-slow: 400ms;
   --duration-very-slow: 500ms;
   --ease-smooth-out: cubic-bezier(0.22, 1, 0.36, 1);
