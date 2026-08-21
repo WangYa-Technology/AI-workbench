@@ -18,6 +18,8 @@ import BrandLogo from '../brand/BrandLogo.vue'
 import AssetMedia from '../domain/AssetMedia.vue'
 import MotionFavoriteIcon from '../ui/MotionFavoriteIcon.vue'
 import UiButton from '../ui/UiButton.vue'
+import UiIconButton from '../ui/UiIconButton.vue'
+import UiInput from '../ui/UiInput.vue'
 import UiSelect from '../ui/UiSelect.vue'
 import UiTextarea from '../ui/UiTextarea.vue'
 import AuthRequiredState from '../domain/AuthRequiredState.vue'
@@ -386,9 +388,9 @@ onMounted(async () => {
           <MessageSquare :size="14" aria-hidden="true" />
           <span class="creation-current-conversation-label">{{ conversationTitle(currentConversation) }}</span>
         </span>
-        <button class="creation-icon-link" :class="{ active: historyOpen }" type="button" :aria-label="t('create.studio.openHistory')" :aria-expanded="historyOpen" :title="t('create.studio.openHistory')" @click="historyOpen = !historyOpen">
+        <UiIconButton class="creation-icon-link" :class="{ active: historyOpen }" :label="t('create.studio.openHistory')" :aria-expanded="historyOpen" @click="historyOpen = !historyOpen">
           <History :size="17" />
-        </button>
+        </UiIconButton>
       </div>
     </header>
 
@@ -399,15 +401,13 @@ onMounted(async () => {
             <span>{{ t('create.studio.historyLabel') }}</span>
             <strong>{{ t('create.studio.historyTitle') }}</strong>
           </div>
-          <button class="creation-icon-link" type="button" :aria-label="t('actions.close')" :title="t('actions.close')" @click="historyOpen = false">
+          <UiIconButton class="creation-icon-link" :label="t('actions.close')" @click="historyOpen = false">
             <X :size="16" />
-          </button>
+          </UiIconButton>
         </header>
-        <button class="creation-history-new" type="button" :disabled="conversationCreating" @click="newConversation">
-          <LoaderCircle v-if="conversationCreating" class="spin" :size="16" />
-          <Plus v-else :size="16" />
-          <span>{{ t('create.studio.newChat') }}</span>
-        </button>
+        <UiButton class="creation-history-new" variant="secondary" :loading="conversationCreating" @click="newConversation">
+          {{ t('create.studio.newChat') }}
+        </UiButton>
         <div v-if="historyLoading" class="creation-history-empty">
           <LoaderCircle class="spin" :size="17" />{{ t('status.loadingWorkspace') }}
         </div>
@@ -430,13 +430,25 @@ onMounted(async () => {
     <main class="creation-main">
       <div class="creation-main-content">
         <div v-if="capabilityUnavailable || error || feedback" class="creation-notices">
-          <div v-if="capabilityUnavailable" class="creation-notice error" role="status"><AlertCircle :size="16" /><span>{{ t('create.modeUnavailable') }}</span></div>
-          <div v-if="error" class="creation-notice error" role="alert"><AlertCircle :size="16" /><span>{{ error }}</span><button type="button" :aria-label="t('actions.close')" @click="error = ''"><X :size="15" /></button></div>
-          <div v-if="feedback" class="creation-notice success" role="status"><Check :size="16" /><span>{{ feedback }}</span><button type="button" :aria-label="t('actions.close')" @click="feedback = ''"><X :size="15" /></button></div>
+          <div v-if="capabilityUnavailable" class="creation-notice error" role="status">
+            <AlertCircle :size="16" /><span>{{ t('create.modeUnavailable') }}</span>
+          </div>
+          <div v-if="error" class="creation-notice error" role="alert">
+            <AlertCircle :size="16" /><span>{{ error }}</span><UiIconButton size="sm" :label="t('actions.close')" @click="error = ''">
+              <X :size="15" />
+            </UiIconButton>
+          </div>
+          <div v-if="feedback" class="creation-notice success" role="status">
+            <Check :size="16" /><span>{{ feedback }}</span><UiIconButton size="sm" :label="t('actions.close')" @click="feedback = ''">
+              <X :size="15" />
+            </UiIconButton>
+          </div>
         </div>
         <AuthRequiredState v-if="session.initialized && !session.user" class="creation-auth" :title="t('authRequired.createTitle')" :summary="t('authRequired.createSummary')" :return-to="route.fullPath" />
         <section v-else class="creation-conversation" :aria-label="t('create.studio.conversationLabel')">
-          <div v-if="loading" class="creation-loading" aria-live="polite"><span></span><span></span><span></span></div>
+          <div v-if="loading" class="creation-loading" aria-live="polite">
+            <span></span><span></span><span></span>
+          </div>
           <div v-else-if="!generations.length" class="creation-empty">
             <span class="creation-empty-mark"><component :is="modeIcon" :size="28" /></span>
             <strong>{{ t('create.studio.welcomeTitle') }}</strong>
@@ -453,10 +465,22 @@ onMounted(async () => {
                 <div class="creation-assistant">
                   <BrandLogo class="creation-assistant-mark" />
                   <div class="creation-assistant-body">
-                    <div class="creation-result-head"><span class="creation-status" :data-status="item.status">{{ statusLabel(item) }}</span><span>{{ item.modelName }}</span><button type="button" :aria-label="item.isFavorite ? t('workspace.unfavoriteGeneration') : t('workspace.favoriteGeneration')" @click.stop="toggleFavorite(item)"><MotionFavoriteIcon :active="item.isFavorite" kind="bookmark" :size="15" /></button></div>
-                    <div v-if="item.mode === 'chat' && item.outputText" class="creation-output-box"><div class="creation-text">{{ item.outputText }}</div></div>
-                    <div v-else-if="item.outputMediaUrl" class="creation-media"><AssetMedia :src="item.outputMediaUrl" :kind="generationMediaKind(item)" :alt="item.prompt" :text="item.outputText || ''" :width="1200" :height="900" :controls="generationMediaKind(item) === 'video' || generationMediaKind(item) === 'audio'" /></div>
-                    <div v-else class="creation-progress"><LoaderCircle v-if="['queued', 'running'].includes(item.status)" class="spin" :size="22" /><AlertCircle v-else-if="item.status === 'failed'" :size="22" /><component :is="modes.find(option => option.id === item.mode)?.icon" v-else :size="22" /><span>{{ item.errorMessage || `${item.progress}%` }}</span></div>
+                    <div class="creation-result-head">
+                      <span class="creation-status" :data-status="item.status">{{ statusLabel(item) }}</span><span>{{ item.modelName }}</span><UiIconButton size="sm" :label="item.isFavorite ? t('workspace.unfavoriteGeneration') : t('workspace.favoriteGeneration')" @click.stop="toggleFavorite(item)">
+                        <MotionFavoriteIcon :active="item.isFavorite" kind="bookmark" :size="15" />
+                      </UiIconButton>
+                    </div>
+                    <div v-if="item.mode === 'chat' && item.outputText" class="creation-output-box">
+                      <div class="creation-text">
+                        {{ item.outputText }}
+                      </div>
+                    </div>
+                    <div v-else-if="item.outputMediaUrl" class="creation-media">
+                      <AssetMedia :src="item.outputMediaUrl" :kind="generationMediaKind(item)" :alt="item.prompt" :text="item.outputText || ''" :width="1200" :height="900" :controls="generationMediaKind(item) === 'video' || generationMediaKind(item) === 'audio'" />
+                    </div>
+                    <div v-else class="creation-progress">
+                      <LoaderCircle v-if="['queued', 'running'].includes(item.status)" class="spin" :size="22" /><AlertCircle v-else-if="item.status === 'failed'" :size="22" /><component :is="modes.find(option => option.id === item.mode)?.icon" v-else :size="22" /><span>{{ item.errorMessage || `${item.progress}%` }}</span>
+                    </div>
                     <footer><span>{{ parameterSummary(item) }}</span><span>{{ generationCost(item) }}</span></footer>
                   </div>
                 </div>
@@ -469,15 +493,19 @@ onMounted(async () => {
 
     <form class="creation-composer" @submit.prevent="submit">
       <div v-if="sourceAssets.length || maskAsset" class="creation-context">
-        <span v-for="asset in sourceAssets" :key="asset.id" class="creation-context-chip"><Paperclip :size="13" /><strong>{{ asset.title }}</strong><button type="button" :aria-label="t('actions.close')" @click="removeSourceAsset(asset.id)"><X :size="13" /></button></span>
-        <span v-if="maskAsset" class="creation-context-chip mask"><ImageIcon :size="13" /><strong>{{ maskAsset.title }}</strong><button type="button" :aria-label="t('actions.close')" @click="maskAsset = null"><X :size="13" /></button></span>
+        <span v-for="asset in sourceAssets" :key="asset.id" class="creation-context-chip"><Paperclip :size="13" /><strong>{{ asset.title }}</strong><UiIconButton size="sm" :label="t('actions.close')" @click="removeSourceAsset(asset.id)"><X :size="13" /></UiIconButton></span>
+        <span v-if="maskAsset" class="creation-context-chip mask"><ImageIcon :size="13" /><strong>{{ maskAsset.title }}</strong><UiIconButton size="sm" :label="t('actions.close')" @click="maskAsset = null"><X :size="13" /></UiIconButton></span>
       </div>
       <UiTextarea v-model="prompt" class="creation-prompt-input" rows="2" maxlength="1800" :placeholder="t(`create.builder.modePlaceholder.${activeMode}`)" @keydown.enter.exact.prevent="canSubmit && submit()" />
       <div class="creation-composer-row">
         <div class="creation-composer-tools">
-          <button ref="modeMenuTrigger" class="creation-tool-button" type="button" :class="{ active: modeMenuOpen }" :aria-label="t('create.studio.chooseCreationType')" :aria-expanded="modeMenuOpen" @click="toggleModeMenu"><Plus :size="19" /></button>
-          <span v-if="activeMode !== 'chat'" class="creation-mode-chip"><component :is="modeIcon" :size="14" /><span class="creation-mode-chip-label">{{ modeLabel }}</span><button type="button" :aria-label="t('create.studio.removeCreationType')" @click="selectMode('chat')"><X :size="12" /></button></span>
-          <button ref="controlsTrigger" class="creation-tool-button" type="button" :class="{ active: controlsOpen }" :aria-label="t('create.studio.outputSettings')" :aria-expanded="controlsOpen" @click="controlsOpen = !controlsOpen; modeMenuOpen = false; assetPickerOpen = false"><Settings2 :size="17" /></button>
+          <UiIconButton ref="modeMenuTrigger" class="creation-tool-button" :class="{ active: modeMenuOpen }" :label="t('create.studio.chooseCreationType')" :aria-expanded="modeMenuOpen" @click="toggleModeMenu">
+            <Plus :size="19" />
+          </UiIconButton>
+          <span v-if="activeMode !== 'chat'" class="creation-mode-chip"><component :is="modeIcon" :size="14" /><span class="creation-mode-chip-label">{{ modeLabel }}</span><UiIconButton size="sm" :label="t('create.studio.removeCreationType')" @click="selectMode('chat')"><X :size="12" /></UiIconButton></span>
+          <UiIconButton ref="controlsTrigger" class="creation-tool-button" :class="{ active: controlsOpen }" :label="t('create.studio.outputSettings')" :aria-expanded="controlsOpen" @click="controlsOpen = !controlsOpen; modeMenuOpen = false; assetPickerOpen = false">
+            <Settings2 :size="17" />
+          </UiIconButton>
         </div>
         <div class="creation-composer-actions">
           <label v-if="capabilitiesLoaded" class="creation-model-picker">
@@ -495,23 +523,39 @@ onMounted(async () => {
               </option>
             </UiSelect>
           </label>
-          <UiButton class="creation-submit" variant="primary" type="submit" :disabled="!canSubmit" :loading="submitting"><template #start><ArrowUp v-if="!submitting" :size="18" /></template><span>{{ submitting ? t('actions.generating') : generationLabel }}</span></UiButton>
+          <UiButton class="creation-submit" variant="primary" type="submit" :disabled="!canSubmit" :loading="submitting">
+            <template #start>
+              <ArrowUp v-if="!submitting" :size="18" />
+            </template><span>{{ submitting ? t('actions.generating') : generationLabel }}</span>
+          </UiButton>
         </div>
       </div>
 
       <Transition name="creation-popover">
         <section v-if="modeMenuOpen" ref="modeMenu" class="creation-popover creation-tools-menu t-dropdown is-open" data-origin="bottom-left" role="menu" :aria-label="t('create.studio.chooseCreationType')">
           <div class="creation-menu-group">
-            <button type="button" class="creation-menu-item" @click="openAssetPicker('references')"><FileText :size="18" /><span><strong>{{ t('create.studio.menuItems.file') }}</strong><small>{{ t('create.studio.referenceSummary') }}</small></span></button>
-            <button type="button" class="creation-menu-item" @click="openAssetPicker('references')"><Cloud :size="18" /><span><strong>{{ t('create.studio.menuItems.library') }}</strong><small>{{ t('create.studio.menuItems.referenceWindow') }}</small></span></button>
-            <button type="button" class="creation-menu-item" @click="openAssetPicker('references')"><Images :size="18" /><span><strong>{{ t('create.studio.menuItems.album') }}</strong><small>{{ t('create.studio.menuItems.reference') }}</small></span></button>
+            <button type="button" class="creation-menu-item" @click="openAssetPicker('references')">
+              <FileText :size="18" /><span><strong>{{ t('create.studio.menuItems.file') }}</strong><small>{{ t('create.studio.referenceSummary') }}</small></span>
+            </button>
+            <button type="button" class="creation-menu-item" @click="openAssetPicker('references')">
+              <Cloud :size="18" /><span><strong>{{ t('create.studio.menuItems.library') }}</strong><small>{{ t('create.studio.menuItems.referenceWindow') }}</small></span>
+            </button>
+            <button type="button" class="creation-menu-item" @click="openAssetPicker('references')">
+              <Images :size="18" /><span><strong>{{ t('create.studio.menuItems.album') }}</strong><small>{{ t('create.studio.menuItems.reference') }}</small></span>
+            </button>
           </div>
           <div class="creation-menu-divider"></div>
-          <div class="creation-menu-heading">{{ t('create.studio.menuItems.generationHeading') }}</div>
-          <div class="creation-menu-group">
-            <button v-for="item in modes" :key="item.id" type="button" class="creation-menu-item generation" :class="{ selected: activeMode === item.id, unavailable: !modeAvailable(item.id) }" :disabled="!modeAvailable(item.id)" :aria-disabled="!modeAvailable(item.id)" :title="!modeAvailable(item.id) ? t('create.studio.noModelAvailable') : undefined" @click="selectMode(item.id)"><span class="creation-menu-icon"><component :is="item.icon" :size="18" /></span><span><strong>{{ item.menuLabel }}</strong><small>{{ t(`create.modeMeta.${item.id}.summary`) }}</small></span><Check v-if="activeMode === item.id" class="creation-menu-check" :size="16" /></button>
+          <div class="creation-menu-heading">
+            {{ t('create.studio.menuItems.generationHeading') }}
           </div>
-          <button type="button" class="creation-menu-item" @click="router.push('/market/demands')"><FolderOpen :size="18" /><span><strong>{{ t('create.studio.menuItems.taskContext') }}</strong><small>{{ t('create.studio.menuItems.referenceWindow') }}</small></span></button>
+          <div class="creation-menu-group">
+            <button v-for="item in modes" :key="item.id" type="button" class="creation-menu-item generation" :class="{ selected: activeMode === item.id, unavailable: !modeAvailable(item.id) }" :disabled="!modeAvailable(item.id)" :aria-disabled="!modeAvailable(item.id)" :title="!modeAvailable(item.id) ? t('create.studio.noModelAvailable') : undefined" @click="selectMode(item.id)">
+              <span class="creation-menu-icon"><component :is="item.icon" :size="18" /></span><span><strong>{{ item.menuLabel }}</strong><small>{{ t(`create.modeMeta.${item.id}.summary`) }}</small></span><Check v-if="activeMode === item.id" class="creation-menu-check" :size="16" />
+            </button>
+          </div>
+          <button type="button" class="creation-menu-item" @click="router.push('/market/demands')">
+            <FolderOpen :size="18" /><span><strong>{{ t('create.studio.menuItems.taskContext') }}</strong><small>{{ t('create.studio.menuItems.referenceWindow') }}</small></span>
+          </button>
         </section>
       </Transition>
 
@@ -522,27 +566,81 @@ onMounted(async () => {
           <label v-if="['video', 'music'].includes(activeMode)"><span>{{ t('create.studio.duration') }}</span><UiSelect :model-value="settings.duration" @update:model-value="settings.duration = Number($event)"><option v-for="item in durationOptions" :key="item" :value="item">{{ t('create.studio.durationValue', { value: item }) }}</option></UiSelect></label>
           <label v-if="activeMode === 'chat'"><span>{{ t('create.studio.responseLength') }}</span><UiSelect v-model="settings.responseLength"><option value="short">{{ t('create.studio.responseLengths.short') }}</option><option value="balanced">{{ t('create.studio.responseLengths.balanced') }}</option><option value="detailed">{{ t('create.studio.responseLengths.detailed') }}</option></UiSelect></label>
           <label v-if="capabilityFormatOptions.length > 1"><span>{{ t('create.studio.format') }}</span><UiSelect v-model="settings.format"><option v-for="item in capabilityFormatOptions" :key="item" :value="item">{{ item.toUpperCase() }}</option></UiSelect></label>
-          <label v-if="activeMode !== 'chat'"><span>{{ t('create.studio.count') }}</span><input v-model.number="settings.count" type="number" min="1" max="4" /></label>
+          <label v-if="activeMode !== 'chat'"><span>{{ t('create.studio.count') }}</span><UiInput v-model.number="settings.count" type="number" min="1" max="4" /></label>
         </section>
       </Transition>
 
       <section v-if="assetPickerOpen" class="creation-popover creation-assets t-dropdown is-open" data-origin="bottom-left" role="dialog" :aria-label="t('create.studio.references')">
-        <header><div><strong>{{ t(referencePickerMode === 'mask' ? 'create.studio.maskAsset' : 'create.studio.references') }}</strong><small>{{ t('create.studio.referenceSummary') }}</small></div><button type="button" :aria-label="t('actions.close')" @click="assetPickerOpen = false"><X :size="15" /></button></header>
-        <div class="creation-asset-actions"><button type="button" :disabled="uploadLoading" @click="fileInput?.click()"><LoaderCircle v-if="uploadLoading" class="spin" :size="15" /><Upload v-else :size="15" />{{ t('create.studio.uploadReference') }}</button><input ref="fileInput" class="sr-only" type="file" :accept="referenceAccept" @change="uploadReference" /></div>
-        <div v-if="assetsLoading" class="creation-asset-empty"><LoaderCircle class="spin" :size="17" />{{ t('status.loadingAssets') }}</div>
-        <div v-else-if="assets.length" class="creation-asset-list"><button v-for="asset in assets" :key="asset.id" type="button" :class="{ selected: referencePickerMode === 'mask' ? maskAsset?.id === asset.id : sourceAssets.some(item => item.id === asset.id) }" @click="chooseAsset(asset)"><AssetMedia :src="asset.mediaUrl" :kind="asset.kind" :alt="asset.title" :width="48" :height="48" :controls="false" /><span><strong>{{ asset.title }}</strong><small>{{ asset.mimeType }}</small></span><Check v-if="referencePickerMode === 'mask' ? maskAsset?.id === asset.id : sourceAssets.some(item => item.id === asset.id)" :size="14" /></button></div>
-        <p v-else class="creation-asset-empty">{{ t('create.studio.noReferences') }}</p>
+        <header>
+          <div><strong>{{ t(referencePickerMode === 'mask' ? 'create.studio.maskAsset' : 'create.studio.references') }}</strong><small>{{ t('create.studio.referenceSummary') }}</small></div><UiIconButton size="sm" :label="t('actions.close')" @click="assetPickerOpen = false">
+            <X :size="15" />
+          </UiIconButton>
+        </header>
+        <div class="creation-asset-actions">
+          <UiButton variant="secondary" size="sm" :loading="uploadLoading" @click="fileInput?.click()">
+            <template #start>
+              <Upload v-if="!uploadLoading" :size="15" />
+            </template>{{ t('create.studio.uploadReference') }}
+          </UiButton><input ref="fileInput" class="sr-only" type="file" :accept="referenceAccept" @change="uploadReference" />
+        </div>
+        <div v-if="assetsLoading" class="creation-asset-empty">
+          <LoaderCircle class="spin" :size="17" />{{ t('status.loadingAssets') }}
+        </div>
+        <div v-else-if="assets.length" class="creation-asset-list">
+          <button v-for="asset in assets" :key="asset.id" type="button" :class="{ selected: referencePickerMode === 'mask' ? maskAsset?.id === asset.id : sourceAssets.some(item => item.id === asset.id) }" @click="chooseAsset(asset)">
+            <AssetMedia :src="asset.mediaUrl" :kind="asset.kind" :alt="asset.title" :width="48" :height="48" :controls="false" /><span><strong>{{ asset.title }}</strong><small>{{ asset.mimeType }}</small></span><Check v-if="referencePickerMode === 'mask' ? maskAsset?.id === asset.id : sourceAssets.some(item => item.id === asset.id)" :size="14" />
+          </button>
+        </div>
+        <p v-else class="creation-asset-empty">
+          {{ t('create.studio.noReferences') }}
+        </p>
       </section>
     </form>
 
     <div v-if="selectedGeneration" class="creation-detail-backdrop" @mousedown.self="selectedGeneration = null">
       <aside class="creation-detail" role="dialog" aria-modal="true" :aria-label="t('create.studio.detailTitle')">
-        <header><div><span>{{ statusLabel(selectedGeneration) }}</span><h2>{{ t('create.studio.detailTitle') }}</h2></div><button class="creation-icon-link" type="button" :aria-label="t('actions.close')" @click="selectedGeneration = null"><X :size="17" /></button></header>
-        <div class="creation-detail-media"><div v-if="selectedGeneration.mode === 'chat' && selectedGeneration.outputText" class="creation-detail-text">{{ selectedGeneration.outputText }}</div><AssetMedia v-else-if="selectedGeneration.outputMediaUrl" :src="selectedGeneration.outputMediaUrl" :kind="generationMediaKind(selectedGeneration)" :alt="selectedGeneration.prompt" :text="selectedGeneration.outputText || ''" :width="1200" :height="900" :controls="generationMediaKind(selectedGeneration) === 'video' || generationMediaKind(selectedGeneration) === 'audio'" /><div v-else><LoaderCircle v-if="['queued', 'running'].includes(selectedGeneration.status)" class="spin" :size="24" /><strong>{{ selectedGeneration.progress }}%</strong></div></div>
-        <p class="creation-detail-prompt">{{ selectedGeneration.prompt }}</p>
+        <header>
+          <div><span>{{ statusLabel(selectedGeneration) }}</span><h2>{{ t('create.studio.detailTitle') }}</h2></div><UiIconButton class="creation-icon-link" :label="t('actions.close')" @click="selectedGeneration = null">
+            <X :size="17" />
+          </UiIconButton>
+        </header>
+        <div class="creation-detail-media">
+          <div v-if="selectedGeneration.mode === 'chat' && selectedGeneration.outputText" class="creation-detail-text">
+            {{ selectedGeneration.outputText }}
+          </div><AssetMedia v-else-if="selectedGeneration.outputMediaUrl" :src="selectedGeneration.outputMediaUrl" :kind="generationMediaKind(selectedGeneration)" :alt="selectedGeneration.prompt" :text="selectedGeneration.outputText || ''" :width="1200" :height="900" :controls="generationMediaKind(selectedGeneration) === 'video' || generationMediaKind(selectedGeneration) === 'audio'" /><div v-else>
+            <LoaderCircle v-if="['queued', 'running'].includes(selectedGeneration.status)" class="spin" :size="24" /><strong>{{ selectedGeneration.progress }}%</strong>
+          </div>
+        </div>
+        <p class="creation-detail-prompt">
+          {{ selectedGeneration.prompt }}
+        </p>
         <dl><div><dt>{{ t('create.modelLabel') }}</dt><dd>{{ selectedGeneration.modelName }}</dd></div><div><dt>{{ t('create.studio.outputSettings') }}</dt><dd>{{ parameterSummary(selectedGeneration) }}</dd></div><div><dt>{{ t('workspace.cost') }}</dt><dd>{{ generationCost(selectedGeneration) }}</dd></div><div><dt>{{ t('workspace.created') }}</dt><dd>{{ generationDate(selectedGeneration.createdAt) }}</dd></div></dl>
-        <p v-if="selectedGeneration.errorMessage" class="creation-detail-error"><AlertCircle :size="15" />{{ selectedGeneration.errorMessage }}</p>
-        <footer><button type="button" @click="toggleFavorite(selectedGeneration)"><MotionFavoriteIcon :active="selectedGeneration.isFavorite" kind="bookmark" :size="15" />{{ selectedGeneration.isFavorite ? t('workspace.unfavoriteGeneration') : t('workspace.favoriteGeneration') }}</button><button v-if="selectedGeneration.actions.canReuse" type="button" @click="reuseGeneration(selectedGeneration)"><RefreshCw :size="15" />{{ t('actions.remix') }}</button><a v-if="selectedGeneration.actions.canDownload && selectedGeneration.actions.downloadPath" :href="selectedGeneration.actions.downloadPath"><ArrowUp :size="15" />{{ t('actions.download') }}</a><button v-if="selectedGeneration.actions.canCancel" type="button" @click="changeGeneration(selectedGeneration, 'cancel')"><X :size="15" />{{ t('actions.cancel') }}</button><button v-if="selectedGeneration.actions.canRetry" type="button" @click="changeGeneration(selectedGeneration, 'retry')"><RefreshCw :size="15" />{{ t('actions.retry') }}</button></footer>
+        <p v-if="selectedGeneration.errorMessage" class="creation-detail-error">
+          <AlertCircle :size="15" />{{ selectedGeneration.errorMessage }}
+        </p>
+        <footer>
+          <UiButton variant="secondary" size="sm" @click="toggleFavorite(selectedGeneration)">
+            <template #start>
+              <MotionFavoriteIcon :active="selectedGeneration.isFavorite" kind="bookmark" :size="15" />
+            </template>{{ selectedGeneration.isFavorite ? t('workspace.unfavoriteGeneration') : t('workspace.favoriteGeneration') }}
+          </UiButton><UiButton v-if="selectedGeneration.actions.canReuse" variant="secondary" size="sm" @click="reuseGeneration(selectedGeneration)">
+            <template #start>
+              <RefreshCw :size="15" />
+            </template>{{ t('actions.remix') }}
+          </UiButton><UiButton v-if="selectedGeneration.actions.canDownload && selectedGeneration.actions.downloadPath" as="a" variant="secondary" size="sm" :href="selectedGeneration.actions.downloadPath">
+            <template #start>
+              <ArrowUp :size="15" />
+            </template>{{ t('actions.download') }}
+          </UiButton><UiButton v-if="selectedGeneration.actions.canCancel" variant="secondary" size="sm" @click="changeGeneration(selectedGeneration, 'cancel')">
+            <template #start>
+              <X :size="15" />
+            </template>{{ t('actions.cancel') }}
+          </UiButton><UiButton v-if="selectedGeneration.actions.canRetry" variant="secondary" size="sm" @click="changeGeneration(selectedGeneration, 'retry')">
+            <template #start>
+              <RefreshCw :size="15" />
+            </template>{{ t('actions.retry') }}
+          </UiButton>
+        </footer>
       </aside>
     </div>
   </section>

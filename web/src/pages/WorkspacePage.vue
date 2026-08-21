@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import {
   ArrowLeft, ArrowRight, Boxes, ClipboardList, Clock3, FileCheck2, PackageCheck, Plus,
-  Ban, Bookmark, BookmarkX, Coins, Download, GitBranch, ListFilter, LoaderCircle, ReceiptText, RefreshCw, RotateCcw, ShieldCheck, ShoppingBag, Store, TrendingUp, Upload, WalletCards, WandSparkles, X,
+  Ban, Bookmark, BookmarkX, Coins, Download, GitBranch, ListFilter, ReceiptText, RefreshCw, RotateCcw, ShieldCheck, ShoppingBag, Store, TrendingUp, Upload, WalletCards, WandSparkles, X,
 } from 'lucide-vue-next'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -13,9 +13,11 @@ import AssetMedia from '../components/domain/AssetMedia.vue'
 import AuthRequiredState from '../components/domain/AuthRequiredState.vue'
 import MotionFavoriteIcon from '../components/ui/MotionFavoriteIcon.vue'
 import UiButton from '../components/ui/UiButton.vue'
+import UiCheckbox from '../components/ui/UiCheckbox.vue'
 import UiIconButton from '../components/ui/UiIconButton.vue'
 import UiInput from '../components/ui/UiInput.vue'
 import UiSelect from '../components/ui/UiSelect.vue'
+import UiTextarea from '../components/ui/UiTextarea.vue'
 
 const { t, locale } = useI18n()
 const route = useRoute()
@@ -601,9 +603,11 @@ onMounted(() => void load())
         {{ t('status.loadingAssets') }}
       </div>
       <div v-else-if="error || !selectedAsset" class="page-state" role="alert">
-        <p>{{ error }}</p><button class="command-button secondary" type="button" @click="load">
-          <RefreshCw :size="17" />{{ t('actions.retry') }}
-        </button>
+        <p>{{ error }}</p><UiButton class="command-button secondary" variant="secondary" @click="load">
+          <template #start>
+            <RefreshCw :size="17" />
+          </template>{{ t('actions.retry') }}
+        </UiButton>
       </div>
       <div v-else class="asset-detail-layout">
         <div v-if="selectedAsset.scanStatus === 'clean'" class="asset-detail-media">
@@ -623,17 +627,21 @@ onMounted(() => void load())
             <RouterLink v-for="version in selectedAsset.versions" :key="version.id" class="source-lineage" :to="`/workspace/assets/${version.id}`">
               <span>v{{ version.versionNumber }} · {{ t(`workspace.scanStatus.${version.scanStatus}`) }}</span><strong>{{ version.title }}</strong><small>{{ version.versionNote || date(version.createdAt) }}</small>
             </RouterLink>
-            <button v-if="selectedAsset.isLatestVersion && selectedAsset.sourceType !== 'purchase'" class="command-button secondary wide" type="button" @click="versionOpen = !versionOpen">
-              <Upload :size="17" />{{ t('workspace.uploadVersion') }}
-            </button>
+            <UiButton v-if="selectedAsset.isLatestVersion && selectedAsset.sourceType !== 'purchase'" class="command-button secondary wide" variant="secondary" @click="versionOpen = !versionOpen">
+              <template #start>
+                <Upload :size="17" />
+              </template>{{ t('workspace.uploadVersion') }}
+            </UiButton>
             <form v-if="versionOpen" class="asset-version-form" @submit.prevent="uploadVersion">
-              <label>{{ t('workspace.versionTitle') }}<input v-model="versionTitle" type="text" minlength="3" maxlength="120" :placeholder="selectedAsset.title" /></label>
-              <label>{{ t('workspace.versionNote') }}<textarea v-model="versionNote" rows="2" minlength="3" maxlength="500" required></textarea></label>
+              <label>{{ t('workspace.versionTitle') }}<UiInput v-model="versionTitle" type="text" minlength="3" maxlength="120" :placeholder="selectedAsset.title" /></label>
+              <label>{{ t('workspace.versionNote') }}<UiTextarea v-model="versionNote" rows="2" minlength="3" maxlength="500" required /></label>
               <label>{{ t('workspace.versionFile') }}<input type="file" :accept="versionAccept" required @change="chooseVersion" /></label>
               <small>{{ t('workspace.versionScanBoundary') }}</small>
-              <button class="command-button primary wide" type="submit" :disabled="versionUploading || !versionFile">
-                <LoaderCircle v-if="versionUploading" class="spin" :size="17" /><Upload v-else :size="17" />{{ t('workspace.queueVersion') }}
-              </button>
+              <UiButton class="command-button primary wide" variant="primary" type="submit" :loading="versionUploading" :disabled="!versionFile">
+                <template #start>
+                  <Upload v-if="!versionUploading" :size="17" />
+                </template>{{ t('workspace.queueVersion') }}
+              </UiButton>
             </form>
           </section>
 
@@ -649,22 +657,30 @@ onMounted(() => void load())
               </div>
             </template>
             <small v-if="!selectedAsset.usages?.length">{{ t('workspace.noAssetUsage') }}</small>
-            <button v-if="selectedAsset.usageNextCursor" class="command-button secondary wide" type="button" :disabled="assetUsageLoadingMore" @click="loadMoreAssetUsages">
-              <LoaderCircle v-if="assetUsageLoadingMore" class="spin" :size="16" /><Plus v-else :size="16" />{{ t('actions.loadMore') }}
-            </button>
+            <UiButton v-if="selectedAsset.usageNextCursor" class="command-button secondary wide" variant="secondary" :loading="assetUsageLoadingMore" @click="loadMoreAssetUsages">
+              {{ t('actions.loadMore') }}
+            </UiButton>
           </section>
 
           <section v-if="selectedAsset.provenance?.purchase" class="provenance-block">
             <header><ShoppingBag :size="19" /><h2>{{ t('workspace.purchasedFrom') }}</h2></header>
             <strong>{{ selectedAsset.provenance.purchase.productTitle }}</strong><span>{{ selectedAsset.provenance.purchase.sellerName }} · @{{ selectedAsset.provenance.purchase.sellerHandle }}</span>
             <p>{{ selectedAsset.provenance.purchase.licenseName }}</p><small>{{ t(selectedAsset.provenance.purchase.paymentMode === 'stripe' ? 'workspace.stripeMode' : 'workspace.localTestMode') }} · {{ t(`marketplace.orderStatus.${selectedAsset.provenance.purchase.orderStatus}`) }}</small>
-            <RouterLink v-if="selectedAsset.provenance.purchase.orderStatus === 'fulfilled'" class="command-button primary wide" :to="`/create/image?sourceAssetId=${selectedAsset.id}`">
-              <WandSparkles :size="17" />{{ t('actions.useInCreate') }}
-            </RouterLink>
-            <a v-if="selectedAsset.provenance.purchase.orderStatus === 'fulfilled'" class="command-button secondary wide" :href="selectedAsset.mediaUrl" :download="selectedAsset.title"><Download :size="17" />{{ t('actions.downloadLicensed') }}</a>
-            <RouterLink class="command-button secondary wide" to="/workspace/orders">
-              <ReceiptText :size="17" />{{ t('marketplace.viewOrder') }}
-            </RouterLink>
+            <UiButton v-if="selectedAsset.provenance.purchase.orderStatus === 'fulfilled'" as="RouterLink" class="command-button primary wide" variant="primary" :to="`/create/image?sourceAssetId=${selectedAsset.id}`">
+              <template #start>
+                <WandSparkles :size="17" />
+              </template>{{ t('actions.useInCreate') }}
+            </UiButton>
+            <UiButton v-if="selectedAsset.provenance.purchase.orderStatus === 'fulfilled'" as="a" class="command-button secondary wide" variant="secondary" :href="selectedAsset.mediaUrl" :download="selectedAsset.title">
+              <template #start>
+                <Download :size="17" />
+              </template>{{ t('actions.downloadLicensed') }}
+            </UiButton>
+            <UiButton as="RouterLink" class="command-button secondary wide" variant="secondary" to="/workspace/orders">
+              <template #start>
+                <ReceiptText :size="17" />
+              </template>{{ t('marketplace.viewOrder') }}
+            </UiButton>
           </section>
 
           <section v-if="selectedAsset.provenance?.generation" class="provenance-block">
@@ -681,9 +697,9 @@ onMounted(() => void load())
           <section v-if="selectedAsset.sourceType === 'upload'" class="provenance-block">
             <header><Upload :size="19" /><h2>{{ t('workspace.uploadEvidence') }}</h2></header><strong>{{ selectedAsset.uploadedFilename }}</strong><span>{{ selectedAsset.mimeType }} · {{ selectedAsset.sizeBytes ? t('workspace.fileSize', { size: selectedAsset.sizeBytes }) : '' }}</span><p>{{ selectedAsset.scanReason || t('workspace.scanPendingDetail') }}</p>
           </section>
-          <RouterLink v-if="selectedAsset.sourceType !== 'purchase' && selectedAsset.scanStatus === 'clean'" class="command-button secondary wide" :to="`/publish?assetId=${selectedAsset.id}`">
+          <UiButton v-if="selectedAsset.sourceType !== 'purchase' && selectedAsset.scanStatus === 'clean'" as="RouterLink" class="command-button secondary wide" variant="secondary" :to="`/publish?assetId=${selectedAsset.id}`">
             {{ t('actions.publishAsset') }}
-          </RouterLink>
+          </UiButton>
         </aside>
       </div>
     </template>
@@ -694,11 +710,15 @@ onMounted(() => void load())
           <span class="status-label"><component :is="sectionMeta.icon" :size="14" />{{ t('workspace.workbenchLabel') }} · {{ t('workspace.itemCount', { count: sectionMeta.count }) }}</span>
           <h1>{{ sectionMeta.title }}</h1><p>{{ sectionMeta.summary }}</p>
         </div>
-        <button v-if="section === 'assets' && assetView === 'owned'" class="command-button primary" type="button" @click="uploadOpen = !uploadOpen">
-          <Upload :size="17" />{{ sectionMeta.actionLabel }}
-        </button><RouterLink v-else-if="section !== 'assets'" class="command-button primary" :to="sectionMeta.actionTo">
-          <component :is="sectionMeta.actionIcon" :size="17" />{{ sectionMeta.actionLabel }}
-        </RouterLink>
+        <UiButton v-if="section === 'assets' && assetView === 'owned'" class="command-button primary" variant="primary" @click="uploadOpen = !uploadOpen">
+          <template #start>
+            <Upload :size="17" />
+          </template>{{ sectionMeta.actionLabel }}
+        </UiButton><UiButton v-else-if="section !== 'assets'" as="RouterLink" class="command-button primary" variant="primary" :to="sectionMeta.actionTo">
+          <template #start>
+            <component :is="sectionMeta.actionIcon" :size="17" />
+          </template>{{ sectionMeta.actionLabel }}
+        </UiButton>
       </header>
       <nav class="section-tabs workspace-switcher" :aria-label="t('workspace.sectionsLabel')">
         <RouterLink to="/workspace/assets" :class="{ active: section === 'assets' }">
@@ -730,14 +750,16 @@ onMounted(() => void load())
 
       <form v-if="uploadOpen && section === 'assets' && assetView === 'owned'" class="asset-upload-panel" @submit.prevent="uploadAsset">
         <header>
-          <div><span class="status-label">{{ t('workspace.localScanLabel') }}</span><h2>{{ t('workspace.uploadAsset') }}</h2><p>{{ t('workspace.uploadSummary') }}</p></div><button class="icon-button" type="button" :aria-label="t('actions.close')" @click="uploadOpen = false">
+          <div><span class="status-label">{{ t('workspace.localScanLabel') }}</span><h2>{{ t('workspace.uploadAsset') }}</h2><p>{{ t('workspace.uploadSummary') }}</p></div><UiIconButton class="icon-button" :label="t('actions.close')" @click="uploadOpen = false">
             <X :size="17" />
-          </button>
+          </UiIconButton>
         </header>
-        <div><label>{{ t('workspace.uploadTitle') }}<input v-model="uploadTitle" type="text" minlength="3" maxlength="120" required /></label><label>{{ t('workspace.uploadFile') }}<input type="file" accept="image/jpeg,image/png,video/mp4,audio/wav,audio/mpeg,text/plain" required @change="chooseUpload" /></label></div>
-        <small>{{ t('workspace.uploadLimits') }}</small><button class="command-button primary" type="submit" :disabled="uploading || !uploadFile">
-          <LoaderCircle v-if="uploading" class="spin" :size="17" /><Upload v-else :size="17" />{{ uploading ? t('workspace.uploading') : t('workspace.queueUpload') }}
-        </button>
+        <div><label>{{ t('workspace.uploadTitle') }}<UiInput v-model="uploadTitle" type="text" minlength="3" maxlength="120" required /></label><label>{{ t('workspace.uploadFile') }}<input type="file" class="ui-input" accept="image/jpeg,image/png,video/mp4,audio/wav,audio/mpeg,text/plain" required @change="chooseUpload" /></label></div>
+        <small>{{ t('workspace.uploadLimits') }}</small><UiButton class="command-button primary" variant="primary" type="submit" :loading="uploading" :disabled="!uploadFile">
+          <template #start>
+            <Upload v-if="!uploading" :size="17" />
+          </template>{{ uploading ? t('workspace.uploading') : t('workspace.queueUpload') }}
+        </UiButton>
       </form>
 
       <div v-if="success && section === 'assets'" class="task-feedback success" role="status">
@@ -748,9 +770,11 @@ onMounted(() => void load())
         {{ t('status.loadingWorkspace') }}
       </div>
       <div v-else-if="error && section !== 'orders'" class="page-state" role="alert">
-        <p>{{ error }}</p><button class="command-button secondary" type="button" @click="load">
-          <RefreshCw :size="17" />{{ t('actions.retry') }}
-        </button>
+        <p>{{ error }}</p><UiButton class="command-button secondary" variant="secondary" @click="load">
+          <template #start>
+            <RefreshCw :size="17" />
+          </template>{{ t('actions.retry') }}
+        </UiButton>
       </div>
 
       <template v-else-if="section === 'assets' && assetView === 'saved'">
@@ -774,22 +798,22 @@ onMounted(() => void load())
                   <RouterLink class="icon-button" :to="`/works/${item.workId}`" :aria-label="t('actions.viewDetails')" :title="t('actions.viewDetails')">
                     <ArrowRight :size="16" />
                   </RouterLink>
-                  <button class="icon-button" type="button" :aria-label="t('workspace.removeSaved')" :title="t('workspace.removeSaved')" @click="removeSavedWork(item)">
+                  <UiIconButton class="icon-button" :label="t('workspace.removeSaved')" @click="removeSavedWork(item)">
                     <BookmarkX :size="16" />
-                  </button>
+                  </UiIconButton>
                 </div>
               </footer>
             </div>
           </article>
           <div v-if="!savedWorks.length" class="workspace-empty">
-            <Bookmark :size="22" /><h2>{{ t('workspace.noSavedTitle') }}</h2><p>{{ t('workspace.noSaved') }}</p><RouterLink class="command-button secondary" to="/community">
+            <Bookmark :size="22" /><h2>{{ t('workspace.noSavedTitle') }}</h2><p>{{ t('workspace.noSaved') }}</p><UiButton as="RouterLink" class="command-button secondary" variant="secondary" to="/community">
               {{ t('workspace.browseCommunity') }}<ArrowRight :size="16" />
-            </RouterLink>
+            </UiButton>
           </div>
         </div>
-        <button v-if="savedWorkNextCursor" class="command-button secondary generation-load-more" type="button" :disabled="savedWorkLoadingMore" @click="loadMoreSavedWorks">
-          <LoaderCircle v-if="savedWorkLoadingMore" class="spin" :size="16" /><Plus v-else :size="16" />{{ t('actions.loadMore') }}
-        </button>
+        <UiButton v-if="savedWorkNextCursor" class="command-button secondary generation-load-more" variant="secondary" :loading="savedWorkLoadingMore" @click="loadMoreSavedWorks">
+          {{ t('actions.loadMore') }}
+        </UiButton>
       </template>
 
       <template v-else-if="section === 'assets' || section === 'purchases'">
@@ -820,14 +844,14 @@ onMounted(() => void load())
           <div v-if="!visibleAssets.length" class="workspace-empty">
             <ShoppingBag v-if="section === 'purchases'" :size="22" /><Boxes v-else :size="22" />
             <h2>{{ section === 'purchases' ? t('workspace.noPurchasesTitle') : t('workspace.noAssetsTitle') }}</h2>
-            <p>{{ section === 'purchases' ? t('workspace.noPurchases') : t('workspace.noAssets') }}</p><RouterLink class="command-button secondary" :to="section === 'purchases' ? '/market' : '/create/image'">
+            <p>{{ section === 'purchases' ? t('workspace.noPurchases') : t('workspace.noAssets') }}</p><UiButton as="RouterLink" class="command-button secondary" variant="secondary" :to="section === 'purchases' ? '/market' : '/create/image'">
               {{ section === 'purchases' ? t('workspace.browseMarket') : t('actions.startCreating') }}<ArrowRight :size="16" />
-            </RouterLink>
+            </UiButton>
           </div>
         </div>
-        <button v-if="(section === 'assets' || section === 'purchases') && assetNextCursor" class="command-button secondary generation-load-more" type="button" :disabled="assetLoadingMore" @click="loadMoreAssets">
-          <LoaderCircle v-if="assetLoadingMore" class="spin" :size="16" /><Plus v-else :size="16" />{{ t('actions.loadMore') }}
-        </button>
+        <UiButton v-if="(section === 'assets' || section === 'purchases') && assetNextCursor" class="command-button secondary generation-load-more" variant="secondary" :loading="assetLoadingMore" @click="loadMoreAssets">
+          {{ t('actions.loadMore') }}
+        </UiButton>
       </template>
 
       <div v-else-if="section === 'generations'" class="generation-list">
@@ -840,8 +864,14 @@ onMounted(() => void load())
           </UiSelect></label>
           <label><span>{{ t('workspace.dateFrom') }}</span><UiInput v-model="generationDateFrom" type="date" /></label>
           <label><span>{{ t('workspace.dateTo') }}</span><UiInput v-model="generationDateTo" type="date" /></label>
-          <UiButton class="command-button secondary" variant="secondary" type="submit"><template #start><ListFilter :size="16" /></template>{{ t('actions.applyFilters') }}</UiButton>
-          <UiIconButton class="icon-button" :label="t('actions.clearFilters')" @click="clearGenerationFilters"><X :size="16" /></UiIconButton>
+          <UiButton class="command-button secondary" variant="secondary" type="submit">
+            <template #start>
+              <ListFilter :size="16" />
+            </template>{{ t('actions.applyFilters') }}
+          </UiButton>
+          <UiIconButton class="icon-button" :label="t('actions.clearFilters')" @click="clearGenerationFilters">
+            <X :size="16" />
+          </UiIconButton>
         </form>
         <div v-if="success" class="task-feedback success" role="status">
           <FileCheck2 :size="18" />{{ success }}
@@ -850,21 +880,27 @@ onMounted(() => void load())
           <RefreshCw :size="18" />{{ error }}
         </div>
         <div v-if="generations.length" class="generation-bulk-toolbar">
-          <label class="generation-select-all"><input type="checkbox" :checked="allGenerationsSelected" @change="toggleAllGenerations" /><span>{{ t('workspace.selectGenerations', { count: selectedGenerations.length }) }}</span></label>
+          <label class="generation-select-all"><UiCheckbox :model-value="allGenerationsSelected" @update:model-value="toggleAllGenerations" /><span>{{ t('workspace.selectGenerations', { count: selectedGenerations.length }) }}</span></label>
           <div v-if="selectedGenerations.length" class="generation-bulk-actions">
-            <button class="command-button secondary" type="button" :disabled="generationAction === 'batch'" @click="applyGenerationBatch('favorite')">
-              <Bookmark :size="15" />{{ t('workspace.favoriteSelected') }}
-            </button>
-            <button class="command-button secondary" type="button" :disabled="generationAction === 'batch'" @click="applyGenerationBatch('unfavorite')">
-              <BookmarkX :size="15" />{{ t('workspace.unfavoriteSelected') }}
-            </button>
-            <button class="command-button secondary" type="button" :disabled="generationAction === 'batch'" @click="applyGenerationBatch('cancel')">
-              <Ban :size="15" />{{ t('workspace.cancelSelected') }}
-            </button>
+            <UiButton class="command-button secondary" variant="secondary" :loading="generationAction === 'batch'" @click="applyGenerationBatch('favorite')">
+              <template #start>
+                <Bookmark v-if="generationAction !== 'batch'" :size="15" />
+              </template>{{ t('workspace.favoriteSelected') }}
+            </UiButton>
+            <UiButton class="command-button secondary" variant="secondary" :loading="generationAction === 'batch'" @click="applyGenerationBatch('unfavorite')">
+              <template #start>
+                <BookmarkX v-if="generationAction !== 'batch'" :size="15" />
+              </template>{{ t('workspace.unfavoriteSelected') }}
+            </UiButton>
+            <UiButton class="command-button secondary" variant="secondary" :loading="generationAction === 'batch'" @click="applyGenerationBatch('cancel')">
+              <template #start>
+                <Ban v-if="generationAction !== 'batch'" :size="15" />
+              </template>{{ t('workspace.cancelSelected') }}
+            </UiButton>
           </div>
         </div>
         <article v-for="item in generations" :key="item.id" class="generation-row" :class="{ 'usage-focus': generationFocus === item.id }">
-          <label class="generation-row-select"><input type="checkbox" :checked="selectedGenerationIDs.includes(item.id)" :aria-label="t('workspace.selectGeneration', { prompt: item.prompt })" @click.stop @change="toggleGenerationSelection(item)" /></label>
+          <label class="generation-row-select"><UiCheckbox :model-value="selectedGenerationIDs.includes(item.id)" :aria-label="t('workspace.selectGeneration', { prompt: item.prompt })" @click.stop @update:model-value="toggleGenerationSelection(item)" /></label>
           <div v-if="item.outputMediaUrl" class="generation-thumb">
             <AssetMedia :src="item.outputMediaUrl" :kind="item.mode === 'music' ? 'audio' : item.mode === 'chat' ? 'document' : item.mode" :alt="item.prompt" :text="item.outputText" :width="100" :height="100" :controls="false" />
           </div><div v-else class="generation-thumb placeholder">
@@ -874,15 +910,15 @@ onMounted(() => void load())
           </div><span class="generation-row-data model-cell"><small>{{ t('workspace.model') }}</small><strong>{{ item.modelName }}</strong></span><span class="generation-row-data created-cell"><small>{{ t('workspace.created') }}</small><strong>{{ date(item.createdAt) }}</strong></span><span class="generation-row-data cost-cell"><small>{{ t('workspace.pointsUsed') }}</small><strong>{{ (item.chargedPoints || item.estimatedPoints).toLocaleString(locale) }} {{ t('workspace.pointsUnit') }}</strong></span><div class="generation-row-status" :data-status="item.status">
             <strong>{{ generationStatusLabel(item) }}</strong><span>{{ item.progress }}%</span>
           </div><div class="generation-actions">
-            <button class="icon-button" type="button" :disabled="generationAction === `${item.id}:favorite`" :aria-label="item.isFavorite ? t('workspace.unfavoriteGeneration') : t('workspace.favoriteGeneration')" :title="item.isFavorite ? t('workspace.unfavoriteGeneration') : t('workspace.favoriteGeneration')" @click="toggleGenerationFavorite(item)">
+            <UiIconButton class="icon-button" :label="item.isFavorite ? t('workspace.unfavoriteGeneration') : t('workspace.favoriteGeneration')" :disabled="generationAction === `${item.id}:favorite`" @click="toggleGenerationFavorite(item)">
               <MotionFavoriteIcon :active="item.isFavorite" kind="bookmark" :size="16" />
-            </button>
-            <button v-if="item.actions.canCancel" class="icon-button" type="button" :disabled="generationAction === item.id" :aria-label="t('actions.cancel')" :title="t('actions.cancel')" @click="changeGeneration(item, 'cancel')">
+            </UiIconButton>
+            <UiIconButton v-if="item.actions.canCancel" class="icon-button" :label="t('actions.cancel')" :disabled="generationAction === item.id" @click="changeGeneration(item, 'cancel')">
               <Ban :size="16" />
-            </button>
-            <button v-if="item.actions.canRetry" class="icon-button" type="button" :disabled="generationAction === item.id" :aria-label="t('actions.retry')" :title="t('actions.retry')" @click="changeGeneration(item, 'retry')">
+            </UiIconButton>
+            <UiIconButton v-if="item.actions.canRetry" class="icon-button" :label="t('actions.retry')" :disabled="generationAction === item.id" @click="changeGeneration(item, 'retry')">
               <RotateCcw :size="16" />
-            </button>
+            </UiIconButton>
             <a v-if="item.actions.canDownload && item.actions.downloadPath" class="icon-button" :href="item.actions.downloadPath" :download="item.prompt" :aria-label="t('actions.download')" :title="t('actions.download')"><Download :size="16" /></a>
             <RouterLink v-if="item.actions.canReuse && item.actions.reusePath" class="icon-button" :to="item.actions.reusePath" :aria-label="t('actions.useInCreate')" :title="t('actions.useInCreate')">
               <WandSparkles :size="16" />
@@ -909,13 +945,13 @@ onMounted(() => void load())
           </div>
         </article>
         <div v-if="!generations.length" class="workspace-empty">
-          <Clock3 :size="22" /><h2>{{ t('workspace.noGenerationsTitle') }}</h2><p>{{ t('workspace.noGenerations') }}</p><RouterLink class="command-button secondary" to="/create/image">
+          <Clock3 :size="22" /><h2>{{ t('workspace.noGenerationsTitle') }}</h2><p>{{ t('workspace.noGenerations') }}</p><UiButton as="RouterLink" class="command-button secondary" variant="secondary" to="/create/image">
             {{ t('actions.startCreating') }}<ArrowRight :size="16" />
-          </RouterLink>
+          </UiButton>
         </div>
-        <button v-if="generationNextCursor" class="command-button secondary generation-load-more" type="button" :disabled="generationLoadingMore" @click="loadMoreGenerations">
-          <LoaderCircle v-if="generationLoadingMore" class="spin" :size="16" /><Plus v-else :size="16" />{{ t('actions.loadMore') }}
-        </button>
+        <UiButton v-if="generationNextCursor" class="command-button secondary generation-load-more" variant="secondary" :loading="generationLoadingMore" @click="loadMoreGenerations">
+          {{ t('actions.loadMore') }}
+        </UiButton>
       </div>
 
       <div v-else-if="section === 'orders'" class="order-list">
@@ -941,19 +977,21 @@ onMounted(() => void load())
             </section>
           </div>
           <form v-if="order.status === 'fulfilled'" class="refund-form" @submit.prevent="requestRefund(order)">
-            <label>{{ t('workspace.refundReason') }}<textarea v-model="refundReasons[order.id]" rows="2" minlength="10" maxlength="500" required :placeholder="t('workspace.refundPlaceholder')"></textarea></label><button class="command-button secondary" type="submit" :disabled="refunding === order.id">
-              <RotateCcw :size="17" />{{ t(order.paymentMode === 'stripe' ? 'workspace.requestProviderRefund' : 'workspace.requestRefund') }}
-            </button>
+            <label>{{ t('workspace.refundReason') }}<UiTextarea v-model="refundReasons[order.id]" rows="2" minlength="10" maxlength="500" required :placeholder="t('workspace.refundPlaceholder')" /></label><UiButton class="command-button secondary" variant="secondary" type="submit" :loading="refunding === order.id">
+              <template #start>
+                <RotateCcw v-if="refunding !== order.id" :size="17" />
+              </template>{{ t(order.paymentMode === 'stripe' ? 'workspace.requestProviderRefund' : 'workspace.requestRefund') }}
+            </UiButton>
           </form>
         </article>
         <div v-if="!orders.length" class="workspace-empty">
-          <ReceiptText :size="22" /><h2>{{ t('workspace.noOrdersTitle') }}</h2><p>{{ t('workspace.noOrders') }}</p><RouterLink class="command-button secondary" to="/market">
+          <ReceiptText :size="22" /><h2>{{ t('workspace.noOrdersTitle') }}</h2><p>{{ t('workspace.noOrders') }}</p><UiButton as="RouterLink" class="command-button secondary" variant="secondary" to="/market">
             {{ t('workspace.browseMarket') }}<ArrowRight :size="16" />
-          </RouterLink>
+          </UiButton>
         </div>
-        <button v-if="orderNextCursor" class="command-button secondary generation-load-more" type="button" :disabled="ordersLoadingMore" @click="loadMoreOrders">
-          <LoaderCircle v-if="ordersLoadingMore" class="spin" :size="16" /><Plus v-else :size="16" />{{ t('actions.loadMore') }}
-        </button>
+        <UiButton v-if="orderNextCursor" class="command-button secondary generation-load-more" variant="secondary" :loading="ordersLoadingMore" @click="loadMoreOrders">
+          {{ t('actions.loadMore') }}
+        </UiButton>
       </div>
 
       <div v-else-if="section === 'billing' && billing && points" class="billing-dashboard">
@@ -961,7 +999,9 @@ onMounted(() => void load())
           <div class="billing-account-heading">
             <div>
               <span class="wallet-kicker">{{ t('workspace.billing') }}</span>
-              <h1 id="billing-dashboard-title"><span class="billing-greeting-mark" aria-hidden="true">👋</span>{{ t('workspace.billingGreeting', { name: session.user?.displayName || points.currentSubscription?.planName || t('workspace.noActiveSubscription') }) }}</h1>
+              <h1 id="billing-dashboard-title">
+                <span class="billing-greeting-mark" aria-hidden="true">👋</span>{{ t('workspace.billingGreeting', { name: session.user?.displayName || points.currentSubscription?.planName || t('workspace.noActiveSubscription') }) }}
+              </h1>
               <p><ShieldCheck :size="15" />{{ t('workspace.billingAccountStatus') }}</p>
             </div>
           </div>
@@ -982,13 +1022,19 @@ onMounted(() => void load())
           </div>
         </header>
 
-        <div v-if="success" class="task-feedback success" role="status"><FileCheck2 :size="18" />{{ success }}</div>
+        <div v-if="success" class="task-feedback success" role="status">
+          <FileCheck2 :size="18" />{{ success }}
+        </div>
 
         <div class="billing-dashboard-columns">
           <div class="billing-dashboard-column">
             <section class="billing-dashboard-panel billing-usage-panel" aria-labelledby="billing-trend-title">
               <header class="billing-panel-heading">
-                <div><h2 id="billing-trend-title">{{ t('workspace.pointsBalanceTrend') }}</h2><p>{{ t('workspace.trendBasedOnRecentEntries') }}</p></div>
+                <div>
+                  <h2 id="billing-trend-title">
+                    {{ t('workspace.pointsBalanceTrend') }}
+                  </h2><p>{{ t('workspace.trendBasedOnRecentEntries') }}</p>
+                </div>
                 <span class="billing-range-chip">{{ t('workspace.recentSevenDays') }}</span>
               </header>
               <div class="billing-trend-chart" role="img" :aria-label="t('workspace.pointsBalanceTrend')">
@@ -1004,21 +1050,33 @@ onMounted(() => void load())
                   <polyline class="billing-chart-line" :points="pointTrendGeometry.line" />
                   <circle v-for="point in pointTrendGeometry.dots" :key="`${point.x}-${point.y}`" class="billing-chart-dot" :cx="point.x" :cy="point.y" r="4" />
                 </svg>
-                <div class="billing-chart-labels"><span v-for="item in pointBalanceTrend" :key="item.label">{{ item.label }}</span></div>
-                <div class="billing-chart-current"><strong>{{ points.account.balancePoints.toLocaleString(locale) }}</strong><span>{{ t('workspace.pointsUnit') }}</span></div>
+                <div class="billing-chart-labels">
+                  <span v-for="item in pointBalanceTrend" :key="item.label">{{ item.label }}</span>
+                </div>
+                <div class="billing-chart-current">
+                  <strong>{{ points.account.balancePoints.toLocaleString(locale) }}</strong><span>{{ t('workspace.pointsUnit') }}</span>
+                </div>
               </div>
               <div class="billing-usage-facts">
                 <div><Coins :size="18" /><span>{{ t('workspace.pointsGranted', { count: (points.currentSubscription?.grantedPoints || 0).toLocaleString(locale) }) }}</span></div>
                 <div><Clock3 :size="18" /><span>{{ t('workspace.reservedCredits') }} · {{ formatCurrency(billing.account.reservedCents, billing.account.currency, locale) }}</span></div>
                 <div><ShieldCheck :size="18" /><span>{{ t('workspace.localTestMode') }}</span></div>
               </div>
-              <div class="billing-environment-note"><ShieldCheck :size="17" /><p>{{ t('workspace.localTestWalletSummary') }}</p></div>
+              <div class="billing-environment-note">
+                <ShieldCheck :size="17" /><p>{{ t('workspace.localTestWalletSummary') }}</p>
+              </div>
             </section>
 
             <section class="billing-dashboard-panel billing-wallet-panel" aria-labelledby="billing-wallet-title">
               <div class="billing-wallet-visual">
-                <header><span class="wallet-kicker">{{ t('workspace.walletSectionLabel') }}</span><h2 id="billing-wallet-title">{{ t('workspace.addFunds') }}</h2><p>{{ t('workspace.addFundsSummary') }}</p></header>
-                <div class="billing-wallet-balance"><span>{{ t('workspace.availableCredits') }}</span><strong>{{ formatCurrency(billing.account.availableCents, billing.account.currency, locale) }}</strong><small>{{ t('workspace.localTestWallet') }}</small></div>
+                <header>
+                  <span class="wallet-kicker">{{ t('workspace.walletSectionLabel') }}</span><h2 id="billing-wallet-title">
+                    {{ t('workspace.addFunds') }}
+                  </h2><p>{{ t('workspace.addFundsSummary') }}</p>
+                </header>
+                <div class="billing-wallet-balance">
+                  <span>{{ t('workspace.availableCredits') }}</span><strong>{{ formatCurrency(billing.account.availableCents, billing.account.currency, locale) }}</strong><small>{{ t('workspace.localTestWallet') }}</small>
+                </div>
               </div>
               <div class="billing-wallet-summary-details">
                 <dl class="billing-wallet-details">
@@ -1026,14 +1084,22 @@ onMounted(() => void load())
                   <div><dt>{{ t('workspace.reservedCredits') }}</dt><dd>{{ formatCurrency(billing.account.reservedCents, billing.account.currency, locale) }}</dd></div>
                   <div><dt>{{ t('workspace.paymentMode') }}</dt><dd>{{ t('workspace.localTestMode') }}</dd></div>
                 </dl>
-                <RouterLink class="command-button secondary billing-support-link" to="/support">{{ t('workspace.contactSupportForCredits') }}<ArrowRight :size="16" /></RouterLink>
+                <RouterLink class="command-button secondary billing-support-link" to="/support">
+                  {{ t('workspace.contactSupportForCredits') }}<ArrowRight :size="16" />
+                </RouterLink>
               </div>
             </section>
           </div>
 
           <div class="billing-dashboard-column">
             <section class="billing-dashboard-panel billing-plans-panel" aria-labelledby="billing-plans-title">
-              <header class="billing-panel-heading"><div><h2 id="billing-plans-title">{{ t('workspace.subscription') }}</h2><p>{{ t('workspace.subscriptionSummary') }}</p></div><ShieldCheck :size="21" /></header>
+              <header class="billing-panel-heading">
+                <div>
+                  <h2 id="billing-plans-title">
+                    {{ t('workspace.subscription') }}
+                  </h2><p>{{ t('workspace.subscriptionSummary') }}</p>
+                </div><ShieldCheck :size="21" />
+              </header>
               <div v-if="points.currentSubscription" class="billing-current-plan">
                 <span class="plan-mark">{{ t('workspace.planMark') }}</span>
                 <div><strong>{{ points.currentSubscription.planName }}</strong><small>{{ t('workspace.planRenewsOn', { date: date(points.currentSubscription.currentPeriodEnd) }) }}</small></div>
@@ -1045,18 +1111,29 @@ onMounted(() => void load())
               </div>
               <div class="billing-plan-list">
                 <article v-for="plan in points.plans" :key="plan.id" :class="{ current: points.currentSubscription?.planId === plan.id }">
-                  <div class="billing-plan-copy"><strong>{{ plan.name }}</strong><small>{{ plan.description }}</small><span>{{ t('workspace.modelsIncluded', { count: plan.modelIds.length }) }}</span></div>
-                  <div class="billing-plan-price"><strong>{{ plan.includedPoints.toLocaleString(locale) }} {{ t('workspace.pointsUnit') }}</strong><small>{{ formatCurrency(plan.priceCents, plan.currency, locale) }} / {{ plan.billingPeriodDays }} {{ t('workspace.days') }}</small></div>
-                  <button class="command-button secondary" type="button" :disabled="subscriptionAction !== '' || points.currentSubscription?.planId === plan.id" @click="purchasePlan(plan.id)">
-                    <LoaderCircle v-if="subscriptionAction === plan.id" class="spin" :size="15" /><ShieldCheck v-else-if="points.currentSubscription?.planId === plan.id" :size="15" /><Coins v-else :size="15" />
-                    {{ points.currentSubscription?.planId === plan.id ? t('workspace.currentPlan') : t('workspace.choosePlan') }}
-                  </button>
+                  <div class="billing-plan-copy">
+                    <strong>{{ plan.name }}</strong><small>{{ plan.description }}</small><span>{{ t('workspace.modelsIncluded', { count: plan.modelIds.length }) }}</span>
+                  </div>
+                  <div class="billing-plan-price">
+                    <strong>{{ plan.includedPoints.toLocaleString(locale) }} {{ t('workspace.pointsUnit') }}</strong><small>{{ formatCurrency(plan.priceCents, plan.currency, locale) }} / {{ plan.billingPeriodDays }} {{ t('workspace.days') }}</small>
+                  </div>
+                  <UiButton class="command-button secondary" variant="secondary" :loading="subscriptionAction === plan.id" :disabled="subscriptionAction !== '' || points.currentSubscription?.planId === plan.id" @click="purchasePlan(plan.id)">
+                    <template #start>
+                      <ShieldCheck v-if="points.currentSubscription?.planId === plan.id && subscriptionAction !== plan.id" :size="15" /><Coins v-else-if="subscriptionAction !== plan.id" :size="15" />
+                    </template>{{ points.currentSubscription?.planId === plan.id ? t('workspace.currentPlan') : t('workspace.choosePlan') }}
+                  </UiButton>
                 </article>
               </div>
             </section>
 
             <section class="billing-dashboard-panel billing-point-ledger" aria-labelledby="billing-points-ledger-title">
-              <header class="billing-ledger-heading"><div><h2 id="billing-points-ledger-title">{{ t('workspace.pointStatement') }}</h2><p>{{ t('workspace.recentPointEntries') }}</p></div><span>{{ points.entries.length }} {{ t('workspace.entriesLoaded') }}</span></header>
+              <header class="billing-ledger-heading">
+                <div>
+                  <h2 id="billing-points-ledger-title">
+                    {{ t('workspace.pointStatement') }}
+                  </h2><p>{{ t('workspace.recentPointEntries') }}</p>
+                </div><span>{{ points.entries.length }} {{ t('workspace.entriesLoaded') }}</span>
+              </header>
               <article v-for="entry in points.entries" :key="entry.id" class="billing-entry">
                 <span :data-direction="entry.direction">{{ entry.direction === 'credit' ? '+' : '-' }}</span>
                 <div><strong>{{ entry.description }}</strong><small>{{ date(entry.createdAt) }} · {{ t(`workspace.pointEntryTypes.${entry.entryType}`) }}</small></div>
@@ -1068,14 +1145,26 @@ onMounted(() => void load())
         </div>
 
         <section class="billing-dashboard-panel billing-wallet-ledger" aria-labelledby="billing-wallet-ledger-title">
-          <header class="billing-ledger-heading"><div><span class="wallet-kicker">{{ t('workspace.walletSectionLabel') }}</span><h2 id="billing-wallet-ledger-title">{{ t('workspace.walletStatement') }}</h2></div><span>{{ billing.entries.length }} {{ t('workspace.entriesLoaded') }}</span></header>
+          <header class="billing-ledger-heading">
+            <div>
+              <span class="wallet-kicker">{{ t('workspace.walletSectionLabel') }}</span><h2 id="billing-wallet-ledger-title">
+                {{ t('workspace.walletStatement') }}
+              </h2>
+            </div><span>{{ billing.entries.length }} {{ t('workspace.entriesLoaded') }}</span>
+          </header>
           <form class="billing-filters" @submit.prevent="applyBillingFilters">
             <label><span>{{ t('workspace.billingDirection') }}</span><UiSelect v-model="billingDirection"><option value="">{{ t('workspace.allDirections') }}</option><option value="debit">{{ t('workspace.billingDirections.debit') }}</option><option value="credit">{{ t('workspace.billingDirections.credit') }}</option></UiSelect></label>
             <label><span>{{ t('workspace.billingEntryType') }}</span><UiSelect v-model="billingEntryType"><option value="">{{ t('workspace.allEntryTypes') }}</option><option v-for="entryType in billingEntryTypes" :key="entryType" :value="entryType">{{ t(`workspace.billingEntryTypes.${entryType}`) }}</option></UiSelect></label>
             <label><span>{{ t('workspace.dateFrom') }}</span><UiInput v-model="billingDateFrom" type="date" /></label>
             <label><span>{{ t('workspace.dateTo') }}</span><UiInput v-model="billingDateTo" type="date" /></label>
-            <UiButton class="command-button secondary" variant="secondary" type="submit"><template #start><ListFilter :size="16" /></template>{{ t('actions.applyFilters') }}</UiButton>
-            <UiIconButton class="icon-button" :label="t('actions.clearFilters')" @click="clearBillingFilters"><X :size="16" /></UiIconButton>
+            <UiButton class="command-button secondary" variant="secondary" type="submit">
+              <template #start>
+                <ListFilter :size="16" />
+              </template>{{ t('actions.applyFilters') }}
+            </UiButton>
+            <UiIconButton class="icon-button" :label="t('actions.clearFilters')" @click="clearBillingFilters">
+              <X :size="16" />
+            </UiIconButton>
           </form>
           <article v-for="entry in billing.entries" :key="entry.id" class="billing-entry">
             <span :data-direction="entry.direction">{{ entry.direction === 'credit' ? '+' : '-' }}</span>
@@ -1083,8 +1172,12 @@ onMounted(() => void load())
             <strong>{{ formatCurrency(entry.amountCents, entry.currency, locale) }}</strong>
             <small>{{ formatCurrency(entry.balanceAfterCents, entry.currency, locale) }}</small>
           </article>
-          <div v-if="!billing.entries.length" class="workspace-empty"><WalletCards :size="22" /><h2>{{ t('workspace.noBillingEntries') }}</h2></div>
-          <button v-if="billingNextCursor" class="command-button secondary billing-load-more" type="button" :disabled="billingLoadingMore" @click="loadMoreBilling"><LoaderCircle v-if="billingLoadingMore" class="spin" :size="16" /><Plus v-else :size="16" />{{ t('actions.loadMore') }}</button>
+          <div v-if="!billing.entries.length" class="workspace-empty">
+            <WalletCards :size="22" /><h2>{{ t('workspace.noBillingEntries') }}</h2>
+          </div>
+          <UiButton v-if="billingNextCursor" class="command-button secondary billing-load-more" variant="secondary" :loading="billingLoadingMore" @click="loadMoreBilling">
+            {{ t('actions.loadMore') }}
+          </UiButton>
         </section>
       </div>
 
@@ -1093,9 +1186,9 @@ onMounted(() => void load())
           <span class="task-status" :data-status="item.status">{{ t(`tasks.status.${item.status}`) }}</span><span><strong>{{ item.title }}</strong><small>{{ item.client.displayName }} / {{ t(`tasks.types.${item.deliverableType}`) }}</small></span><span><small>{{ t('tasks.reward') }}</small><strong>{{ formatCurrency(item.budgetCents, item.currency, locale) }}</strong></span><span><small>{{ t('tasks.deadline') }}</small><strong>{{ formatDateTime(item.deadline, locale, item.clientTimezone) }}</strong></span><ArrowRight :size="17" />
         </RouterLink>
         <div v-if="!tasks.length" class="workspace-empty">
-          <ClipboardList :size="22" /><h2>{{ t('workspace.noTasksTitle') }}</h2><p>{{ t('workspace.noTasks') }}</p><RouterLink class="command-button secondary" to="/market/demands">
+          <ClipboardList :size="22" /><h2>{{ t('workspace.noTasksTitle') }}</h2><p>{{ t('workspace.noTasks') }}</p><UiButton as="RouterLink" class="command-button secondary" variant="secondary" to="/market/demands">
             {{ t('workspace.browseTasks') }}<ArrowRight :size="16" />
-          </RouterLink>
+          </UiButton>
         </div>
       </div>
     </template>
