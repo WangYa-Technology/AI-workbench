@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { RouterLink, useRoute } from 'vue-router'
 import { api, messageFrom, type Work } from '../api/client'
 import AssetMedia from '../components/domain/AssetMedia.vue'
+import UiButton from '../components/ui/UiButton.vue'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -43,12 +44,16 @@ onMounted(() => void load())
         <p>{{ t('discover.summary') }}</p>
       </div>
       <nav class="discover-intro-actions" :aria-label="t('actions.quickLinks')">
-        <RouterLink class="command-button primary" to="/create/image">
-          <Sparkles :size="17" :stroke-width="1.75" />{{ t('actions.startCreating') }}
-        </RouterLink>
-        <RouterLink class="command-button secondary" to="/market/demands">
-          <BriefcaseBusiness :size="17" :stroke-width="1.75" />{{ t('actions.findBrief') }}
-        </RouterLink>
+        <UiButton as="RouterLink" class="command-button primary" variant="primary" to="/create/image">
+          <template #start>
+            <Sparkles :size="17" :stroke-width="1.75" />
+          </template>{{ t('actions.startCreating') }}
+        </UiButton>
+        <UiButton as="RouterLink" class="command-button secondary" variant="secondary" to="/market/demands">
+          <template #start>
+            <BriefcaseBusiness :size="17" :stroke-width="1.75" />
+          </template>{{ t('actions.findBrief') }}
+        </UiButton>
       </nav>
     </header>
     <section v-if="!loading && !error" class="discover-pathways content-width" :aria-label="t('discover.pathwaysLabel')">
@@ -73,9 +78,11 @@ onMounted(() => void load())
     </div>
     <div v-else-if="error" class="page-state hero-state" role="alert">
       <p>{{ error }}</p>
-      <button class="command-button secondary" type="button" @click="load">
-        <RefreshCw :size="17" :stroke-width="1.75" />{{ t('actions.retry') }}
-      </button>
+      <UiButton class="command-button secondary" variant="secondary" @click="load">
+        <template #start>
+          <RefreshCw :size="17" :stroke-width="1.75" />
+        </template>{{ t('actions.retry') }}
+      </UiButton>
     </div>
     <div v-else-if="featured" class="discover-hero">
       <RouterLink class="hero-media" :to="`/works/${featured.id}`" :aria-label="featured.title">
@@ -92,10 +99,11 @@ onMounted(() => void load())
           <span>{{ featured.modelName }}</span>
         </div>
         <div class="hero-actions">
-          <RouterLink class="command-button primary" :to="`/create/image?sourceWorkId=${featured.id}`">
-            {{ t('actions.remix') }}
-            <ArrowRight :size="17" :stroke-width="1.75" />
-          </RouterLink>
+          <UiButton as="RouterLink" class="command-button primary" variant="primary" :to="`/create/image?sourceWorkId=${featured.id}`">
+            {{ t('actions.remix') }}<template #end>
+              <ArrowRight :size="17" :stroke-width="1.75" />
+            </template>
+          </UiButton>
           <RouterLink class="text-link" :to="`/works/${featured.id}`">
             {{ t('actions.viewWork') }}
           </RouterLink>
@@ -107,9 +115,11 @@ onMounted(() => void load())
         <span class="hero-eyebrow">{{ query ? t('discover.noSearchResults') : t('discover.emptyTitle') }}</span>
         <h2>{{ query ? t('discover.tryAnotherSearch') : t('discover.emptySummary') }}</h2>
       </div>
-      <RouterLink class="command-button primary" to="/create/image">
-        <Sparkles :size="17" :stroke-width="1.75" />{{ t('actions.startCreating') }}
-      </RouterLink>
+      <UiButton as="RouterLink" class="command-button primary" variant="primary" to="/create/image">
+        <template #start>
+          <Sparkles :size="17" :stroke-width="1.75" />
+        </template>{{ t('actions.startCreating') }}
+      </UiButton>
     </div>
 
     <section id="recent" class="content-section content-width">

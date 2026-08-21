@@ -1,11 +1,15 @@
 <script setup lang="ts">
-import { ArrowLeft, CheckCircle2, Clock3, FileWarning, Headphones, LoaderCircle, MessageSquare, Plus, Send, ShieldCheck } from 'lucide-vue-next'
+import { ArrowLeft, CheckCircle2, Clock3, FileWarning, Headphones, MessageSquare, Plus, Send, ShieldCheck } from 'lucide-vue-next'
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { api, messageFrom, type SupportCase, type SupportCaseCreate } from '../api/client'
 import { formatDateTime } from '../lib/format'
 import { useSessionStore } from '../stores/session'
+import UiButton from '../components/ui/UiButton.vue'
+import UiInput from '../components/ui/UiInput.vue'
+import UiSelect from '../components/ui/UiSelect.vue'
+import UiTextarea from '../components/ui/UiTextarea.vue'
 
 const { t, locale } = useI18n()
 const route = useRoute()
@@ -141,15 +145,17 @@ onMounted(() => void load())
   <section class="support-page content-width">
     <header class="support-header">
       <div><span class="status-label"><Headphones :size="14" />{{ t('support.workspaceLabel') }}</span><h1>{{ t('support.title') }}</h1><p>{{ t('support.summary') }}</p></div>
-      <button v-if="session.user" class="command-button primary" type="button" @click="startCreate">
-        <Plus :size="17" />{{ t('support.newCase') }}
-      </button>
+      <UiButton v-if="session.user" class="command-button primary" variant="primary" @click="startCreate">
+        <template #start>
+          <Plus :size="17" />
+        </template>{{ t('support.newCase') }}
+      </UiButton>
     </header>
 
     <div v-if="!loading && !session.user" class="support-auth-state">
-      <Headphones :size="28" /><h2>{{ t('support.signInTitle') }}</h2><p>{{ t('support.signInSummary') }}</p><button class="command-button primary" type="button" @click="useDemo">
+      <Headphones :size="28" /><h2>{{ t('support.signInTitle') }}</h2><p>{{ t('support.signInSummary') }}</p><UiButton class="command-button primary" variant="primary" @click="useDemo">
         {{ t('account.demoCreator') }}
-      </button>
+      </UiButton>
     </div>
 
     <template v-else-if="session.user">
@@ -173,9 +179,9 @@ onMounted(() => void load())
             <span><small>{{ date(item.updatedAt) }}</small><em :data-status="item.status">{{ t(`support.statuses.${item.status}`) }}</em></span>
           </button>
           <div v-if="nextCursor" class="support-index-pagination">
-            <button class="command-button secondary" type="button" :disabled="loadingMore" @click="loadMore">
-              <LoaderCircle v-if="loadingMore" class="spin" :size="16" />{{ t('actions.loadMore') }}
-            </button>
+            <UiButton class="command-button secondary" variant="secondary" :loading="loadingMore" @click="loadMore">
+              {{ t('actions.loadMore') }}
+            </UiButton>
           </div>
           <div v-if="!cases.length" class="support-empty">
             <MessageSquare :size="22" /><strong>{{ t('support.emptyTitle') }}</strong><p>{{ t('support.emptySummary') }}</p>
@@ -188,16 +194,16 @@ onMounted(() => void load())
           </button>
           <header><span class="status-label">{{ t('support.intakeLabel') }}</span><h2>{{ t('support.createTitle') }}</h2><p>{{ t('support.createSummary') }}</p></header>
           <form class="support-form" @submit.prevent="createCase">
-            <label>{{ t('support.category') }}<select v-model="form.category" @change="resetCopyrightFields"><option v-for="category in ['general_support','billing','account','task_or_order','copyright']" :key="category" :value="category">{{ t(`support.categories.${category}`) }}</option></select></label>
-            <label>{{ t('support.subject') }}<input v-model.trim="form.subject" minlength="4" maxlength="160" required /></label>
-            <label>{{ t('support.details') }}<textarea v-model.trim="form.details" rows="7" minlength="20" maxlength="4000" required></textarea></label>
+            <label>{{ t('support.category') }}<UiSelect v-model="form.category" @change="resetCopyrightFields"><option v-for="category in ['general_support','billing','account','task_or_order','copyright']" :key="category" :value="category">{{ t(`support.categories.${category}`) }}</option></UiSelect></label>
+            <label>{{ t('support.subject') }}<UiInput v-model.trim="form.subject" minlength="4" maxlength="160" required /></label>
+            <label>{{ t('support.details') }}<UiTextarea v-model.trim="form.details" rows="7" minlength="20" maxlength="4000" required /></label>
             <div class="support-form-pair">
-              <label>{{ t('support.relatedType') }}<select v-model="form.relatedResourceType"><option value="">{{ t('support.noResource') }}</option><option v-for="kind in ['work','product','post','asset','generation','order','task']" :key="kind" :value="kind">{{ t(`support.resourceTypes.${kind}`) }}</option></select></label>
-              <label>{{ t('support.relatedId') }}<input v-model.trim="form.relatedResourceId" :required="isCopyright || Boolean(form.relatedResourceType)" :placeholder="t('support.uuidPlaceholder')" /></label>
+              <label>{{ t('support.relatedType') }}<UiSelect v-model="form.relatedResourceType"><option value="">{{ t('support.noResource') }}</option><option v-for="kind in ['work','product','post','asset','generation','order','task']" :key="kind" :value="kind">{{ t(`support.resourceTypes.${kind}`) }}</option></UiSelect></label>
+              <label>{{ t('support.relatedId') }}<UiInput v-model.trim="form.relatedResourceId" :required="isCopyright || Boolean(form.relatedResourceType)" :placeholder="t('support.uuidPlaceholder')" /></label>
             </div>
             <template v-if="isCopyright">
-              <label>{{ t('support.claimantRelationship') }}<select v-model="form.claimantRelationship" required><option value="" disabled>{{ t('support.chooseRelationship') }}</option><option value="rights_holder">{{ t('support.relationships.rights_holder') }}</option><option value="authorized_agent">{{ t('support.relationships.authorized_agent') }}</option></select></label>
-              <label>{{ t('support.rightsStatement') }}<textarea v-model.trim="form.rightsStatement" rows="4" minlength="20" maxlength="1500" required></textarea></label>
+              <label>{{ t('support.claimantRelationship') }}<UiSelect v-model="form.claimantRelationship" required><option value="" disabled>{{ t('support.chooseRelationship') }}</option><option value="rights_holder">{{ t('support.relationships.rights_holder') }}</option><option value="authorized_agent">{{ t('support.relationships.authorized_agent') }}</option></UiSelect></label>
+              <label>{{ t('support.rightsStatement') }}<UiTextarea v-model.trim="form.rightsStatement" rows="4" minlength="20" maxlength="1500" required /></label>
               <p class="support-boundary">
                 <ShieldCheck :size="16" />{{ t('support.copyrightBoundary') }}
               </p>
@@ -205,9 +211,11 @@ onMounted(() => void load())
             <p class="support-boundary">
               <FileWarning :size="16" />{{ t('support.sensitiveBoundary') }}
             </p>
-            <button class="command-button primary" type="submit" :disabled="actionLoading">
-              <LoaderCircle v-if="actionLoading" class="spin" :size="17" /><Send v-else :size="17" />{{ t('support.submitCase') }}
-            </button>
+            <UiButton class="command-button primary" variant="primary" type="submit" :loading="actionLoading">
+              <template #start>
+                <Send v-if="!actionLoading" :size="17" />
+              </template>{{ t('support.submitCase') }}
+            </UiButton>
           </form>
         </section>
 
@@ -235,10 +243,12 @@ onMounted(() => void load())
             </article>
           </div>
           <form v-if="!terminal" class="support-reply" @submit.prevent="submitReply">
-            <label>{{ t('support.reply') }}<textarea v-model.trim="replyBody" rows="4" minlength="2" maxlength="4000" required :placeholder="t('support.replyPlaceholder')"></textarea></label>
-            <button class="command-button primary" type="submit" :disabled="actionLoading">
-              <LoaderCircle v-if="actionLoading" class="spin" :size="17" /><Send v-else :size="17" />{{ t('support.sendReply') }}
-            </button>
+            <label>{{ t('support.reply') }}<UiTextarea v-model.trim="replyBody" rows="4" minlength="2" maxlength="4000" required :placeholder="t('support.replyPlaceholder')" /></label>
+            <UiButton class="command-button primary" variant="primary" type="submit" :loading="actionLoading">
+              <template #start>
+                <Send v-if="!actionLoading" :size="17" />
+              </template>{{ t('support.sendReply') }}
+            </UiButton>
           </form>
           <div v-else class="support-closed-note">
             <Clock3 :size="16" /><span><strong>{{ t('support.caseComplete') }}</strong>{{ activeCase.resolutionReason }}</span>

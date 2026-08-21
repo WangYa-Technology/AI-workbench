@@ -7,6 +7,7 @@ import { api, messageFrom, type CreatorProfile } from '../api/client'
 import AssetMedia from '../components/domain/AssetMedia.vue'
 import { formatCurrency } from '../lib/format'
 import { useSessionStore } from '../stores/session'
+import UiButton from '../components/ui/UiButton.vue'
 
 const { t, locale } = useI18n()
 const route = useRoute()
@@ -66,9 +67,11 @@ watch(() => route.params.handle, () => void load(), { immediate: true })
       {{ t('creator.loading') }}
     </div>
     <div v-else-if="error" class="page-state content-width" role="alert">
-      <p>{{ error }}</p><button class="command-button secondary" type="button" @click="load">
-        <RefreshCw :size="17" />{{ t('actions.retry') }}
-      </button>
+      <p>{{ error }}</p><UiButton class="command-button secondary" variant="secondary" @click="load">
+        <template #start>
+          <RefreshCw :size="17" />
+        </template>{{ t('actions.retry') }}
+      </UiButton>
     </div>
     <template v-else-if="profile">
       <header class="creator-header content-width">
@@ -85,15 +88,19 @@ watch(() => route.params.handle, () => void load(), { immediate: true })
             <span><CalendarDays :size="15" />{{ t('creator.memberSince', { date: memberDate(profile.memberSince) }) }}</span>
           </div>
         </div>
-        <button v-if="session.user && !isSelf" class="command-button secondary" type="button" :disabled="actionLoading" @click="toggleFollow">
-          <UserPlus :size="17" />{{ profile.viewerFollowing ? t('community.following') : t('community.follow') }}
-        </button>
-        <RouterLink v-else-if="!session.user" class="command-button secondary" to="/settings">
-          <UserPlus :size="17" />{{ t('creator.signInToFollow') }}
-        </RouterLink>
-        <RouterLink v-else class="command-button secondary" to="/settings">
+        <UiButton v-if="session.user && !isSelf" class="command-button secondary" variant="secondary" :loading="actionLoading" @click="toggleFollow">
+          <template #start>
+            <UserPlus v-if="!actionLoading" :size="17" />
+          </template>{{ profile.viewerFollowing ? t('community.following') : t('community.follow') }}
+        </UiButton>
+        <UiButton v-else-if="!session.user" as="RouterLink" class="command-button secondary" variant="secondary" to="/settings">
+          <template #start>
+            <UserPlus :size="17" />
+          </template>{{ t('creator.signInToFollow') }}
+        </UiButton>
+        <UiButton v-else as="RouterLink" class="command-button secondary" variant="secondary" to="/settings">
           {{ t('creator.editAccount') }}
-        </RouterLink>
+        </UiButton>
         <p v-if="actionError" class="inline-error" role="alert">
           {{ actionError }}
         </p>

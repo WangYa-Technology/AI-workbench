@@ -7,6 +7,10 @@ import { api, messageFrom, type CommunityComment, type CommunityPost, type Commu
 import AssetMedia from '../components/domain/AssetMedia.vue'
 import MotionFavoriteIcon from '../components/ui/MotionFavoriteIcon.vue'
 import { useSessionStore } from '../stores/session'
+import UiButton from '../components/ui/UiButton.vue'
+import UiIconButton from '../components/ui/UiIconButton.vue'
+import UiSelect from '../components/ui/UiSelect.vue'
+import UiTextarea from '../components/ui/UiTextarea.vue'
 
 const { locale, t } = useI18n()
 const route = useRoute()
@@ -164,9 +168,11 @@ watch(() => route.params.id, () => void load(), { immediate: true })
     </div>
     <div v-else-if="error" class="page-state" role="alert">
       <p>{{ error }}</p>
-      <button class="command-button secondary" type="button" @click="load">
-        <RefreshCw :size="17" />{{ t('actions.retry') }}
-      </button>
+      <UiButton class="command-button secondary" variant="secondary" @click="load">
+        <template #start>
+          <RefreshCw :size="17" />
+        </template>{{ t('actions.retry') }}
+      </UiButton>
     </div>
     <div v-else-if="post" class="community-post-layout">
       <div class="community-post-main">
@@ -212,15 +218,15 @@ watch(() => route.params.id, () => void load(), { immediate: true })
           <form v-if="reportForm.open" class="community-governance-form community-post-report" @submit.prevent="submitReport">
             <header>
               <strong>{{ t('community.reportPost') }}</strong>
-              <button class="icon-button" type="button" :aria-label="t('actions.close')" @click="reportForm.open = false">
+              <UiIconButton class="icon-button" :label="t('actions.close')" @click="reportForm.open = false">
                 <X :size="16" />
-              </button>
+              </UiIconButton>
             </header>
-            <label>{{ t('community.reportCategory') }}<select v-model="reportForm.category"><option v-for="category in ['spam','harassment','copyright','sexual','violence','misleading','other']" :key="category" :value="category">{{ t(`community.reportCategories.${category}`) }}</option></select></label>
-            <label>{{ t('community.reportDetails') }}<textarea v-model="reportForm.details" rows="3" minlength="10" maxlength="1000" required></textarea></label>
-            <button class="command-button secondary" type="submit" :disabled="actionLoading === 'report'">
+            <label>{{ t('community.reportCategory') }}<UiSelect v-model="reportForm.category"><option v-for="category in ['spam','harassment','copyright','sexual','violence','misleading','other']" :key="category" :value="category">{{ t(`community.reportCategories.${category}`) }}</option></UiSelect></label>
+            <label>{{ t('community.reportDetails') }}<UiTextarea v-model="reportForm.details" rows="3" minlength="10" maxlength="1000" required /></label>
+            <UiButton class="command-button secondary" variant="secondary" type="submit" :loading="actionLoading === 'report'">
               {{ t('community.submitReport') }}
-            </button>
+            </UiButton>
           </form>
         </article>
       </div>
@@ -268,18 +274,20 @@ watch(() => route.params.id, () => void load(), { immediate: true })
           {{ t('community.noComments') }}
         </p>
 
-        <button v-if="commentNextCursor" class="command-button secondary community-comment-load-more" type="button" :disabled="commentLoadingMore" @click="loadMoreComments">
-          <LoaderCircle v-if="commentLoadingMore" class="spin" :size="16" />{{ t('actions.loadMore') }}
-        </button>
+        <UiButton v-if="commentNextCursor" class="command-button secondary community-comment-load-more" variant="secondary" :loading="commentLoadingMore" @click="loadMoreComments">
+          {{ t('actions.loadMore') }}
+        </UiButton>
 
         <form class="community-comment-composer" @submit.prevent="addComment">
           <label for="community-comment">{{ t('community.addComment') }}</label>
           <div class="community-comment-field">
-            <textarea id="community-comment" v-model="commentDraft" name="body" rows="3" minlength="2" maxlength="1000" required :placeholder="t('community.commentPlaceholder')"></textarea>
+            <UiTextarea id="community-comment" v-model="commentDraft" name="body" rows="3" minlength="2" maxlength="1000" required :placeholder="t('community.commentPlaceholder')" />
             <div>
-              <button class="command-button" type="submit" :disabled="actionLoading === 'comment'">
-                <MessageCircle :size="15" />{{ t('community.addComment') }}
-              </button>
+              <UiButton class="command-button" variant="primary" type="submit" :loading="actionLoading === 'comment'">
+                <template #start>
+                  <MessageCircle v-if="actionLoading !== 'comment'" :size="15" />
+                </template>{{ t('community.addComment') }}
+              </UiButton>
             </div>
           </div>
         </form>
