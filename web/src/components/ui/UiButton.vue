@@ -21,10 +21,16 @@ const props = withDefaults(defineProps<{
 const attrs = useAttrs()
 const component = computed(() => props.as === 'RouterLink' ? RouterLink : props.as)
 const componentAttrs = computed(() => ({ ...attrs, ...(props.as === 'button' ? { type: props.type, disabled: props.disabled || props.loading } : { 'aria-disabled': props.disabled || props.loading ? 'true' : undefined, tabindex: props.disabled || props.loading ? -1 : undefined }) }))
+const onClick = (event: globalThis.MouseEvent) => {
+  if (props.as !== 'button' && (props.disabled || props.loading)) {
+    event.preventDefault()
+    event.stopImmediatePropagation()
+  }
+}
 </script>
 
 <template>
-  <component :is="component" v-bind="componentAttrs" class="ui-button" :class="{ 'ui-button--wide': wide }" :data-variant="variant" :data-size="size" :data-loading="loading ? 'true' : 'false'">
+  <component :is="component" v-bind="componentAttrs" class="ui-button" :class="{ 'ui-button--wide': wide }" :data-variant="variant" :data-size="size" :data-loading="loading ? 'true' : 'false'" @click="onClick">
     <LoaderCircle v-if="loading" class="ui-button__spinner" :size="15" aria-hidden="true" />
     <slot name="start"></slot>
     <span v-if="$slots.default"><slot></slot></span>

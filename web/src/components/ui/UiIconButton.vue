@@ -14,10 +14,16 @@ const props = withDefaults(defineProps<{
 const attrs = useAttrs()
 const component = computed(() => props.as === 'RouterLink' ? RouterLink : props.as)
 const componentAttrs = computed(() => ({ ...attrs, 'aria-label': props.label, title: attrs.title || props.label, ...(props.as === 'button' ? { type: props.type, disabled: props.disabled } : { 'aria-disabled': props.disabled ? 'true' : undefined }) }))
+const onClick = (event: globalThis.MouseEvent) => {
+  if (props.as !== 'button' && props.disabled) {
+    event.preventDefault()
+    event.stopImmediatePropagation()
+  }
+}
 </script>
 
 <template>
-  <component :is="component" v-bind="componentAttrs" class="ui-icon-button" :data-variant="variant" :data-size="size">
+  <component :is="component" v-bind="componentAttrs" class="ui-icon-button" :data-variant="variant" :data-size="size" @click="onClick">
     <slot></slot>
   </component>
 </template>
