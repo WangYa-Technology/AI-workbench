@@ -179,6 +179,11 @@
 body.ui-dialog-open { overflow: hidden; }
 .command-button { transition: background-color var(--duration-quick) var(--ease-smooth-out), border-color var(--duration-quick) var(--ease-smooth-out), color var(--duration-quick) var(--ease-smooth-out), box-shadow var(--duration-quick) var(--ease-smooth-out), transform var(--duration-micro) var(--ease-smooth-out), opacity var(--duration-quick) var(--ease-smooth-out); }
 .command-button { border-radius: var(--radius-control); font-weight: 560; }
+.ui-button.provider-row { width: 100%; min-height: 58px; display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; justify-content: stretch; gap: 10px; align-items: center; padding: 8px 0; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: transparent; color: var(--text); text-align: left; }
+.ui-button.provider-row:hover:not(:disabled) { background: transparent; transform: none; }
+.ui-button.provider-row > span { min-width: 0; }
+.ui-button.provider-row > span:nth-child(2) { display: grid; gap: 2px; }
+.ui-button.provider-row small { color: var(--text-secondary); font-size: 11px; }
 .command-button.primary { background: var(--accent); color: var(--accent-contrast); }
 .command-button.primary:hover:not(:disabled) { background: var(--accent-hover); }
 .command-button.secondary { border: 1px solid var(--border); background: var(--surface); color: var(--text); }

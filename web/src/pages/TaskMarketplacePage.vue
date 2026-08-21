@@ -14,8 +14,11 @@ import {
 import { formatCurrency, formatDateTime } from '../lib/format'
 import { useSessionStore } from '../stores/session'
 import UiButton from '../components/ui/UiButton.vue'
+import UiCheckbox from '../components/ui/UiCheckbox.vue'
+import UiIconButton from '../components/ui/UiIconButton.vue'
 import UiInput from '../components/ui/UiInput.vue'
 import UiSelect from '../components/ui/UiSelect.vue'
+import UiTextarea from '../components/ui/UiTextarea.vue'
 
 const { t, locale } = useI18n()
 const route = useRoute()
@@ -462,16 +465,24 @@ onBeforeUnmount(() => {
         </div>
         <div class="page-hero-actions">
           <UiButton v-if="session.user" as="RouterLink" class="command-button secondary" variant="secondary" to="/workspace/tasks">
-            <template #start><BriefcaseBusiness :size="17" /></template>{{ t('tasks.myTasks') }}
+            <template #start>
+              <BriefcaseBusiness :size="17" />
+            </template>{{ t('tasks.myTasks') }}
           </UiButton>
           <UiButton v-if="canPublishBrief" class="command-button primary" variant="primary" @click="createOpen = true">
-            <template #start><Plus :size="17" /></template>{{ t('tasks.publishBrief') }}
+            <template #start>
+              <Plus :size="17" />
+            </template>{{ t('tasks.publishBrief') }}
           </UiButton>
           <UiButton v-if="!session.user" as="RouterLink" class="command-button secondary" variant="secondary" :to="{ path: '/settings', query: { auth: 'login', returnTo: route.fullPath } }">
-            <template #start><LogIn :size="17" /></template>{{ t('account.signIn') }}
+            <template #start>
+              <LogIn :size="17" />
+            </template>{{ t('account.signIn') }}
           </UiButton>
           <UiButton v-if="!session.user" as="RouterLink" class="command-button primary" variant="primary" :to="{ path: '/settings', query: { auth: 'register', returnTo: route.fullPath } }">
-            <template #start><UserPlus :size="17" /></template>{{ t('account.createAccount') }}
+            <template #start>
+              <UserPlus :size="17" />
+            </template>{{ t('account.createAccount') }}
           </UiButton>
         </div>
         <img class="page-hero-art task-market-hero-art" src="/tasks/task-hero-transparent.webp" alt="" aria-hidden="true" />
@@ -506,35 +517,55 @@ onBeforeUnmount(() => {
           <span class="task-filter-display" aria-hidden="true"><span>{{ sort === 'deadline' ? t('tasks.sortDeadline') : sort === 'budget_desc' ? t('tasks.sortBudget') : t('tasks.sortNewest') }}</span><ChevronDown :size="14" /></span>
           <UiSelect v-model="sort" :aria-label="t('tasks.sortNewest')" @change="applyFilters"><option value="newest">{{ t('tasks.sortNewest') }}</option><option value="deadline">{{ t('tasks.sortDeadline') }}</option><option value="budget_desc">{{ t('tasks.sortBudget') }}</option></UiSelect>
         </label>
-        <UiButton class="command-button primary task-filter-submit" variant="primary" type="submit"><template #start><Search :size="17" /></template>{{ t('actions.search') }}</UiButton>
+        <UiButton class="command-button primary task-filter-submit" variant="primary" type="submit">
+          <template #start>
+            <Search :size="17" />
+          </template>{{ t('actions.search') }}
+        </UiButton>
       </form>
 
       <div v-if="loading" class="task-skeleton" aria-live="polite">
         <span v-for="item in 4" :key="item"></span><p>{{ t('tasks.loading') }}</p>
       </div>
       <div v-else-if="error" class="task-market-state task-market-error" role="alert">
-        <span><AlertTriangle :size="20" /></span><strong>{{ t('tasks.unavailable') }}</strong><p>{{ error }}</p><button class="command-button secondary" type="button" @click="load">
-          <RefreshCw :size="17" />{{ t('actions.retry') }}
-        </button>
+        <span><AlertTriangle :size="20" /></span><strong>{{ t('tasks.unavailable') }}</strong><p>{{ error }}</p><UiButton class="command-button secondary" variant="secondary" @click="load">
+          <template #start>
+            <RefreshCw :size="17" />
+          </template>{{ t('actions.retry') }}
+        </UiButton>
       </div>
       <div v-else class="task-browser-layout">
         <aside class="task-category-panel" :aria-label="t('tasks.categories')">
           <h2>{{ t('tasks.categories') }}</h2>
           <nav>
-            <button type="button" :class="{ active: !deliverableType }" @click="selectTaskType('')"><BriefcaseBusiness :size="17" /><span>{{ t('tasks.allTasks') }}</span><small>{{ catalogTasks.length }}</small></button>
-            <button v-for="type in types" :key="type" type="button" :class="{ active: deliverableType === type }" @click="selectTaskType(type)"><component :is="taskTypeIcon(type)" :size="17" /><span>{{ t(`tasks.types.${type}`) }}</span><small>{{ taskTypeCounts[type] || 0 }}</small></button>
+            <button type="button" :class="{ active: !deliverableType }" @click="selectTaskType('')">
+              <BriefcaseBusiness :size="17" /><span>{{ t('tasks.allTasks') }}</span><small>{{ catalogTasks.length }}</small>
+            </button>
+            <button v-for="type in types" :key="type" type="button" :class="{ active: deliverableType === type }" @click="selectTaskType(type)">
+              <component :is="taskTypeIcon(type)" :size="17" /><span>{{ t(`tasks.types.${type}`) }}</span><small>{{ taskTypeCounts[type] || 0 }}</small>
+            </button>
           </nav>
-          <section class="task-creator-program"><span><Sparkles :size="20" /></span><div><strong>{{ t('tasks.creatorProgram') }}</strong><p>{{ t('tasks.creatorProgramSummary') }}</p></div><RouterLink class="text-link" to="/settings">{{ t('tasks.learnMore') }}<ChevronRight :size="15" /></RouterLink></section>
+          <section class="task-creator-program">
+            <span><Sparkles :size="20" /></span><div><strong>{{ t('tasks.creatorProgram') }}</strong><p>{{ t('tasks.creatorProgramSummary') }}</p></div><RouterLink class="text-link" to="/settings">
+              {{ t('tasks.learnMore') }}<ChevronRight :size="15" />
+            </RouterLink>
+          </section>
         </aside>
 
         <div class="task-results">
           <div class="task-results-meta">
             <div><strong>{{ tasks.length }} {{ t('tasks.results') }}</strong><span>{{ t(view === 'mine' ? 'tasks.myActivitySummary' : 'tasks.availableWorkSummary') }}</span></div>
             <div class="task-results-actions">
-              <button v-if="search || deliverableType || status !== (view === 'mine' ? '' : 'open') || sort !== 'newest'" class="text-link" type="button" @click="clearFilters">{{ t('tasks.clearFilters') }}</button>
+              <UiButton v-if="search || deliverableType || status !== (view === 'mine' ? '' : 'open') || sort !== 'newest'" class="text-link" variant="ghost" size="sm" @click="clearFilters">
+                {{ t('tasks.clearFilters') }}
+              </UiButton>
               <div class="task-layout-switcher" :aria-label="t('tasks.layout')">
-                <button type="button" :class="{ active: layoutMode === 'list' }" :aria-label="t('tasks.listView')" :title="t('tasks.listView')" @click="layoutMode = 'list'"><List :size="17" /></button>
-                <button type="button" :class="{ active: layoutMode === 'grid' }" :aria-label="t('tasks.gridView')" :title="t('tasks.gridView')" @click="layoutMode = 'grid'"><Grid2X2 :size="16" /></button>
+                <UiIconButton size="sm" class="icon-button" variant="ghost" :class="{ active: layoutMode === 'list' }" :label="t('tasks.listView')" @click="layoutMode = 'list'">
+                  <List :size="17" />
+                </UiIconButton>
+                <UiIconButton size="sm" class="icon-button" variant="ghost" :class="{ active: layoutMode === 'grid' }" :label="t('tasks.gridView')" @click="layoutMode = 'grid'">
+                  <Grid2X2 :size="16" />
+                </UiIconButton>
               </div>
             </div>
           </div>
@@ -553,16 +584,36 @@ onBeforeUnmount(() => {
               </span>
             </RouterLink>
             <div v-if="!tasks.length" class="task-market-state task-market-empty">
-              <span><component :is="view === 'mine' ? BriefcaseBusiness : Search" :size="20" /></span><strong>{{ t(view === 'mine' ? 'tasks.noMyActivity' : 'tasks.noResults') }}</strong><button v-if="view === 'available'" class="text-link" type="button" @click="clearFilters">{{ t('tasks.clearFilters') }}</button>
+              <span><component :is="view === 'mine' ? BriefcaseBusiness : Search" :size="20" /></span><strong>{{ t(view === 'mine' ? 'tasks.noMyActivity' : 'tasks.noResults') }}</strong><UiButton v-if="view === 'available'" class="text-link" variant="ghost" size="sm" @click="clearFilters">
+                {{ t('tasks.clearFilters') }}
+              </UiButton>
               <p>{{ t(view === 'mine' ? 'tasks.noMyActivitySummary' : 'tasks.emptySummary') }}</p>
               <div class="task-empty-actions">
-                <button v-if="view === 'mine'" class="command-button secondary" type="button" @click="selectView('available')"><Search :size="17" />{{ t('tasks.browseTasks') }}</button>
-                <RouterLink v-else class="command-button secondary" to="/create/image"><WandSparkles :size="17" />{{ t('tasks.createInstead') }}</RouterLink>
-                <button v-if="canPublishBrief" class="command-button primary" type="button" @click="createOpen = true"><Plus :size="17" />{{ t('tasks.publishBrief') }}</button>
+                <UiButton v-if="view === 'mine'" class="command-button secondary" variant="secondary" @click="selectView('available')">
+                  <template #start>
+                    <Search :size="17" />
+                  </template>{{ t('tasks.browseTasks') }}
+                </UiButton>
+                <UiButton v-else as="RouterLink" class="command-button secondary" variant="secondary" to="/create/image">
+                  <template #start>
+                    <WandSparkles :size="17" />
+                  </template>{{ t('tasks.createInstead') }}
+                </UiButton>
+                <UiButton v-if="canPublishBrief" class="command-button primary" variant="primary" @click="createOpen = true">
+                  <template #start>
+                    <Plus :size="17" />
+                  </template>{{ t('tasks.publishBrief') }}
+                </UiButton>
               </div>
             </div>
           </div>
-          <section v-if="canPublishBrief" class="task-publish-cta"><span><Sparkles :size="20" /></span><div><strong>{{ t('tasks.publishIdea') }}</strong><p>{{ t('tasks.publishIdeaSummary') }}</p></div><button class="command-button primary" type="button" @click="createOpen = true"><Plus :size="17" />{{ t('tasks.publishBrief') }}</button></section>
+          <section v-if="canPublishBrief" class="task-publish-cta">
+            <span><Sparkles :size="20" /></span><div><strong>{{ t('tasks.publishIdea') }}</strong><p>{{ t('tasks.publishIdeaSummary') }}</p></div><UiButton class="command-button primary" variant="primary" @click="createOpen = true">
+              <template #start>
+                <Plus :size="17" />
+              </template>{{ t('tasks.publishBrief') }}
+            </UiButton>
+          </section>
         </div>
       </div>
     </template>
@@ -573,21 +624,27 @@ onBeforeUnmount(() => {
           <ArrowLeft :size="17" />{{ t('tasks.back') }}
         </RouterLink>
         <div v-if="detail" class="task-detail-toolbar-actions">
-          <RouterLink class="command-button primary" :to="`/create/image?taskId=${detail.id}`">
-            <WandSparkles :size="17" />{{ t('tasks.startCreating') }}
-          </RouterLink>
-          <RouterLink class="command-button secondary" to="/market/demands">
-            <BriefcaseBusiness :size="17" />{{ t('tasks.findTasks') }}
-          </RouterLink>
+          <UiButton as="RouterLink" class="command-button primary" variant="primary" :to="`/create/image?taskId=${detail.id}`">
+            <template #start>
+              <WandSparkles :size="17" />
+            </template>{{ t('tasks.startCreating') }}
+          </UiButton>
+          <UiButton as="RouterLink" class="command-button secondary" variant="secondary" to="/market/demands">
+            <template #start>
+              <BriefcaseBusiness :size="17" />
+            </template>{{ t('tasks.findTasks') }}
+          </UiButton>
         </div>
       </div>
       <div v-if="loading" class="page-state" aria-live="polite">
         <LoaderCircle class="spin" :size="20" />{{ t('tasks.loading') }}
       </div>
       <div v-else-if="error && !detail" class="page-state" role="alert">
-        <p>{{ error }}</p><button class="command-button secondary" type="button" @click="load">
-          <RefreshCw :size="17" />{{ t('actions.retry') }}
-        </button>
+        <p>{{ error }}</p><UiButton class="command-button secondary" variant="secondary" @click="load">
+          <template #start>
+            <RefreshCw :size="17" />
+          </template>{{ t('actions.retry') }}
+        </UiButton>
       </div>
       <div v-else-if="detail" class="task-detail-layout">
         <article class="task-brief">
@@ -596,7 +653,11 @@ onBeforeUnmount(() => {
               <span class="task-status" :data-status="detail.status">{{ t(`tasks.status.${detail.status}`) }}</span><span v-if="detail.allowDirectAccept && detail.status === 'open' && (!paymentEnabled || directFundingConfirmed || detail.viewerRole === 'client')" class="task-direct-signal"><BriefcaseBusiness :size="14" />{{ t(paymentEnabled && !directFundingConfirmed ? 'tasks.directFundingRequired' : 'tasks.direct') }}</span>
             </div><h1>{{ detail.title }}</h1><p>{{ detail.summary }}</p>
           </header>
-          <section class="task-brief-overview"><div class="task-section-heading"><FileCheck2 :size="19" /><h2>{{ t('tasks.brief') }}</h2></div><p>{{ detail.brief }}</p></section>
+          <section class="task-brief-overview">
+            <div class="task-section-heading">
+              <FileCheck2 :size="19" /><h2>{{ t('tasks.brief') }}</h2>
+            </div><p>{{ detail.brief }}</p>
+          </section>
           <div class="task-rule-grid">
             <section class="task-rule-card" data-tone="blue">
               <header><span><Play v-if="detail.deliverableType === 'video'" :size="13" fill="currentColor" /><component :is="taskTypeIcon(detail.deliverableType)" v-else :size="15" /></span><h2>{{ t('tasks.deliverables') }}</h2></header><ul>
@@ -626,11 +687,13 @@ onBeforeUnmount(() => {
           <section v-if="detail.proposals.length" class="task-proposals">
             <h2>{{ detail.viewerRole === 'client' ? t('tasks.proposals') : t('tasks.yourProposal') }}</h2><article v-for="item in detail.proposals" :key="item.id">
               <div><strong>{{ item.creator.displayName }}</strong><span>@{{ item.creator.handle }}</span></div><p>{{ item.approach }}</p><p>{{ item.deliverables }}</p><dl><div><dt>{{ paymentEnabled ? t('tasks.providerReward') : t('tasks.reward') }}</dt><dd>{{ money(item.amountCents) }}</dd></div><div><dt>{{ t('tasks.timelineDays') }}</dt><dd>{{ item.timelineDays }}</dd></div></dl><div v-if="item.status === 'submitted' && detail.status === 'open' && detail.viewerRole === 'client'" class="task-proposal-actions">
-                <button v-if="canFundProposal(item.id)" class="command-button secondary" type="button" :disabled="actionLoading" @click="fundTask(item.id)">
-                  <CircleDollarSign :size="17" />{{ fundingActionLabel(item.id) }}
-                </button><button v-if="canAcceptProposal(item.id)" class="command-button primary" type="button" :disabled="actionLoading" @click="acceptProposal(item.id)">
+                <UiButton v-if="canFundProposal(item.id)" class="command-button secondary" variant="secondary" :loading="actionLoading" @click="fundTask(item.id)">
+                  <template #start>
+                    <CircleDollarSign v-if="!actionLoading" :size="17" />
+                  </template>{{ fundingActionLabel(item.id) }}
+                </UiButton><UiButton v-if="canAcceptProposal(item.id)" class="command-button primary" variant="primary" :loading="actionLoading" @click="acceptProposal(item.id)">
                   {{ t('tasks.acceptProposal') }}
-                </button>
+                </UiButton>
               </div><span v-else class="task-status" :data-status="item.status">{{ t(`tasks.proposalStatus.${item.status}`) }}</span>
             </article>
           </section>
@@ -646,7 +709,9 @@ onBeforeUnmount(() => {
           </section>
 
           <section class="task-history">
-            <div class="task-section-heading"><Clock3 :size="19" /><h2>{{ t('tasks.history') }}</h2></div><ol>
+            <div class="task-section-heading">
+              <Clock3 :size="19" /><h2>{{ t('tasks.history') }}</h2>
+            </div><ol>
               <li v-for="event in detail.events" :key="event.id">
                 <span aria-hidden="true"></span><div>
                   <strong>{{ eventLabel(event.kind) }}</strong><p v-if="event.note">
@@ -672,12 +737,14 @@ onBeforeUnmount(() => {
 
           <div v-if="!session.user" class="market-auth-prompt">
             <div><h2>{{ t('tasks.guestTitle') }}</h2><p>{{ t('tasks.guestSummary') }}</p></div>
-            <RouterLink class="command-button primary wide" :to="{ path: '/settings', query: { auth: 'login', returnTo: route.fullPath } }">
-              <LogIn :size="17" />{{ t('account.signIn') }}
-            </RouterLink>
-            <RouterLink class="text-link" :to="{ path: '/settings', query: { auth: 'register', returnTo: route.fullPath } }">
+            <UiButton as="RouterLink" class="command-button primary wide" variant="primary" :to="{ path: '/settings', query: { auth: 'login', returnTo: route.fullPath } }">
+              <template #start>
+                <LogIn :size="17" />
+              </template>{{ t('account.signIn') }}
+            </UiButton>
+            <UiButton as="RouterLink" class="text-link" variant="ghost" size="sm" :to="{ path: '/settings', query: { auth: 'register', returnTo: route.fullPath } }">
               {{ t('account.createAccount') }}
-            </RouterLink>
+            </UiButton>
           </div>
 
           <div v-if="success" class="task-feedback success" role="status">
@@ -691,64 +758,78 @@ onBeforeUnmount(() => {
             <CircleDollarSign :size="19" /><div><strong>{{ t(`tasks.fundingStatus.${detail.funding.status}`) }}</strong><span>{{ money(detail.funding.amountCents, detail.funding.currency) }} / {{ t(detail.funding.liveMode ? 'tasks.providerLiveMode' : 'tasks.providerTestMode') }}</span></div>
           </div>
 
-          <button v-if="canFundDirect" class="command-button primary wide" type="button" :disabled="actionLoading" @click="fundTask()">
-            <CircleDollarSign :size="17" />{{ fundingActionLabel() }}
-          </button>
+          <UiButton v-if="canFundDirect" class="command-button primary wide" variant="primary" :loading="actionLoading" @click="fundTask()">
+            <template #start>
+              <CircleDollarSign v-if="!actionLoading" :size="17" />
+            </template>{{ fundingActionLabel() }}
+          </UiButton>
 
-          <button v-if="canClaim" class="command-button primary wide" type="button" :disabled="actionLoading" @click="claimTask">
-            <BriefcaseBusiness :size="17" />{{ t('tasks.acceptTask') }}
-          </button>
-          <button v-if="canPropose && !proposalOpen" class="command-button primary wide" type="button" @click="showProposalForm">
-            <Plus :size="17" />{{ t('tasks.submitProposal') }}
-          </button>
+          <UiButton v-if="canClaim" class="command-button primary wide" variant="primary" :loading="actionLoading" @click="claimTask">
+            <template #start>
+              <BriefcaseBusiness v-if="!actionLoading" :size="17" />
+            </template>{{ t('tasks.acceptTask') }}
+          </UiButton>
+          <UiButton v-if="canPropose && !proposalOpen" class="command-button primary wide" variant="primary" @click="showProposalForm">
+            <template #start>
+              <Plus :size="17" />
+            </template>{{ t('tasks.submitProposal') }}
+          </UiButton>
           <form v-if="proposalOpen" class="task-action-form" @submit.prevent="submitProposal">
-            <label>{{ t('tasks.proposalApproach') }}<textarea v-model="proposal.approach" rows="5" minlength="20" required></textarea></label><label>{{ t('tasks.proposalDeliverables') }}<textarea v-model="proposal.deliverables" rows="3" minlength="10" required></textarea></label><div class="form-pair">
-              <label>{{ t('tasks.proposedAmount') }}<input v-model="proposal.amount" type="number" min="1" step="1" required /></label><label>{{ t('tasks.timelineDays') }}<input v-model="proposal.timelineDays" type="number" min="1" required /></label>
-            </div><button class="command-button primary wide" type="submit" :disabled="actionLoading">
+            <label>{{ t('tasks.proposalApproach') }}<UiTextarea v-model="proposal.approach" rows="5" minlength="20" required /></label><label>{{ t('tasks.proposalDeliverables') }}<UiTextarea v-model="proposal.deliverables" rows="3" minlength="10" required /></label><div class="form-pair">
+              <label>{{ t('tasks.proposedAmount') }}<UiInput v-model="proposal.amount" type="number" min="1" step="1" required /></label><label>{{ t('tasks.timelineDays') }}<UiInput v-model="proposal.timelineDays" type="number" min="1" required /></label>
+            </div><UiButton class="command-button primary wide" variant="primary" type="submit" :loading="actionLoading">
               {{ t('tasks.submitProposal') }}
-            </button>
+            </UiButton>
           </form>
 
           <template v-if="canDeliver">
-            <RouterLink class="command-button primary wide" :to="`/create/image?taskId=${detail.id}`">
-              <WandSparkles :size="17" />{{ t('tasks.createForTask') }}
-            </RouterLink><form class="task-action-form" @submit.prevent="submitDelivery">
-              <label>{{ t('tasks.asset') }}<select v-model="delivery.assetId" required><option v-for="asset in assets" :key="asset.id" :value="asset.id">{{ asset.title }}</option></select></label><label>{{ t('tasks.deliveryNote') }}<textarea v-model="delivery.note" rows="4" minlength="5" required></textarea></label><button class="command-button secondary wide" type="submit" :disabled="actionLoading || !assets.length">
-                <FileCheck2 :size="17" />{{ t('tasks.submitDelivery') }}
-              </button>
+            <UiButton as="RouterLink" class="command-button primary wide" variant="primary" :to="`/create/image?taskId=${detail.id}`">
+              <template #start>
+                <WandSparkles :size="17" />
+              </template>{{ t('tasks.createForTask') }}
+            </UiButton><form class="task-action-form" @submit.prevent="submitDelivery">
+              <label>{{ t('tasks.asset') }}<UiSelect v-model="delivery.assetId" required><option v-for="asset in assets" :key="asset.id" :value="asset.id">{{ asset.title }}</option></UiSelect></label><label>{{ t('tasks.deliveryNote') }}<UiTextarea v-model="delivery.note" rows="4" minlength="5" required /></label><UiButton class="command-button secondary wide" variant="secondary" type="submit" :loading="actionLoading" :disabled="!assets.length">
+                <template #start>
+                  <FileCheck2 v-if="!actionLoading" :size="17" />
+                </template>{{ t('tasks.submitDelivery') }}
+              </UiButton>
             </form><p v-if="!assets.length" class="task-inline-help">
               {{ t('tasks.noDeliveryAssets') }}
             </p>
           </template>
 
           <form v-if="canReview" class="task-action-form" @submit.prevent>
-            <label>{{ t('tasks.reviewNote') }}<textarea v-model="reviewNote" rows="4"></textarea></label><button class="command-button primary wide" type="button" :disabled="actionLoading" @click="review('accept')">
-              <Check :size="17" />{{ t('tasks.acceptDelivery') }}
-            </button><button class="command-button secondary wide" type="button" :disabled="actionLoading" @click="review('request_revision')">
-              <RefreshCw :size="17" />{{ t('tasks.requestRevision') }}
-            </button>
+            <label>{{ t('tasks.reviewNote') }}<UiTextarea v-model="reviewNote" rows="4" /></label><UiButton class="command-button primary wide" variant="primary" :loading="actionLoading" @click="review('accept')">
+              <template #start>
+                <Check v-if="!actionLoading" :size="17" />
+              </template>{{ t('tasks.acceptDelivery') }}
+            </UiButton><UiButton class="command-button secondary wide" variant="secondary" :loading="actionLoading" @click="review('request_revision')">
+              <template #start>
+                <RefreshCw v-if="!actionLoading" :size="17" />
+              </template>{{ t('tasks.requestRevision') }}
+            </UiButton>
           </form>
 
-          <button v-if="canDispute && !disputeOpen" class="text-link danger-link" type="button" @click="disputeOpen = true">
+          <UiButton v-if="canDispute && !disputeOpen" class="text-link danger-link" variant="ghost" size="sm" @click="disputeOpen = true">
             {{ t('tasks.openDispute') }}
-          </button>
+          </UiButton>
           <form v-if="disputeOpen" class="task-action-form" @submit.prevent="openDispute">
-            <label>{{ t('tasks.disputeReason') }}<textarea v-model="disputeReason" rows="4" minlength="20" required></textarea></label><button class="command-button secondary wide" type="submit" :disabled="actionLoading">
+            <label>{{ t('tasks.disputeReason') }}<UiTextarea v-model="disputeReason" rows="4" minlength="20" required /></label><UiButton class="command-button secondary wide" variant="secondary" type="submit" :loading="actionLoading">
               {{ t('tasks.openDispute') }}
-            </button>
+            </UiButton>
           </form>
-          <button v-if="canCancel && !cancelOpen" class="text-link danger-link" type="button" @click="cancelOpen = true">
+          <UiButton v-if="canCancel && !cancelOpen" class="text-link danger-link" variant="ghost" size="sm" @click="cancelOpen = true">
             {{ t('tasks.cancelTask') }}
-          </button>
+          </UiButton>
           <form v-if="cancelOpen" class="task-action-form" @submit.prevent="cancelTask">
             <p class="task-form-warning">
               <AlertTriangle :size="16" />{{ t('tasks.cancelWarning') }}
-            </p><label>{{ t('tasks.cancelReason') }}<textarea v-model="cancelReason" rows="3" minlength="10" required></textarea></label><div class="task-confirm-actions">
-              <button class="command-button secondary" type="button" @click="cancelOpen = false">
+            </p><label>{{ t('tasks.cancelReason') }}<UiTextarea v-model="cancelReason" rows="3" minlength="10" required /></label><div class="task-confirm-actions">
+              <UiButton class="command-button secondary" variant="secondary" type="button" @click="cancelOpen = false">
                 {{ t('tasks.keepTask') }}
-              </button><button class="command-button danger" type="submit" :disabled="actionLoading">
+              </UiButton><UiButton class="command-button destructive" variant="destructive" type="submit" :loading="actionLoading">
                 {{ t('tasks.confirmCancel') }}
-              </button>
+              </UiButton>
             </div>
           </form>
           <div v-if="detail.settlement" class="task-settlement">
@@ -758,9 +839,9 @@ onBeforeUnmount(() => {
           </p>
 
           <div v-if="session.user" class="demo-actor-switch">
-            <span>{{ t('tasks.accountMode') }}: <strong>{{ session.user?.displayName }}</strong></span><button type="button" :disabled="actionLoading" @click="switchActor(detail.viewerRole === 'client' ? 'creator' : 'publisher')">
+            <span>{{ t('tasks.accountMode') }}: <strong>{{ session.user?.displayName }}</strong></span><UiButton variant="ghost" size="sm" :loading="actionLoading" @click="switchActor(detail.viewerRole === 'client' ? 'creator' : 'publisher')">
               {{ detail.viewerRole === 'client' ? t('tasks.switchCreator') : t('tasks.switchPublisher') }}
-            </button>
+            </UiButton>
           </div>
         </aside>
       </div>
@@ -773,28 +854,29 @@ onBeforeUnmount(() => {
             <h2 id="task-create-title">
               {{ t('tasks.createTitle') }}
             </h2><p>{{ t('tasks.createSummary') }}</p>
-          </div><button class="icon-button" type="button" :aria-label="t('tasks.cancel')" @click="createOpen = false">
+          </div><UiIconButton class="icon-button" :label="t('tasks.cancel')" @click="createOpen = false">
             <X :size="19" />
-          </button>
+          </UiIconButton>
         </header><form @submit.prevent="publishTask">
           <fieldset class="task-form-section">
-            <legend>{{ t('tasks.scopeSection') }}</legend><label>{{ t('tasks.titleLabel') }}<input ref="taskTitleInput" v-model="draft.title" required minlength="5" /></label><label>{{ t('tasks.summaryLabel') }}<textarea v-model="draft.summary" rows="2" required minlength="10"></textarea></label><label>{{ t('tasks.brief') }}<textarea v-model="draft.brief" rows="5" required minlength="30"></textarea></label>
+            <legend>{{ t('tasks.scopeSection') }}</legend><label>{{ t('tasks.titleLabel') }}<UiInput ref="taskTitleInput" v-model="draft.title" required minlength="5" /></label><label>{{ t('tasks.summaryLabel') }}<UiTextarea v-model="draft.summary" rows="2" required minlength="10" /></label><label>{{ t('tasks.brief') }}<UiTextarea v-model="draft.brief" rows="5" required minlength="30" /></label>
           </fieldset>
           <fieldset class="task-form-section">
             <legend>{{ t('tasks.scheduleSection') }}</legend><div class="form-pair">
-              <label>{{ t('tasks.typeLabel') }}<select v-model="draft.deliverableType"><option v-for="item in types" :key="item" :value="item">{{ t(`tasks.types.${item}`) }}</option></select></label><label>{{ t('tasks.budgetLabel') }}<input v-model="draft.budget" type="number" min="1" step="1" required /></label>
+              <label>{{ t('tasks.typeLabel') }}<UiSelect v-model="draft.deliverableType"><option v-for="item in types" :key="item" :value="item">{{ t(`tasks.types.${item}`) }}</option></UiSelect></label><label>{{ t('tasks.budgetLabel') }}<UiInput v-model="draft.budget" type="number" min="1" step="1" required /></label>
             </div><div class="form-pair">
-              <label>{{ t('tasks.deadlineLabel') }}<input v-model="draft.deadline" type="datetime-local" :min="minimumDeadline" required /></label><label>{{ t('tasks.timezoneLabel') }}<select v-model="draft.timezone" :aria-label="t('tasks.timezoneLabel')" required><option v-for="item in timezoneOptions" :key="item" :value="item">{{ item }}</option></select></label>
-            </div><label class="check-label"><input v-model="draft.allowDirectAccept" type="checkbox" />{{ t('tasks.directLabel') }}</label>
+              <label>{{ t('tasks.deadlineLabel') }}<UiInput v-model="draft.deadline" type="datetime-local" :min="minimumDeadline" required /></label><label>{{ t('tasks.timezoneLabel') }}<UiSelect v-model="draft.timezone" :aria-label="t('tasks.timezoneLabel')" required><option v-for="item in timezoneOptions" :key="item" :value="item">{{ item }}</option></UiSelect>
+              </label>
+            </div><label class="check-label"><UiCheckbox v-model="draft.allowDirectAccept" />{{ t('tasks.directLabel') }}</label>
           </fieldset>
           <fieldset class="task-form-section">
-            <legend>{{ t('tasks.deliverySection') }}</legend><label>{{ t('tasks.deliverablesLabel') }}<textarea v-model="draft.deliverables" rows="3" required></textarea></label><label>{{ t('tasks.acceptanceLabel') }}<textarea v-model="draft.acceptanceRules" rows="3" required></textarea></label><label>{{ t('tasks.rightsLabel') }}<textarea v-model="draft.rightsTerms" rows="3" required></textarea></label><label>{{ t('tasks.disclosureLabel') }}<textarea v-model="draft.aiDisclosureRequirement" rows="3" required></textarea></label>
+            <legend>{{ t('tasks.deliverySection') }}</legend><label>{{ t('tasks.deliverablesLabel') }}<UiTextarea v-model="draft.deliverables" rows="3" required /></label><label>{{ t('tasks.acceptanceLabel') }}<UiTextarea v-model="draft.acceptanceRules" rows="3" required /></label><label>{{ t('tasks.rightsLabel') }}<UiTextarea v-model="draft.rightsTerms" rows="3" required /></label><label>{{ t('tasks.disclosureLabel') }}<UiTextarea v-model="draft.aiDisclosureRequirement" rows="3" required /></label>
           </fieldset><div class="modal-actions">
-            <button class="command-button secondary" type="button" @click="createOpen = false">
+            <UiButton class="command-button secondary" variant="secondary" type="button" @click="createOpen = false">
               {{ t('tasks.cancel') }}
-            </button><button class="command-button primary" type="submit" :disabled="actionLoading">
+            </UiButton><UiButton class="command-button primary" variant="primary" type="submit" :loading="actionLoading">
               {{ t('tasks.publish') }}
-            </button>
+            </UiButton>
           </div>
         </form>
       </section>

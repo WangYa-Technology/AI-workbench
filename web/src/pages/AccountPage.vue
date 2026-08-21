@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { CheckCircle2, Copy, Download, FileKey2, Github, Globe2, KeyRound, Landmark, Laptop2, LoaderCircle, LogOut, Mail, MailCheck, Plus, RefreshCw, Send, ShieldCheck, Smartphone, Trash2, UserRound, UsersRound, Webhook } from 'lucide-vue-next'
+import { CheckCircle2, Copy, Download, FileKey2, Github, Globe2, KeyRound, Landmark, Laptop2, LogOut, Mail, MailCheck, Plus, RefreshCw, Send, ShieldCheck, Smartphone, Trash2, UserRound, UsersRound, Webhook } from 'lucide-vue-next'
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
@@ -8,6 +8,11 @@ import { formatDateTime } from '../lib/format'
 import { useNotificationsStore } from '../stores/notifications'
 import { usePreferencesStore } from '../stores/preferences'
 import { useSessionStore } from '../stores/session'
+import UiButton from '../components/ui/UiButton.vue'
+import UiCheckbox from '../components/ui/UiCheckbox.vue'
+import UiInput from '../components/ui/UiInput.vue'
+import UiSelect from '../components/ui/UiSelect.vue'
+import UiTextarea from '../components/ui/UiTextarea.vue'
 
 const { t, locale } = useI18n()
 const route = useRoute()
@@ -549,45 +554,49 @@ onMounted(async () => {
 
       <div class="auth-panel">
         <nav class="auth-tabs" :aria-label="t('account.authMode')">
-          <button type="button" :class="{ active: authMode === 'login' }" @click="authMode = 'login'">
+          <UiButton type="button" variant="ghost" :class="{ active: authMode === 'login' }" @click="authMode = 'login'">
             {{ t('account.signIn') }}
-          </button>
-          <button type="button" :class="{ active: authMode === 'register' }" @click="authMode = 'register'">
+          </UiButton>
+          <UiButton type="button" variant="ghost" :class="{ active: authMode === 'register' }" @click="authMode = 'register'">
             {{ t('account.createAccount') }}
-          </button>
+          </UiButton>
         </nav>
 
         <form v-if="authMode === 'login'" class="account-form" @submit.prevent="submitLogin">
-          <label>{{ t('account.email') }}<input v-model.trim="loginForm.email" type="email" autocomplete="email" required /></label>
-          <label>{{ t('account.password') }}<input v-model="loginForm.password" type="password" autocomplete="current-password" required /></label>
+          <label>{{ t('account.email') }}<UiInput v-model="loginForm.email" type="email" autocomplete="email" required /></label>
+          <label>{{ t('account.password') }}<UiInput v-model="loginForm.password" type="password" autocomplete="current-password" required /></label>
           <p v-if="error" class="form-error" role="alert">
             {{ error }}
           </p>
-          <button class="command-button primary" type="submit" :disabled="session.loading">
-            <Mail :size="17" />{{ session.loading ? t('account.signingIn') : t('account.signIn') }}
-          </button>
-          <button class="text-link" type="button" @click="resetRequestForm.email = loginForm.email; authMode = 'reset'; error = ''; success = ''">
+          <UiButton class="command-button primary" variant="primary" type="submit" :loading="session.loading">
+            <template #start>
+              <Mail v-if="!session.loading" :size="17" />
+            </template>{{ session.loading ? t('account.signingIn') : t('account.signIn') }}
+          </UiButton>
+          <UiButton class="text-link" variant="ghost" size="sm" type="button" @click="resetRequestForm.email = loginForm.email; authMode = 'reset'; error = ''; success = ''">
             {{ t('account.forgotPassword') }}
-          </button>
+          </UiButton>
         </form>
 
         <form v-else-if="authMode === 'register'" class="account-form" @submit.prevent="submitRegistration">
           <div class="form-pair">
-            <label>{{ t('account.displayName') }}<input v-model.trim="registerForm.displayName" autocomplete="name" minlength="2" maxlength="80" required /></label>
-            <label>{{ t('account.handle') }}<input v-model.trim="registerForm.handle" pattern="[a-z0-9_]{3,30}" autocomplete="username" required /></label>
+            <label>{{ t('account.displayName') }}<UiInput v-model="registerForm.displayName" autocomplete="name" minlength="2" maxlength="80" required /></label>
+            <label>{{ t('account.handle') }}<UiInput v-model="registerForm.handle" pattern="[a-z0-9_]{3,30}" autocomplete="username" required /></label>
           </div>
-          <label>{{ t('account.email') }}<input v-model.trim="registerForm.email" type="email" autocomplete="email" required /></label>
-          <label>{{ t('account.password') }}<input v-model="registerForm.password" type="password" autocomplete="new-password" minlength="10" maxlength="128" required /><small>{{ t('account.passwordHint') }}</small></label>
+          <label>{{ t('account.email') }}<UiInput v-model="registerForm.email" type="email" autocomplete="email" required /></label>
+          <label>{{ t('account.password') }}<UiInput v-model="registerForm.password" type="password" autocomplete="new-password" minlength="10" maxlength="128" required /><small>{{ t('account.passwordHint') }}</small></label>
           <div class="form-pair">
-            <label>{{ t('account.language') }}<select v-model="registerForm.locale"><option value="en-US">English (US)</option><option value="zh-CN">简体中文</option></select></label>
-            <label>{{ t('account.timezone') }}<input v-model.trim="registerForm.timezone" autocomplete="off" required /></label>
+            <label>{{ t('account.language') }}<UiSelect v-model="registerForm.locale"><option value="en-US">English (US)</option><option value="zh-CN">简体中文</option></UiSelect></label>
+            <label>{{ t('account.timezone') }}<UiInput v-model="registerForm.timezone" autocomplete="off" required /></label>
           </div>
           <p v-if="error" class="form-error" role="alert">
             {{ error }}
           </p>
-          <button class="command-button primary" type="submit" :disabled="session.loading">
-            <UserRound :size="17" />{{ session.loading ? t('account.creating') : t('account.createAccount') }}
-          </button>
+          <UiButton class="command-button primary" variant="primary" type="submit" :loading="session.loading">
+            <template #start>
+              <UserRound v-if="!session.loading" :size="17" />
+            </template>{{ session.loading ? t('account.creating') : t('account.createAccount') }}
+          </UiButton>
         </form>
 
         <form v-else class="account-form" @submit.prevent="requestReset">
@@ -596,42 +605,52 @@ onMounted(async () => {
               {{ t('account.resetPasswordSummary') }}
             </p>
           </div>
-          <label>{{ t('account.email') }}<input v-model.trim="resetRequestForm.email" type="email" autocomplete="email" required /></label>
+          <label>{{ t('account.email') }}<UiInput v-model="resetRequestForm.email" type="email" autocomplete="email" required /></label>
           <p v-if="success" class="task-feedback success" role="status">
             {{ success }}
           </p>
           <p v-if="error" class="form-error" role="alert">
             {{ error }}
           </p>
-          <button class="command-button primary" type="submit" :disabled="Boolean(actionID)">
-            <Send :size="17" />{{ t('account.sendResetLink') }}
-          </button>
-          <button class="text-link" type="button" @click="authMode = 'login'; error = ''; success = ''">
+          <UiButton class="command-button primary" variant="primary" type="submit" :loading="Boolean(actionID)">
+            <template #start>
+              <Send v-if="!actionID" :size="17" />
+            </template>{{ t('account.sendResetLink') }}
+          </UiButton>
+          <UiButton class="text-link" variant="ghost" size="sm" type="button" @click="authMode = 'login'; error = ''; success = ''">
             {{ t('account.backToSignIn') }}
-          </button>
+          </UiButton>
         </form>
 
         <section class="oauth-boundary" aria-labelledby="oauth-heading">
           <h2 id="oauth-heading">
             {{ t('account.otherMethods') }}
           </h2>
-          <button v-for="provider in providers" :key="provider.provider" class="provider-row" type="button" disabled :title="t('account.signInMethodsSummary')">
-            <Github v-if="provider.provider === 'github'" :size="19" /><Globe2 v-else :size="19" />
+          <UiButton v-for="provider in providers" :key="provider.provider" class="provider-row" variant="ghost" disabled :title="t('account.signInMethodsSummary')">
+            <template #start>
+              <Github v-if="provider.provider === 'github'" :size="19" /><Globe2 v-else :size="19" />
+            </template>
             <span><strong>{{ provider.name }}</strong><small>{{ t('account.signInMethodsSummary') }}</small></span>
-            <span class="availability-label">{{ t('account.unavailable') }}</span>
-          </button>
+            <template #end>
+              <span class="availability-label">{{ t('account.unavailable') }}</span>
+            </template>
+          </UiButton>
         </section>
 
         <section v-if="localDemoAvailable" class="local-demo-boundary">
           <h2>{{ t('account.localDemo') }}</h2>
           <p>{{ t('account.localDemoDetail') }}</p>
           <div>
-            <button class="command-button secondary" type="button" :disabled="Boolean(actionID)" @click="startDemo('creator')">
-              <UserRound :size="17" />{{ t('account.demoCreator') }}
-            </button>
-            <button class="command-button secondary" type="button" :disabled="Boolean(actionID)" @click="startDemo('publisher')">
-              <UsersRound :size="17" />{{ t('account.demoPublisher') }}
-            </button>
+            <UiButton class="command-button secondary" variant="secondary" :loading="actionID === 'demo-creator'" :disabled="Boolean(actionID)" @click="startDemo('creator')">
+              <template #start>
+                <UserRound v-if="actionID !== 'demo-creator'" :size="17" />
+              </template>{{ t('account.demoCreator') }}
+            </UiButton>
+            <UiButton class="command-button secondary" variant="secondary" :loading="actionID === 'demo-publisher'" :disabled="Boolean(actionID)" @click="startDemo('publisher')">
+              <template #start>
+                <UsersRound v-if="actionID !== 'demo-publisher'" :size="17" />
+              </template>{{ t('account.demoPublisher') }}
+            </UiButton>
           </div>
         </section>
       </div>
@@ -644,9 +663,11 @@ onMounted(async () => {
           <h1>{{ session.user.displayName }}</h1>
           <p>@{{ session.user.handle }} · {{ session.user.email }}</p>
         </div>
-        <button class="command-button secondary" type="button" @click="signOut">
-          <LogOut :size="17" />{{ t('account.signOut') }}
-        </button>
+        <UiButton class="command-button secondary" variant="secondary" @click="signOut">
+          <template #start>
+            <LogOut :size="17" />
+          </template>{{ t('account.signOut') }}
+        </UiButton>
       </header>
 
       <nav class="account-section-nav" :aria-label="t('account.settingsSections')">
@@ -680,7 +701,7 @@ onMounted(async () => {
       <div v-if="section === 'profile'" class="settings-layout">
         <aside><h2>{{ t('account.profile') }}</h2><p>{{ t('account.profileSummary') }}</p></aside>
         <form class="settings-panel account-form" @submit.prevent="saveProfile">
-          <label>{{ t('account.displayName') }}<input v-model.trim="profileForm.displayName" minlength="2" maxlength="80" required /></label>
+          <label>{{ t('account.displayName') }}<UiInput v-model="profileForm.displayName" minlength="2" maxlength="80" required /></label>
           <div class="identity-readonly">
             <span>{{ t('account.handle') }}</span><strong>@{{ session.user.handle }}</strong><small>{{ t('account.handleStable') }}</small>
           </div>
@@ -688,12 +709,12 @@ onMounted(async () => {
             <span>{{ t('account.email') }}</span><strong>{{ session.user.email }}</strong><small>{{ t('account.emailStable') }}</small>
           </div>
           <div class="form-pair">
-            <label>{{ t('account.language') }}<select v-model="profileForm.locale"><option value="en-US">English (US)</option><option value="zh-CN">简体中文</option></select></label>
-            <label>{{ t('account.timezone') }}<input v-model.trim="profileForm.timezone" required /></label>
+            <label>{{ t('account.language') }}<UiSelect v-model="profileForm.locale"><option value="en-US">English (US)</option><option value="zh-CN">简体中文</option></UiSelect></label>
+            <label>{{ t('account.timezone') }}<UiInput v-model="profileForm.timezone" required /></label>
           </div>
-          <button class="command-button primary" type="submit" :disabled="session.loading">
+          <UiButton class="command-button primary" variant="primary" type="submit" :loading="session.loading">
             {{ t('account.saveProfile') }}
-          </button>
+          </UiButton>
         </form>
 
         <aside><h2>{{ t('account.access') }}</h2><p>{{ t('account.accessSummary') }}</p></aside>
@@ -715,23 +736,25 @@ onMounted(async () => {
             <MailCheck :size="19" />
             <div><strong>{{ session.user.email }}</strong><span>{{ session.user.emailVerified ? t('account.verified') : t('account.unverified') }}</span></div>
             <span v-if="session.user.emailVerified" class="availability-label available">{{ t('account.verified') }}</span>
-            <button v-else class="command-button secondary" type="button" :disabled="Boolean(actionID)" @click="requestVerification">
-              <Send :size="16" />{{ t('account.sendVerification') }}
-            </button>
+            <UiButton v-else class="command-button secondary" variant="secondary" :loading="actionID === 'email-verification'" :disabled="Boolean(actionID)" @click="requestVerification">
+              <template #start>
+                <Send v-if="actionID !== 'email-verification'" :size="16" />
+              </template>{{ t('account.sendVerification') }}
+            </UiButton>
           </article>
           <article v-for="item in emailActions" :key="item.id">
             <Mail :size="19" /><div><strong>{{ t(`account.emailActionKinds.${item.kind}`) }}</strong><span>{{ item.emailHint }} · {{ t(`account.emailActionStatuses.${item.status}`) }}</span><small>{{ t('account.emailActionEvidence', { attempts: item.attemptCount, date: date(item.expiresAt) }) }}</small></div>
           </article>
           <div v-if="emailActionNextCursor" class="account-evidence-pagination">
-            <button class="command-button secondary" type="button" :disabled="emailActionsLoadingMore" @click="loadMoreEmailActions">
-              <LoaderCircle v-if="emailActionsLoadingMore" class="spin" :size="16" />{{ t('actions.loadMore') }}
-            </button>
+            <UiButton class="command-button secondary" variant="secondary" :loading="emailActionsLoadingMore" @click="loadMoreEmailActions">
+              {{ t('actions.loadMore') }}
+            </UiButton>
           </div>
         </section>
         <aside>
-          <h2>{{ t('account.activeSessions') }}</h2><p>{{ t('account.activeSessionsSummary') }}</p><button class="text-link" type="button" :disabled="actionID === 'others'" @click="revokeOthers">
+          <h2>{{ t('account.activeSessions') }}</h2><p>{{ t('account.activeSessionsSummary') }}</p><UiButton class="text-link" variant="ghost" size="sm" type="button" :loading="actionID === 'others'" @click="revokeOthers">
             {{ t('account.signOutOthers') }}
-          </button>
+          </UiButton>
         </aside>
         <section class="settings-panel session-list">
           <div v-if="loadingEvidence" class="inline-empty">
@@ -740,14 +763,14 @@ onMounted(async () => {
           <article v-for="item in sessions" v-else :key="item.id" class="session-row">
             <span class="session-icon"><Smartphone v-if="/iOS|Android/.test(item.clientLabel)" :size="19" /><Laptop2 v-else :size="19" /></span>
             <div><strong>{{ item.clientLabel }}</strong><span>{{ item.current ? t('account.currentSession') : t(`account.sessionStatus.${item.status}`) }}</span><small>{{ t('account.lastActive', { date: date(item.lastSeenAt) }) }}<template v-if="item.networkHint"> · {{ t('account.networkHint', { hint: item.networkHint }) }}</template></small></div>
-            <button class="command-button secondary" type="button" :disabled="Boolean(actionID) || item.status !== 'active'" @click="revoke(item)">
+            <UiButton class="command-button secondary" variant="secondary" type="button" :loading="actionID === item.id" :disabled="item.status !== 'active'" @click="revoke(item)">
               {{ item.current ? t('account.signOut') : t('account.revoke') }}
-            </button>
+            </UiButton>
           </article>
           <div v-if="sessionNextCursor" class="account-evidence-pagination">
-            <button class="command-button secondary" type="button" :disabled="sessionsLoadingMore" @click="loadMoreSessions">
-              <LoaderCircle v-if="sessionsLoadingMore" class="spin" :size="16" />{{ t('actions.loadMore') }}
-            </button>
+            <UiButton class="command-button secondary" variant="secondary" :loading="sessionsLoadingMore" @click="loadMoreSessions">
+              {{ t('actions.loadMore') }}
+            </UiButton>
           </div>
         </section>
       </div>
@@ -788,9 +811,11 @@ onMounted(async () => {
                 <dt>{{ t('account.payoutAccount') }}</dt><dd><code>{{ payoutStatus.destinationId }}</code></dd>
               </div>
             </dl>
-            <button v-if="payoutStatus.canStartOnboarding" class="command-button primary" type="button" :disabled="Boolean(actionID)" @click="beginPayoutOnboarding">
-              <Landmark :size="17" />{{ payoutStatus.status === 'not_started' ? t('account.payoutStart') : t('account.payoutResume') }}
-            </button>
+            <UiButton v-if="payoutStatus.canStartOnboarding" class="command-button primary" variant="primary" :loading="actionID === 'payout-onboarding'" @click="beginPayoutOnboarding">
+              <template #start>
+                <Landmark v-if="actionID !== 'payout-onboarding'" :size="17" />
+              </template>{{ payoutStatus.status === 'not_started' ? t('account.payoutStart') : t('account.payoutResume') }}
+            </UiButton>
             <p v-if="!payoutStatus.providerAvailable" class="retention-note">
               {{ t('account.payoutUnavailable') }}
             </p>
@@ -819,50 +844,62 @@ onMounted(async () => {
         <aside><h2>{{ t('account.serviceAccounts') }}</h2><p>{{ t('account.serviceAccountsSummary') }}</p></aside>
         <section class="settings-panel developer-accounts">
           <form class="account-form developer-create" @submit.prevent="createDeveloperAccount">
-            <label>{{ t('account.serviceAccountName') }}<input v-model.trim="developerForm.accountName" minlength="3" maxlength="80" required /></label>
-            <button class="command-button primary" type="submit" :disabled="Boolean(actionID) || !developerAccess?.control.enabled">
-              <Plus :size="17" />{{ t('account.createServiceAccount') }}
-            </button>
+            <label>{{ t('account.serviceAccountName') }}<UiInput v-model="developerForm.accountName" minlength="3" maxlength="80" required /></label>
+            <UiButton class="command-button primary" variant="primary" type="submit" :loading="actionID === 'developer-account-create'" :disabled="!developerAccess?.control.enabled">
+              <template #start>
+                <Plus v-if="actionID !== 'developer-account-create'" :size="17" />
+              </template>{{ t('account.createServiceAccount') }}
+            </UiButton>
           </form>
           <p v-if="developerAccess && !developerAccess.accounts.length" class="inline-empty">
             {{ t('account.noServiceAccounts') }}
           </p>
           <article v-for="account in developerAccess?.accounts || []" :key="account.id" class="developer-account-row">
             <header>
-              <div><strong>{{ account.name }}</strong><span>{{ t(`account.developerStatuses.${account.status}`) }} · v{{ account.version }}</span></div><button v-if="account.status === 'active'" class="command-button secondary" type="button" :disabled="Boolean(actionID) || !developerForm.confirmed" @click="revokeDeveloperAccount(account)">
-                <Trash2 :size="16" />{{ t('account.revoke') }}
-              </button>
+              <div><strong>{{ account.name }}</strong><span>{{ t(`account.developerStatuses.${account.status}`) }} · v{{ account.version }}</span></div><UiButton v-if="account.status === 'active'" class="command-button secondary" variant="secondary" :loading="actionID === `developer-account-${account.id}`" :disabled="!developerForm.confirmed" @click="revokeDeveloperAccount(account)">
+                <template #start>
+                  <Trash2 v-if="actionID !== `developer-account-${account.id}`" :size="16" />
+                </template>{{ t('account.revoke') }}
+              </UiButton>
             </header>
             <div class="developer-key-controls">
-              <label>{{ t('account.keyTtl') }}<input v-model.number="developerForm.ttlDays" type="number" min="1" max="365" /></label>
-              <label>{{ t('account.ipAllowlist') }}<input v-model.trim="developerForm.ipAllowlist" :placeholder="t('account.ipAllowlistPlaceholder')" /></label>
-              <button class="command-button secondary" type="button" :disabled="Boolean(actionID) || account.status !== 'active'" @click="issueDeveloperKey(account)">
-                <KeyRound :size="16" />{{ t('account.issueKey') }}
-              </button>
+              <label>{{ t('account.keyTtl') }}<UiInput v-model.number="developerForm.ttlDays" type="number" min="1" max="365" /></label>
+              <label>{{ t('account.ipAllowlist') }}<UiInput v-model="developerForm.ipAllowlist" :placeholder="t('account.ipAllowlistPlaceholder')" /></label>
+              <UiButton class="command-button secondary" variant="secondary" :loading="actionID === `developer-issue-${account.id}`" :disabled="account.status !== 'active'" @click="issueDeveloperKey(account)">
+                <template #start>
+                  <KeyRound v-if="actionID !== `developer-issue-${account.id}`" :size="16" />
+                </template>{{ t('account.issueKey') }}
+              </UiButton>
             </div>
             <div v-for="key in account.keys" :key="key.id" class="developer-key-row">
               <div><strong>{{ t('account.keyDisplay', { prefix: key.publicPrefix, hint: key.displayHint }) }}</strong><span>{{ t(`account.developerStatuses.${key.status}`) }} · {{ t('account.keyUses', { count: key.usageCount }) }}</span><small>{{ t('account.keyExpires', { date: date(key.expiresAt) }) }}<template v-if="key.lastUsedAt"> · {{ t('account.keyLastUsed', { date: date(key.lastUsedAt) }) }}</template></small></div>
               <div v-if="key.status === 'active'">
-                <button class="command-button secondary" type="button" :disabled="Boolean(actionID) || !developerForm.confirmed" @click="rotateDeveloperKey(account, key)">
-                  <RefreshCw :size="15" />{{ t('account.rotateKey') }}
-                </button><button class="command-button secondary" type="button" :disabled="Boolean(actionID) || !developerForm.confirmed" @click="revokeDeveloperKey(account, key)">
-                  <Trash2 :size="15" />{{ t('account.revoke') }}
-                </button>
+                <UiButton class="command-button secondary" variant="secondary" :loading="actionID === `developer-rotate-${key.id}`" :disabled="!developerForm.confirmed" @click="rotateDeveloperKey(account, key)">
+                  <template #start>
+                    <RefreshCw v-if="actionID !== `developer-rotate-${key.id}`" :size="15" />
+                  </template>{{ t('account.rotateKey') }}
+                </UiButton><UiButton class="command-button secondary" variant="secondary" :loading="actionID === `developer-revoke-${key.id}`" :disabled="!developerForm.confirmed" @click="revokeDeveloperKey(account, key)">
+                  <template #start>
+                    <Trash2 v-if="actionID !== `developer-revoke-${key.id}`" :size="15" />
+                  </template>{{ t('account.revoke') }}
+                </UiButton>
               </div>
             </div>
           </article>
           <div v-if="developerAccess?.accounts.some(account => account.status === 'active')" class="developer-danger-controls">
-            <label>{{ t('account.operationReason') }}<textarea v-model.trim="developerForm.reason" rows="2" minlength="10" maxlength="500"></textarea></label>
-            <label class="rights-confirm"><input v-model="developerForm.confirmed" type="checkbox" />{{ t('account.developerConfirm') }}</label>
+            <label>{{ t('account.operationReason') }}<UiTextarea v-model="developerForm.reason" rows="2" minlength="10" maxlength="500" /></label>
+            <label class="rights-confirm"><UiCheckbox v-model="developerForm.confirmed" />{{ t('account.developerConfirm') }}</label>
           </div>
         </section>
 
         <aside><h2>{{ t('account.oneTimeKey') }}</h2><p>{{ t('account.oneTimeKeySummary') }}</p></aside>
         <section class="settings-panel developer-secret">
           <div v-if="revealedCredential">
-            <code>{{ revealedCredential.plaintextKey }}</code><button class="command-button secondary" type="button" @click="copyDeveloperKey">
-              <Copy :size="16" />{{ t('account.copyKey') }}
-            </button>
+            <code>{{ revealedCredential.plaintextKey }}</code><UiButton class="command-button secondary" variant="secondary" @click="copyDeveloperKey">
+              <template #start>
+                <Copy :size="16" />
+              </template>{{ t('account.copyKey') }}
+            </UiButton>
           </div>
           <p v-else class="inline-empty">
             {{ t('account.noRevealedKey') }}
@@ -873,16 +910,18 @@ onMounted(async () => {
         <section class="settings-panel webhook-endpoints">
           <form class="account-form webhook-create" @submit.prevent="createDeveloperWebhook">
             <div class="form-pair">
-              <label>{{ t('account.webhookName') }}<input v-model.trim="webhookForm.name" minlength="3" maxlength="80" required /></label>
-              <label>{{ t('account.webhookUrl') }}<input v-model.trim="webhookForm.url" type="url" maxlength="2048" :placeholder="t('account.webhookUrlPlaceholder')" required /></label>
+              <label>{{ t('account.webhookName') }}<UiInput v-model="webhookForm.name" minlength="3" maxlength="80" required /></label>
+              <label>{{ t('account.webhookUrl') }}<UiInput v-model="webhookForm.url" type="url" maxlength="2048" :placeholder="t('account.webhookUrlPlaceholder')" required /></label>
             </div>
             <fieldset class="webhook-event-grid">
               <legend>{{ t('account.webhookEvents') }}</legend>
-              <label v-for="eventType in webhookAccess?.eventTypes || []" :key="eventType"><input v-model="webhookForm.eventTypes" type="checkbox" :value="eventType" />{{ webhookEventLabel(eventType) }}</label>
+              <label v-for="eventType in webhookAccess?.eventTypes || []" :key="eventType"><UiCheckbox v-model="webhookForm.eventTypes" :value="eventType" />{{ webhookEventLabel(eventType) }}</label>
             </fieldset>
-            <button class="command-button primary" type="submit" :disabled="Boolean(actionID) || !developerAccess?.control.enabled || !webhookForm.eventTypes.length">
-              <Plus :size="17" />{{ t('account.createWebhook') }}
-            </button>
+            <UiButton class="command-button primary" variant="primary" type="submit" :loading="actionID === 'webhook-create'" :disabled="!developerAccess?.control.enabled || !webhookForm.eventTypes.length">
+              <template #start>
+                <Plus v-if="actionID !== 'webhook-create'" :size="17" />
+              </template>{{ t('account.createWebhook') }}
+            </UiButton>
           </form>
           <p v-if="webhookAccess && !webhookAccess.endpoints.length" class="inline-empty">
             {{ t('account.noWebhooks') }}
@@ -891,15 +930,21 @@ onMounted(async () => {
             <header>
               <div><strong>{{ endpoint.name }}</strong><span>{{ endpoint.url }}</span><small>{{ t(`account.developerStatuses.${endpoint.status}`) }} · {{ t('account.webhookSecretVersion', { version: endpoint.currentSecretVersion, hint: endpoint.secretHint }) }}</small></div>
               <div v-if="endpoint.status === 'active'" class="webhook-actions">
-                <button class="command-button secondary" type="button" :disabled="Boolean(actionID)" @click="testDeveloperWebhook(endpoint)">
-                  <Send :size="15" />{{ t('account.sendWebhookTest') }}
-                </button>
-                <button class="command-button secondary" type="button" :disabled="Boolean(actionID) || !webhookForm.confirmed" @click="rotateDeveloperWebhook(endpoint)">
-                  <RefreshCw :size="15" />{{ t('account.rotateWebhookSecret') }}
-                </button>
-                <button class="command-button secondary" type="button" :disabled="Boolean(actionID) || !webhookForm.confirmed" @click="revokeDeveloperWebhook(endpoint)">
-                  <Trash2 :size="15" />{{ t('account.revoke') }}
-                </button>
+                <UiButton class="command-button secondary" variant="secondary" :loading="actionID === `webhook-test-${endpoint.id}`" @click="testDeveloperWebhook(endpoint)">
+                  <template #start>
+                    <Send v-if="actionID !== `webhook-test-${endpoint.id}`" :size="15" />
+                  </template>{{ t('account.sendWebhookTest') }}
+                </UiButton>
+                <UiButton class="command-button secondary" variant="secondary" :loading="actionID === `webhook-rotate-${endpoint.id}`" :disabled="!webhookForm.confirmed" @click="rotateDeveloperWebhook(endpoint)">
+                  <template #start>
+                    <RefreshCw v-if="actionID !== `webhook-rotate-${endpoint.id}`" :size="15" />
+                  </template>{{ t('account.rotateWebhookSecret') }}
+                </UiButton>
+                <UiButton class="command-button secondary" variant="secondary" :loading="actionID === `webhook-revoke-${endpoint.id}`" :disabled="!webhookForm.confirmed" @click="revokeDeveloperWebhook(endpoint)">
+                  <template #start>
+                    <Trash2 v-if="actionID !== `webhook-revoke-${endpoint.id}`" :size="15" />
+                  </template>{{ t('account.revoke') }}
+                </UiButton>
               </div>
             </header>
             <div class="webhook-subscriptions">
@@ -912,9 +957,9 @@ onMounted(async () => {
                 <small v-if="delivery.lastStatusCode">{{ t('account.webhookHttpStatus', { code: delivery.lastStatusCode }) }}</small><small v-else-if="delivery.lastErrorCode">{{ delivery.lastErrorCode }}</small>
               </div>
               <div v-if="endpoint.deliveryNextCursor" class="webhook-delivery-pagination">
-                <button class="command-button secondary" type="button" :disabled="webhookDeliveriesLoading[endpoint.id]" @click="loadMoreWebhookDeliveries(endpoint)">
-                  <LoaderCircle v-if="webhookDeliveriesLoading[endpoint.id]" class="spin" :size="15" />{{ t('actions.loadMore') }}
-                </button>
+                <UiButton class="command-button secondary" variant="secondary" :loading="webhookDeliveriesLoading[endpoint.id]" @click="loadMoreWebhookDeliveries(endpoint)">
+                  {{ t('actions.loadMore') }}
+                </UiButton>
               </div>
             </div>
             <p v-else class="inline-empty">
@@ -922,17 +967,19 @@ onMounted(async () => {
             </p>
           </article>
           <div v-if="webhookAccess?.endpoints.some(endpoint => endpoint.status === 'active')" class="developer-danger-controls webhook-danger-controls">
-            <label>{{ t('account.operationReason') }}<textarea v-model.trim="webhookForm.reason" rows="2" minlength="10" maxlength="500"></textarea></label>
-            <label class="rights-confirm"><input v-model="webhookForm.confirmed" type="checkbox" />{{ t('account.webhookConfirm') }}</label>
+            <label>{{ t('account.operationReason') }}<UiTextarea v-model="webhookForm.reason" rows="2" minlength="10" maxlength="500" /></label>
+            <label class="rights-confirm"><UiCheckbox v-model="webhookForm.confirmed" />{{ t('account.webhookConfirm') }}</label>
           </div>
         </section>
 
         <aside><h2>{{ t('account.oneTimeWebhookSecret') }}</h2><p>{{ t('account.oneTimeWebhookSecretSummary') }}</p></aside>
         <section class="settings-panel developer-secret">
           <div v-if="revealedWebhookCredential">
-            <code>{{ revealedWebhookCredential.signingSecret }}</code><button class="command-button secondary" type="button" @click="copyWebhookSecret">
-              <Copy :size="16" />{{ t('account.copyWebhookSecret') }}
-            </button>
+            <code>{{ revealedWebhookCredential.signingSecret }}</code><UiButton class="command-button secondary" variant="secondary" @click="copyWebhookSecret">
+              <template #start>
+                <Copy :size="16" />
+              </template>{{ t('account.copyWebhookSecret') }}
+            </UiButton>
           </div>
           <p v-else class="inline-empty">
             {{ t('account.noRevealedWebhookSecret') }}
@@ -943,19 +990,23 @@ onMounted(async () => {
       <div v-else-if="section === 'privacy'" class="settings-layout data-rights-layout">
         <aside><h2>{{ t('account.privacyRights') }}</h2><p>{{ t('account.privacyRightsSummary') }}</p></aside>
         <section class="settings-panel data-rights-actions">
-          <label>{{ t('account.confirmHandle') }}<input v-model.trim="rightsForm.identityConfirmation" autocomplete="off" :placeholder="session.user.handle" /></label>
+          <label>{{ t('account.confirmHandle') }}<UiInput v-model="rightsForm.identityConfirmation" autocomplete="off" :placeholder="session.user.handle" /></label>
           <article>
             <div><FileKey2 :size="19" /><span><strong>{{ t('account.exportData') }}</strong><small>{{ t('account.exportDataSummary') }}</small></span></div>
-            <button class="command-button secondary" type="button" :disabled="Boolean(actionID) || !rightsForm.identityConfirmation" @click="createDataRightsRequest('data_export')">
-              <Download :size="17" />{{ t('account.requestExport') }}
-            </button>
+            <UiButton class="command-button secondary" variant="secondary" :loading="actionID === 'rights-data_export'" :disabled="!rightsForm.identityConfirmation" @click="createDataRightsRequest('data_export')">
+              <template #start>
+                <Download v-if="actionID !== 'rights-data_export'" :size="17" />
+              </template>{{ t('account.requestExport') }}
+            </UiButton>
           </article>
           <article class="danger-zone">
             <div><Trash2 :size="19" /><span><strong>{{ t('account.deleteAccount') }}</strong><small>{{ t('account.deleteAccountSummary') }}</small></span></div>
-            <label class="rights-confirm"><input v-model="rightsForm.deletionConfirmed" type="checkbox" />{{ t('account.deleteConfirmation') }}</label>
-            <button class="command-button secondary" type="button" :disabled="Boolean(actionID) || !rightsForm.identityConfirmation || !rightsForm.deletionConfirmed" @click="createDataRightsRequest('account_deletion')">
-              <Trash2 :size="17" />{{ t('account.scheduleDeletion') }}
-            </button>
+            <label class="rights-confirm"><UiCheckbox v-model="rightsForm.deletionConfirmed" />{{ t('account.deleteConfirmation') }}</label>
+            <UiButton class="command-button secondary" variant="secondary" :loading="actionID === 'rights-account_deletion'" :disabled="!rightsForm.identityConfirmation || !rightsForm.deletionConfirmed" @click="createDataRightsRequest('account_deletion')">
+              <template #start>
+                <Trash2 v-if="actionID !== 'rights-account_deletion'" :size="17" />
+              </template>{{ t('account.scheduleDeletion') }}
+            </UiButton>
           </article>
           <p class="retention-note">
             {{ t('account.retentionBoundary') }}
@@ -975,17 +1026,19 @@ onMounted(async () => {
               <small v-else-if="item.cancelUntil">{{ t('account.cancelUntil', { date: date(item.cancelUntil) }) }}</small>
               <small v-if="item.receipt">{{ t('account.receiptEvidence', { checksum: item.receipt.checksumSha256.slice(0, 16) }) }}</small>
             </div>
-            <a v-if="item.requestType === 'data_export' && item.status === 'ready' && item.export && !item.export.purgedAt" class="command-button secondary" :href="exportURL(item)" download>
-              <Download :size="16" />{{ t('account.downloadExport') }}
-            </a>
-            <button v-else-if="canCancel(item)" class="command-button secondary" type="button" :disabled="Boolean(actionID)" @click="cancelDataRightsRequest(item)">
+            <UiButton v-if="item.requestType === 'data_export' && item.status === 'ready' && item.export && !item.export.purgedAt" as="a" class="command-button secondary" variant="secondary" :href="exportURL(item)" download>
+              <template #start>
+                <Download :size="16" />
+              </template>{{ t('account.downloadExport') }}
+            </UiButton>
+            <UiButton v-else-if="canCancel(item)" class="command-button secondary" variant="secondary" :loading="actionID === item.id" @click="cancelDataRightsRequest(item)">
               {{ t('account.cancelRequest') }}
-            </button>
+            </UiButton>
           </article>
           <div v-if="dataRightsNextCursor" class="account-evidence-pagination">
-            <button class="command-button secondary" type="button" :disabled="dataRightsLoadingMore" @click="loadMoreDataRights">
-              <LoaderCircle v-if="dataRightsLoadingMore" class="spin" :size="16" />{{ t('actions.loadMore') }}
-            </button>
+            <UiButton class="command-button secondary" variant="secondary" :loading="dataRightsLoadingMore" @click="loadMoreDataRights">
+              {{ t('actions.loadMore') }}
+            </UiButton>
           </div>
         </section>
       </div>
