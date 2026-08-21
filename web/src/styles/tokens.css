@@ -39,6 +39,29 @@
   --radius-surface: 10px;
   --radius-workspace: 12px;
   --radius-pill: 999px;
+
+  /* Appica-compatible semantic aliases. Keep product tokens above stable. */
+  --color-primary: var(--accent);
+  --color-primary-hover: var(--accent-hover);
+  --color-primary-foreground: var(--accent-contrast);
+  --color-secondary: var(--surface-muted);
+  --color-secondary-hover: var(--surface-raised);
+  --color-foreground: var(--text);
+  --color-foreground-muted: var(--text-secondary);
+  --color-foreground-subtle: var(--text-tertiary);
+  --color-background: var(--canvas);
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-danger: var(--danger);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --focus-ring: 0 0 0 3px color-mix(in srgb, var(--focus) 26%, transparent);
+  --control-height-sm: 32px;
+  --control-height-md: 36px;
+  --control-height-lg: 42px;
+  --shadow-panel: 0 1px 2px rgb(20 33 61 / 4%), 0 8px 24px rgb(20 33 61 / 6%);
 }
 
 [data-theme='dark'] {
@@ -75,4 +98,25 @@
   --content-max: 1440px;
   --space-page-x: 28px;
   --space-page-y: 24px;
+  --color-primary: var(--accent);
+  --color-primary-hover: var(--accent-hover);
+  --color-primary-foreground: var(--accent-contrast);
+  --color-secondary: var(--surface-muted);
+  --color-secondary-hover: var(--surface-raised);
+  --color-foreground: var(--text);
+  --color-foreground-muted: var(--text-secondary);
+  --color-foreground-subtle: var(--text-tertiary);
+  --color-background: var(--canvas);
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-danger: var(--danger);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --focus-ring: 0 0 0 3px color-mix(in srgb, var(--focus) 30%, transparent);
+  --control-height-sm: 32px;
+  --control-height-md: 36px;
+  --control-height-lg: 42px;
+  --shadow-panel: 0 1px 2px rgb(0 0 0 / 18%), 0 8px 24px rgb(0 0 0 / 22%);
 }

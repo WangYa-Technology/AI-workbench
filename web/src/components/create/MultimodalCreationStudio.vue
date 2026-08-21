@@ -17,6 +17,9 @@ import { useSessionStore } from '../../stores/session'
 import BrandLogo from '../brand/BrandLogo.vue'
 import AssetMedia from '../domain/AssetMedia.vue'
 import MotionFavoriteIcon from '../ui/MotionFavoriteIcon.vue'
+import UiButton from '../ui/UiButton.vue'
+import UiSelect from '../ui/UiSelect.vue'
+import UiTextarea from '../ui/UiTextarea.vue'
 import AuthRequiredState from '../domain/AuthRequiredState.vue'
 
 type CreationMode = CreationDraftMode
@@ -469,7 +472,7 @@ onMounted(async () => {
         <span v-for="asset in sourceAssets" :key="asset.id" class="creation-context-chip"><Paperclip :size="13" /><strong>{{ asset.title }}</strong><button type="button" :aria-label="t('actions.close')" @click="removeSourceAsset(asset.id)"><X :size="13" /></button></span>
         <span v-if="maskAsset" class="creation-context-chip mask"><ImageIcon :size="13" /><strong>{{ maskAsset.title }}</strong><button type="button" :aria-label="t('actions.close')" @click="maskAsset = null"><X :size="13" /></button></span>
       </div>
-      <textarea v-model="prompt" rows="2" maxlength="1800" :placeholder="t(`create.builder.modePlaceholder.${activeMode}`)" @keydown.enter.exact.prevent="canSubmit && submit()"></textarea>
+      <UiTextarea v-model="prompt" class="creation-prompt-input" rows="2" maxlength="1800" :placeholder="t(`create.builder.modePlaceholder.${activeMode}`)" @keydown.enter.exact.prevent="canSubmit && submit()" />
       <div class="creation-composer-row">
         <div class="creation-composer-tools">
           <button ref="modeMenuTrigger" class="creation-tool-button" type="button" :class="{ active: modeMenuOpen }" :aria-label="t('create.studio.chooseCreationType')" :aria-expanded="modeMenuOpen" @click="toggleModeMenu"><Plus :size="19" /></button>
@@ -479,7 +482,7 @@ onMounted(async () => {
         <div class="creation-composer-actions">
           <label v-if="capabilitiesLoaded" class="creation-model-picker">
             <span>{{ t('create.studio.modelSelector') }}</span>
-            <select
+            <UiSelect
               v-model="selectedModelId"
               :disabled="!modelOptions.length"
               :aria-label="t('create.studio.modelSelector')"
@@ -490,9 +493,9 @@ onMounted(async () => {
               <option v-for="item in modelOptions" :key="item.value" :value="item.value">
                 {{ item.label }}
               </option>
-            </select>
+            </UiSelect>
           </label>
-          <button class="creation-submit" type="submit" :disabled="!canSubmit"><LoaderCircle v-if="submitting" class="spin" :size="17" /><ArrowUp v-else :size="18" /><span>{{ submitting ? t('actions.generating') : generationLabel }}</span></button>
+          <UiButton class="creation-submit" variant="primary" type="submit" :disabled="!canSubmit" :loading="submitting"><template #start><ArrowUp v-if="!submitting" :size="18" /></template><span>{{ submitting ? t('actions.generating') : generationLabel }}</span></UiButton>
         </div>
       </div>
 
@@ -514,11 +517,11 @@ onMounted(async () => {
 
       <Transition name="creation-popover">
         <section v-if="controlsOpen" ref="controlsPanel" class="creation-popover creation-settings t-dropdown is-open" data-origin="bottom-right" role="dialog" :aria-label="t('create.studio.outputSettings')">
-          <label v-if="['image', 'video'].includes(activeMode)"><span>{{ t('create.studio.ratio') }}</span><select v-model="settings.ratio"><option v-for="item in ratioOptions" :key="item" :value="item">{{ item }}</option></select></label>
-          <label v-if="activeMode !== 'chat'"><span>{{ t('create.studio.quality') }}</span><select v-model="settings.quality"><option v-for="item in qualityOptions" :key="item" :value="item">{{ t(`create.studio.qualities.${item}`) }}</option></select></label>
-          <label v-if="['video', 'music'].includes(activeMode)"><span>{{ t('create.studio.duration') }}</span><select v-model.number="settings.duration"><option v-for="item in durationOptions" :key="item" :value="item">{{ t('create.studio.durationValue', { value: item }) }}</option></select></label>
-          <label v-if="activeMode === 'chat'"><span>{{ t('create.studio.responseLength') }}</span><select v-model="settings.responseLength"><option value="short">{{ t('create.studio.responseLengths.short') }}</option><option value="balanced">{{ t('create.studio.responseLengths.balanced') }}</option><option value="detailed">{{ t('create.studio.responseLengths.detailed') }}</option></select></label>
-          <label v-if="capabilityFormatOptions.length > 1"><span>{{ t('create.studio.format') }}</span><select v-model="settings.format"><option v-for="item in capabilityFormatOptions" :key="item" :value="item">{{ item.toUpperCase() }}</option></select></label>
+          <label v-if="['image', 'video'].includes(activeMode)"><span>{{ t('create.studio.ratio') }}</span><UiSelect v-model="settings.ratio"><option v-for="item in ratioOptions" :key="item" :value="item">{{ item }}</option></UiSelect></label>
+          <label v-if="activeMode !== 'chat'"><span>{{ t('create.studio.quality') }}</span><UiSelect v-model="settings.quality"><option v-for="item in qualityOptions" :key="item" :value="item">{{ t(`create.studio.qualities.${item}`) }}</option></UiSelect></label>
+          <label v-if="['video', 'music'].includes(activeMode)"><span>{{ t('create.studio.duration') }}</span><UiSelect :model-value="settings.duration" @update:model-value="settings.duration = Number($event)"><option v-for="item in durationOptions" :key="item" :value="item">{{ t('create.studio.durationValue', { value: item }) }}</option></UiSelect></label>
+          <label v-if="activeMode === 'chat'"><span>{{ t('create.studio.responseLength') }}</span><UiSelect v-model="settings.responseLength"><option value="short">{{ t('create.studio.responseLengths.short') }}</option><option value="balanced">{{ t('create.studio.responseLengths.balanced') }}</option><option value="detailed">{{ t('create.studio.responseLengths.detailed') }}</option></UiSelect></label>
+          <label v-if="capabilityFormatOptions.length > 1"><span>{{ t('create.studio.format') }}</span><UiSelect v-model="settings.format"><option v-for="item in capabilityFormatOptions" :key="item" :value="item">{{ item.toUpperCase() }}</option></UiSelect></label>
           <label v-if="activeMode !== 'chat'"><span>{{ t('create.studio.count') }}</span><input v-model.number="settings.count" type="number" min="1" max="4" /></label>
         </section>
       </Transition>

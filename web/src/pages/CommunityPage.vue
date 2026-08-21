@@ -6,6 +6,9 @@ import { RouterLink, useRouter } from 'vue-router'
 import { api, messageFrom, type CommunityPost, type CommunityReport } from '../api/client'
 import AssetMedia from '../components/domain/AssetMedia.vue'
 import { useSessionStore } from '../stores/session'
+import UiButton from '../components/ui/UiButton.vue'
+import UiInput from '../components/ui/UiInput.vue'
+import UiSelect from '../components/ui/UiSelect.vue'
 
 const { locale, t } = useI18n()
 const router = useRouter()
@@ -184,10 +187,10 @@ onMounted(async () => {
         </div>
       </div>
       <div class="page-hero-actions">
-        <RouterLink class="command-button primary" to="/publish">
-          <Upload :size="17" :stroke-width="1.75" aria-hidden="true" />
+        <UiButton as="RouterLink" class="command-button primary" variant="primary" to="/publish">
+          <template #start><Upload :size="17" :stroke-width="1.75" aria-hidden="true" /></template>
           {{ t('actions.publishWork') }}
-        </RouterLink>
+        </UiButton>
       </div>
       <img class="page-hero-art community-hero-art" src="/community/community-hero.webp" alt="" width="768" height="714" aria-hidden="true" />
       <div v-if="session.user" class="page-hero-account">
@@ -204,9 +207,7 @@ onMounted(async () => {
       </article>
     </div>
     <div v-else-if="error" class="page-state" role="alert">
-      <p>{{ error }}</p><button class="command-button secondary" type="button" @click="load">
-        <RefreshCw :size="17" :stroke-width="1.75" />{{ t('actions.retry') }}
-      </button>
+      <p>{{ error }}</p><UiButton class="command-button secondary" variant="secondary" @click="load"><template #start><RefreshCw :size="17" :stroke-width="1.75" /></template>{{ t('actions.retry') }}</UiButton>
     </div>
     <div v-else>
       <div class="view-switcher-bar">
@@ -224,18 +225,18 @@ onMounted(async () => {
         <label class="community-search-control">
           <span class="sr-only">{{ t('community.searchLabel') }}</span>
           <Search :size="18" :stroke-width="1.75" aria-hidden="true" />
-          <input v-model="search" type="search" maxlength="120" :placeholder="t('community.searchPlaceholder')" />
+          <UiInput v-model="search" type="search" maxlength="120" :placeholder="t('community.searchPlaceholder')" />
         </label>
         <label class="community-type-control">
           <LayoutGrid :size="17" :stroke-width="1.75" aria-hidden="true" />
           <span class="sr-only">{{ t('community.typeLabel') }}</span>
-          <select v-model="mediaFilter" :aria-label="t('community.typeLabel')">
+          <UiSelect v-model="mediaFilter" :aria-label="t('community.typeLabel')">
             <option value="all">{{ t('community.allTypes') }}</option>
             <option value="image">{{ t('create.modes.image') }}</option>
             <option value="video">{{ t('create.modes.video') }}</option>
             <option value="music">{{ t('create.modes.music') }}</option>
             <option value="other">{{ t('community.workTopic') }}</option>
-          </select>
+          </UiSelect>
         </label>
         <nav class="community-toolbar-actions" :aria-label="t('community.communityActions')">
           <button type="button" :class="{ active: showCases }" :aria-pressed="showCases" @click="toggleCases">

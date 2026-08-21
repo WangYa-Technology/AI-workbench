@@ -7,6 +7,9 @@ import { usePreferencesStore } from '../../stores/preferences'
 import { useNotificationsStore } from '../../stores/notifications'
 import { useSessionStore } from '../../stores/session'
 import BrandLogo from '../brand/BrandLogo.vue'
+import UiButton from '../ui/UiButton.vue'
+import UiIconButton from '../ui/UiIconButton.vue'
+import UiInput from '../ui/UiInput.vue'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -155,20 +158,18 @@ const submitSearch = () => {
         </section>
       </nav>
 
-      <button
+      <UiIconButton
         class="sidebar-collapse-control"
-        type="button"
+        :label="t(preferences.sidebarCollapsed ? 'actions.expandSidebar' : 'actions.collapseSidebar')"
         aria-controls="primary-navigation"
         :aria-expanded="!preferences.sidebarCollapsed"
-        :aria-label="t(preferences.sidebarCollapsed ? 'actions.expandSidebar' : 'actions.collapseSidebar')"
-        :title="t(preferences.sidebarCollapsed ? 'actions.expandSidebar' : 'actions.collapseSidebar')"
         @click="preferences.toggleSidebar"
       >
         <span class="t-icon-swap" :data-state="preferences.sidebarCollapsed ? 'a' : 'b'" aria-hidden="true">
           <span class="t-icon" data-icon="a"><PanelLeftOpen :size="18" :stroke-width="1.75" /></span>
           <span class="t-icon" data-icon="b"><PanelLeftClose :size="18" :stroke-width="1.75" /></span>
         </span>
-      </button>
+      </UiIconButton>
     </aside>
 
     <div class="app-main" :class="{ 'is-create-route': route.name === 'create' }">
@@ -180,10 +181,10 @@ const submitSearch = () => {
 
         <div class="search-stack">
           <form class="global-search" role="search" @submit.prevent="submitSearch">
-            <input v-model="searchQuery" type="search" :placeholder="t('actions.searchPlaceholder')" :aria-label="t('actions.search')" />
-            <button type="submit" :aria-label="t('actions.search')" :title="t('actions.search')">
+            <UiInput v-model="searchQuery" class="global-search-input" type="search" :placeholder="t('actions.searchPlaceholder')" :aria-label="t('actions.search')" />
+            <UiIconButton class="global-search-submit" type="submit" :label="t('actions.search')">
               <Search :size="18" :stroke-width="1.75" />
-            </button>
+            </UiIconButton>
           </form>
           <p class="quick-links-context">
             {{ t('actions.explore') }}
@@ -191,26 +192,26 @@ const submitSearch = () => {
         </div>
 
         <div class="header-actions">
-          <RouterLink class="command-button secondary" to="/publish">
-            <Upload :size="17" :stroke-width="1.75" />
-            <span>{{ t('actions.publish') }}</span>
-          </RouterLink>
-          <RouterLink class="icon-button notification-action" to="/notifications" :aria-label="t('actions.notifications')" :title="t('actions.notifications')">
+          <UiButton as="RouterLink" class="command-button secondary" variant="secondary" to="/publish">
+            <template #start><Upload :size="17" :stroke-width="1.75" /></template>
+            {{ t('actions.publish') }}
+          </UiButton>
+          <UiIconButton as="RouterLink" class="icon-button notification-action" to="/notifications" :label="t('actions.notifications')">
             <Bell :size="19" :stroke-width="1.75" />
             <span class="t-badge" :data-open="String(Boolean(notifications.unreadCount))">
               <span class="t-badge-dot notification-badge" :aria-label="notifications.unreadCount ? t('notifications.unreadCount', { count: notifications.unreadCount }) : undefined">{{ notifications.unreadCount ? (notifications.unreadCount > 99 ? '99+' : notifications.unreadCount) : '' }}</span>
             </span>
-          </RouterLink>
-          <button class="icon-button desktop-utility" type="button" :aria-label="t('actions.language')" :title="t('actions.language')" @click="preferences.toggleLocale">
+          </UiIconButton>
+          <UiIconButton class="icon-button desktop-utility" :label="t('actions.language')" @click="preferences.toggleLocale">
             <Languages :size="18" :stroke-width="1.75" />
-          </button>
-          <button class="icon-button desktop-utility" type="button" :aria-label="t('actions.theme')" :title="t('actions.theme')" @click="preferences.toggleTheme">
+          </UiIconButton>
+          <UiIconButton class="icon-button desktop-utility" :label="t('actions.theme')" @click="preferences.toggleTheme">
             <Sun v-if="preferences.resolvedTheme === 'dark'" :size="18" :stroke-width="1.75" />
             <Moon v-else :size="18" :stroke-width="1.75" />
-          </button>
-          <RouterLink class="icon-button account-action" to="/settings" :aria-label="t('actions.account')" :title="session.user?.displayName || t('actions.account')">
+          </UiIconButton>
+          <UiIconButton as="RouterLink" class="icon-button account-action" to="/settings" :label="session.user?.displayName || t('actions.account')">
             <CircleUserRound :size="19" :stroke-width="1.75" />
-          </RouterLink>
+          </UiIconButton>
         </div>
       </header>
 

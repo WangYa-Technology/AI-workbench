@@ -13,6 +13,9 @@ import {
 } from '../api/client'
 import { formatCurrency, formatDateTime } from '../lib/format'
 import { useSessionStore } from '../stores/session'
+import UiButton from '../components/ui/UiButton.vue'
+import UiInput from '../components/ui/UiInput.vue'
+import UiSelect from '../components/ui/UiSelect.vue'
 
 const { t, locale } = useI18n()
 const route = useRoute()
@@ -458,18 +461,18 @@ onBeforeUnmount(() => {
           </div>
         </div>
         <div class="page-hero-actions">
-          <RouterLink v-if="session.user" class="command-button secondary" to="/workspace/tasks">
-            <BriefcaseBusiness :size="17" />{{ t('tasks.myTasks') }}
-          </RouterLink>
-          <button v-if="canPublishBrief" class="command-button primary" type="button" @click="createOpen = true">
-            <Plus :size="17" />{{ t('tasks.publishBrief') }}
-          </button>
-          <RouterLink v-if="!session.user" class="command-button secondary" :to="{ path: '/settings', query: { auth: 'login', returnTo: route.fullPath } }">
-            <LogIn :size="17" />{{ t('account.signIn') }}
-          </RouterLink>
-          <RouterLink v-if="!session.user" class="command-button primary" :to="{ path: '/settings', query: { auth: 'register', returnTo: route.fullPath } }">
-            <UserPlus :size="17" />{{ t('account.createAccount') }}
-          </RouterLink>
+          <UiButton v-if="session.user" as="RouterLink" class="command-button secondary" variant="secondary" to="/workspace/tasks">
+            <template #start><BriefcaseBusiness :size="17" /></template>{{ t('tasks.myTasks') }}
+          </UiButton>
+          <UiButton v-if="canPublishBrief" class="command-button primary" variant="primary" @click="createOpen = true">
+            <template #start><Plus :size="17" /></template>{{ t('tasks.publishBrief') }}
+          </UiButton>
+          <UiButton v-if="!session.user" as="RouterLink" class="command-button secondary" variant="secondary" :to="{ path: '/settings', query: { auth: 'login', returnTo: route.fullPath } }">
+            <template #start><LogIn :size="17" /></template>{{ t('account.signIn') }}
+          </UiButton>
+          <UiButton v-if="!session.user" as="RouterLink" class="command-button primary" variant="primary" :to="{ path: '/settings', query: { auth: 'register', returnTo: route.fullPath } }">
+            <template #start><UserPlus :size="17" /></template>{{ t('account.createAccount') }}
+          </UiButton>
         </div>
         <img class="page-hero-art task-market-hero-art" src="/tasks/task-hero-transparent.webp" alt="" aria-hidden="true" />
         <div v-if="session.user" class="page-hero-account">
@@ -490,22 +493,20 @@ onBeforeUnmount(() => {
       </div>
 
       <form class="task-filters" role="search" @submit.prevent="applyFilters">
-        <label class="task-search"><span class="sr-only">{{ t('actions.search') }}</span><Search :size="17" /><input v-model="search" type="search" :placeholder="t('tasks.searchPlaceholder')" /></label>
+        <label class="task-search"><span class="sr-only">{{ t('actions.search') }}</span><Search :size="17" /><UiInput v-model="search" type="search" :placeholder="t('tasks.searchPlaceholder')" /></label>
         <label class="task-filter-control">
           <span class="task-filter-display" aria-hidden="true"><Filter :size="15" /><span>{{ deliverableType ? t(`tasks.types.${deliverableType}`) : t('tasks.allTypes') }}</span><ChevronDown :size="14" /></span>
-          <select v-model="deliverableType" :aria-label="t('tasks.allTypes')" @change="applyFilters"><option value="">{{ t('tasks.allTypes') }}</option><option v-for="item in types" :key="item" :value="item">{{ t(`tasks.types.${item}`) }}</option></select>
+          <UiSelect v-model="deliverableType" :aria-label="t('tasks.allTypes')" @change="applyFilters"><option value="">{{ t('tasks.allTypes') }}</option><option v-for="item in types" :key="item" :value="item">{{ t(`tasks.types.${item}`) }}</option></UiSelect>
         </label>
         <label class="task-filter-control">
           <span class="task-filter-display" aria-hidden="true"><span>{{ status ? t(`tasks.status.${status}`) : t('tasks.allStatuses') }}</span><ChevronDown :size="14" /></span>
-          <select v-model="status" :aria-label="t('tasks.allStatuses')" @change="applyFilters"><option value="">{{ t('tasks.allStatuses') }}</option><option v-for="item in statuses" :key="item" :value="item">{{ t(`tasks.status.${item}`) }}</option></select>
+          <UiSelect v-model="status" :aria-label="t('tasks.allStatuses')" @change="applyFilters"><option value="">{{ t('tasks.allStatuses') }}</option><option v-for="item in statuses" :key="item" :value="item">{{ t(`tasks.status.${item}`) }}</option></UiSelect>
         </label>
         <label class="task-filter-control">
           <span class="task-filter-display" aria-hidden="true"><span>{{ sort === 'deadline' ? t('tasks.sortDeadline') : sort === 'budget_desc' ? t('tasks.sortBudget') : t('tasks.sortNewest') }}</span><ChevronDown :size="14" /></span>
-          <select v-model="sort" :aria-label="t('tasks.sortNewest')" @change="applyFilters"><option value="newest">{{ t('tasks.sortNewest') }}</option><option value="deadline">{{ t('tasks.sortDeadline') }}</option><option value="budget_desc">{{ t('tasks.sortBudget') }}</option></select>
+          <UiSelect v-model="sort" :aria-label="t('tasks.sortNewest')" @change="applyFilters"><option value="newest">{{ t('tasks.sortNewest') }}</option><option value="deadline">{{ t('tasks.sortDeadline') }}</option><option value="budget_desc">{{ t('tasks.sortBudget') }}</option></UiSelect>
         </label>
-        <button class="command-button primary task-filter-submit" type="submit">
-          <Search :size="17" />{{ t('actions.search') }}
-        </button>
+        <UiButton class="command-button primary task-filter-submit" variant="primary" type="submit"><template #start><Search :size="17" /></template>{{ t('actions.search') }}</UiButton>
       </form>
 
       <div v-if="loading" class="task-skeleton" aria-live="polite">
