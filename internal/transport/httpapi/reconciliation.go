@@ -52,7 +52,7 @@ func (s *Server) adminRequestProviderCostReconciliation(w http.ResponseWriter, r
 	}
 	item, err := s.reconciliation.Request(r.Context(), actor.ID, input, httputil.RequestID(r.Context()))
 	if errors.Is(err, reconciliation.ErrInvalid) {
-		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_provider_cost_reconciliation", "Choose an approved Provider, complete UTC-day period, reason, and explicit confirmation.", false)
+		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_provider_cost_reconciliation", "Choose an approved Provider and a complete UTC-day period.", false)
 		return
 	}
 	if errors.Is(err, reconciliation.ErrUnavailable) {

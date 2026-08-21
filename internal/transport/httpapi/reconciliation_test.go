@@ -34,6 +34,16 @@ func TestAdminProviderCostReconciliationHTTPBoundary(t *testing.T) {
 	defer server.Close()
 
 	memberClient, adminClient := testHTTPClient(t), testHTTPClient(t)
+	var meta struct {
+		ProviderCostReconciliation struct {
+			Enabled  bool   `json:"enabled"`
+			Provider string `json:"provider"`
+		} `json:"providerCostReconciliation"`
+	}
+	metaResponse := requestJSON(t, adminClient, http.MethodGet, server.URL+"/api/v1/meta", nil, &meta)
+	if metaResponse.StatusCode != http.StatusOK || !meta.ProviderCostReconciliation.Enabled || meta.ProviderCostReconciliation.Provider != "openai" {
+		t.Fatalf("enabled reconciliation metadata mismatch: status=%d meta=%#v", metaResponse.StatusCode, meta.ProviderCostReconciliation)
+	}
 	member := registerGovernanceUser(t, memberClient, server.URL, "cost_http_member")
 	administrator := registerGovernanceUser(t, adminClient, server.URL, "cost_http_admin")
 	if _, err := pool.Exec(context.Background(), `UPDATE users SET role='admin' WHERE id=$1`, administrator.ID); err != nil {
@@ -42,7 +52,6 @@ func TestAdminProviderCostReconciliationHTTPBoundary(t *testing.T) {
 	start := time.Date(2026, time.August, 3, 0, 0, 0, 0, time.UTC)
 	input := map[string]any{
 		"provider": "openai", "periodStart": start.Format(time.RFC3339), "periodEnd": start.Add(24 * time.Hour).Format(time.RFC3339),
-		"reason": "Reconcile the approved isolated daily OpenAI cost boundary.", "confirmed": true,
 	}
 	response := requestJSON(t, memberClient, http.MethodPost, server.URL+"/api/v1/admin/provider-cost-reconciliations", input, nil)
 	if response.StatusCode != http.StatusForbidden {
@@ -62,12 +71,6 @@ func TestAdminProviderCostReconciliationHTTPBoundary(t *testing.T) {
 	if response.StatusCode != http.StatusOK || len(page.Items) != 1 || page.Items[0].ID != item.ID {
 		t.Fatalf("reconciliation list mismatch: status=%d page=%#v", response.StatusCode, page)
 	}
-	response = requestJSON(t, adminClient, http.MethodPost, server.URL+"/api/v1/admin/provider-cost-reconciliations", map[string]any{
-		"provider": "openai", "periodStart": start.Format(time.RFC3339), "periodEnd": start.Add(24 * time.Hour).Format(time.RFC3339), "reason": "This must not be accepted without an explicit confirmation.", "confirmed": false,
-	}, nil)
-	if response.StatusCode != http.StatusUnprocessableEntity {
-		t.Fatalf("unconfirmed reconciliation request accepted: %d", response.StatusCode)
-	}
 	_ = member
 }
 
@@ -79,6 +82,15 @@ func TestAdminProviderCostReconciliationStaysUnavailableByDefault(t *testing.T) 
 	}, pool, slog.New(slog.NewTextHandler(io.Discard, nil))))
 	defer server.Close()
 	adminClient := testHTTPClient(t)
+	var meta struct {
+		ProviderCostReconciliation struct {
+			Enabled bool `json:"enabled"`
+		} `json:"providerCostReconciliation"`
+	}
+	metaResponse := requestJSON(t, adminClient, http.MethodGet, server.URL+"/api/v1/meta", nil, &meta)
+	if metaResponse.StatusCode != http.StatusOK || meta.ProviderCostReconciliation.Enabled {
+		t.Fatalf("disabled reconciliation metadata mismatch: status=%d meta=%#v", metaResponse.StatusCode, meta.ProviderCostReconciliation)
+	}
 	administrator := registerGovernanceUser(t, adminClient, server.URL, "cost_disabled_admin")
 	if _, err := pool.Exec(context.Background(), `UPDATE users SET role='admin' WHERE id=$1`, administrator.ID); err != nil {
 		t.Fatal(err)

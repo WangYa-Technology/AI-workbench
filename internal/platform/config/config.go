@@ -44,9 +44,15 @@ type Config struct {
 	OpenAIEnabled                              bool
 	OpenAIPaidCallsApproved                    bool
 	OpenAIAPIKey                               string
+	OpenAIChatAPIKey                           string
+	OpenAIImageAPIKey                          string
 	OpenAIBaseURL                              string
+	OpenAIChatAPI                              string
 	OpenAIChatModel                            string
 	OpenAIImageModel                           string
+	OpenAIImageAsync                           bool
+	OpenAIImagePollIntervalSeconds             int
+	OpenAIImageTimeoutSeconds                  int
 	OpenAIChatMaxOutputTokens                  int
 	OpenAIImageSize                            string
 	OpenAIImageQuality                         string
@@ -88,6 +94,14 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	openAIChatMaxOutputTokens, err := integer("OPENAI_CHAT_MAX_OUTPUT_TOKENS", 2048)
+	if err != nil {
+		return Config{}, err
+	}
+	openAIImagePollIntervalSeconds, err := integer("OPENAI_IMAGE_POLL_INTERVAL_SECONDS", 10)
+	if err != nil {
+		return Config{}, err
+	}
+	openAIImageTimeoutSeconds, err := integer("OPENAI_IMAGE_TIMEOUT_SECONDS", 300)
 	if err != nil {
 		return Config{}, err
 	}
@@ -155,46 +169,61 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	openAIAPIKey := strings.TrimSpace(os.Getenv("OPENAI_API_KEY"))
+	openAIChatAPIKey := strings.TrimSpace(os.Getenv("OPENAI_CHAT_API_KEY"))
+	openAIImageAPIKey := strings.TrimSpace(os.Getenv("OPENAI_IMAGE_API_KEY"))
+	if openAIChatAPIKey == "" {
+		openAIChatAPIKey = openAIAPIKey
+	}
+	if openAIImageAPIKey == "" {
+		openAIImageAPIKey = openAIAPIKey
+	}
 	cfg := Config{
-		Environment:                  value("APP_ENV", "development"),
-		HTTPAddr:                     value("HTTP_ADDR", ":8080"),
-		DatabaseURL:                  value("DATABASE_URL", "postgres://hcai:hcai@localhost:5432/hcai?sslmode=disable"),
-		MediaRoot:                    value("MEDIA_ROOT", "./data/media"),
-		MediaStorageAdapter:          value("MEDIA_STORAGE_ADAPTER", "local_file"),
-		MediaS3Bucket:                strings.TrimSpace(os.Getenv("MEDIA_S3_BUCKET")),
-		MediaS3Region:                strings.TrimSpace(os.Getenv("MEDIA_S3_REGION")),
-		MediaS3Endpoint:              strings.TrimSpace(os.Getenv("MEDIA_S3_ENDPOINT")),
-		MediaS3AccessKeyID:           strings.TrimSpace(os.Getenv("MEDIA_S3_ACCESS_KEY_ID")),
-		MediaS3SecretAccessKey:       strings.TrimSpace(os.Getenv("MEDIA_S3_SECRET_ACCESS_KEY")),
-		MediaS3SessionToken:          strings.TrimSpace(os.Getenv("MEDIA_S3_SESSION_TOKEN")),
-		MediaS3PathStyle:             mediaS3PathStyle,
-		MediaS3Prefix:                strings.Trim(strings.TrimSpace(os.Getenv("MEDIA_S3_PREFIX")), "/"),
-		MediaScannerAdapter:          value("MEDIA_SCANNER_ADAPTER", "local_deterministic"),
-		MediaScannerURL:              strings.TrimSpace(os.Getenv("MEDIA_SCANNER_URL")),
-		MediaScannerToken:            strings.TrimSpace(os.Getenv("MEDIA_SCANNER_TOKEN")),
-		MediaScannerTimeoutSeconds:   mediaScannerTimeoutSeconds,
-		LocalProviderSource:          value("LOCAL_PROVIDER_SOURCE", "./web/public/media/home-cinematic.jpg"),
-		WebOrigin:                    value("WEB_ORIGIN", "http://localhost:5173"),
-		TrustedProxyCIDRs:            trustedProxyCIDRs,
-		LocalProviderEnabled:         boolean("LOCAL_PROVIDER_ENABLED", true),
-		DemoDataEnabled:              boolean("DEMO_DATA_ENABLED", false),
-		CookieSecure:                 boolean("COOKIE_SECURE", false),
-		WebhookAllowLocal:            boolean("WEBHOOK_ALLOW_LOCAL", true),
-		EmailDeliveryMode:            value("EMAIL_DELIVERY_MODE", emailDeliveryDefault(value("APP_ENV", "development"))),
-		OpenAIEnabled:                openAIEnabled,
-		OpenAIPaidCallsApproved:      openAIPaidCallsApproved,
-		OpenAIAPIKey:                 strings.TrimSpace(os.Getenv("OPENAI_API_KEY")),
-		OpenAIBaseURL:                value("OPENAI_BASE_URL", "https://api.openai.com/v1"),
-		OpenAIChatModel:              value("OPENAI_CHAT_MODEL", "gpt-5.6-terra"),
-		OpenAIImageModel:             value("OPENAI_IMAGE_MODEL", "gpt-image-2"),
-		OpenAIChatMaxOutputTokens:    openAIChatMaxOutputTokens,
-		OpenAIImageSize:              value("OPENAI_IMAGE_SIZE", "1024x1024"),
-		OpenAIImageQuality:           value("OPENAI_IMAGE_QUALITY", "medium"),
-		OpenAIOrganization:           strings.TrimSpace(os.Getenv("OPENAI_ORGANIZATION")),
-		OpenAIProject:                strings.TrimSpace(os.Getenv("OPENAI_PROJECT")),
-		OpenAIReconciliationEnabled:  openAIReconciliationEnabled,
-		OpenAIReconciliationApproved: openAIReconciliationApproved,
-		OpenAIAdminAPIKey:            strings.TrimSpace(os.Getenv("OPENAI_ADMIN_API_KEY")),
+		Environment:                    value("APP_ENV", "development"),
+		HTTPAddr:                       value("HTTP_ADDR", ":8080"),
+		DatabaseURL:                    value("DATABASE_URL", "postgres://hcai:hcai@localhost:5432/hcai?sslmode=disable"),
+		MediaRoot:                      value("MEDIA_ROOT", "./data/media"),
+		MediaStorageAdapter:            value("MEDIA_STORAGE_ADAPTER", "local_file"),
+		MediaS3Bucket:                  strings.TrimSpace(os.Getenv("MEDIA_S3_BUCKET")),
+		MediaS3Region:                  strings.TrimSpace(os.Getenv("MEDIA_S3_REGION")),
+		MediaS3Endpoint:                strings.TrimSpace(os.Getenv("MEDIA_S3_ENDPOINT")),
+		MediaS3AccessKeyID:             strings.TrimSpace(os.Getenv("MEDIA_S3_ACCESS_KEY_ID")),
+		MediaS3SecretAccessKey:         strings.TrimSpace(os.Getenv("MEDIA_S3_SECRET_ACCESS_KEY")),
+		MediaS3SessionToken:            strings.TrimSpace(os.Getenv("MEDIA_S3_SESSION_TOKEN")),
+		MediaS3PathStyle:               mediaS3PathStyle,
+		MediaS3Prefix:                  strings.Trim(strings.TrimSpace(os.Getenv("MEDIA_S3_PREFIX")), "/"),
+		MediaScannerAdapter:            value("MEDIA_SCANNER_ADAPTER", "local_deterministic"),
+		MediaScannerURL:                strings.TrimSpace(os.Getenv("MEDIA_SCANNER_URL")),
+		MediaScannerToken:              strings.TrimSpace(os.Getenv("MEDIA_SCANNER_TOKEN")),
+		MediaScannerTimeoutSeconds:     mediaScannerTimeoutSeconds,
+		LocalProviderSource:            value("LOCAL_PROVIDER_SOURCE", "./web/public/media/home-cinematic.jpg"),
+		WebOrigin:                      value("WEB_ORIGIN", "http://localhost:5173"),
+		TrustedProxyCIDRs:              trustedProxyCIDRs,
+		LocalProviderEnabled:           boolean("LOCAL_PROVIDER_ENABLED", true),
+		DemoDataEnabled:                boolean("DEMO_DATA_ENABLED", false),
+		CookieSecure:                   boolean("COOKIE_SECURE", false),
+		WebhookAllowLocal:              boolean("WEBHOOK_ALLOW_LOCAL", true),
+		EmailDeliveryMode:              value("EMAIL_DELIVERY_MODE", emailDeliveryDefault(value("APP_ENV", "development"))),
+		OpenAIEnabled:                  openAIEnabled,
+		OpenAIPaidCallsApproved:        openAIPaidCallsApproved,
+		OpenAIAPIKey:                   openAIAPIKey,
+		OpenAIChatAPIKey:               openAIChatAPIKey,
+		OpenAIImageAPIKey:              openAIImageAPIKey,
+		OpenAIBaseURL:                  value("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+		OpenAIChatAPI:                  value("OPENAI_CHAT_API", "responses"),
+		OpenAIChatModel:                value("OPENAI_CHAT_MODEL", "gpt-5.6-terra"),
+		OpenAIImageModel:               value("OPENAI_IMAGE_MODEL", "gpt-image-2"),
+		OpenAIImageAsync:               boolean("OPENAI_IMAGE_ASYNC", false),
+		OpenAIImagePollIntervalSeconds: openAIImagePollIntervalSeconds,
+		OpenAIImageTimeoutSeconds:      openAIImageTimeoutSeconds,
+		OpenAIChatMaxOutputTokens:      openAIChatMaxOutputTokens,
+		OpenAIImageSize:                value("OPENAI_IMAGE_SIZE", "1024x1024"),
+		OpenAIImageQuality:             value("OPENAI_IMAGE_QUALITY", "medium"),
+		OpenAIOrganization:             strings.TrimSpace(os.Getenv("OPENAI_ORGANIZATION")),
+		OpenAIProject:                  strings.TrimSpace(os.Getenv("OPENAI_PROJECT")),
+		OpenAIReconciliationEnabled:    openAIReconciliationEnabled,
+		OpenAIReconciliationApproved:   openAIReconciliationApproved,
+		OpenAIAdminAPIKey:              strings.TrimSpace(os.Getenv("OPENAI_ADMIN_API_KEY")),
 		OpenAIReconciliationOverageThresholdMicros: openAIReconciliationOverageThresholdMicros,
 		VideoEnabled:                  videoEnabled,
 		VideoPaidCallsApproved:        videoPaidCallsApproved,
@@ -441,6 +470,15 @@ func validateOpenAI(cfg *Config) error {
 	if cfg.OpenAIChatMaxOutputTokens < 1 || cfg.OpenAIChatMaxOutputTokens > 32768 {
 		return fmt.Errorf("OPENAI_CHAT_MAX_OUTPUT_TOKENS must be between 1 and 32768")
 	}
+	if !oneOf(cfg.OpenAIChatAPI, "responses", "chat_completions") {
+		return fmt.Errorf("OPENAI_CHAT_API must be responses or chat_completions")
+	}
+	if cfg.OpenAIImagePollIntervalSeconds < 1 || cfg.OpenAIImagePollIntervalSeconds > 60 {
+		return fmt.Errorf("OPENAI_IMAGE_POLL_INTERVAL_SECONDS must be between 1 and 60")
+	}
+	if cfg.OpenAIImageTimeoutSeconds < 30 || cfg.OpenAIImageTimeoutSeconds > 600 || cfg.OpenAIImagePollIntervalSeconds >= cfg.OpenAIImageTimeoutSeconds {
+		return fmt.Errorf("OPENAI_IMAGE_TIMEOUT_SECONDS must be between 30 and 600 and greater than OPENAI_IMAGE_POLL_INTERVAL_SECONDS")
+	}
 	if !oneOf(cfg.OpenAIImageSize, "1024x1024", "1536x1024", "1024x1536", "auto") {
 		return fmt.Errorf("OPENAI_IMAGE_SIZE must be 1024x1024, 1536x1024, 1024x1536, or auto")
 	}
@@ -448,7 +486,8 @@ func validateOpenAI(cfg *Config) error {
 		return fmt.Errorf("OPENAI_IMAGE_QUALITY must be low, medium, high, or auto")
 	}
 	for key, candidate := range map[string]string{
-		"OPENAI_API_KEY": cfg.OpenAIAPIKey, "OPENAI_ORGANIZATION": cfg.OpenAIOrganization, "OPENAI_PROJECT": cfg.OpenAIProject, "OPENAI_ADMIN_API_KEY": cfg.OpenAIAdminAPIKey,
+		"OPENAI_API_KEY": cfg.OpenAIAPIKey, "OPENAI_CHAT_API_KEY": cfg.OpenAIChatAPIKey, "OPENAI_IMAGE_API_KEY": cfg.OpenAIImageAPIKey,
+		"OPENAI_ORGANIZATION": cfg.OpenAIOrganization, "OPENAI_PROJECT": cfg.OpenAIProject, "OPENAI_ADMIN_API_KEY": cfg.OpenAIAdminAPIKey,
 	} {
 		if strings.ContainsAny(candidate, "\r\n") {
 			return fmt.Errorf("%s cannot contain line breaks", key)
@@ -477,8 +516,8 @@ func validateOpenAI(cfg *Config) error {
 		if !cfg.OpenAIPaidCallsApproved {
 			return fmt.Errorf("OPENAI_PAID_CALLS_APPROVED must be true before OPENAI_ENABLED can be enabled")
 		}
-		if cfg.OpenAIAPIKey == "" {
-			return fmt.Errorf("OPENAI_API_KEY is required when OPENAI_ENABLED is true")
+		if cfg.OpenAIChatAPIKey == "" || cfg.OpenAIImageAPIKey == "" {
+			return fmt.Errorf("OPENAI_API_KEY or both OPENAI_CHAT_API_KEY and OPENAI_IMAGE_API_KEY are required when OPENAI_ENABLED is true")
 		}
 		if cfg.OpenAIChatModel == "" || cfg.OpenAIImageModel == "" {
 			return fmt.Errorf("OPENAI_CHAT_MODEL and OPENAI_IMAGE_MODEL are required when OPENAI_ENABLED is true")

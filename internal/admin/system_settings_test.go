@@ -23,7 +23,7 @@ func TestSystemSettingRevisionsGateBusinessTransactions(t *testing.T) {
 	if err != nil || initial.Current.Version != 1 || !initial.Current.RegistrationsEnabled || !initial.Current.GenerationsEnabled || !initial.Current.PublishingEnabled || !initial.Current.MarketplaceCheckoutEnabled || !initial.Current.TaskCreationEnabled {
 		t.Fatalf("initial settings mismatch: %#v %v", initial, err)
 	}
-	input := admin.SystemSettingUpdate{Name: "Bounded maintenance controls", RegistrationsEnabled: false, GenerationsEnabled: false, PublishingEnabled: false, MarketplaceCheckoutEnabled: false, TaskCreationEnabled: false, PublicNotice: "Selected write operations are paused in this Local Test environment.", Reason: "Verify every high-impact write boundary fails closed during bounded maintenance.", ExpectedVersion: 1, Confirmed: true}
+	input := admin.SystemSettingUpdate{Name: "Bounded maintenance controls", RegistrationsEnabled: false, GenerationsEnabled: false, PublishingEnabled: false, MarketplaceCheckoutEnabled: false, TaskCreationEnabled: false, PublicNotice: "Selected write operations are paused in this Local Test environment.", ExpectedVersion: 1}
 	stale := input
 	stale.ExpectedVersion = 2
 	if _, err := service.UpdateSystemSettingPolicy(ctx, actorID, stale, "settings-stale"); !errors.Is(err, admin.ErrConflict) {

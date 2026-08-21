@@ -72,7 +72,7 @@ func TestAdminOperationsDirectoriesTraverseBeyondLegacyWindows(t *testing.T) {
 	if _, err := service.ListGenerations(ctx, admin.GenerationListInput{Cursor: "modified"}); !errors.Is(err, admin.ErrInvalidGenerationFilter) {
 		t.Fatalf("modified generation cursor was accepted: %v", err)
 	}
-	cancelled, err := service.CancelGeneration(ctx, administratorID, targetGenerationID, "Verified older generation beyond the legacy operations window.", "operations-directory-generation")
+	cancelled, err := service.CancelGeneration(ctx, administratorID, targetGenerationID, "operations-directory-generation")
 	if err != nil || cancelled.ID != targetGenerationID || cancelled.Status != "cancelled" {
 		t.Fatalf("exact older generation cancellation failed: %#v %v", cancelled, err)
 	}
@@ -104,40 +104,9 @@ func TestAdminOperationsDirectoriesTraverseBeyondLegacyWindows(t *testing.T) {
 		t.Fatalf("unsupported finance state was accepted: %v", err)
 	}
 	adjusted, err := service.AdjustFinance(ctx, administratorID, targetOwnerID, admin.FinanceAdjustment{
-		DeltaCents: 1, Currency: "USD", Reason: "Verified older finance account beyond the legacy operations window.", Confirmed: true,
-	}, "operations-directory-finance")
+		DeltaCents: 1, Currency: "USD"}, "operations-directory-finance")
 	if err != nil || adjusted.UserID != targetOwnerID || adjusted.BalanceCents != 250001 {
 		t.Fatalf("exact older finance adjustment failed: %#v %v", adjusted, err)
 	}
 
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO audit_events(actor_id,action,resource_type,reason,request_id,metadata,created_at)
-		SELECT $1,'admin.operations_directory_probe','operations_probe','Audit directory backlog '||value,'audit-directory-'||value,jsonb_build_object('ordinal',value),now()-interval '2 hours'
-		FROM generate_series(1,306) value`, administratorID); err != nil {
-		t.Fatal(err)
-	}
-	auditInput := admin.AuditListInput{Query: "audit directory backlog", Action: "admin.operations_directory_probe", ResourceType: "operations_probe", Limit: 50}
-	seenAudit := map[uuid.UUID]bool{}
-	for {
-		page, err := service.ListAudit(ctx, auditInput)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, item := range page.Items {
-			if seenAudit[item.ID] {
-				t.Fatalf("audit event repeated across cursor pages: %s", item.ID)
-			}
-			seenAudit[item.ID] = true
-		}
-		if page.NextCursor == nil {
-			break
-		}
-		auditInput.Cursor = *page.NextCursor
-	}
-	if len(seenAudit) != 306 {
-		t.Fatalf("incomplete audit traversal: count=%d", len(seenAudit))
-	}
-	if _, err := service.ListAudit(ctx, admin.AuditListInput{Cursor: "modified"}); !errors.Is(err, admin.ErrInvalidAuditFilter) {
-		t.Fatalf("modified audit cursor was accepted: %v", err)
-	}
 }

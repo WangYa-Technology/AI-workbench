@@ -1,16 +1,17 @@
 <script setup lang="ts">
 import {
   ArrowLeft, ArrowRight, Boxes, ClipboardList, Clock3, FileCheck2, PackageCheck, Plus,
-  Ban, Bookmark, BookmarkX, Download, GitBranch, ListFilter, LoaderCircle, ReceiptText, RefreshCw, RotateCcw, ShieldCheck, ShoppingBag, Store, Upload, WalletCards, WandSparkles, X,
+  Ban, Bookmark, BookmarkX, Coins, Download, GitBranch, ListFilter, LoaderCircle, ReceiptText, RefreshCw, RotateCcw, ShieldCheck, ShoppingBag, Store, TrendingUp, Upload, WalletCards, WandSparkles, X,
 } from 'lucide-vue-next'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
-import { api, messageFrom, type Asset, type BillingStatement, type Generation, type Order, type SavedWork, type TaskSummary } from '../api/client'
+import { api, messageFrom, type Asset, type BillingStatement, type Generation, type Order, type PointOverview, type SavedWork, type TaskSummary } from '../api/client'
 import { formatCurrency, formatDateTime } from '../lib/format'
 import { useSessionStore } from '../stores/session'
 import AssetMedia from '../components/domain/AssetMedia.vue'
 import AuthRequiredState from '../components/domain/AuthRequiredState.vue'
+import MotionFavoriteIcon from '../components/ui/MotionFavoriteIcon.vue'
 
 const { t, locale } = useI18n()
 const route = useRoute()
@@ -24,6 +25,8 @@ const orders = ref<Order[]>([])
 const orderNextCursor = ref<string | null>(null)
 const ordersLoadingMore = ref(false)
 const billing = ref<BillingStatement | null>(null)
+const points = ref<PointOverview | null>(null)
+const subscriptionAction = ref('')
 const selectedAsset = ref<Asset | null>(null)
 const loading = ref(true)
 const refunding = ref('')
@@ -58,7 +61,7 @@ const billingDirection = ref('')
 const billingEntryType = ref('')
 const billingDateFrom = ref('')
 const billingDateTo = ref('')
-const billingEntryTypes = ['generation_charge', 'product_purchase', 'product_sale', 'product_refund', 'task_payment', 'task_earning', 'admin_adjustment', 'initial_credit'] as const
+const billingEntryTypes = ['subscription_purchase', 'product_purchase', 'product_sale', 'product_refund', 'task_payment', 'task_earning', 'admin_adjustment', 'initial_credit'] as const
 
 const assetID = computed(() => String(route.params.assetId || ''))
 const needsAuthentication = computed(() => session.initialized && !session.user && !session.error)
@@ -68,6 +71,61 @@ const generationFocus = computed(() => String(route.query.generationId || ''))
 const visibleAssets = computed(() => section.value === 'purchases' ? assets.value.filter((item) => item.sourceType === 'purchase') : assets.value)
 const selectedGenerations = computed(() => generations.value.filter(item => selectedGenerationIDs.value.includes(item.id)))
 const allGenerationsSelected = computed(() => generations.value.length > 0 && selectedGenerations.value.length === generations.value.length)
+const pointUsage = computed(() => points.value?.account.lifetimeSpentPoints || 0)
+const pointBalanceTrend = computed(() => {
+  if (!points.value) return []
+  const entries = [...points.value.entries].sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))
+  const today = new Date()
+  let balance = points.value.account.balancePoints
+  let entryIndex = 0
+  const snapshots: Array<{ label: string; value: number }> = []
+  for (let offset = 0; offset < 7; offset += 1) {
+    const dayStart = new Date(today)
+    dayStart.setHours(0, 0, 0, 0)
+    dayStart.setDate(dayStart.getDate() - offset)
+    const nextDay = new Date(dayStart)
+    nextDay.setDate(nextDay.getDate() + 1)
+    snapshots.push({
+      label: new Intl.DateTimeFormat(locale.value, { month: 'numeric', day: 'numeric' }).format(dayStart),
+      value: Math.max(0, balance),
+    })
+    while (entryIndex < entries.length) {
+      const entry = entries[entryIndex]
+      if (!entry) break
+      const entryTime = Date.parse(entry.createdAt)
+      if (entryTime < dayStart.getTime()) break
+      if (entryTime < nextDay.getTime()) balance += entry.direction === 'debit' ? entry.amountPoints : -entry.amountPoints
+      entryIndex += 1
+    }
+  }
+  return snapshots.reverse()
+})
+const pointTrendGeometry = computed(() => {
+  const values = pointBalanceTrend.value.map(item => item.value)
+  if (!values.length) return { line: '', area: '', dots: [] as Array<{ x: number; y: number }>, grid: [] as Array<{ y: number; value: number }> }
+  const rawMin = Math.min(...values)
+  const rawMax = Math.max(...values)
+  const range = Math.max(rawMax - rawMin, Math.max(rawMax * 0.08, 100))
+  const min = Math.max(0, rawMin - range * 0.18)
+  const max = Math.max(min + 1, rawMax + range * 0.18)
+  const left = 54
+  const right = 676
+  const top = 20
+  const bottom = 166
+  const coordinates = values.map((value, index) => {
+    const x = values.length === 1 ? (left + right) / 2 : left + (index / (values.length - 1)) * (right - left)
+    const y = bottom - ((value - min) / (max - min)) * (bottom - top)
+    return { x, y }
+  })
+  const line = coordinates.map(point => `${point.x.toFixed(2)},${point.y.toFixed(2)}`).join(' ')
+  const area = coordinates.length ? `M ${left} ${bottom} L ${line.replaceAll(',', ' ')} L ${right} ${bottom} Z` : ''
+  return {
+    line,
+    area,
+    dots: coordinates,
+    grid: [max, (max + min) / 2, min].map((value, index) => ({ y: top + index * ((bottom - top) / 2), value: Math.round(value) })),
+  }
+})
 const sectionMeta = computed(() => ({
   assets: { title: t('workspace.assets'), summary: assetView.value === 'saved' ? t('workspace.savedSummary') : t('workspace.assetsSummary'), count: assetView.value === 'saved' ? savedWorks.value.length : visibleAssets.value.length, icon: Boxes, actionIcon: Upload, actionLabel: t('workspace.uploadAsset'), actionTo: '' },
   generations: { title: t('workspace.generations'), summary: t('workspace.generationsSummary'), count: generations.value.length, icon: Clock3, actionIcon: Plus, actionLabel: t('actions.newCreation'), actionTo: '/create/image' },
@@ -89,6 +147,11 @@ function orderEventLabel(status: string) {
 function orderPaymentModeLabel(order: Order) {
   if (order.paymentMode !== 'stripe') return t('workspace.localTestMode')
   return t(order.realCharge ? 'workspace.stripeLiveMode' : 'workspace.stripeTestMode')
+}
+
+function generationStatusLabel(item: Generation) {
+  if (item.mode === 'chat' && item.status === 'succeeded') return t('create.studio.chatCompleted')
+  return t(`generation.status.${item.status}`)
 }
 
 function generationListQuery(cursor = '') {
@@ -142,6 +205,22 @@ async function loadBillingStatement(cursor = '') {
   billingNextCursor.value = page.nextCursor || null
 }
 
+async function purchasePlan(planId: string) {
+  if (subscriptionAction.value) return
+  subscriptionAction.value = planId
+  error.value = ''
+  success.value = ''
+  try {
+    points.value = await api.purchaseSubscription(planId)
+    billing.value = await api.billingStatement()
+    success.value = t('workspace.subscriptionPurchased')
+  } catch (reason) {
+    error.value = messageFrom(reason)
+  } finally {
+    subscriptionAction.value = ''
+  }
+}
+
 async function applyBillingFilters() {
   const query: Record<string, string> = {}
   if (billingDirection.value) query.direction = billingDirection.value
@@ -189,7 +268,7 @@ async function applyGenerationFilters() {
   if (generationStatus.value) query.status = generationStatus.value
   if (generationDateFrom.value) query.dateFrom = generationDateFrom.value
   if (generationDateTo.value) query.dateTo = generationDateTo.value
-  await router.push({ path: '/workspace/generations', query })
+  await router.push({ path: '/create/image', query })
 }
 
 async function clearGenerationFilters() {
@@ -197,7 +276,7 @@ async function clearGenerationFilters() {
   generationStatus.value = ''
   generationDateFrom.value = ''
   generationDateTo.value = ''
-  await router.push('/workspace/generations')
+  await router.push('/create/image')
 }
 
 async function load() {
@@ -236,7 +315,8 @@ async function load() {
       tasks.value = (await api.listTasks({ mine: true })).items
     } else if (section.value === 'billing') {
       syncBillingFilters()
-      await loadBillingStatement()
+      const [, pointOverview] = await Promise.all([loadBillingStatement(), api.pointOverview()])
+      points.value = pointOverview
     }
     selectedAsset.value = null
   } catch (reason) {
@@ -350,8 +430,9 @@ async function changeGeneration(item: Generation, action: 'cancel' | 'retry') {
     await (action === 'cancel'
       ? api.cancelGeneration(item.id, 'Cancelled from personal generation history.')
       : api.retryGeneration(item.id))
-    const [, statement] = await Promise.all([loadGenerationList(), api.billingStatement()])
+    const [, statement, pointOverview] = await Promise.all([loadGenerationList(), api.billingStatement(), api.pointOverview()])
     billing.value = statement
+    points.value = pointOverview
     success.value = action === 'cancel' ? t('workspace.generationCancelled') : t('workspace.generationRetried')
   } catch (reason) {
     error.value = messageFrom(reason)
@@ -604,7 +685,7 @@ onMounted(() => void load())
     </template>
 
     <template v-else>
-      <header class="workspace-header">
+      <header v-if="section !== 'billing'" class="workspace-header">
         <div>
           <span class="status-label"><component :is="sectionMeta.icon" :size="14" />{{ t('workspace.workbenchLabel') }} · {{ t('workspace.itemCount', { count: sectionMeta.count }) }}</span>
           <h1>{{ sectionMeta.title }}</h1><p>{{ sectionMeta.summary }}</p>
@@ -618,9 +699,6 @@ onMounted(() => void load())
       <nav class="section-tabs workspace-switcher" :aria-label="t('workspace.sectionsLabel')">
         <RouterLink to="/workspace/assets" :class="{ active: section === 'assets' }">
           <Boxes :size="17" />{{ t('workspace.assets') }}
-        </RouterLink>
-        <RouterLink to="/workspace/generations" :class="{ active: section === 'generations' }">
-          <Clock3 :size="17" />{{ t('workspace.generations') }}
         </RouterLink>
         <RouterLink to="/workspace/purchases" :class="{ active: section === 'purchases' }">
           <ShoppingBag :size="17" />{{ t('workspace.purchases') }}
@@ -636,11 +714,12 @@ onMounted(() => void load())
         </RouterLink>
       </nav>
 
-      <nav v-if="section === 'assets'" class="asset-view-switcher" :aria-label="t('workspace.assetViewsLabel')">
-        <RouterLink to="/workspace/assets" :class="{ active: assetView === 'owned' }">
+      <nav v-if="section === 'assets'" v-motion-tabs class="asset-view-switcher t-tabs" role="tablist" :aria-label="t('workspace.assetViewsLabel')">
+        <span class="t-tabs-pill" aria-hidden="true"></span>
+        <RouterLink class="t-tab" role="tab" to="/workspace/assets" :aria-selected="assetView === 'owned'" :class="{ active: assetView === 'owned' }">
           <Boxes :size="16" />{{ t('workspace.ownedAssets') }}
         </RouterLink>
-        <RouterLink to="/workspace/assets?view=saved" :class="{ active: assetView === 'saved' }">
+        <RouterLink class="t-tab" role="tab" to="/workspace/assets?view=saved" :aria-selected="assetView === 'saved'" :class="{ active: assetView === 'saved' }">
           <Bookmark :size="16" />{{ t('workspace.savedWorks') }}
         </RouterLink>
       </nav>
@@ -792,11 +871,11 @@ onMounted(() => void load())
             <Clock3 :size="20" />
           </div><div class="generation-row-copy">
             <strong>{{ item.prompt }}</strong><span>{{ t(`create.modes.${item.mode}`) }} · {{ item.provider === 'local_test' ? t('status.localProvider') : item.provider }}</span>
-          </div><span class="generation-row-data model-cell"><small>{{ t('workspace.model') }}</small><strong>{{ item.modelName }}</strong></span><span class="generation-row-data created-cell"><small>{{ t('workspace.created') }}</small><strong>{{ date(item.createdAt) }}</strong></span><span class="generation-row-data cost-cell"><small>{{ t('workspace.cost') }}</small><strong>{{ formatCurrency(item.chargedCostCents, 'USD', locale) }}</strong></span><div class="generation-row-status" :data-status="item.status">
-            <strong>{{ t(`generation.status.${item.status}`) }}</strong><span>{{ item.progress }}%</span>
+          </div><span class="generation-row-data model-cell"><small>{{ t('workspace.model') }}</small><strong>{{ item.modelName }}</strong></span><span class="generation-row-data created-cell"><small>{{ t('workspace.created') }}</small><strong>{{ date(item.createdAt) }}</strong></span><span class="generation-row-data cost-cell"><small>{{ t('workspace.pointsUsed') }}</small><strong>{{ (item.chargedPoints || item.estimatedPoints).toLocaleString(locale) }} {{ t('workspace.pointsUnit') }}</strong></span><div class="generation-row-status" :data-status="item.status">
+            <strong>{{ generationStatusLabel(item) }}</strong><span>{{ item.progress }}%</span>
           </div><div class="generation-actions">
             <button class="icon-button" type="button" :disabled="generationAction === `${item.id}:favorite`" :aria-label="item.isFavorite ? t('workspace.unfavoriteGeneration') : t('workspace.favoriteGeneration')" :title="item.isFavorite ? t('workspace.unfavoriteGeneration') : t('workspace.favoriteGeneration')" @click="toggleGenerationFavorite(item)">
-              <Bookmark :size="16" :fill="item.isFavorite ? 'currentColor' : 'none'" />
+              <MotionFavoriteIcon :active="item.isFavorite" kind="bookmark" :size="16" />
             </button>
             <button v-if="item.actions.canCancel" class="icon-button" type="button" :disabled="generationAction === item.id" :aria-label="t('actions.cancel')" :title="t('actions.cancel')" @click="changeGeneration(item, 'cancel')">
               <Ban :size="16" />
@@ -877,34 +956,126 @@ onMounted(() => void load())
         </button>
       </div>
 
-      <div v-else-if="section === 'billing' && billing" class="billing-workspace">
-        <section class="billing-balance">
-          <span class="status-label"><ShieldCheck :size="14" />{{ t('workspace.localTestMode') }}</span>
-          <h2>{{ formatCurrency(billing.account.availableCents, billing.account.currency, locale) }}</h2>
-          <p>{{ t('workspace.availableCredits') }}</p>
-          <dl class="asset-facts">
-            <div><dt>{{ t('workspace.totalBalance') }}</dt><dd>{{ formatCurrency(billing.account.balanceCents, billing.account.currency, locale) }}</dd></div>
-            <div><dt>{{ t('workspace.reservedCredits') }}</dt><dd>{{ formatCurrency(billing.account.reservedCents, billing.account.currency, locale) }}</dd></div>
-            <div><dt>{{ t('workspace.paymentMode') }}</dt><dd>{{ t('workspace.localTestMode') }}</dd></div>
-          </dl>
-        </section>
-        <section class="billing-entries">
-          <h2>{{ t('workspace.statement') }}</h2>
+      <div v-else-if="section === 'billing' && billing && points" class="billing-dashboard">
+        <header class="billing-account-overview" aria-labelledby="billing-dashboard-title">
+          <div class="billing-account-heading">
+            <div>
+              <span class="wallet-kicker">{{ t('workspace.billing') }}</span>
+              <h1 id="billing-dashboard-title"><span class="billing-greeting-mark" aria-hidden="true">👋</span>{{ t('workspace.billingGreeting', { name: session.user?.displayName || points.currentSubscription?.planName || t('workspace.noActiveSubscription') }) }}</h1>
+              <p><ShieldCheck :size="15" />{{ t('workspace.billingAccountStatus') }}</p>
+            </div>
+          </div>
+          <img class="billing-account-art" src="/billing/account-overview.png" alt="" aria-hidden="true" />
+          <div class="billing-account-stats">
+            <article>
+              <span class="billing-stat-icon" data-tone="primary"><Coins :size="22" /></span>
+              <div><span>{{ t('workspace.currentBalance') }}</span><strong>{{ points.account.availablePoints.toLocaleString(locale) }}</strong><small>{{ t('workspace.availablePoints') }}</small></div>
+            </article>
+            <article>
+              <span class="billing-stat-icon" data-tone="success"><TrendingUp :size="22" /></span>
+              <div><span>{{ t('workspace.totalUsage') }}</span><strong>{{ pointUsage.toLocaleString(locale) }}</strong><small>{{ t('workspace.lifetimeUsage') }}</small></div>
+            </article>
+            <article>
+              <span class="billing-stat-icon" data-tone="wallet"><WalletCards :size="22" /></span>
+              <div><span>{{ t('workspace.walletBalance') }}</span><strong>{{ formatCurrency(billing.account.availableCents, billing.account.currency, locale) }}</strong><small>{{ t('workspace.subscriptionPaymentBalance') }}</small></div>
+            </article>
+          </div>
+        </header>
+
+        <div v-if="success" class="task-feedback success" role="status"><FileCheck2 :size="18" />{{ success }}</div>
+
+        <div class="billing-dashboard-columns">
+          <div class="billing-dashboard-column">
+            <section class="billing-dashboard-panel billing-usage-panel" aria-labelledby="billing-trend-title">
+              <header class="billing-panel-heading">
+                <div><h2 id="billing-trend-title">{{ t('workspace.pointsBalanceTrend') }}</h2><p>{{ t('workspace.trendBasedOnRecentEntries') }}</p></div>
+                <span class="billing-range-chip">{{ t('workspace.recentSevenDays') }}</span>
+              </header>
+              <div class="billing-trend-chart" role="img" :aria-label="t('workspace.pointsBalanceTrend')">
+                <svg viewBox="0 0 700 184" preserveAspectRatio="none" aria-hidden="true">
+                  <defs><linearGradient id="billing-chart-fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="currentColor" stop-opacity=".2" /><stop offset="100%" stop-color="currentColor" stop-opacity="0" /></linearGradient></defs>
+                  <g class="billing-chart-grid">
+                    <template v-for="line in pointTrendGeometry.grid" :key="line.y">
+                      <line x1="54" x2="676" :y1="line.y" :y2="line.y" />
+                      <text x="0" :y="line.y + 4">{{ line.value.toLocaleString(locale) }}</text>
+                    </template>
+                  </g>
+                  <path class="billing-chart-area" :d="pointTrendGeometry.area" />
+                  <polyline class="billing-chart-line" :points="pointTrendGeometry.line" />
+                  <circle v-for="point in pointTrendGeometry.dots" :key="`${point.x}-${point.y}`" class="billing-chart-dot" :cx="point.x" :cy="point.y" r="4" />
+                </svg>
+                <div class="billing-chart-labels"><span v-for="item in pointBalanceTrend" :key="item.label">{{ item.label }}</span></div>
+                <div class="billing-chart-current"><strong>{{ points.account.balancePoints.toLocaleString(locale) }}</strong><span>{{ t('workspace.pointsUnit') }}</span></div>
+              </div>
+              <div class="billing-usage-facts">
+                <div><Coins :size="18" /><span>{{ t('workspace.pointsGranted', { count: (points.currentSubscription?.grantedPoints || 0).toLocaleString(locale) }) }}</span></div>
+                <div><Clock3 :size="18" /><span>{{ t('workspace.reservedCredits') }} · {{ formatCurrency(billing.account.reservedCents, billing.account.currency, locale) }}</span></div>
+                <div><ShieldCheck :size="18" /><span>{{ t('workspace.localTestMode') }}</span></div>
+              </div>
+              <div class="billing-environment-note"><ShieldCheck :size="17" /><p>{{ t('workspace.localTestWalletSummary') }}</p></div>
+            </section>
+
+            <section class="billing-dashboard-panel billing-wallet-panel" aria-labelledby="billing-wallet-title">
+              <div class="billing-wallet-visual">
+                <header><span class="wallet-kicker">{{ t('workspace.walletSectionLabel') }}</span><h2 id="billing-wallet-title">{{ t('workspace.addFunds') }}</h2><p>{{ t('workspace.addFundsSummary') }}</p></header>
+                <div class="billing-wallet-balance"><span>{{ t('workspace.availableCredits') }}</span><strong>{{ formatCurrency(billing.account.availableCents, billing.account.currency, locale) }}</strong><small>{{ t('workspace.localTestWallet') }}</small></div>
+              </div>
+              <div class="billing-wallet-summary-details">
+                <dl class="billing-wallet-details">
+                  <div><dt>{{ t('workspace.totalBalance') }}</dt><dd>{{ formatCurrency(billing.account.balanceCents, billing.account.currency, locale) }}</dd></div>
+                  <div><dt>{{ t('workspace.reservedCredits') }}</dt><dd>{{ formatCurrency(billing.account.reservedCents, billing.account.currency, locale) }}</dd></div>
+                  <div><dt>{{ t('workspace.paymentMode') }}</dt><dd>{{ t('workspace.localTestMode') }}</dd></div>
+                </dl>
+                <RouterLink class="command-button secondary billing-support-link" to="/support">{{ t('workspace.contactSupportForCredits') }}<ArrowRight :size="16" /></RouterLink>
+              </div>
+            </section>
+          </div>
+
+          <div class="billing-dashboard-column">
+            <section class="billing-dashboard-panel billing-plans-panel" aria-labelledby="billing-plans-title">
+              <header class="billing-panel-heading"><div><h2 id="billing-plans-title">{{ t('workspace.subscription') }}</h2><p>{{ t('workspace.subscriptionSummary') }}</p></div><ShieldCheck :size="21" /></header>
+              <div v-if="points.currentSubscription" class="billing-current-plan">
+                <span class="plan-mark">{{ t('workspace.planMark') }}</span>
+                <div><strong>{{ points.currentSubscription.planName }}</strong><small>{{ t('workspace.planRenewsOn', { date: date(points.currentSubscription.currentPeriodEnd) }) }}</small></div>
+                <span class="billing-plan-status"><ShieldCheck :size="14" />{{ t('workspace.activePlan') }}</span>
+                <ul>
+                  <li><Coins :size="15" />{{ t('workspace.pointsGranted', { count: points.currentSubscription.grantedPoints.toLocaleString(locale) }) }}</li>
+                  <li><ShieldCheck :size="15" />{{ t('workspace.planFeatureOne') }}</li>
+                </ul>
+              </div>
+              <div class="billing-plan-list">
+                <article v-for="plan in points.plans" :key="plan.id" :class="{ current: points.currentSubscription?.planId === plan.id }">
+                  <div class="billing-plan-copy"><strong>{{ plan.name }}</strong><small>{{ plan.description }}</small><span>{{ t('workspace.modelsIncluded', { count: plan.modelIds.length }) }}</span></div>
+                  <div class="billing-plan-price"><strong>{{ plan.includedPoints.toLocaleString(locale) }} {{ t('workspace.pointsUnit') }}</strong><small>{{ formatCurrency(plan.priceCents, plan.currency, locale) }} / {{ plan.billingPeriodDays }} {{ t('workspace.days') }}</small></div>
+                  <button class="command-button secondary" type="button" :disabled="subscriptionAction !== '' || points.currentSubscription?.planId === plan.id" @click="purchasePlan(plan.id)">
+                    <LoaderCircle v-if="subscriptionAction === plan.id" class="spin" :size="15" /><ShieldCheck v-else-if="points.currentSubscription?.planId === plan.id" :size="15" /><Coins v-else :size="15" />
+                    {{ points.currentSubscription?.planId === plan.id ? t('workspace.currentPlan') : t('workspace.choosePlan') }}
+                  </button>
+                </article>
+              </div>
+            </section>
+
+            <section class="billing-dashboard-panel billing-point-ledger" aria-labelledby="billing-points-ledger-title">
+              <header class="billing-ledger-heading"><div><h2 id="billing-points-ledger-title">{{ t('workspace.pointStatement') }}</h2><p>{{ t('workspace.recentPointEntries') }}</p></div><span>{{ points.entries.length }} {{ t('workspace.entriesLoaded') }}</span></header>
+              <article v-for="entry in points.entries" :key="entry.id" class="billing-entry">
+                <span :data-direction="entry.direction">{{ entry.direction === 'credit' ? '+' : '-' }}</span>
+                <div><strong>{{ entry.description }}</strong><small>{{ date(entry.createdAt) }} · {{ t(`workspace.pointEntryTypes.${entry.entryType}`) }}</small></div>
+                <strong>{{ entry.direction === 'credit' ? '+' : '-' }}{{ entry.amountPoints.toLocaleString(locale) }} {{ t('workspace.pointsUnit') }}</strong>
+                <small>{{ entry.balanceAfterPoints.toLocaleString(locale) }}</small>
+              </article>
+            </section>
+          </div>
+        </div>
+
+        <section class="billing-dashboard-panel billing-wallet-ledger" aria-labelledby="billing-wallet-ledger-title">
+          <header class="billing-ledger-heading"><div><span class="wallet-kicker">{{ t('workspace.walletSectionLabel') }}</span><h2 id="billing-wallet-ledger-title">{{ t('workspace.walletStatement') }}</h2></div><span>{{ billing.entries.length }} {{ t('workspace.entriesLoaded') }}</span></header>
           <form class="billing-filters" @submit.prevent="applyBillingFilters">
-            <label><span>{{ t('workspace.billingDirection') }}</span><select v-model="billingDirection">
-              <option value="">{{ t('workspace.allDirections') }}</option><option value="debit">{{ t('workspace.billingDirections.debit') }}</option><option value="credit">{{ t('workspace.billingDirections.credit') }}</option>
-            </select></label>
-            <label><span>{{ t('workspace.billingEntryType') }}</span><select v-model="billingEntryType">
-              <option value="">{{ t('workspace.allEntryTypes') }}</option><option v-for="entryType in billingEntryTypes" :key="entryType" :value="entryType">{{ t(`workspace.billingEntryTypes.${entryType}`) }}</option>
-            </select></label>
+            <label><span>{{ t('workspace.billingDirection') }}</span><select v-model="billingDirection"><option value="">{{ t('workspace.allDirections') }}</option><option value="debit">{{ t('workspace.billingDirections.debit') }}</option><option value="credit">{{ t('workspace.billingDirections.credit') }}</option></select></label>
+            <label><span>{{ t('workspace.billingEntryType') }}</span><select v-model="billingEntryType"><option value="">{{ t('workspace.allEntryTypes') }}</option><option v-for="entryType in billingEntryTypes" :key="entryType" :value="entryType">{{ t(`workspace.billingEntryTypes.${entryType}`) }}</option></select></label>
             <label><span>{{ t('workspace.dateFrom') }}</span><input v-model="billingDateFrom" type="date" /></label>
             <label><span>{{ t('workspace.dateTo') }}</span><input v-model="billingDateTo" type="date" /></label>
-            <button class="command-button secondary" type="submit">
-              <ListFilter :size="16" />{{ t('actions.applyFilters') }}
-            </button>
-            <button class="icon-button" type="button" :aria-label="t('actions.clearFilters')" :title="t('actions.clearFilters')" @click="clearBillingFilters">
-              <X :size="16" />
-            </button>
+            <button class="command-button secondary" type="submit"><ListFilter :size="16" />{{ t('actions.applyFilters') }}</button>
+            <button class="icon-button" type="button" :aria-label="t('actions.clearFilters')" :title="t('actions.clearFilters')" @click="clearBillingFilters"><X :size="16" /></button>
           </form>
           <article v-for="entry in billing.entries" :key="entry.id" class="billing-entry">
             <span :data-direction="entry.direction">{{ entry.direction === 'credit' ? '+' : '-' }}</span>
@@ -912,12 +1083,8 @@ onMounted(() => void load())
             <strong>{{ formatCurrency(entry.amountCents, entry.currency, locale) }}</strong>
             <small>{{ formatCurrency(entry.balanceAfterCents, entry.currency, locale) }}</small>
           </article>
-          <div v-if="!billing.entries.length" class="workspace-empty">
-            <WalletCards :size="22" /><h2>{{ t('workspace.noBillingEntries') }}</h2>
-          </div>
-          <button v-if="billingNextCursor" class="command-button secondary billing-load-more" type="button" :disabled="billingLoadingMore" @click="loadMoreBilling">
-            <LoaderCircle v-if="billingLoadingMore" class="spin" :size="16" /><Plus v-else :size="16" />{{ t('actions.loadMore') }}
-          </button>
+          <div v-if="!billing.entries.length" class="workspace-empty"><WalletCards :size="22" /><h2>{{ t('workspace.noBillingEntries') }}</h2></div>
+          <button v-if="billingNextCursor" class="command-button secondary billing-load-more" type="button" :disabled="billingLoadingMore" @click="loadMoreBilling"><LoaderCircle v-if="billingLoadingMore" class="spin" :size="16" /><Plus v-else :size="16" />{{ t('actions.loadMore') }}</button>
         </section>
       </div>
 

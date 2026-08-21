@@ -2,7 +2,6 @@ package httpapi_test
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -96,8 +95,7 @@ func TestAdminSupportAndRiskDirectoriesTraverseBeyondLegacyWindows(t *testing.T)
 	}
 	var updatedSupport support.Case
 	response := requestJSON(t, adminClient, http.MethodPatch, server.URL+"/api/v1/admin/support/cases/"+oldestSupport.ID.String(), map[string]any{
-		"status": "in_review", "resolutionCode": "", "reason": "CP37 verifies exact operation retrieval outside the former support window.", "expectedVersion": 1, "confirmed": true,
-	}, &updatedSupport)
+		"status": "in_review", "resolutionCode": "", "expectedVersion": 1}, &updatedSupport)
 	if response.StatusCode != http.StatusOK || updatedSupport.ID != oldestSupport.ID || updatedSupport.Status != "in_review" {
 		t.Fatalf("oldest support operation failed: status=%d item=%#v", response.StatusCode, updatedSupport)
 	}
@@ -140,8 +138,7 @@ func TestAdminSupportAndRiskDirectoriesTraverseBeyondLegacyWindows(t *testing.T)
 	}
 	var reviewed admin.RiskSignal
 	response = requestJSON(t, adminClient, http.MethodPost, server.URL+"/api/v1/admin/risk/signals/"+oldestRisk.ID.String()+"/review", map[string]any{
-		"decision": "monitor", "reason": fmt.Sprintf("CP37 exact review for signal %s outside the former risk window.", oldestRisk.ID), "expectedVersion": 1, "confirmed": true,
-	}, &reviewed)
+		"decision": "monitor", "expectedVersion": 1}, &reviewed)
 	if response.StatusCode != http.StatusOK || reviewed.ID != oldestRisk.ID || reviewed.Status != "reviewing" {
 		t.Fatalf("oldest risk operation failed: status=%d item=%#v", response.StatusCode, reviewed)
 	}

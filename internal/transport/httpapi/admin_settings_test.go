@@ -27,7 +27,7 @@ func TestAdminSystemSettingsHTTPContract(t *testing.T) {
 	if response := requestJSON(t, memberClient, http.MethodGet, server.URL+"/api/v1/admin/settings", nil, nil); response.StatusCode != http.StatusForbidden {
 		t.Fatalf("member accessed settings: %d", response.StatusCode)
 	}
-	input := map[string]any{"name": "Registration maintenance", "registrationsEnabled": false, "generationsEnabled": true, "publishingEnabled": true, "marketplaceCheckoutEnabled": true, "taskCreationEnabled": true, "publicNotice": "New registration is paused for a bounded Local Test maintenance window.", "reason": "Verify the registration gate through the administrator HTTP contract.", "expectedVersion": 1, "confirmed": true}
+	input := map[string]any{"name": "Registration maintenance", "registrationsEnabled": false, "generationsEnabled": true, "publishingEnabled": true, "marketplaceCheckoutEnabled": true, "taskCreationEnabled": true, "publicNotice": "New registration is paused for a bounded Local Test maintenance window.", "expectedVersion": 1}
 	var updated admin.SystemSettingPolicy
 	response := requestJSON(t, adminClient, http.MethodPost, server.URL+"/api/v1/admin/settings", input, &updated)
 	if response.StatusCode != http.StatusOK || updated.Current.Version != 2 || updated.Current.RegistrationsEnabled {

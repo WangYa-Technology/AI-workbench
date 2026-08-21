@@ -12,6 +12,15 @@ import (
 	"github.com/hcai-chat/hcai-chat/internal/platform/httputil"
 )
 
+func (s *Server) getCommunityPost(w http.ResponseWriter, r *http.Request) {
+	postID, ok := pathUUID(w, r, "postID")
+	if !ok {
+		return
+	}
+	item, err := s.community.GetPostForViewer(r.Context(), s.optionalViewer(r), postID)
+	s.writeCommunityResult(w, r, item, err, http.StatusOK)
+}
+
 func (s *Server) listComments(w http.ResponseWriter, r *http.Request) {
 	postID, ok := pathUUID(w, r, "postID")
 	if !ok {

@@ -106,8 +106,7 @@ func TestIdentityEmailHTTPContract(t *testing.T) {
 		t.Fatalf("modified Admin email cursor was accepted: %d", response.StatusCode)
 	}
 	response = requestJSON(t, adminClient, http.MethodPost, server.URL+"/api/v1/admin/email-actions/"+actionID.String()+"/retry", map[string]any{
-		"expectedVersion": deadLetters.Items[0].Version, "reason": "Local mailbox delivery was inspected and recovered", "confirmed": true,
-	}, nil)
+		"expectedVersion": deadLetters.Items[0].Version}, nil)
 	if response.StatusCode != http.StatusAccepted {
 		t.Fatalf("admin identity email retry failed: %d", response.StatusCode)
 	}

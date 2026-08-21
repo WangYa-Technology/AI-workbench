@@ -98,14 +98,16 @@ type Transition struct {
 	Confirmed       bool   `json:"confirmed"`
 }
 
+type AdminTransition struct {
+	ExpectedVersion int `json:"expectedVersion"`
+}
+
 type ControlUpdate struct {
-	Enabled            bool   `json:"enabled"`
-	MaxServiceAccounts int    `json:"maxServiceAccounts"`
-	MaxActiveKeys      int    `json:"maxActiveKeys"`
-	DefaultTTLDays     int    `json:"defaultTtlDays"`
-	ExpectedVersion    int    `json:"expectedVersion"`
-	Reason             string `json:"reason"`
-	Confirmed          bool   `json:"confirmed"`
+	Enabled            bool `json:"enabled"`
+	MaxServiceAccounts int  `json:"maxServiceAccounts"`
+	MaxActiveKeys      int  `json:"maxActiveKeys"`
+	DefaultTTLDays     int  `json:"defaultTtlDays"`
+	ExpectedVersion    int  `json:"expectedVersion"`
 }
 
 type Principal struct {
@@ -378,8 +380,8 @@ func (s *Service) RevokeAccount(ctx context.Context, ownerID, accountID uuid.UUI
 	return item, nil
 }
 
-func (s *Service) AdminRevokeKey(ctx context.Context, actorID, keyID uuid.UUID, input Transition, requestID string) (APIKey, error) {
-	if !validTransition(input) {
+func (s *Service) AdminRevokeKey(ctx context.Context, _ uuid.UUID, keyID uuid.UUID, input AdminTransition, _ string) (APIKey, error) {
+	if input.ExpectedVersion < 1 {
 		return APIKey{}, ErrInvalid
 	}
 	tx, err := s.pool.Begin(ctx)
@@ -396,17 +398,14 @@ func (s *Service) AdminRevokeKey(ctx context.Context, actorID, keyID uuid.UUID, 
 	if err != nil {
 		return APIKey{}, err
 	}
-	if err := audit(ctx, tx, actorID, "admin.developer_api_key_revoked", "developer_api_key", keyID, input.Reason, requestID, map[string]any{"serviceAccountId": accountID, "publicPrefix": item.PublicPrefix}); err != nil {
-		return APIKey{}, err
-	}
 	if err := tx.Commit(ctx); err != nil {
 		return APIKey{}, err
 	}
 	return item, nil
 }
 
-func (s *Service) AdminRevokeAccount(ctx context.Context, actorID, accountID uuid.UUID, input Transition, requestID string) (ServiceAccount, error) {
-	if !validTransition(input) {
+func (s *Service) AdminRevokeAccount(ctx context.Context, _ uuid.UUID, accountID uuid.UUID, input AdminTransition, _ string) (ServiceAccount, error) {
+	if input.ExpectedVersion < 1 {
 		return ServiceAccount{}, ErrInvalid
 	}
 	tx, err := s.pool.Begin(ctx)
@@ -425,9 +424,6 @@ func (s *Service) AdminRevokeAccount(ctx context.Context, actorID, accountID uui
 	if _, err := tx.Exec(ctx, `UPDATE developer_api_keys SET status='revoked',revoked_at=now(),version=version+1 WHERE service_account_id=$1 AND status='active'`, accountID); err != nil {
 		return ServiceAccount{}, err
 	}
-	if err := audit(ctx, tx, actorID, "admin.developer_service_account_revoked", "developer_service_account", accountID, input.Reason, requestID, map[string]any{"ownerId": item.OwnerID}); err != nil {
-		return ServiceAccount{}, err
-	}
 	if err := tx.Commit(ctx); err != nil {
 		return ServiceAccount{}, err
 	}
@@ -435,8 +431,8 @@ func (s *Service) AdminRevokeAccount(ctx context.Context, actorID, accountID uui
 	return item, nil
 }
 
-func (s *Service) UpdateControl(ctx context.Context, actorID uuid.UUID, input ControlUpdate, requestID string) (Control, error) {
-	if !input.Confirmed || len(strings.TrimSpace(input.Reason)) < 10 || input.ExpectedVersion < 1 || input.MaxServiceAccounts < 1 || input.MaxServiceAccounts > 20 || input.MaxActiveKeys < 1 || input.MaxActiveKeys > 10 || input.DefaultTTLDays < 1 || input.DefaultTTLDays > 365 {
+func (s *Service) UpdateControl(ctx context.Context, _ uuid.UUID, input ControlUpdate, _ string) (Control, error) {
+	if input.ExpectedVersion < 1 || input.MaxServiceAccounts < 1 || input.MaxServiceAccounts > 20 || input.MaxActiveKeys < 1 || input.MaxActiveKeys > 10 || input.DefaultTTLDays < 1 || input.DefaultTTLDays > 365 {
 		return Control{}, ErrInvalid
 	}
 	tx, err := s.pool.Begin(ctx)
@@ -450,9 +446,6 @@ func (s *Service) UpdateControl(ctx context.Context, actorID uuid.UUID, input Co
 		return Control{}, ErrConflict
 	}
 	if err != nil {
-		return Control{}, err
-	}
-	if err := audit(ctx, tx, actorID, "admin.developer_access_updated", "developer_access_control", uuid.Nil, input.Reason, requestID, map[string]any{"enabled": item.Enabled, "version": item.Version, "maxServiceAccounts": item.MaxServiceAccounts, "maxActiveKeys": item.MaxActiveKeys, "defaultTtlDays": item.DefaultTTLDays}); err != nil {
 		return Control{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {

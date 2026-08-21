@@ -39,6 +39,7 @@ var (
 
 type Generation struct {
 	ID                  uuid.UUID              `json:"id"`
+	ConversationID      *uuid.UUID             `json:"conversationId,omitempty"`
 	Mode                string                 `json:"mode"`
 	Provider            string                 `json:"provider"`
 	ModelName           string                 `json:"modelName"`
@@ -48,6 +49,8 @@ type Generation struct {
 	Progress            int                    `json:"progress"`
 	EstimatedCostCents  int                    `json:"estimatedCostCents"`
 	ChargedCostCents    int                    `json:"chargedCostCents"`
+	EstimatedPoints     int64                  `json:"estimatedPoints"`
+	ChargedPoints       int64                  `json:"chargedPoints"`
 	ProviderUsage       *ProviderUsageEvidence `json:"providerUsage,omitempty"`
 	OutputAssetID       *uuid.UUID             `json:"outputAssetId,omitempty"`
 	OutputMediaURL      *string                `json:"outputMediaUrl,omitempty"`
@@ -78,6 +81,29 @@ type GenerationParameters struct {
 	ResponseLength  string `json:"responseLength,omitempty"`
 }
 
+func pointMeterInput(prompt string, parameters GenerationParameters) billing.MeterInput {
+	return billing.MeterInput{
+		PromptCharacters: len([]rune(prompt)), ResponseLength: parameters.ResponseLength,
+		AspectRatio: parameters.AspectRatio, DurationSeconds: parameters.DurationSeconds, ImageCount: 1,
+	}
+}
+
+func pointUsageMetrics(output ProviderOutput, parameters GenerationParameters) billing.UsageMetrics {
+	usage := billing.UsageMetrics{DurationSeconds: parameters.DurationSeconds, ImageCount: 1}
+	if output.Width != nil {
+		usage.Width = *output.Width
+	}
+	if output.Height != nil {
+		usage.Height = *output.Height
+	}
+	if output.Usage != nil {
+		usage.InputTokens = output.Usage.InputTokens
+		usage.OutputTokens = output.Usage.OutputTokens
+		usage.ProviderReported = true
+	}
+	return usage
+}
+
 // ProviderUsageEvidence is an owner-safe meter projection. It is usage data,
 // not a Provider invoice or a claim about the final external monetary charge.
 type ProviderUsageEvidence struct {
@@ -103,17 +129,36 @@ type GenerationActions struct {
 }
 
 type GenerationListInput struct {
-	Mode     string
-	Status   string
-	DateFrom *time.Time
-	DateTo   *time.Time
-	Cursor   string
-	Limit    int
+	ConversationID *uuid.UUID
+	Mode           string
+	Status         string
+	DateFrom       *time.Time
+	DateTo         *time.Time
+	Cursor         string
+	Limit          int
 }
 
 type GenerationPage struct {
 	Items      []Generation `json:"items"`
 	NextCursor *string      `json:"nextCursor,omitempty"`
+}
+
+type Conversation struct {
+	ID                 uuid.UUID  `json:"id"`
+	Title              string     `json:"title"`
+	Modes              []string   `json:"modes"`
+	GenerationCount    int        `json:"generationCount"`
+	LatestGenerationAt *time.Time `json:"latestGenerationAt,omitempty"`
+	CreatedAt          time.Time  `json:"createdAt"`
+	UpdatedAt          time.Time  `json:"updatedAt"`
+}
+
+type ConversationPage struct {
+	Items []Conversation `json:"items"`
+}
+
+type ConversationCreateInput struct {
+	Title string `json:"title"`
 }
 
 type GenerationBatchInput struct {
@@ -138,9 +183,11 @@ type generationCursor struct {
 }
 
 type SubmitInput struct {
+	ConversationID     *uuid.UUID           `json:"conversationId"`
 	Mode               string               `json:"mode"`
 	Prompt             string               `json:"prompt"`
 	Parameters         GenerationParameters `json:"parameters"`
+	ModelID            *uuid.UUID           `json:"modelId"`
 	SourceWorkID       *uuid.UUID           `json:"sourceWorkId"`
 	SourceAssetID      *uuid.UUID           `json:"sourceAssetId"`
 	SourceAssetIDs     []uuid.UUID          `json:"sourceAssetIds"`
@@ -203,16 +250,18 @@ func (s *Service) SubmitCommand(ctx context.Context, ownerID uuid.UUID, input Su
 		return Generation{}, ErrIdempotency
 	}
 	requestHash := hashCommand(struct {
+		ConversationID     *uuid.UUID           `json:"conversationId"`
 		Mode               string               `json:"mode"`
 		Prompt             string               `json:"prompt"`
 		Parameters         GenerationParameters `json:"parameters"`
+		ModelID            *uuid.UUID           `json:"modelId"`
 		SourceWorkID       *uuid.UUID           `json:"sourceWorkId"`
 		SourceAssetID      *uuid.UUID           `json:"sourceAssetId"`
 		SourceAssetIDs     []uuid.UUID          `json:"sourceAssetIds"`
 		MaskAssetID        *uuid.UUID           `json:"maskAssetId"`
 		SourceTaskID       *uuid.UUID           `json:"sourceTaskId"`
 		ParentGenerationID *uuid.UUID           `json:"parentGenerationId"`
-	}{input.Mode, input.Prompt, input.Parameters, input.SourceWorkID, input.SourceAssetID, input.SourceAssetIDs, input.MaskAssetID, input.SourceTaskID, input.ParentGenerationID})
+	}{input.ConversationID, input.Mode, input.Prompt, input.Parameters, input.ModelID, input.SourceWorkID, input.SourceAssetID, input.SourceAssetIDs, input.MaskAssetID, input.SourceTaskID, input.ParentGenerationID})
 
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -228,21 +277,52 @@ func (s *Service) SubmitCommand(ctx context.Context, ownerID uuid.UUID, input Su
 	if err := systemsettings.RequireTx(ctx, tx, systemsettings.Generations); err != nil {
 		return Generation{}, err
 	}
+	if input.ConversationID == nil && input.ParentGenerationID != nil {
+		var inheritedConversationID *uuid.UUID
+		if err := tx.QueryRow(ctx, `SELECT conversation_id FROM generations WHERE id=$1 AND owner_id=$2`, *input.ParentGenerationID, ownerID).Scan(&inheritedConversationID); err == nil {
+			input.ConversationID = inheritedConversationID
+		}
+	}
+	conversationID, err := s.ensureConversationTx(ctx, tx, ownerID, input.ConversationID)
+	if err != nil {
+		return Generation{}, err
+	}
 
-	var provider, modelName string
+	var provider, modelName, providerProfileID string
+	providerModelID := input.ModelID
 	var estimatedCost, routeVersion, maxAttempts int
 	var routeRevisionID uuid.UUID
-	if err := tx.QueryRow(ctx, `
-		SELECT p.provider,p.model_name,p.estimated_cost_cents,r.id,r.version,r.max_attempts
+	var modelRaw []byte
+	if input.ModelID != nil {
+		if err := tx.QueryRow(ctx, `
+			SELECT c.runtime_provider,m.model_name,m.estimated_cost_cents,m.capabilities
+			FROM provider_config_models m JOIN provider_configs c ON c.id=m.provider_id
+			WHERE m.id=$1 AND m.mode=$2 AND m.archived_at IS NULL AND c.archived_at IS NULL AND m.admin_enabled=true AND c.admin_enabled=true`, *input.ModelID, input.Mode).Scan(&provider, &modelName, &estimatedCost, &modelRaw); errors.Is(err, pgx.ErrNoRows) {
+			return Generation{}, ErrProviderOff
+		} else if err != nil {
+			return Generation{}, fmt.Errorf("load selected provider model: %w", err)
+		}
+		providerProfileID = input.ModelID.String()
+	} else if err := tx.QueryRow(ctx, `
+		SELECT p.id,p.provider,p.model_name,p.estimated_cost_cents,p.capabilities,m.id
 		FROM model_route_state s JOIN model_route_revisions r ON r.id=s.active_revision_id
 		JOIN provider_profiles p ON p.id=r.provider_profile_id
-		WHERE s.mode=$1 AND p.admin_enabled=true`, input.Mode).Scan(&provider, &modelName, &estimatedCost, &routeRevisionID, &routeVersion, &maxAttempts); errors.Is(err, pgx.ErrNoRows) {
+		LEFT JOIN provider_config_models m ON m.id::text=p.id AND m.archived_at IS NULL
+		WHERE s.mode=$1 AND p.admin_enabled=true`, input.Mode).Scan(&providerProfileID, &provider, &modelName, &estimatedCost, &modelRaw, &providerModelID); errors.Is(err, pgx.ErrNoRows) {
 		return Generation{}, ErrProviderOff
 	} else if err != nil {
 		return Generation{}, fmt.Errorf("load provider capability: %w", err)
 	}
+	if err := tx.QueryRow(ctx, `SELECT r.id,r.version,r.max_attempts FROM model_route_state s JOIN model_route_revisions r ON r.id=s.active_revision_id WHERE s.mode=$1`, input.Mode).Scan(&routeRevisionID, &routeVersion, &maxAttempts); errors.Is(err, pgx.ErrNoRows) {
+		return Generation{}, ErrProviderOff
+	} else if err != nil {
+		return Generation{}, fmt.Errorf("load route evidence: %w", err)
+	}
 	if !s.runtimes.Available(provider, input.Mode, modelName) {
 		return Generation{}, ErrProviderOff
+	}
+	if err := validateModelCapabilities(input.Mode, ParseModelCapabilities(input.Mode, modelRaw), input.Parameters, len(input.SourceAssetIDs), input.MaskAssetID != nil); err != nil {
+		return Generation{}, err
 	}
 	if err := validateProviderRequest(provider, input.Mode, input.Parameters, len(input.SourceAssetIDs), input.MaskAssetID != nil); err != nil {
 		return Generation{}, err
@@ -308,8 +388,8 @@ func (s *Service) SubmitCommand(ctx context.Context, ownerID uuid.UUID, input Su
 		if err := tx.QueryRow(ctx, `
 			SELECT EXISTS(
 			  SELECT 1 FROM generations
-			  WHERE id=$1 AND owner_id=$2 AND mode='chat' AND status='succeeded'
-			)`, input.ParentGenerationID, ownerID).Scan(&validParent); err != nil {
+			  WHERE id=$1 AND owner_id=$2 AND conversation_id=$3 AND mode='chat' AND status='succeeded'
+			)`, input.ParentGenerationID, ownerID, conversationID).Scan(&validParent); err != nil {
 			return Generation{}, fmt.Errorf("check chat parent generation: %w", err)
 		}
 		if !validParent {
@@ -318,7 +398,8 @@ func (s *Service) SubmitCommand(ctx context.Context, ownerID uuid.UUID, input Su
 	}
 
 	id := uuid.New()
-	if err := billing.ReserveTx(ctx, tx, ownerID, id, estimatedCost, "USD"); err != nil {
+	estimatedPoints, pricingSnapshot, err := billing.ReserveGenerationPointsTx(ctx, tx, ownerID, id, providerModelID, providerProfileID, input.Mode, pointMeterInput(input.Prompt, input.Parameters))
+	if err != nil {
 		return Generation{}, err
 	}
 	var generation Generation
@@ -327,20 +408,23 @@ func (s *Service) SubmitCommand(ctx context.Context, ownerID uuid.UUID, input Su
 		return Generation{}, fmt.Errorf("encode generation parameters: %w", err)
 	}
 	err = tx.QueryRow(ctx, `
-		INSERT INTO generations(id,owner_id,mode,provider,model_name,prompt,parameters,status,progress,estimated_cost_cents,source_work_id,source_asset_id,mask_asset_id,source_task_id,parent_generation_id,model_route_revision_id,model_route_version)
-		VALUES($1,$2,$3,$4,$5,$6,$7,'queued',0,$8,$9,$10,$11,$12,$13,$14,$15)
-		RETURNING id,mode,provider,model_name,prompt,status,progress,estimated_cost_cents,charged_cost_cents,
+		INSERT INTO generations(id,owner_id,conversation_id,mode,provider,model_name,prompt,parameters,status,progress,estimated_cost_cents,provider_model_id,estimated_points,point_pricing_snapshot,source_work_id,source_asset_id,mask_asset_id,source_task_id,parent_generation_id,model_route_revision_id,model_route_version)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,'queued',0,0,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+		RETURNING id,conversation_id,mode,provider,model_name,prompt,status,progress,estimated_cost_cents,charged_cost_cents,estimated_points,charged_points,
 		          output_asset_id,output_text,source_work_id,source_asset_id,mask_asset_id,source_task_id,parent_generation_id,retry_of_generation_id,error_code,error_message,cancelled_at,cancel_reason,created_at,updated_at`,
-		id, ownerID, input.Mode, provider, modelName, input.Prompt, parametersJSON, estimatedCost,
+		id, ownerID, conversationID, input.Mode, provider, modelName, input.Prompt, parametersJSON, providerModelID, estimatedPoints, pricingSnapshot,
 		input.SourceWorkID, input.SourceAssetID, input.MaskAssetID, input.SourceTaskID, input.ParentGenerationID, routeRevisionID, routeVersion).Scan(
-		&generation.ID, &generation.Mode, &generation.Provider, &generation.ModelName, &generation.Prompt,
-		&generation.Status, &generation.Progress, &generation.EstimatedCostCents, &generation.ChargedCostCents,
+		&generation.ID, &generation.ConversationID, &generation.Mode, &generation.Provider, &generation.ModelName, &generation.Prompt,
+		&generation.Status, &generation.Progress, &generation.EstimatedCostCents, &generation.ChargedCostCents, &generation.EstimatedPoints, &generation.ChargedPoints,
 		&generation.OutputAssetID, &generation.OutputText, &generation.SourceWorkID, &generation.SourceAssetID, &generation.MaskAssetID, &generation.SourceTaskID, &generation.ParentGenerationID, &generation.RetryOfGenerationID,
 		&generation.ErrorCode, &generation.ErrorMessage, &generation.CancelledAt, &generation.CancelReason,
 		&generation.CreatedAt, &generation.UpdatedAt,
 	)
 	if err != nil {
 		return Generation{}, fmt.Errorf("insert generation: %w", err)
+	}
+	if err := touchConversationTx(ctx, tx, conversationID, input.Prompt); err != nil {
+		return Generation{}, fmt.Errorf("update conversation: %w", err)
 	}
 	generation.Parameters = input.Parameters
 	generation.SourceAssetIDs = append([]uuid.UUID(nil), input.SourceAssetIDs...)
@@ -360,8 +444,8 @@ func (s *Service) SubmitCommand(ctx context.Context, ownerID uuid.UUID, input Su
 		return Generation{}, fmt.Errorf("record generation submit command: %w", err)
 	}
 	if err := writeAudit(ctx, tx, ownerID, "generation.submitted", generation.ID, requestID, map[string]any{
-		"mode": generation.Mode, "provider": generation.Provider, "estimatedCostCents": generation.EstimatedCostCents, "modelRouteRevisionId": routeRevisionID, "modelRouteVersion": routeVersion,
-		"paymentMode": "local_test",
+		"mode": generation.Mode, "provider": generation.Provider, "estimatedPoints": generation.EstimatedPoints, "modelRouteRevisionId": routeRevisionID, "modelRouteVersion": routeVersion,
+		"paymentMode": "points",
 	}); err != nil {
 		return Generation{}, err
 	}
@@ -412,6 +496,9 @@ func (s *Service) Cancel(ctx context.Context, ownerID, generationID uuid.UUID, i
 			WHERE kind=$2 AND payload->>'generationId'=$1 AND status IN ('queued','running')`, generationID.String(), JobKind); err != nil {
 			return Generation{}, fmt.Errorf("cancel generation job: %w", err)
 		}
+		if err := billing.ReleaseGenerationPointsTx(ctx, tx, generationID, "cancelled: "+reason); err != nil {
+			return Generation{}, err
+		}
 		if err := billing.ReleaseGenerationTx(ctx, tx, generationID, "cancelled: "+reason); err != nil {
 			return Generation{}, err
 		}
@@ -449,9 +536,9 @@ func (s *Service) Retry(ctx context.Context, ownerID, generationID uuid.UUID, id
 	var actualOwner uuid.UUID
 	var status string
 	if err := tx.QueryRow(ctx, `
-		SELECT owner_id,mode,prompt,parameters,source_work_id,source_asset_id,mask_asset_id,source_task_id,parent_generation_id,status
+		SELECT owner_id,conversation_id,mode,prompt,parameters,source_work_id,source_asset_id,mask_asset_id,source_task_id,parent_generation_id,status
 		FROM generations WHERE id=$1 FOR UPDATE`, generationID).Scan(
-		&actualOwner, &input.Mode, &input.Prompt, &parametersJSON, &input.SourceWorkID, &input.SourceAssetID, &input.MaskAssetID, &input.SourceTaskID, &input.ParentGenerationID, &status); errors.Is(err, pgx.ErrNoRows) {
+		&actualOwner, &input.ConversationID, &input.Mode, &input.Prompt, &parametersJSON, &input.SourceWorkID, &input.SourceAssetID, &input.MaskAssetID, &input.SourceTaskID, &input.ParentGenerationID, &status); errors.Is(err, pgx.ErrNoRows) {
 		return Generation{}, ErrNotFound
 	} else if err != nil {
 		return Generation{}, fmt.Errorf("load generation retry source: %w", err)
@@ -472,14 +559,16 @@ func (s *Service) Retry(ctx context.Context, ownerID, generationID uuid.UUID, id
 	if err := systemsettings.RequireTx(ctx, tx, systemsettings.Generations); err != nil {
 		return Generation{}, err
 	}
-	var provider, modelName string
+	var provider, modelName, providerProfileID string
+	var providerModelID *uuid.UUID
 	var estimatedCost, routeVersion, maxAttempts int
 	var routeRevisionID uuid.UUID
 	if err := tx.QueryRow(ctx, `
-		SELECT p.provider,p.model_name,p.estimated_cost_cents,r.id,r.version,r.max_attempts
+		SELECT p.id,p.provider,p.model_name,p.estimated_cost_cents,r.id,r.version,r.max_attempts,m.id
 		FROM model_route_state s JOIN model_route_revisions r ON r.id=s.active_revision_id
 		JOIN provider_profiles p ON p.id=r.provider_profile_id
-		WHERE s.mode=$1 AND p.admin_enabled=true`, input.Mode).Scan(&provider, &modelName, &estimatedCost, &routeRevisionID, &routeVersion, &maxAttempts); errors.Is(err, pgx.ErrNoRows) {
+		LEFT JOIN provider_config_models m ON m.id::text=p.id AND m.archived_at IS NULL
+		WHERE s.mode=$1 AND p.admin_enabled=true`, input.Mode).Scan(&providerProfileID, &provider, &modelName, &estimatedCost, &routeRevisionID, &routeVersion, &maxAttempts, &providerModelID); errors.Is(err, pgx.ErrNoRows) {
 		return Generation{}, ErrProviderOff
 	} else if err != nil {
 		return Generation{}, fmt.Errorf("load retry provider: %w", err)
@@ -494,7 +583,8 @@ func (s *Service) Retry(ctx context.Context, ownerID, generationID uuid.UUID, id
 		return Generation{}, err
 	}
 	newID := uuid.New()
-	if err := billing.ReserveTx(ctx, tx, ownerID, newID, estimatedCost, "USD"); err != nil {
+	estimatedPoints, pricingSnapshot, err := billing.ReserveGenerationPointsTx(ctx, tx, ownerID, newID, providerModelID, providerProfileID, input.Mode, pointMeterInput(input.Prompt, input.Parameters))
+	if err != nil {
 		return Generation{}, err
 	}
 	var generation Generation
@@ -503,17 +593,22 @@ func (s *Service) Retry(ctx context.Context, ownerID, generationID uuid.UUID, id
 		return Generation{}, fmt.Errorf("encode generation retry parameters: %w", err)
 	}
 	if err := tx.QueryRow(ctx, `
-		INSERT INTO generations(id,owner_id,mode,provider,model_name,prompt,parameters,status,progress,estimated_cost_cents,source_work_id,source_asset_id,mask_asset_id,source_task_id,parent_generation_id,retry_of_generation_id,model_route_revision_id,model_route_version)
-		VALUES($1,$2,$3,$4,$5,$6,$7,'queued',0,$8,$9,$10,$11,$12,$13,$14,$15,$16)
-		RETURNING id,mode,provider,model_name,prompt,status,progress,estimated_cost_cents,charged_cost_cents,
+		INSERT INTO generations(id,owner_id,conversation_id,mode,provider,model_name,prompt,parameters,status,progress,estimated_cost_cents,provider_model_id,estimated_points,point_pricing_snapshot,source_work_id,source_asset_id,mask_asset_id,source_task_id,parent_generation_id,retry_of_generation_id,model_route_revision_id,model_route_version)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,'queued',0,0,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+		RETURNING id,conversation_id,mode,provider,model_name,prompt,status,progress,estimated_cost_cents,charged_cost_cents,estimated_points,charged_points,
 		output_asset_id,output_text,source_work_id,source_asset_id,mask_asset_id,source_task_id,parent_generation_id,retry_of_generation_id,error_code,error_message,cancelled_at,cancel_reason,created_at,updated_at`,
-		newID, ownerID, input.Mode, provider, modelName, input.Prompt, parametersJSON, estimatedCost,
+		newID, ownerID, input.ConversationID, input.Mode, provider, modelName, input.Prompt, parametersJSON, providerModelID, estimatedPoints, pricingSnapshot,
 		input.SourceWorkID, input.SourceAssetID, input.MaskAssetID, input.SourceTaskID, input.ParentGenerationID, generationID, routeRevisionID, routeVersion).Scan(
-		&generation.ID, &generation.Mode, &generation.Provider, &generation.ModelName, &generation.Prompt, &generation.Status,
-		&generation.Progress, &generation.EstimatedCostCents, &generation.ChargedCostCents, &generation.OutputAssetID, &generation.OutputText,
+		&generation.ID, &generation.ConversationID, &generation.Mode, &generation.Provider, &generation.ModelName, &generation.Prompt, &generation.Status,
+		&generation.Progress, &generation.EstimatedCostCents, &generation.ChargedCostCents, &generation.EstimatedPoints, &generation.ChargedPoints, &generation.OutputAssetID, &generation.OutputText,
 		&generation.SourceWorkID, &generation.SourceAssetID, &generation.MaskAssetID, &generation.SourceTaskID, &generation.ParentGenerationID, &generation.RetryOfGenerationID,
 		&generation.ErrorCode, &generation.ErrorMessage, &generation.CancelledAt, &generation.CancelReason, &generation.CreatedAt, &generation.UpdatedAt); err != nil {
 		return Generation{}, fmt.Errorf("insert generation retry: %w", err)
+	}
+	if input.ConversationID != nil {
+		if err := touchConversationTx(ctx, tx, *input.ConversationID, input.Prompt); err != nil {
+			return Generation{}, fmt.Errorf("update conversation retry: %w", err)
+		}
 	}
 	generation.Parameters = input.Parameters
 	generation.SourceAssetIDs = append([]uuid.UUID(nil), input.SourceAssetIDs...)
@@ -527,7 +622,7 @@ func (s *Service) Retry(ctx context.Context, ownerID, generationID uuid.UUID, id
 	if _, err := tx.Exec(ctx, `INSERT INTO generation_commands(actor_id,operation,idempotency_key,generation_id,result_generation_id,request_hash) VALUES($1,'retry',$2,$3,$4,$5)`, ownerID, idempotencyKey, generationID, newID, requestHash); err != nil {
 		return Generation{}, fmt.Errorf("record generation retry: %w", err)
 	}
-	if err := writeAudit(ctx, tx, ownerID, "generation.retried", generationID, requestID, map[string]any{"resultGenerationId": newID, "estimatedCostCents": estimatedCost, "modelRouteRevisionId": routeRevisionID, "modelRouteVersion": routeVersion}); err != nil {
+	if err := writeAudit(ctx, tx, ownerID, "generation.retried", generationID, requestID, map[string]any{"resultGenerationId": newID, "estimatedPoints": estimatedPoints, "modelRouteRevisionId": routeRevisionID, "modelRouteVersion": routeVersion}); err != nil {
 		return Generation{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -661,12 +756,13 @@ func (s *Service) List(ctx context.Context, ownerID uuid.UUID, input GenerationL
 	}
 	rows, err := s.pool.Query(ctx, generationSelect+`
 		WHERE g.owner_id=$1
-		  AND ($2='' OR g.mode=$2)
-		  AND ($3='' OR g.status=$3)
-		  AND ($4::timestamptz IS NULL OR g.created_at >= $4)
-		  AND ($5::timestamptz IS NULL OR g.created_at <= $5)
-		  AND ($6::timestamptz IS NULL OR (g.created_at,g.id) < ($6,$7::uuid))
-		ORDER BY g.created_at DESC,g.id DESC LIMIT $8`, ownerID, input.Mode, input.Status, input.DateFrom, input.DateTo, cursorTime, cursorID, input.Limit+1)
+		  AND ($2::uuid IS NULL OR g.conversation_id=$2)
+		  AND ($3='' OR g.mode=$3)
+		  AND ($4='' OR g.status=$4)
+		  AND ($5::timestamptz IS NULL OR g.created_at >= $5)
+		  AND ($6::timestamptz IS NULL OR g.created_at <= $6)
+		  AND ($7::timestamptz IS NULL OR (g.created_at,g.id) < ($7,$8::uuid))
+		ORDER BY g.created_at DESC,g.id DESC LIMIT $9`, ownerID, input.ConversationID, input.Mode, input.Status, input.DateFrom, input.DateTo, cursorTime, cursorID, input.Limit+1)
 	if err != nil {
 		return GenerationPage{}, fmt.Errorf("list generations: %w", err)
 	}
@@ -725,23 +821,43 @@ func (s *Service) HandleJob(ctx context.Context, job jobs.Job) error {
 			WHERE id=$1`, payload.GenerationID, "The configured generation Provider could not complete this request."); updateErr != nil {
 			return fmt.Errorf("%w; record generation failure: %v", err, updateErr)
 		}
-		if releaseErr := billing.ReleaseGenerationTx(ctx, tx, payload.GenerationID, "provider failed after all attempts"); releaseErr != nil {
+		if releaseErr := billing.ReleaseGenerationPointsTx(ctx, tx, payload.GenerationID, "provider failed after all attempts"); releaseErr != nil {
 			return fmt.Errorf("%w; release failed generation credits: %v", err, releaseErr)
 		}
-		if auditErr := writeAudit(ctx, tx, ownerID, "generation.failed", payload.GenerationID, "worker", map[string]any{"errorCode": "provider_failed", "charged": false}); auditErr != nil {
-			return fmt.Errorf("%w; audit failed generation: %v", err, auditErr)
-		}
-		if notifyErr := notifications.CreateTx(ctx, tx, notifications.CreateInput{
-			UserID: ownerID, Kind: "generation.failed", Title: "Generation failed",
-			Body:       "The generation could not be completed. Reserved Local Test credits were released.",
-			TargetPath: "/workspace/generations", ResourceType: "generation", ResourceID: &payload.GenerationID,
-			SourceKey: "generation:" + payload.GenerationID.String() + ":failed",
-		}); notifyErr != nil {
-			return fmt.Errorf("%w; notify failed generation: %v", err, notifyErr)
+		if releaseErr := billing.ReleaseGenerationTx(ctx, tx, payload.GenerationID, "provider failed after all attempts"); releaseErr != nil {
+			return fmt.Errorf("%w; release failed legacy generation credits: %v", err, releaseErr)
 		}
 	}
 	if commitErr := tx.Commit(ctx); commitErr != nil {
 		return fmt.Errorf("%w; commit failed generation: %v", err, commitErr)
+	}
+	// Persisting the terminal state and releasing the reservation is the
+	// important user-visible transition. Audit and notification writes happen
+	// after that commit so a secondary evidence failure cannot roll the task
+	// back to a permanent 35% running state.
+	if status != "succeeded" && status != "cancelled" {
+		evidenceTx, evidenceErr := s.pool.Begin(ctx)
+		if evidenceErr == nil {
+			var conversationID *uuid.UUID
+			_ = evidenceTx.QueryRow(ctx, `SELECT conversation_id FROM generations WHERE id=$1`, payload.GenerationID).Scan(&conversationID)
+			targetPath := "/create/image"
+			if conversationID != nil {
+				targetPath += "?conversationId=" + conversationID.String() + "&generationId=" + payload.GenerationID.String()
+			} else {
+				targetPath += "?generationId=" + payload.GenerationID.String()
+			}
+			if auditErr := writeAudit(ctx, evidenceTx, ownerID, "generation.failed", payload.GenerationID, "worker", map[string]any{"errorCode": "provider_failed", "charged": false}); auditErr == nil {
+				if notifyErr := notifications.CreateTx(ctx, evidenceTx, notifications.CreateInput{
+					UserID: ownerID, Kind: "generation.failed", Title: "Generation failed",
+					Body:       "The generation could not be completed. Reserved points were released.",
+					TargetPath: targetPath, ResourceType: "generation", ResourceID: &payload.GenerationID,
+					SourceKey: "generation:" + payload.GenerationID.String() + ":failed",
+				}); notifyErr == nil {
+					_ = evidenceTx.Commit(ctx)
+				}
+			}
+			_ = evidenceTx.Rollback(ctx)
+		}
 	}
 	return err
 }
@@ -813,6 +929,12 @@ func (s *Service) process(ctx context.Context, generationID uuid.UUID) error {
 	if err != nil {
 		return err
 	}
+	// Chat responses are conversation state, not publishable media. Keep the
+	// text on the generation record so it can continue the thread, but do not
+	// create a media object, storage key, asset entry, or asset notification.
+	if mode == "chat" {
+		return s.persistChatOutput(ctx, generationID, ownerID, provider, modelName, output)
+	}
 	store := s.stores.Primary()
 	storageKey, err := store.ObjectKey(assetID.String() + output.Extension)
 	if err != nil {
@@ -839,7 +961,8 @@ func (s *Service) process(ctx context.Context, generationID uuid.UUID) error {
 	if status == "cancelled" {
 		return tx.Commit(ctx)
 	}
-	if err := billing.CaptureGenerationTx(ctx, tx, generationID, "Local Test "+mode+" generation"); err != nil {
+	chargedPoints, usageSnapshot, err := billing.CaptureGenerationPointsTx(ctx, tx, generationID, pointUsageMetrics(output, parameters))
+	if err != nil {
 		return fmt.Errorf("capture generation charge: %w", err)
 	}
 	if err := recordProviderUsageTx(ctx, tx, generationID, provider, modelName, output.Usage); err != nil {
@@ -858,8 +981,8 @@ func (s *Service) process(ctx context.Context, generationID uuid.UUID) error {
 		return fmt.Errorf("insert generated asset: %w", err)
 	}
 	result, err := tx.Exec(ctx, `
-		UPDATE generations SET status='succeeded',progress=100,output_asset_id=$2,output_text=$3,charged_cost_cents=estimated_cost_cents,error_code=NULL,error_message=NULL,updated_at=now()
-		WHERE id=$1 AND status <> 'cancelled'`, generationID, assetID, output.Text)
+		UPDATE generations SET status='succeeded',progress=100,output_asset_id=$2,output_text=$3,charged_cost_cents=0,charged_points=$4,point_usage_snapshot=$5,error_code=NULL,error_message=NULL,updated_at=now()
+		WHERE id=$1 AND status <> 'cancelled'`, generationID, assetID, output.Text, chargedPoints, usageSnapshot)
 	if err != nil {
 		return fmt.Errorf("complete generation: %w", err)
 	}
@@ -875,7 +998,7 @@ func (s *Service) process(ctx context.Context, generationID uuid.UUID) error {
 		return fmt.Errorf("notify generation completion: %w", err)
 	}
 	if err := writeAudit(ctx, tx, ownerID, "generation.succeeded", generationID, "worker", map[string]any{
-		"assetId": assetID, "charged": true, "paymentMode": "local_test",
+		"assetId": assetID, "charged": true, "chargedPoints": chargedPoints, "paymentMode": "points",
 	}); err != nil {
 		return err
 	}
@@ -886,6 +1009,75 @@ func (s *Service) process(ctx context.Context, generationID uuid.UUID) error {
 		return fmt.Errorf("commit generation result: %w", err)
 	}
 	keepOutput = true
+	return nil
+}
+
+func (s *Service) persistChatOutput(ctx context.Context, generationID, ownerID uuid.UUID, provider, modelName string, output ProviderOutput) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin chat generation result: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var status string
+	if err := tx.QueryRow(ctx, `SELECT status FROM generations WHERE id=$1 FOR UPDATE`, generationID).Scan(&status); err != nil {
+		return fmt.Errorf("lock chat generation: %w", err)
+	}
+	if status == "cancelled" {
+		return tx.Commit(ctx)
+	}
+	var parameters GenerationParameters
+	var parametersJSON []byte
+	if err := tx.QueryRow(ctx, `SELECT parameters FROM generations WHERE id=$1`, generationID).Scan(&parametersJSON); err != nil {
+		return fmt.Errorf("load chat generation parameters: %w", err)
+	}
+	if err := json.Unmarshal(parametersJSON, &parameters); err != nil {
+		return fmt.Errorf("decode chat generation parameters: %w", err)
+	}
+	chargedPoints, usageSnapshot, err := billing.CaptureGenerationPointsTx(ctx, tx, generationID, pointUsageMetrics(output, parameters))
+	if err != nil {
+		return fmt.Errorf("capture chat generation charge: %w", err)
+	}
+	if err := recordProviderUsageTx(ctx, tx, generationID, provider, modelName, output.Usage); err != nil {
+		return fmt.Errorf("record chat provider usage: %w", err)
+	}
+	result, err := tx.Exec(ctx, `
+		UPDATE generations SET status='succeeded',progress=100,output_asset_id=NULL,output_text=$2,charged_cost_cents=0,charged_points=$3,point_usage_snapshot=$4,error_code=NULL,error_message=NULL,updated_at=now()
+		WHERE id=$1 AND status <> 'cancelled'`, generationID, output.Text, chargedPoints, usageSnapshot)
+	if err != nil {
+		return fmt.Errorf("complete chat generation: %w", err)
+	}
+	if result.RowsAffected() != 1 {
+		return errors.New("chat generation was cancelled")
+	}
+	var conversationID *uuid.UUID
+	if err := tx.QueryRow(ctx, `SELECT conversation_id FROM generations WHERE id=$1`, generationID).Scan(&conversationID); err != nil {
+		return fmt.Errorf("load conversation target: %w", err)
+	}
+	targetPath := "/create/image"
+	if conversationID != nil {
+		targetPath += "?conversationId=" + conversationID.String() + "&generationId=" + generationID.String()
+	} else {
+		targetPath += "?generationId=" + generationID.String()
+	}
+	if err := notifications.CreateTx(ctx, tx, notifications.CreateInput{
+		UserID: ownerID, Kind: "generation.completed", Title: "Conversation ready",
+		Body:       "Your conversation response is ready in the creation workspace.",
+		TargetPath: targetPath, ResourceType: "generation", ResourceID: &generationID,
+		SourceKey: "generation:" + generationID.String() + ":completed",
+	}); err != nil {
+		return fmt.Errorf("notify chat completion: %w", err)
+	}
+	if err := writeAudit(ctx, tx, ownerID, "generation.succeeded", generationID, "worker", map[string]any{
+		"assetId": nil, "charged": true, "chargedPoints": chargedPoints, "paymentMode": "points", "outputType": "conversation",
+	}); err != nil {
+		return err
+	}
+	if err := webhooks.EnqueueTx(ctx, tx, webhooks.EventInput{OwnerID: ownerID, EventType: "generation.completed", ResourceType: "generation", ResourceID: &generationID, SourceKey: "generation:" + generationID.String() + ":completed"}); err != nil {
+		return fmt.Errorf("enqueue chat generation webhook: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit chat generation result: %w", err)
+	}
 	return nil
 }
 
@@ -1038,7 +1230,7 @@ func (s *Service) providerAssets(ctx context.Context, ownerID uuid.UUID, ids []u
 }
 
 const generationSelect = `
-	SELECT g.id,g.mode,g.provider,g.model_name,g.prompt,g.parameters,g.status,g.progress,g.estimated_cost_cents,g.charged_cost_cents,
+	SELECT g.id,g.conversation_id,g.mode,g.provider,g.model_name,g.prompt,g.parameters,g.status,g.progress,g.estimated_cost_cents,g.charged_cost_cents,g.estimated_points,g.charged_points,
 	       g.output_asset_id,a.media_url,a.scan_status,g.output_text,g.source_work_id,g.source_asset_id,g.mask_asset_id,
 	       ARRAY(SELECT reference.asset_id FROM generation_reference_assets reference WHERE reference.generation_id=g.id ORDER BY reference.position),
 	       g.source_task_id,g.parent_generation_id,g.retry_of_generation_id,
@@ -1057,8 +1249,8 @@ func scanGeneration(row scanner) (Generation, error) {
 	var usageStatus *string
 	var usageInput, usageCachedInput, usageOutput, usageReasoning, usageTotal *int
 	var usageRecordedAt *time.Time
-	err := row.Scan(&item.ID, &item.Mode, &item.Provider, &item.ModelName, &item.Prompt, &parametersJSON, &item.Status, &item.Progress,
-		&item.EstimatedCostCents, &item.ChargedCostCents, &item.OutputAssetID, &item.OutputMediaURL, &item.OutputScanStatus, &item.OutputText,
+	err := row.Scan(&item.ID, &item.ConversationID, &item.Mode, &item.Provider, &item.ModelName, &item.Prompt, &parametersJSON, &item.Status, &item.Progress,
+		&item.EstimatedCostCents, &item.ChargedCostCents, &item.EstimatedPoints, &item.ChargedPoints, &item.OutputAssetID, &item.OutputMediaURL, &item.OutputScanStatus, &item.OutputText,
 		&item.SourceWorkID, &item.SourceAssetID, &item.MaskAssetID, &item.SourceAssetIDs, &item.SourceTaskID, &item.ParentGenerationID, &item.RetryOfGenerationID, &item.ErrorCode, &item.ErrorMessage,
 		&item.CancelledAt, &item.CancelReason, &item.IsFavorite, &item.CreatedAt, &item.UpdatedAt,
 		&usageStatus, &usageInput, &usageCachedInput, &usageOutput, &usageReasoning, &usageTotal, &usageRecordedAt)
@@ -1093,11 +1285,15 @@ func recordProviderUsageTx(ctx context.Context, tx pgx.Tx, generationID uuid.UUI
 }
 
 func withGenerationActions(item Generation) Generation {
+	viewPath := "/create/image"
+	if item.ConversationID != nil {
+		viewPath += "?conversationId=" + item.ConversationID.String() + "&generationId=" + item.ID.String()
+	}
 	item.Actions = GenerationActions{
 		CanView:       true,
 		CanCancel:     item.Status == "queued" || item.Status == "running",
 		CanRetry:      item.Status == "failed" || item.Status == "cancelled",
-		ViewPath:      "/workspace/generations?generationId=" + item.ID.String(),
+		ViewPath:      viewPath,
 		WorkspacePath: "/create/" + item.Mode,
 	}
 	if item.Status == "succeeded" && item.OutputAssetID != nil && item.OutputScanStatus != nil && *item.OutputScanStatus == "clean" {
@@ -1374,6 +1570,49 @@ func validateProviderRequest(provider, mode string, parameters GenerationParamet
 		}
 	}
 	return nil
+}
+
+func validateModelCapabilities(mode string, capabilities ModelCapabilities, parameters GenerationParameters, referenceCount int, hasMask bool) error {
+	contains := func(values []string, value string) bool {
+		for _, candidate := range values {
+			if candidate == value {
+				return true
+			}
+		}
+		return false
+	}
+	if !contains(capabilities.OutputFormats, parameters.OutputFormat) || !contains(capabilities.ResultFormats, parameters.OutputFormat) {
+		return ErrInvalid
+	}
+	if mode == "image" || mode == "video" {
+		if !contains(capabilities.AspectRatios, parameters.AspectRatio) || !contains(capabilities.Qualities, parameters.Quality) {
+			return ErrInvalid
+		}
+	}
+	if mode == "music" {
+		if !contains(capabilities.Qualities, parameters.Quality) || !containsInt(capabilities.DurationSeconds, parameters.DurationSeconds) {
+			return ErrInvalid
+		}
+	}
+	if mode == "video" && !containsInt(capabilities.DurationSeconds, parameters.DurationSeconds) {
+		return ErrInvalid
+	}
+	if referenceCount > 0 && len(capabilities.ReferenceKinds) == 0 {
+		return ErrInvalid
+	}
+	if hasMask && !capabilities.SupportsMask {
+		return ErrInvalid
+	}
+	return nil
+}
+
+func containsInt(values []int, value int) bool {
+	for _, candidate := range values {
+		if candidate == value {
+			return true
+		}
+	}
+	return false
 }
 
 func oneOf(value string, allowed ...string) bool {

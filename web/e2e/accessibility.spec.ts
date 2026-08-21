@@ -4,7 +4,7 @@ import { expect, test, type Page } from '@playwright/test'
 const wcagTags = ['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa']
 
 const scan = async (page: Page, label: string) => {
-  await expect(page.locator('main h1').first()).toBeVisible()
+  await expect(page.locator('#main-content').first()).toBeVisible()
   await page.waitForTimeout(250)
   const result = await new AxeBuilder({ page }).withTags(wcagTags).analyze()
   const details = result.violations.map((violation) => ({
@@ -22,6 +22,7 @@ const scan = async (page: Page, label: string) => {
 test('critical user and operations routes pass automated WCAG 2.2 AA checks', async ({ page }) => {
   test.setTimeout(90_000)
   const visitorRoutes = [
+    ['Guest home', '/'],
     ['Public marketplace', '/market'],
     ['Public product', '/market/assets/00000000-0000-4000-8000-000000000503'],
     ['Public tasks', '/market/demands'],

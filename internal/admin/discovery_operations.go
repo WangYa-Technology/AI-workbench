@@ -13,16 +13,9 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-type ConfirmedReason struct {
-	Reason    string `json:"reason"`
-	Confirmed bool   `json:"confirmed"`
-}
-
 type RankingRolloutUpdate struct {
 	Percent         int    `json:"percent"`
 	ExpectedVersion int    `json:"expectedVersion"`
-	Reason          string `json:"reason"`
-	Confirmed       bool   `json:"confirmed"`
 }
 
 type DiscoveryIndexRun struct {
@@ -32,7 +25,6 @@ type DiscoveryIndexRun struct {
 	DocumentCounts  map[string]int64 `json:"documentCounts"`
 	IndexSizes      map[string]int64 `json:"indexSizes"`
 	ErrorCode       *string          `json:"errorCode,omitempty"`
-	Reason          string           `json:"reason"`
 	CreatedBy       *uuid.UUID       `json:"createdBy,omitempty"`
 	CreatedByHandle *string          `json:"createdByHandle,omitempty"`
 	StartedAt       time.Time        `json:"startedAt"`
@@ -53,7 +45,6 @@ type RankingEvaluation struct {
 	BaselineMRR         float64        `json:"baselineMrr"`
 	SafetyViolations    int            `json:"safetyViolations"`
 	Metrics             map[string]any `json:"metrics"`
-	Reason              string         `json:"reason"`
 	CreatedBy           *uuid.UUID     `json:"createdBy,omitempty"`
 	CreatedByHandle     *string        `json:"createdByHandle,omitempty"`
 	CreatedAt           time.Time      `json:"createdAt"`
@@ -78,9 +69,8 @@ type evaluationCase struct {
 	Query string
 }
 
-func (s *Service) CreateRankingCandidate(ctx context.Context, actorID uuid.UUID, input RankingUpdate, requestID string) (RankingPolicy, error) {
+func (s *Service) CreateRankingCandidate(ctx context.Context, actorID uuid.UUID, input RankingUpdate, _ string) (RankingPolicy, error) {
 	input.Name = strings.TrimSpace(input.Name)
-	input.Reason = strings.TrimSpace(input.Reason)
 	if !validRankingUpdate(input) {
 		return RankingPolicy{}, ErrInvalid
 	}
@@ -110,10 +100,6 @@ func (s *Service) CreateRankingCandidate(ctx context.Context, actorID uuid.UUID,
 	if _, err := tx.Exec(ctx, `UPDATE discovery_ranking_state SET candidate_revision_id=$1,rollout_percent=0,rollout_started_at=NULL,rollout_version=rollout_version+1,updated_at=now() WHERE singleton=true`, candidateID); err != nil {
 		return RankingPolicy{}, fmt.Errorf("set ranking candidate: %w", err)
 	}
-	if err := audit(ctx, tx, actorID, "admin.discovery_ranking_candidate_created", "discovery_ranking", candidateID, input.Reason, requestID,
-		map[string]any{"baselineRevisionId": activeID, "baselineVersion": activeVersion, "candidateVersion": nextVersion}); err != nil {
-		return RankingPolicy{}, err
-	}
 	if err := tx.Commit(ctx); err != nil {
 		return RankingPolicy{}, err
 	}
@@ -131,17 +117,13 @@ func insertRankingRevision(ctx context.Context, tx pgx.Tx, id uuid.UUID, version
 		id, version, parentID, input.Name, input.TitleExactWeight, input.TitlePrefixWeight,
 		input.TitleContainsWeight, input.CreatorExactWeight, input.CreatorMatchWeight, input.BodyMatchWeight,
 		input.SecondaryMatchWeight, input.RecencyWeight, input.CreatorActivityWeight, input.WorkTypeBoost,
-		input.CreatorTypeBoost, input.ProductTypeBoost, input.DemandTypeBoost, input.Reason, actorID); err != nil {
+		input.CreatorTypeBoost, input.ProductTypeBoost, input.DemandTypeBoost, "Administrative configuration update", actorID); err != nil {
 		return fmt.Errorf("create ranking revision: %w", err)
 	}
 	return nil
 }
 
-func (s *Service) RunRankingEvaluation(ctx context.Context, actorID uuid.UUID, input ConfirmedReason, requestID string) (RankingEvaluation, error) {
-	input.Reason = strings.TrimSpace(input.Reason)
-	if !input.Confirmed || len(input.Reason) < 10 || len(input.Reason) > 500 {
-		return RankingEvaluation{}, ErrInvalid
-	}
+func (s *Service) RunRankingEvaluation(ctx context.Context, actorID uuid.UUID) (RankingEvaluation, error) {
 	policy, err := s.GetRankingPolicy(ctx)
 	if err != nil {
 		return RankingEvaluation{}, err
@@ -193,7 +175,7 @@ func (s *Service) RunRankingEvaluation(ctx context.Context, actorID uuid.UUID, i
 		BaselineRevisionID: policy.Current.ID, BaselineVersion: policy.Current.Version, CaseCount: len(cases),
 		CandidateTop1Hits: candidateTop1, BaselineTop1Hits: baselineTop1,
 		CandidateMRR: candidateRR / float64(len(cases)), BaselineMRR: baselineRR / float64(len(cases)),
-		SafetyViolations: 0, Status: "passed", Reason: input.Reason, CreatedBy: &actorID, CreatedAt: time.Now().UTC(),
+		SafetyViolations: 0, Status: "passed", CreatedBy: &actorID, CreatedAt: time.Now().UTC(),
 		Metrics: map[string]any{"cases": caseMetrics, "gate": "candidate_mrr_gte_baseline_and_zero_safety_violations"},
 	}
 	if item.CandidateMRR < item.BaselineMRR || item.CandidateTop1Hits < item.BaselineTop1Hits {
@@ -213,12 +195,8 @@ func (s *Service) RunRankingEvaluation(ctx context.Context, actorID uuid.UUID, i
 		candidate_top1_hits,baseline_top1_hits,candidate_mrr,baseline_mrr,safety_violations,metrics,reason,created_by,created_at)
 		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`, item.ID, item.CandidateRevisionID,
 		item.BaselineRevisionID, item.Status, item.CaseCount, item.CandidateTop1Hits, item.BaselineTop1Hits,
-		item.CandidateMRR, item.BaselineMRR, item.SafetyViolations, metrics, item.Reason, actorID, item.CreatedAt); err != nil {
+		item.CandidateMRR, item.BaselineMRR, item.SafetyViolations, metrics, "Administrative evaluation", actorID, item.CreatedAt); err != nil {
 		return RankingEvaluation{}, fmt.Errorf("record ranking evaluation: %w", err)
-	}
-	if err := audit(ctx, tx, actorID, "admin.discovery_ranking_evaluated", "discovery_ranking_evaluation", item.ID, item.Reason, requestID,
-		map[string]any{"candidateRevisionId": item.CandidateRevisionID, "baselineRevisionId": item.BaselineRevisionID, "status": item.Status, "caseCount": item.CaseCount, "candidateMrr": item.CandidateMRR, "baselineMrr": item.BaselineMRR}); err != nil {
-		return RankingEvaluation{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return RankingEvaluation{}, err
@@ -226,10 +204,9 @@ func (s *Service) RunRankingEvaluation(ctx context.Context, actorID uuid.UUID, i
 	return item, nil
 }
 
-func (s *Service) UpdateRankingRollout(ctx context.Context, actorID uuid.UUID, input RankingRolloutUpdate, requestID string) (RankingPolicy, error) {
-	input.Reason = strings.TrimSpace(input.Reason)
+func (s *Service) UpdateRankingRollout(ctx context.Context, _ uuid.UUID, input RankingRolloutUpdate, _ string) (RankingPolicy, error) {
 	allowedPercent := map[int]bool{0: true, 5: true, 10: true, 25: true, 50: true, 100: true}
-	if !input.Confirmed || !allowedPercent[input.Percent] || input.ExpectedVersion < 1 || len(input.Reason) < 10 || len(input.Reason) > 500 {
+	if !allowedPercent[input.Percent] || input.ExpectedVersion < 1 {
 		return RankingPolicy{}, ErrInvalid
 	}
 	tx, err := s.pool.Begin(ctx)
@@ -257,7 +234,6 @@ func (s *Service) UpdateRankingRollout(ctx context.Context, actorID uuid.UUID, i
 			return RankingPolicy{}, ErrConflict
 		}
 	}
-	metadata := map[string]any{"baselineRevisionId": activeID, "candidateRevisionId": *candidateID, "rolloutPercent": input.Percent, "previousRolloutVersion": rolloutVersion}
 	if input.Percent == 100 {
 		var candidateVersion int
 		if err := tx.QueryRow(ctx, `SELECT version FROM discovery_ranking_revisions WHERE id=$1`, *candidateID).Scan(&candidateVersion); err != nil {
@@ -266,14 +242,10 @@ func (s *Service) UpdateRankingRollout(ctx context.Context, actorID uuid.UUID, i
 		if _, err := tx.Exec(ctx, `UPDATE discovery_ranking_state SET active_revision_id=$1,version=$2,candidate_revision_id=NULL,rollout_percent=0,rollout_started_at=NULL,rollout_version=rollout_version+1,updated_at=now() WHERE singleton=true`, *candidateID, candidateVersion); err != nil {
 			return RankingPolicy{}, err
 		}
-		metadata["promotedVersion"] = candidateVersion
 	} else {
 		if _, err := tx.Exec(ctx, `UPDATE discovery_ranking_state SET rollout_percent=$1,rollout_started_at=CASE WHEN $1>0 THEN COALESCE(rollout_started_at,now()) ELSE NULL END,rollout_version=rollout_version+1,updated_at=now() WHERE singleton=true`, input.Percent); err != nil {
 			return RankingPolicy{}, err
 		}
-	}
-	if err := audit(ctx, tx, actorID, "admin.discovery_ranking_rollout_updated", "discovery_ranking", *candidateID, input.Reason, requestID, metadata); err != nil {
-		return RankingPolicy{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return RankingPolicy{}, err
@@ -281,12 +253,8 @@ func (s *Service) UpdateRankingRollout(ctx context.Context, actorID uuid.UUID, i
 	return s.GetRankingPolicy(ctx)
 }
 
-func (s *Service) RunDiscoveryIndexAnalyze(ctx context.Context, actorID uuid.UUID, input ConfirmedReason, requestID string) (DiscoveryIndexRun, error) {
-	input.Reason = strings.TrimSpace(input.Reason)
-	if !input.Confirmed || len(input.Reason) < 10 || len(input.Reason) > 500 {
-		return DiscoveryIndexRun{}, ErrInvalid
-	}
-	item := DiscoveryIndexRun{ID: uuid.New(), Operation: "analyze", Status: "succeeded", Reason: input.Reason, CreatedBy: &actorID, StartedAt: time.Now().UTC()}
+func (s *Service) RunDiscoveryIndexAnalyze(ctx context.Context, actorID uuid.UUID) (DiscoveryIndexRun, error) {
+	item := DiscoveryIndexRun{ID: uuid.New(), Operation: "analyze", Status: "succeeded", CreatedBy: &actorID, StartedAt: time.Now().UTC()}
 	if _, err := s.pool.Exec(ctx, `ANALYZE works,users,products,demands`); err != nil {
 		return DiscoveryIndexRun{}, fmt.Errorf("analyze discovery indexes: %w", err)
 	}
@@ -331,10 +299,7 @@ func (s *Service) RunDiscoveryIndexAnalyze(ctx context.Context, actorID uuid.UUI
 		return DiscoveryIndexRun{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if _, err := tx.Exec(ctx, `INSERT INTO discovery_index_runs(id,operation,status,document_counts,index_sizes,reason,created_by,started_at,completed_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, item.ID, item.Operation, item.Status, documentCounts, indexSizes, item.Reason, actorID, item.StartedAt, item.CompletedAt); err != nil {
-		return DiscoveryIndexRun{}, err
-	}
-	if err := audit(ctx, tx, actorID, "admin.discovery_index_analyzed", "discovery_index_run", item.ID, item.Reason, requestID, map[string]any{"documentCounts": item.DocumentCounts, "indexSizes": item.IndexSizes}); err != nil {
+	if _, err := tx.Exec(ctx, `INSERT INTO discovery_index_runs(id,operation,status,document_counts,index_sizes,reason,created_by,started_at,completed_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, item.ID, item.Operation, item.Status, documentCounts, indexSizes, "Administrative index analysis", actorID, item.StartedAt, item.CompletedAt); err != nil {
 		return DiscoveryIndexRun{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -373,14 +338,14 @@ func (s *Service) GetDiscoveryOperations(ctx context.Context, inputs ...Discover
 		evaluationTime, evaluationID = &cursor.CreatedAt, &cursor.ID
 	}
 	result := DiscoveryOperations{IndexRuns: make([]DiscoveryIndexRun, 0), Evaluations: make([]RankingEvaluation, 0)}
-	rows, err := s.pool.Query(ctx, `SELECT r.id,r.operation,r.status,r.document_counts,r.index_sizes,r.error_code,r.reason,r.created_by,u.handle,r.started_at,r.completed_at FROM discovery_index_runs r LEFT JOIN users u ON u.id=r.created_by WHERE ($1::timestamptz IS NULL OR (r.completed_at,r.id) < ($1,$2::uuid)) ORDER BY r.completed_at DESC,r.id DESC LIMIT $3`, indexTime, indexID, input.Limit+1)
+	rows, err := s.pool.Query(ctx, `SELECT r.id,r.operation,r.status,r.document_counts,r.index_sizes,r.error_code,r.created_by,u.handle,r.started_at,r.completed_at FROM discovery_index_runs r LEFT JOIN users u ON u.id=r.created_by WHERE ($1::timestamptz IS NULL OR (r.completed_at,r.id) < ($1,$2::uuid)) ORDER BY r.completed_at DESC,r.id DESC LIMIT $3`, indexTime, indexID, input.Limit+1)
 	if err != nil {
 		return result, err
 	}
 	for rows.Next() {
 		var item DiscoveryIndexRun
 		var counts, sizes []byte
-		if err := rows.Scan(&item.ID, &item.Operation, &item.Status, &counts, &sizes, &item.ErrorCode, &item.Reason, &item.CreatedBy, &item.CreatedByHandle, &item.StartedAt, &item.CompletedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.Operation, &item.Status, &counts, &sizes, &item.ErrorCode, &item.CreatedBy, &item.CreatedByHandle, &item.StartedAt, &item.CompletedAt); err != nil {
 			rows.Close()
 			return result, err
 		}
@@ -407,7 +372,7 @@ func (s *Service) GetDiscoveryOperations(ctx context.Context, inputs ...Discover
 	rows, err = s.pool.Query(ctx, `
 		SELECT e.id,e.candidate_revision_id,c.version,e.baseline_revision_id,b.version,e.status,e.case_count,
 		       e.candidate_top1_hits,e.baseline_top1_hits,e.candidate_mrr::float8,e.baseline_mrr::float8,
-		       e.safety_violations,e.metrics,e.reason,e.created_by,u.handle,e.created_at
+		       e.safety_violations,e.metrics,e.created_by,u.handle,e.created_at
 		FROM discovery_ranking_evaluations e
 		JOIN discovery_ranking_revisions c ON c.id=e.candidate_revision_id
 		JOIN discovery_ranking_revisions b ON b.id=e.baseline_revision_id
@@ -423,7 +388,7 @@ func (s *Service) GetDiscoveryOperations(ctx context.Context, inputs ...Discover
 		var metrics []byte
 		if err := rows.Scan(&item.ID, &item.CandidateRevisionID, &item.CandidateVersion, &item.BaselineRevisionID, &item.BaselineVersion,
 			&item.Status, &item.CaseCount, &item.CandidateTop1Hits, &item.BaselineTop1Hits, &item.CandidateMRR, &item.BaselineMRR,
-			&item.SafetyViolations, &metrics, &item.Reason, &item.CreatedBy, &item.CreatedByHandle, &item.CreatedAt); err != nil {
+			&item.SafetyViolations, &metrics, &item.CreatedBy, &item.CreatedByHandle, &item.CreatedAt); err != nil {
 			return result, err
 		}
 		if err := json.Unmarshal(metrics, &item.Metrics); err != nil {

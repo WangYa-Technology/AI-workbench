@@ -193,18 +193,7 @@ func (s *Server) adminCancelGeneration(w http.ResponseWriter, r *http.Request) {
 	if !valid {
 		return
 	}
-	var input struct {
-		Reason    string `json:"reason"`
-		Confirmed bool   `json:"confirmed"`
-	}
-	if !httputil.DecodeJSON(w, r, &input) {
-		return
-	}
-	if !input.Confirmed {
-		s.writeAdminResult(w, r, nil, admin.ErrInvalid)
-		return
-	}
-	item, err := s.admin.CancelGeneration(r.Context(), actor.ID, id, input.Reason, httputil.RequestID(r.Context()))
+	item, err := s.admin.CancelGeneration(r.Context(), actor.ID, id, httputil.RequestID(r.Context()))
 	s.writeAdminResult(w, r, item, err)
 }
 
@@ -275,6 +264,173 @@ func (s *Server) adminUpdateProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	item, err := s.admin.UpdateProvider(r.Context(), actor.ID, chi.URLParam(r, "providerID"), input, httputil.RequestID(r.Context()))
+	s.writeAdminResult(w, r, item, err)
+}
+
+func (s *Server) adminListProviderConfigs(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requirePermission(w, r, "admin:providers"); !ok {
+		return
+	}
+	items, err := s.admin.ListProviderConfigs(r.Context())
+	if err != nil {
+		s.internalError(w, r, "admin list provider configs", err)
+		return
+	}
+	httputil.JSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (s *Server) adminSyncProviderModels(w http.ResponseWriter, r *http.Request) {
+	actor, ok := s.requirePermission(w, r, "admin:providers")
+	if !ok {
+		return
+	}
+	providerID, valid := pathUUID(w, r, "providerID")
+	if !valid {
+		return
+	}
+	var input struct {
+		Mode string `json:"mode"`
+	}
+	if !httputil.DecodeJSON(w, r, &input) {
+		return
+	}
+	item, err := s.admin.SyncProviderModels(r.Context(), actor.ID, providerID, input.Mode, httputil.RequestID(r.Context()))
+	s.writeAdminResult(w, r, item, err)
+}
+
+func (s *Server) adminCreateProviderConfig(w http.ResponseWriter, r *http.Request) {
+	actor, ok := s.requirePermission(w, r, "admin:providers")
+	if !ok {
+		return
+	}
+	var input admin.ProviderConfigCreate
+	if !httputil.DecodeJSON(w, r, &input) {
+		return
+	}
+	item, err := s.admin.CreateProviderConfig(r.Context(), actor.ID, input, httputil.RequestID(r.Context()))
+	s.writeAdminResult(w, r, item, err)
+}
+
+func (s *Server) adminUpdateProviderConfig(w http.ResponseWriter, r *http.Request) {
+	actor, ok := s.requirePermission(w, r, "admin:providers")
+	if !ok {
+		return
+	}
+	id, valid := pathUUID(w, r, "providerID")
+	if !valid {
+		return
+	}
+	var input admin.ProviderConfigUpdate
+	if !httputil.DecodeJSON(w, r, &input) {
+		return
+	}
+	item, err := s.admin.UpdateProviderConfig(r.Context(), actor.ID, id, input, httputil.RequestID(r.Context()))
+	s.writeAdminResult(w, r, item, err)
+}
+
+func (s *Server) adminArchiveProviderConfig(w http.ResponseWriter, r *http.Request) {
+	actor, ok := s.requirePermission(w, r, "admin:providers")
+	if !ok {
+		return
+	}
+	id, valid := pathUUID(w, r, "providerID")
+	if !valid {
+		return
+	}
+	err := s.admin.ArchiveProviderConfig(r.Context(), actor.ID, id)
+	s.writeAdminResult(w, r, map[string]any{"archived": true}, err)
+}
+
+func (s *Server) adminCreateProviderModel(w http.ResponseWriter, r *http.Request) {
+	actor, ok := s.requirePermission(w, r, "admin:providers")
+	if !ok {
+		return
+	}
+	providerID, valid := pathUUID(w, r, "providerID")
+	if !valid {
+		return
+	}
+	var input admin.ProviderModelCreate
+	if !httputil.DecodeJSON(w, r, &input) {
+		return
+	}
+	item, err := s.admin.CreateProviderModel(r.Context(), actor.ID, providerID, input, httputil.RequestID(r.Context()))
+	s.writeAdminResult(w, r, item, err)
+}
+
+func (s *Server) adminUpdateProviderModel(w http.ResponseWriter, r *http.Request) {
+	actor, ok := s.requirePermission(w, r, "admin:providers")
+	if !ok {
+		return
+	}
+	modelID, valid := pathUUID(w, r, "modelID")
+	if !valid {
+		return
+	}
+	var input admin.ProviderModelUpdate
+	if !httputil.DecodeJSON(w, r, &input) {
+		return
+	}
+	item, err := s.admin.UpdateProviderModel(r.Context(), actor.ID, modelID, input, httputil.RequestID(r.Context()))
+	s.writeAdminResult(w, r, item, err)
+}
+
+func (s *Server) adminArchiveProviderModel(w http.ResponseWriter, r *http.Request) {
+	actor, ok := s.requirePermission(w, r, "admin:providers")
+	if !ok {
+		return
+	}
+	modelID, valid := pathUUID(w, r, "modelID")
+	if !valid {
+		return
+	}
+	err := s.admin.ArchiveProviderModel(r.Context(), actor.ID, modelID)
+	s.writeAdminResult(w, r, map[string]any{"archived": true}, err)
+}
+
+func (s *Server) adminListSubscriptionPlans(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requirePermission(w, r, "admin:finance"); !ok {
+		return
+	}
+	items, err := s.billing.ListSubscriptionPlans(r.Context(), true)
+	if err != nil {
+		s.internalError(w, r, "admin list subscription plans", err)
+		return
+	}
+	httputil.JSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (s *Server) adminCreateSubscriptionPlan(w http.ResponseWriter, r *http.Request) {
+	actor, ok := s.requirePermission(w, r, "admin:finance")
+	if !ok {
+		return
+	}
+	var input billing.SubscriptionPlanInput
+	if !httputil.DecodeJSON(w, r, &input) {
+		return
+	}
+	item, err := s.billing.CreateSubscriptionPlan(r.Context(), actor.ID, input)
+	if err == nil {
+		httputil.JSON(w, http.StatusCreated, item)
+		return
+	}
+	s.writeAdminResult(w, r, item, err)
+}
+
+func (s *Server) adminUpdateSubscriptionPlan(w http.ResponseWriter, r *http.Request) {
+	actor, ok := s.requirePermission(w, r, "admin:finance")
+	if !ok {
+		return
+	}
+	planID, valid := pathUUID(w, r, "planID")
+	if !valid {
+		return
+	}
+	var input billing.SubscriptionPlanUpdate
+	if !httputil.DecodeJSON(w, r, &input) {
+		return
+	}
+	item, err := s.billing.UpdateSubscriptionPlan(r.Context(), actor.ID, planID, input)
 	s.writeAdminResult(w, r, item, err)
 }
 
@@ -555,29 +711,6 @@ func (s *Server) adminUpdateRiskRules(w http.ResponseWriter, r *http.Request) {
 	s.writeAdminResult(w, r, item, err)
 }
 
-func (s *Server) adminListAudit(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.requirePermission(w, r, "admin:audit"); !ok {
-		return
-	}
-	limit, ok := adminDirectoryLimit(w, r, "invalid_admin_audit_filters", "audit")
-	if !ok {
-		return
-	}
-	page, err := s.admin.ListAudit(r.Context(), admin.AuditListInput{
-		Query: r.URL.Query().Get("q"), Action: r.URL.Query().Get("action"), ResourceType: r.URL.Query().Get("resourceType"),
-		Cursor: r.URL.Query().Get("cursor"), Limit: limit,
-	})
-	if errors.Is(err, admin.ErrInvalidAuditFilter) {
-		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_admin_audit_filters", "Use supported audit filters, a page size from 1 to 50, and an unmodified cursor.", false)
-		return
-	}
-	if err != nil {
-		s.internalError(w, r, "admin list audit", err)
-		return
-	}
-	httputil.JSON(w, http.StatusOK, page)
-}
-
 func adminDirectoryLimit(w http.ResponseWriter, r *http.Request, code, subject string) (int, bool) {
 	value := strings.TrimSpace(r.URL.Query().Get("limit"))
 	if value == "" {
@@ -654,11 +787,7 @@ func (s *Server) adminRunRankingEvaluation(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	var input admin.ConfirmedReason
-	if !httputil.DecodeJSON(w, r, &input) {
-		return
-	}
-	item, err := s.admin.RunRankingEvaluation(r.Context(), actor.ID, input, httputil.RequestID(r.Context()))
+	item, err := s.admin.RunRankingEvaluation(r.Context(), actor.ID)
 	s.writeAdminResult(w, r, item, err)
 }
 
@@ -702,11 +831,7 @@ func (s *Server) adminAnalyzeDiscoveryIndex(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
-	var input admin.ConfirmedReason
-	if !httputil.DecodeJSON(w, r, &input) {
-		return
-	}
-	item, err := s.admin.RunDiscoveryIndexAnalyze(r.Context(), actor.ID, input, httputil.RequestID(r.Context()))
+	item, err := s.admin.RunDiscoveryIndexAnalyze(r.Context(), actor.ID)
 	s.writeAdminResult(w, r, item, err)
 }
 
@@ -818,14 +943,18 @@ func (s *Server) writeAdminResult(w http.ResponseWriter, r *http.Request, item a
 	switch {
 	case errors.Is(err, admin.ErrNotFound), errors.Is(err, billing.ErrAccountNotFound):
 		httputil.WriteError(w, r, http.StatusNotFound, "admin_resource_not_found", "The requested operations resource was not found.", false)
-	case errors.Is(err, admin.ErrInvalid):
-		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_admin_command", "Confirm the operation and provide a specific reason of at least 10 characters.", false)
+	case errors.Is(err, admin.ErrInvalid), errors.Is(err, billing.ErrInvalidPlan), errors.Is(err, billing.ErrInvalidPricing):
+		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_admin_command", "Review the submitted fields and refresh any stale data before trying again.", false)
 	case errors.Is(err, admin.ErrSelfMutation):
 		httputil.WriteError(w, r, http.StatusConflict, "self_access_mutation_forbidden", "Use a different administrator account to change your own role or access state.", false)
 	case errors.Is(err, admin.ErrConflict), errors.Is(err, billing.ErrReservationState):
 		httputil.WriteError(w, r, http.StatusConflict, "admin_state_conflict", "The resource is not in a state that allows this operation.", false)
 	case errors.Is(err, admin.ErrProviderConfig):
 		httputil.WriteError(w, r, http.StatusServiceUnavailable, "provider_configuration_required", "This provider cannot be enabled until its external configuration is verified.", false)
+	case errors.Is(err, admin.ErrProviderSecret):
+		httputil.WriteError(w, r, http.StatusServiceUnavailable, "provider_secret_storage_unavailable", "Secure Provider credential storage is unavailable in this environment.", false)
+	case errors.Is(err, admin.ErrProviderSync):
+		httputil.WriteError(w, r, http.StatusServiceUnavailable, "provider_model_sync_unavailable", "This Provider does not expose a supported upstream model catalog or the upstream request failed.", true)
 	case errors.Is(err, billing.ErrInsufficientFunds):
 		httputil.WriteError(w, r, http.StatusConflict, "billing_balance_conflict", "The adjustment would reduce the balance below reserved credits.", false)
 	case err != nil:

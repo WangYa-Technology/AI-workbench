@@ -147,7 +147,7 @@ func (s *Server) adminRevokeDeveloperServiceAccount(w http.ResponseWriter, r *ht
 	if !ok {
 		return
 	}
-	var input developer.Transition
+	var input developer.AdminTransition
 	if !httputil.DecodeJSON(w, r, &input) {
 		return
 	}
@@ -164,7 +164,7 @@ func (s *Server) adminRevokeDeveloperAPIKey(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
-	var input developer.Transition
+	var input developer.AdminTransition
 	if !httputil.DecodeJSON(w, r, &input) {
 		return
 	}
@@ -177,7 +177,7 @@ func (s *Server) writeDeveloperResult(w http.ResponseWriter, r *http.Request, st
 	case errors.Is(err, developer.ErrDisabled):
 		httputil.WriteError(w, r, http.StatusServiceUnavailable, "developer_access_disabled", "Developer Access is disabled by an administrator.", false)
 	case errors.Is(err, developer.ErrInvalid):
-		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_developer_command", "Review the credential settings, confirmation, and reason.", false)
+		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_developer_command", "Review the credential settings and current version.", false)
 	case errors.Is(err, developer.ErrNotFound):
 		httputil.WriteError(w, r, http.StatusNotFound, "developer_resource_not_found", "The Developer Access resource was not found.", false)
 	case errors.Is(err, developer.ErrConflict):

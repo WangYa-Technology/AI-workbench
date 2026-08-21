@@ -76,27 +76,15 @@ func TestAdminRiskHTTPContract(t *testing.T) {
 		t.Fatalf("unpaired risk filter status: %d", response.StatusCode)
 	}
 	response = requestJSON(t, adminClient, http.MethodPost, server.URL+"/api/v1/admin/risk/signals/"+signalID.String()+"/review", map[string]any{
-		"decision": "monitor", "reason": "Missing confirmation must fail closed.", "expectedVersion": 1, "confirmed": false,
-	}, nil)
-	if response.StatusCode != http.StatusUnprocessableEntity {
-		t.Fatalf("unconfirmed risk review status: %d", response.StatusCode)
-	}
-	response = requestJSON(t, adminClient, http.MethodPost, server.URL+"/api/v1/admin/risk/signals/"+signalID.String()+"/review", map[string]any{
-		"decision": "monitor", "reason": "A stale browser version must not overwrite current evidence.", "expectedVersion": 2, "confirmed": true,
-	}, nil)
+		"decision": "monitor", "expectedVersion": 2}, nil)
 	if response.StatusCode != http.StatusConflict {
 		t.Fatalf("stale risk review status: %d", response.StatusCode)
 	}
 	var reviewed admin.RiskSignal
 	response = requestJSON(t, adminClient, http.MethodPost, server.URL+"/api/v1/admin/risk/signals/"+signalID.String()+"/review", map[string]any{
-		"decision": "no_action", "reason": "Reviewed Local Test evidence supports closing without further action.", "expectedVersion": 1, "confirmed": true,
-	}, &reviewed)
+		"decision": "no_action", "expectedVersion": 1}, &reviewed)
 	if response.StatusCode != http.StatusOK || reviewed.Status != "dismissed" || reviewed.Version != 2 || len(reviewed.Events) != 2 {
 		t.Fatalf("risk review contract failed: status=%d signal=%#v", response.StatusCode, reviewed)
-	}
-	var auditCount int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM audit_events WHERE action='admin.risk_reviewed' AND resource_id=$1`, signalID).Scan(&auditCount); err != nil || auditCount != 1 {
-		t.Fatalf("risk review audit evidence mismatch: count=%d err=%v", auditCount, err)
 	}
 }
 
@@ -129,13 +117,8 @@ func TestAdminRiskRulesHTTPContract(t *testing.T) {
 		"communityReportScore": 38, "mediaRejectionScore": 79,
 		"accountLinkScore": 67, "accountLinkMinAccounts": 4, "accountLinkWindowHours": 48,
 		"mediumThreshold": 35, "highThreshold": 65, "criticalThreshold": 90,
-		"reason": "Activate a verified risk rule revision through the administrator contract.", "expectedVersion": 1,
+		"expectedVersion": 1,
 	}
-	response = requestJSON(t, adminClient, http.MethodPost, server.URL+"/api/v1/admin/risk/rules", input, nil)
-	if response.StatusCode != http.StatusUnprocessableEntity {
-		t.Fatalf("unconfirmed risk rule update status: %d", response.StatusCode)
-	}
-	input["confirmed"] = true
 	input["expectedVersion"] = 2
 	response = requestJSON(t, adminClient, http.MethodPost, server.URL+"/api/v1/admin/risk/rules", input, nil)
 	if response.StatusCode != http.StatusConflict {
@@ -147,10 +130,6 @@ func TestAdminRiskRulesHTTPContract(t *testing.T) {
 	if response.StatusCode != http.StatusOK || updated.Current.Version != 2 || updated.Current.TaskDisputeScore != 92 || updated.Current.CommunityReportScore != 38 || updated.Current.MediaRejectionScore != 79 ||
 		updated.Current.AccountLinkScore != 67 || updated.Current.AccountLinkMinAccounts != 4 || updated.Current.AccountLinkWindowHours != 48 || len(updated.History) != 2 {
 		t.Fatalf("risk rule update contract failed: status=%d policy=%#v", response.StatusCode, updated)
-	}
-	var auditCount int
-	if err := pool.QueryRow(context.Background(), `SELECT count(*) FROM audit_events WHERE action='admin.risk_rules_updated' AND resource_id=$1`, updated.Current.ID).Scan(&auditCount); err != nil || auditCount != 1 {
-		t.Fatalf("risk rule HTTP audit evidence mismatch: count=%d err=%v", auditCount, err)
 	}
 }
 

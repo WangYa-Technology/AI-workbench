@@ -28,7 +28,7 @@ func TestCredentialIPBoundaryExpiryAndAccountCascade(t *testing.T) {
 	if err != nil || control.Enabled {
 		t.Fatalf("unexpected initial control: %#v %v", control, err)
 	}
-	control, err = service.UpdateControl(ctx, adminID, developer.ControlUpdate{Enabled: true, MaxServiceAccounts: 2, MaxActiveKeys: 2, DefaultTTLDays: 30, ExpectedVersion: 1, Reason: "Enable isolated domain credential testing", Confirmed: true}, "developer-control")
+	control, err = service.UpdateControl(ctx, adminID, developer.ControlUpdate{Enabled: true, MaxServiceAccounts: 2, MaxActiveKeys: 2, DefaultTTLDays: 30, ExpectedVersion: 1}, "developer-control")
 	if err != nil || !control.Enabled || control.Version != 2 {
 		t.Fatalf("enable control failed: %#v %v", control, err)
 	}

@@ -43,8 +43,6 @@ type RequestInput struct {
 	Provider    string    `json:"provider"`
 	PeriodStart time.Time `json:"periodStart"`
 	PeriodEnd   time.Time `json:"periodEnd"`
-	Reason      string    `json:"reason"`
-	Confirmed   bool      `json:"confirmed"`
 }
 
 type ListInput struct {
@@ -66,7 +64,6 @@ type Reconciliation struct {
 	VarianceMicros           *int64     `json:"varianceMicros,omitempty"`
 	OverageThresholdMicros   int64      `json:"overageThresholdMicros"`
 	Status                   string     `json:"status"`
-	RequestReason            string     `json:"requestReason"`
 	RequestedBy              uuid.UUID  `json:"requestedBy"`
 	JobID                    *uuid.UUID `json:"jobId,omitempty"`
 	ErrorCode                *string    `json:"errorCode,omitempty"`
@@ -105,15 +102,14 @@ func (s *Service) Available() bool {
 	return s != nil && s.pool != nil && s.runtime != nil
 }
 
-func (s *Service) Request(ctx context.Context, actorID uuid.UUID, input RequestInput, requestID string) (Reconciliation, error) {
+func (s *Service) Request(ctx context.Context, actorID uuid.UUID, input RequestInput, _ string) (Reconciliation, error) {
 	if !s.Available() {
 		return Reconciliation{}, ErrUnavailable
 	}
 	input.Provider = strings.ToLower(strings.TrimSpace(input.Provider))
-	input.Reason = strings.TrimSpace(input.Reason)
 	input.PeriodStart = input.PeriodStart.UTC()
 	input.PeriodEnd = input.PeriodEnd.UTC()
-	if actorID == uuid.Nil || s.overageThreshold < 0 || s.overageThreshold > 1_000_000_000_000 || input.Provider != "openai" || !input.Confirmed || len(input.Reason) < 12 || len(input.Reason) > 1000 ||
+	if actorID == uuid.Nil || s.overageThreshold < 0 || s.overageThreshold > 1_000_000_000_000 || input.Provider != "openai" ||
 		!isUTCDay(input.PeriodStart) || !isUTCDay(input.PeriodEnd) || !input.PeriodEnd.After(input.PeriodStart) || input.PeriodEnd.Sub(input.PeriodStart) > maxCostDays*24*time.Hour {
 		return Reconciliation{}, ErrInvalid
 	}
@@ -132,18 +128,12 @@ func (s *Service) Request(ctx context.Context, actorID uuid.UUID, input RequestI
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO provider_cost_reconciliations(id,provider,period_start,period_end,overage_threshold_micros,status,request_reason,requested_by,job_id)
-		VALUES($1,$2,$3,$4,$5,'queued',$6,$7,$8)`, id, input.Provider, input.PeriodStart, input.PeriodEnd, s.overageThreshold, input.Reason, actorID, jobID); err != nil {
+		VALUES($1,$2,$3,$4,$5,'queued','Administrative reconciliation request',$6,$7)`, id, input.Provider, input.PeriodStart, input.PeriodEnd, s.overageThreshold, actorID, jobID); err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 			return Reconciliation{}, ErrConflict
 		}
 		return Reconciliation{}, fmt.Errorf("create provider cost reconciliation: %w", err)
-	}
-	if err := writeAudit(ctx, tx, actorID, "admin.provider_cost_reconciliation_requested", id, input.Reason, requestID, map[string]any{
-		"provider": input.Provider, "periodStart": input.PeriodStart.Format(time.RFC3339), "periodEnd": input.PeriodEnd.Format(time.RFC3339),
-		"thresholdMicros": s.overageThreshold, "jobId": jobID.String(),
-	}); err != nil {
-		return Reconciliation{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Reconciliation{}, err
@@ -313,7 +303,7 @@ func (s *Service) fail(ctx context.Context, id uuid.UUID, code string) error {
 
 const reconciliationSelect = `
 	SELECT id,provider,period_start,period_end,currency,provider_cost_micros,local_estimated_cost_micros,reported_input_tokens,reported_total_tokens,
-	       variance_micros,overage_threshold_micros,status,request_reason,requested_by,job_id,error_code,started_at,completed_at,version,created_at,updated_at
+	       variance_micros,overage_threshold_micros,status,requested_by,job_id,error_code,started_at,completed_at,version,created_at,updated_at
 	FROM provider_cost_reconciliations`
 
 type rowScanner interface{ Scan(...any) error }
@@ -322,21 +312,9 @@ func scanReconciliation(row rowScanner) (Reconciliation, error) {
 	var item Reconciliation
 	err := row.Scan(&item.ID, &item.Provider, &item.PeriodStart, &item.PeriodEnd, &item.Currency, &item.ProviderCostMicros,
 		&item.LocalEstimatedCostMicros, &item.ReportedInputTokens, &item.ReportedTotalTokens, &item.VarianceMicros,
-		&item.OverageThresholdMicros, &item.Status, &item.RequestReason, &item.RequestedBy, &item.JobID, &item.ErrorCode,
+		&item.OverageThresholdMicros, &item.Status, &item.RequestedBy, &item.JobID, &item.ErrorCode,
 		&item.StartedAt, &item.CompletedAt, &item.Version, &item.CreatedAt, &item.UpdatedAt)
 	return item, err
-}
-
-func writeAudit(ctx context.Context, tx pgx.Tx, actorID uuid.UUID, action string, reconciliationID uuid.UUID, reason, requestID string, metadata map[string]any) error {
-	if strings.TrimSpace(requestID) == "" {
-		requestID = "admin"
-	}
-	body, err := json.Marshal(metadata)
-	if err != nil {
-		return err
-	}
-	_, err = tx.Exec(ctx, `INSERT INTO audit_events(actor_id,action,resource_type,resource_id,reason,request_id,metadata) VALUES($1,$2,'provider_cost_reconciliation',$3,$4,$5,$6)`, actorID, action, reconciliationID, reason, requestID, body)
-	return err
 }
 
 func encodeCursor(cursor reconciliationCursor) string {

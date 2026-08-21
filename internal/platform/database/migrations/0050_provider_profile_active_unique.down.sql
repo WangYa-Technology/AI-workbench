@@ -1,0 +1,2 @@
+DROP INDEX IF EXISTS provider_profiles_active_mode_provider_model_name_idx;
+ALTER TABLE provider_profiles ADD CONSTRAINT provider_profiles_mode_provider_model_name_key UNIQUE(mode, provider, model_name);

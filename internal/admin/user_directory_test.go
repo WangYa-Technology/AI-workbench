@@ -60,8 +60,7 @@ func TestAdminUserDirectoryFiltersAndTraversesBeyondFirstPage(t *testing.T) {
 	}
 
 	updated, err := service.UpdateUser(ctx, administratorID, targetID, admin.UserUpdate{
-		Role: "creator", Status: "suspended", Reason: "Verified directory access test beyond the first page.", Confirmed: true,
-	}, "directory-update")
+		Role: "creator", Status: "suspended"}, "directory-update")
 	if err != nil || updated.ID != targetID || updated.Role != "creator" || updated.Status != "suspended" {
 		t.Fatalf("exact user update retrieval failed: %#v %v", updated, err)
 	}

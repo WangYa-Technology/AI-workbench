@@ -84,8 +84,7 @@ func TestExportAndDeletionLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	supportCase, err = supportService.AdminReply(ctx, adminID, supportCase.ID, support.AdminReplyInput{
-		Body:   "We received the request and will preserve only bounded operational evidence.",
-		Reason: "Confirm the private support thread is represented in the owner export.", ExpectedVersion: supportCase.Version, Confirmed: true,
+		Body: "We received the request and will preserve only bounded operational evidence.", ExpectedVersion: supportCase.Version,
 	}, "support-reply")
 	if err != nil {
 		t.Fatal(err)
@@ -295,7 +294,7 @@ func TestExportAndDeletionLifecycle(t *testing.T) {
 	if _, err := pool.Exec(ctx, `UPDATE data_rights_requests SET execute_after=now()-interval '1 minute',cancel_until=now()-interval '1 minute' WHERE id=$1`, deletionRequest.ID); err != nil {
 		t.Fatal(err)
 	}
-	hold, err := service.CreateHold(ctx, adminID, datarights.HoldInput{UserID: user.ID, Reason: "A signed legal request requires temporary preservation.", AuthorityReference: "LEGAL-TEST-REFERENCE", Confirmed: true}, "hold-create")
+	hold, err := service.CreateHold(ctx, adminID, datarights.HoldInput{UserID: user.ID, AuthorityReference: "LEGAL-TEST-REFERENCE"}, "hold-create")
 	if err != nil || hold.Status != "active" || len(hold.AuthorityReferenceHash) != 64 {
 		t.Fatalf("create legal hold: %#v %v", hold, err)
 	}
@@ -306,7 +305,7 @@ func TestExportAndDeletionLifecycle(t *testing.T) {
 	if _, err := identityRepository.Authenticate(ctx, token); err != nil {
 		t.Fatalf("held account lost access before release: %v", err)
 	}
-	hold, err = service.ReleaseHold(ctx, adminID, hold.ID, "Signed authority released the temporary preservation requirement.", "hold-release", true)
+	hold, err = service.ReleaseHold(ctx, adminID, hold.ID)
 	if err != nil || hold.Status != "released" {
 		t.Fatalf("release legal hold: %#v %v", hold, err)
 	}

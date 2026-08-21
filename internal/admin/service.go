@@ -33,7 +33,6 @@ var (
 	ErrInvalidFinanceFilter        = errors.New("invalid admin finance filter")
 	ErrInvalidPaymentFilter        = errors.New("invalid admin payment filter")
 	ErrInvalidDestinationFilter    = errors.New("invalid admin payment destination filter")
-	ErrInvalidAuditFilter          = errors.New("invalid admin audit filter")
 	ErrInvalidSystemSettingHistory = errors.New("invalid admin system setting history filter")
 	ErrInvalidRiskRuleHistory      = errors.New("invalid admin risk rule history filter")
 	ErrInvalidRankingHistory       = errors.New("invalid admin ranking history filter")
@@ -91,10 +90,8 @@ type userCursor struct {
 }
 
 type UserUpdate struct {
-	Role      string `json:"role"`
-	Status    string `json:"status"`
-	Reason    string `json:"reason"`
-	Confirmed bool   `json:"confirmed"`
+	Role   string `json:"role"`
+	Status string `json:"status"`
 }
 
 type ContentItem struct {
@@ -128,9 +125,7 @@ type contentCursor struct {
 }
 
 type ContentUpdate struct {
-	Status    string `json:"status"`
-	Reason    string `json:"reason"`
-	Confirmed bool   `json:"confirmed"`
+	Status string `json:"status"`
 }
 
 type GenerationItem struct {
@@ -156,9 +151,11 @@ type Provider struct {
 }
 
 type ProviderUpdate struct {
-	Enabled   bool   `json:"enabled"`
-	Reason    string `json:"reason"`
-	Confirmed bool   `json:"confirmed"`
+	Enabled            bool    `json:"enabled"`
+	ModelName          *string `json:"modelName,omitempty"`
+	DisplayName        *string `json:"displayName,omitempty"`
+	Description        *string `json:"description,omitempty"`
+	EstimatedCostCents *int    `json:"estimatedCostCents,omitempty"`
 }
 
 type FinanceAccount struct {
@@ -171,24 +168,6 @@ type FinanceAccount struct {
 type FinanceAdjustment struct {
 	DeltaCents int    `json:"deltaCents"`
 	Currency   string `json:"currency"`
-	Reason     string `json:"reason"`
-	Confirmed  bool   `json:"confirmed"`
-}
-
-type AuditEvent struct {
-	ID           uuid.UUID      `json:"id"`
-	Sequence     int64          `json:"sequence"`
-	PreviousHash *string        `json:"previousHash,omitempty"`
-	EventHash    string         `json:"eventHash"`
-	ActorID      *uuid.UUID     `json:"actorId,omitempty"`
-	ActorHandle  *string        `json:"actorHandle,omitempty"`
-	Action       string         `json:"action"`
-	ResourceType string         `json:"resourceType"`
-	ResourceID   *uuid.UUID     `json:"resourceId,omitempty"`
-	Reason       *string        `json:"reason,omitempty"`
-	RequestID    string         `json:"requestId"`
-	Metadata     map[string]any `json:"metadata"`
-	CreatedAt    time.Time      `json:"createdAt"`
 }
 
 type RiskEvent struct {
@@ -252,9 +231,7 @@ type riskSignalCursor struct {
 
 type RiskReview struct {
 	Decision        string `json:"decision"`
-	Reason          string `json:"reason"`
 	ExpectedVersion int    `json:"expectedVersion"`
-	Confirmed       bool   `json:"confirmed"`
 }
 
 type RankingRevision struct {
@@ -275,7 +252,6 @@ type RankingRevision struct {
 	CreatorTypeBoost      int        `json:"creatorTypeBoost"`
 	ProductTypeBoost      int        `json:"productTypeBoost"`
 	DemandTypeBoost       int        `json:"demandTypeBoost"`
-	Reason                string     `json:"reason"`
 	CreatedBy             *uuid.UUID `json:"createdBy,omitempty"`
 	CreatedByHandle       *string    `json:"createdByHandle,omitempty"`
 	CreatedAt             time.Time  `json:"createdAt"`
@@ -310,14 +286,13 @@ type RankingUpdate struct {
 	CreatorTypeBoost      int    `json:"creatorTypeBoost"`
 	ProductTypeBoost      int    `json:"productTypeBoost"`
 	DemandTypeBoost       int    `json:"demandTypeBoost"`
-	Reason                string `json:"reason"`
 	ExpectedVersion       int    `json:"expectedVersion"`
-	Confirmed             bool   `json:"confirmed"`
 }
 
 type Service struct {
-	pool     *pgxpool.Pool
-	runtimes creation.RuntimeAvailability
+	pool              *pgxpool.Pool
+	runtimes          creation.RuntimeAvailability
+	providerSecretKey []byte
 }
 
 func NewService(pool *pgxpool.Pool, localProviderRuntime bool) *Service {
@@ -325,10 +300,14 @@ func NewService(pool *pgxpool.Pool, localProviderRuntime bool) *Service {
 }
 
 func NewServiceWithRuntimes(pool *pgxpool.Pool, runtimes creation.RuntimeAvailability) *Service {
+	return NewServiceWithRuntimesAndProviderKey(pool, runtimes, nil)
+}
+
+func NewServiceWithRuntimesAndProviderKey(pool *pgxpool.Pool, runtimes creation.RuntimeAvailability, providerSecretKey []byte) *Service {
 	if runtimes == nil {
 		runtimes = creation.NewRuntimeCatalog()
 	}
-	return &Service{pool: pool, runtimes: runtimes}
+	return &Service{pool: pool, runtimes: runtimes, providerSecretKey: append([]byte(nil), providerSecretKey...)}
 }
 
 func (s *Service) Overview(ctx context.Context) (Overview, error) {
@@ -455,11 +434,10 @@ func (s *Service) user(ctx context.Context, userID uuid.UUID) (User, error) {
 	return item, nil
 }
 
-func (s *Service) UpdateUser(ctx context.Context, actorID, userID uuid.UUID, input UserUpdate, requestID string) (User, error) {
+func (s *Service) UpdateUser(ctx context.Context, actorID, userID uuid.UUID, input UserUpdate, _ string) (User, error) {
 	input.Role = strings.TrimSpace(strings.ToLower(input.Role))
 	input.Status = strings.TrimSpace(strings.ToLower(input.Status))
-	input.Reason = strings.TrimSpace(input.Reason)
-	if !input.Confirmed || len(input.Reason) < 10 || !oneOf(input.Role, "member", "creator", "publisher", "moderator", "admin") || !oneOf(input.Status, "active", "suspended", "deleted") {
+	if !oneOf(input.Role, "member", "creator", "publisher", "moderator", "admin") || !oneOf(input.Status, "active", "suspended", "deleted") {
 		return User{}, ErrInvalid
 	}
 	if actorID == userID {
@@ -470,8 +448,8 @@ func (s *Service) UpdateUser(ctx context.Context, actorID, userID uuid.UUID, inp
 		return User{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var oldRole, oldStatus string
-	if err := tx.QueryRow(ctx, `SELECT role,status FROM users WHERE id=$1 FOR UPDATE`, userID).Scan(&oldRole, &oldStatus); errors.Is(err, pgx.ErrNoRows) {
+	var lockedID uuid.UUID
+	if err := tx.QueryRow(ctx, `SELECT id FROM users WHERE id=$1 FOR UPDATE`, userID).Scan(&lockedID); errors.Is(err, pgx.ErrNoRows) {
 		return User{}, ErrNotFound
 	} else if err != nil {
 		return User{}, err
@@ -483,11 +461,6 @@ func (s *Service) UpdateUser(ctx context.Context, actorID, userID uuid.UUID, inp
 		if _, err := tx.Exec(ctx, `UPDATE sessions SET revoked_at=COALESCE(revoked_at,now()) WHERE user_id=$1`, userID); err != nil {
 			return User{}, fmt.Errorf("revoke disabled user sessions: %w", err)
 		}
-	}
-	if err := audit(ctx, tx, actorID, "admin.user_updated", "user", userID, input.Reason, requestID, map[string]any{
-		"oldRole": oldRole, "newRole": input.Role, "oldStatus": oldStatus, "newStatus": input.Status,
-	}); err != nil {
-		return User{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return User{}, err
@@ -581,10 +554,9 @@ func (s *Service) content(ctx context.Context, workID uuid.UUID) (ContentItem, e
 	return item, nil
 }
 
-func (s *Service) UpdateContent(ctx context.Context, actorID, workID uuid.UUID, input ContentUpdate, requestID string) (ContentItem, error) {
+func (s *Service) UpdateContent(ctx context.Context, _ uuid.UUID, workID uuid.UUID, input ContentUpdate, _ string) (ContentItem, error) {
 	input.Status = strings.TrimSpace(strings.ToLower(input.Status))
-	input.Reason = strings.TrimSpace(input.Reason)
-	if !input.Confirmed || len(input.Reason) < 10 || !oneOf(input.Status, "published", "hidden", "removed") {
+	if !oneOf(input.Status, "published", "hidden", "removed") {
 		return ContentItem{}, ErrInvalid
 	}
 	tx, err := s.pool.Begin(ctx)
@@ -592,8 +564,8 @@ func (s *Service) UpdateContent(ctx context.Context, actorID, workID uuid.UUID, 
 		return ContentItem{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var oldStatus string
-	if err := tx.QueryRow(ctx, `SELECT status FROM works WHERE id=$1 FOR UPDATE`, workID).Scan(&oldStatus); errors.Is(err, pgx.ErrNoRows) {
+	var lockedID uuid.UUID
+	if err := tx.QueryRow(ctx, `SELECT id FROM works WHERE id=$1 FOR UPDATE`, workID).Scan(&lockedID); errors.Is(err, pgx.ErrNoRows) {
 		return ContentItem{}, ErrNotFound
 	} else if err != nil {
 		return ContentItem{}, err
@@ -608,20 +580,13 @@ func (s *Service) UpdateContent(ctx context.Context, actorID, workID uuid.UUID, 
 	if _, err := tx.Exec(ctx, `UPDATE posts SET status=$2,updated_at=now() WHERE work_id=$1`, workID, postStatus); err != nil {
 		return ContentItem{}, fmt.Errorf("moderate linked post: %w", err)
 	}
-	if err := audit(ctx, tx, actorID, "admin.content_status_changed", "work", workID, input.Reason, requestID, map[string]any{"oldStatus": oldStatus, "newStatus": input.Status}); err != nil {
-		return ContentItem{}, err
-	}
 	if err := tx.Commit(ctx); err != nil {
 		return ContentItem{}, err
 	}
 	return s.content(ctx, workID)
 }
 
-func (s *Service) CancelGeneration(ctx context.Context, actorID, generationID uuid.UUID, reason, requestID string) (GenerationItem, error) {
-	reason = strings.TrimSpace(reason)
-	if len(reason) < 10 {
-		return GenerationItem{}, ErrInvalid
-	}
+func (s *Service) CancelGeneration(ctx context.Context, _ uuid.UUID, generationID uuid.UUID, _ string) (GenerationItem, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return GenerationItem{}, err
@@ -637,18 +602,18 @@ func (s *Service) CancelGeneration(ctx context.Context, actorID, generationID uu
 		return GenerationItem{}, ErrConflict
 	}
 	if status != "cancelled" {
-		if _, err := tx.Exec(ctx, `UPDATE generations SET status='cancelled',progress=0,cancelled_at=now(),cancel_reason=$2,updated_at=now() WHERE id=$1`, generationID, "Administrator: "+reason); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE generations SET status='cancelled',progress=0,cancelled_at=now(),cancel_reason=$2,updated_at=now() WHERE id=$1`, generationID, "Cancelled by an administrator"); err != nil {
 			return GenerationItem{}, err
 		}
 		if _, err := tx.Exec(ctx, `UPDATE jobs SET status='cancelled',lease_owner=NULL,lease_expires_at=NULL,updated_at=now() WHERE kind=$2 AND payload->>'generationId'=$1 AND status IN ('queued','running')`, generationID.String(), creation.JobKind); err != nil {
 			return GenerationItem{}, err
 		}
-		if err := billing.ReleaseGenerationTx(ctx, tx, generationID, "administrator cancellation: "+reason); err != nil {
+		if err := billing.ReleaseGenerationPointsTx(ctx, tx, generationID, "administrator cancellation"); err != nil {
 			return GenerationItem{}, err
 		}
-	}
-	if err := audit(ctx, tx, actorID, "admin.generation_cancelled", "generation", generationID, reason, requestID, map[string]any{"previousStatus": status, "charged": false}); err != nil {
-		return GenerationItem{}, err
+		if err := billing.ReleaseGenerationTx(ctx, tx, generationID, "administrator cancellation"); err != nil {
+			return GenerationItem{}, err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return GenerationItem{}, err
@@ -686,10 +651,9 @@ func (s *Service) ListProviders(ctx context.Context) ([]Provider, error) {
 	return items, rows.Err()
 }
 
-func (s *Service) UpdateProvider(ctx context.Context, actorID uuid.UUID, providerID string, input ProviderUpdate, requestID string) (Provider, error) {
+func (s *Service) UpdateProvider(ctx context.Context, actorID uuid.UUID, providerID string, input ProviderUpdate, _ string) (Provider, error) {
 	providerID = strings.TrimSpace(providerID)
-	input.Reason = strings.TrimSpace(input.Reason)
-	if providerID == "" || !input.Confirmed || len(input.Reason) < 10 {
+	if providerID == "" {
 		return Provider{}, ErrInvalid
 	}
 	tx, err := s.pool.Begin(ctx)
@@ -697,20 +661,42 @@ func (s *Service) UpdateProvider(ctx context.Context, actorID uuid.UUID, provide
 		return Provider{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var mode, provider, modelName string
-	var oldEnabled bool
-	if err := tx.QueryRow(ctx, `SELECT mode,provider,model_name,admin_enabled FROM provider_profiles WHERE id=$1 FOR UPDATE`, providerID).Scan(&mode, &provider, &modelName, &oldEnabled); errors.Is(err, pgx.ErrNoRows) {
+	var mode, provider, modelName, displayName, description string
+	var estimatedCostCents int
+	if err := tx.QueryRow(ctx, `SELECT mode,provider,model_name,display_name,description,estimated_cost_cents FROM provider_profiles WHERE id=$1 FOR UPDATE`, providerID).Scan(&mode, &provider, &modelName, &displayName, &description, &estimatedCostCents); errors.Is(err, pgx.ErrNoRows) {
 		return Provider{}, ErrNotFound
 	} else if err != nil {
 		return Provider{}, err
 	}
-	if input.Enabled && !s.runtimes.Available(provider, mode, modelName) {
+	newModelName, newDisplayName, newDescription, newCost := modelName, displayName, description, estimatedCostCents
+	if input.ModelName != nil {
+		newModelName = strings.TrimSpace(*input.ModelName)
+		if len(newModelName) < 1 || len(newModelName) > 160 {
+			return Provider{}, ErrInvalid
+		}
+	}
+	if input.DisplayName != nil {
+		newDisplayName = strings.TrimSpace(*input.DisplayName)
+		if len(newDisplayName) < 2 || len(newDisplayName) > 120 {
+			return Provider{}, ErrInvalid
+		}
+	}
+	if input.Description != nil {
+		newDescription = strings.TrimSpace(*input.Description)
+		if len(newDescription) < 10 || len(newDescription) > 1000 {
+			return Provider{}, ErrInvalid
+		}
+	}
+	if input.EstimatedCostCents != nil {
+		newCost = *input.EstimatedCostCents
+		if newCost < 0 || newCost > 1000000 {
+			return Provider{}, ErrInvalid
+		}
+	}
+	if input.Enabled && !s.runtimes.Available(provider, mode, newModelName) {
 		return Provider{}, ErrProviderConfig
 	}
-	if _, err := tx.Exec(ctx, `UPDATE provider_profiles SET admin_enabled=$2,updated_by=$3,updated_at=now() WHERE id=$1`, providerID, input.Enabled, actorID); err != nil {
-		return Provider{}, err
-	}
-	if err := audit(ctx, tx, actorID, "admin.provider_status_changed", "provider", uuid.Nil, input.Reason, requestID, map[string]any{"providerId": providerID, "oldEnabled": oldEnabled, "newEnabled": input.Enabled}); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE provider_profiles SET model_name=$2,display_name=$3,description=$4,estimated_cost_cents=$5,admin_enabled=$6,updated_by=$7,updated_at=now() WHERE id=$1`, providerID, newModelName, newDisplayName, newDescription, newCost, input.Enabled, actorID); err != nil {
 		return Provider{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -728,10 +714,9 @@ func (s *Service) UpdateProvider(ctx context.Context, actorID uuid.UUID, provide
 	return Provider{}, ErrNotFound
 }
 
-func (s *Service) AdjustFinance(ctx context.Context, actorID, userID uuid.UUID, input FinanceAdjustment, requestID string) (FinanceAccount, error) {
+func (s *Service) AdjustFinance(ctx context.Context, actorID, userID uuid.UUID, input FinanceAdjustment, _ string) (FinanceAccount, error) {
 	input.Currency = strings.ToUpper(strings.TrimSpace(input.Currency))
-	input.Reason = strings.TrimSpace(input.Reason)
-	if !input.Confirmed || input.DeltaCents == 0 || input.Currency != "USD" || len(input.Reason) < 10 || input.DeltaCents > 1000000 || input.DeltaCents < -1000000 {
+	if input.DeltaCents == 0 || input.Currency != "USD" || input.DeltaCents > 1000000 || input.DeltaCents < -1000000 {
 		return FinanceAccount{}, ErrInvalid
 	}
 	tx, err := s.pool.Begin(ctx)
@@ -740,13 +725,8 @@ func (s *Service) AdjustFinance(ctx context.Context, actorID, userID uuid.UUID, 
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	operationID := uuid.New()
-	account, err := billing.AdjustTx(ctx, tx, userID, operationID, input.DeltaCents, input.Currency, input.Reason, map[string]any{"actorId": actorID.String(), "paymentMode": "local_test"})
+	_, err = billing.AdjustTx(ctx, tx, userID, operationID, input.DeltaCents, input.Currency, "Administrative balance adjustment", map[string]any{"actorId": actorID.String(), "paymentMode": "local_test"})
 	if err != nil {
-		return FinanceAccount{}, err
-	}
-	if err := audit(ctx, tx, actorID, "admin.billing_adjusted", "billing_account", userID, input.Reason, requestID, map[string]any{
-		"operationId": operationID, "deltaCents": input.DeltaCents, "currency": input.Currency, "balanceAfterCents": account.BalanceCents,
-	}); err != nil {
 		return FinanceAccount{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -925,7 +905,7 @@ func (s *Service) GetRankingPolicy(ctx context.Context, inputs ...RevisionHistor
 		       r.title_exact_weight,r.title_prefix_weight,r.title_contains_weight,
 		       r.creator_exact_weight,r.creator_match_weight,r.body_match_weight,r.secondary_match_weight,
 		       r.recency_weight,r.creator_activity_weight,r.work_type_boost,r.creator_type_boost,
-		       r.product_type_boost,r.demand_type_boost,r.reason,r.created_by,u.handle,r.created_at
+		       r.product_type_boost,r.demand_type_boost,r.created_by,u.handle,r.created_at
 		FROM discovery_ranking_revisions r LEFT JOIN users u ON u.id=r.created_by
 		WHERE ($1::int IS NULL OR r.version < $1)
 		ORDER BY r.version DESC LIMIT $2`, cursorVersion, input.Limit+1)
@@ -939,7 +919,7 @@ func (s *Service) GetRankingPolicy(ctx context.Context, inputs ...RevisionHistor
 			&item.TitleExactWeight, &item.TitlePrefixWeight, &item.TitleContainsWeight,
 			&item.CreatorExactWeight, &item.CreatorMatchWeight, &item.BodyMatchWeight, &item.SecondaryMatchWeight,
 			&item.RecencyWeight, &item.CreatorActivityWeight, &item.WorkTypeBoost, &item.CreatorTypeBoost,
-			&item.ProductTypeBoost, &item.DemandTypeBoost, &item.Reason, &item.CreatedBy, &item.CreatedByHandle,
+			&item.ProductTypeBoost, &item.DemandTypeBoost, &item.CreatedBy, &item.CreatedByHandle,
 			&item.CreatedAt); err != nil {
 			return RankingPolicy{}, fmt.Errorf("scan ranking revision: %w", err)
 		}
@@ -963,13 +943,13 @@ func (s *Service) rankingRevision(ctx context.Context, id uuid.UUID) (RankingRev
 		       r.title_exact_weight,r.title_prefix_weight,r.title_contains_weight,
 		       r.creator_exact_weight,r.creator_match_weight,r.body_match_weight,r.secondary_match_weight,
 		       r.recency_weight,r.creator_activity_weight,r.work_type_boost,r.creator_type_boost,
-		       r.product_type_boost,r.demand_type_boost,r.reason,r.created_by,u.handle,r.created_at
+		       r.product_type_boost,r.demand_type_boost,r.created_by,u.handle,r.created_at
 		FROM discovery_ranking_revisions r LEFT JOIN users u ON u.id=r.created_by WHERE r.id=$1`, id).Scan(
 		&item.ID, &item.Version, &item.ParentRevisionID, &item.Name,
 		&item.TitleExactWeight, &item.TitlePrefixWeight, &item.TitleContainsWeight,
 		&item.CreatorExactWeight, &item.CreatorMatchWeight, &item.BodyMatchWeight, &item.SecondaryMatchWeight,
 		&item.RecencyWeight, &item.CreatorActivityWeight, &item.WorkTypeBoost, &item.CreatorTypeBoost,
-		&item.ProductTypeBoost, &item.DemandTypeBoost, &item.Reason, &item.CreatedBy, &item.CreatedByHandle, &item.CreatedAt,
+		&item.ProductTypeBoost, &item.DemandTypeBoost, &item.CreatedBy, &item.CreatedByHandle, &item.CreatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return RankingRevision{}, ErrNotFound
@@ -977,9 +957,8 @@ func (s *Service) rankingRevision(ctx context.Context, id uuid.UUID) (RankingRev
 	return item, err
 }
 
-func (s *Service) UpdateRankingPolicy(ctx context.Context, actorID uuid.UUID, input RankingUpdate, requestID string) (RankingPolicy, error) {
+func (s *Service) UpdateRankingPolicy(ctx context.Context, actorID uuid.UUID, input RankingUpdate, _ string) (RankingPolicy, error) {
 	input.Name = strings.TrimSpace(input.Name)
-	input.Reason = strings.TrimSpace(input.Reason)
 	if !validRankingUpdate(input) {
 		return RankingPolicy{}, ErrInvalid
 	}
@@ -1011,15 +990,11 @@ func (s *Service) UpdateRankingPolicy(ctx context.Context, actorID uuid.UUID, in
 		newID, newVersion, activeID, input.Name, input.TitleExactWeight, input.TitlePrefixWeight,
 		input.TitleContainsWeight, input.CreatorExactWeight, input.CreatorMatchWeight, input.BodyMatchWeight,
 		input.SecondaryMatchWeight, input.RecencyWeight, input.CreatorActivityWeight, input.WorkTypeBoost,
-		input.CreatorTypeBoost, input.ProductTypeBoost, input.DemandTypeBoost, input.Reason, actorID); err != nil {
+		input.CreatorTypeBoost, input.ProductTypeBoost, input.DemandTypeBoost, "Administrative configuration update", actorID); err != nil {
 		return RankingPolicy{}, fmt.Errorf("create ranking revision: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `UPDATE discovery_ranking_state SET active_revision_id=$1,version=$2,updated_at=now() WHERE singleton=true`, newID, newVersion); err != nil {
 		return RankingPolicy{}, fmt.Errorf("activate ranking revision: %w", err)
-	}
-	if err := audit(ctx, tx, actorID, "admin.discovery_ranking_updated", "discovery_ranking", newID, input.Reason, requestID,
-		map[string]any{"previousRevisionId": activeID, "previousVersion": version, "newVersion": newVersion}); err != nil {
-		return RankingPolicy{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return RankingPolicy{}, err
@@ -1043,18 +1018,16 @@ func validRankingUpdate(input RankingUpdate) bool {
 			return false
 		}
 	}
-	return input.Confirmed && input.ExpectedVersion > 0 && len(input.Name) >= 3 && len(input.Name) <= 80 &&
-		len(input.Reason) >= 10 && len(input.Reason) <= 500 && input.RecencyWeight >= 0 && input.RecencyWeight <= 50 &&
+	return input.ExpectedVersion > 0 && len(input.Name) >= 3 && len(input.Name) <= 80 &&
+		input.RecencyWeight >= 0 && input.RecencyWeight <= 50 &&
 		input.CreatorActivityWeight >= 0 && input.CreatorActivityWeight <= 50 &&
 		input.TitleExactWeight >= input.TitlePrefixWeight && input.TitlePrefixWeight >= input.TitleContainsWeight &&
 		input.CreatorExactWeight >= input.CreatorMatchWeight
 }
 
-func (s *Service) ReviewRiskSignal(ctx context.Context, actorID, signalID uuid.UUID, input RiskReview, requestID string) (RiskSignal, error) {
+func (s *Service) ReviewRiskSignal(ctx context.Context, actorID, signalID uuid.UUID, input RiskReview, _ string) (RiskSignal, error) {
 	input.Decision = strings.TrimSpace(strings.ToLower(input.Decision))
-	input.Reason = strings.TrimSpace(input.Reason)
-	if !input.Confirmed || input.ExpectedVersion < 1 || len(input.Reason) < 10 || len(input.Reason) > 1000 ||
-		!oneOf(input.Decision, "monitor", "no_action", "escalated") {
+	if input.ExpectedVersion < 1 || !oneOf(input.Decision, "monitor", "no_action", "escalated") {
 		return RiskSignal{}, ErrInvalid
 	}
 	tx, err := s.pool.Begin(ctx)
@@ -1082,17 +1055,13 @@ func (s *Service) ReviewRiskSignal(ctx context.Context, actorID, signalID uuid.U
 		UPDATE risk_signals SET status=$2,reviewer_id=$3,resolution_outcome=$4,resolution_reason=$5,
 		       resolved_at=CASE WHEN $2 IN ('resolved','dismissed') THEN now() ELSE NULL END,
 		       version=version+1,updated_at=now()
-		WHERE id=$1`, signalID, newStatus, actorID, input.Decision, input.Reason); err != nil {
+		WHERE id=$1`, signalID, newStatus, actorID, input.Decision, "Administrative review: "+input.Decision); err != nil {
 		return RiskSignal{}, err
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO risk_events(signal_id,actor_id,kind,from_status,to_status,reason,metadata)
 		VALUES($1,$2,'reviewed',$3,$4,$5,jsonb_build_object('decision',$6::text,'expectedVersion',$7::integer))`,
-		signalID, actorID, oldStatus, newStatus, input.Reason, input.Decision, input.ExpectedVersion); err != nil {
-		return RiskSignal{}, err
-	}
-	if err := audit(ctx, tx, actorID, "admin.risk_reviewed", "risk_signal", signalID, input.Reason, requestID,
-		map[string]any{"previousStatus": oldStatus, "newStatus": newStatus, "decision": input.Decision, "expectedVersion": input.ExpectedVersion}); err != nil {
+		signalID, actorID, oldStatus, newStatus, "Administrative review: "+input.Decision, input.Decision, input.ExpectedVersion); err != nil {
 		return RiskSignal{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -1146,24 +1115,6 @@ func scanGeneration(row scanner) (GenerationItem, error) {
 		&item.ErrorCode, &item.ErrorMessage, &item.CancelledAt, &item.CancelReason, &item.CreatedAt, &item.UpdatedAt,
 		&item.OwnerEmail, &item.OwnerHandle)
 	return item, err
-}
-
-func audit(ctx context.Context, tx pgx.Tx, actorID uuid.UUID, action, resourceType string, resourceID uuid.UUID, reason, requestID string, metadata map[string]any) error {
-	if strings.TrimSpace(requestID) == "" {
-		requestID = "admin"
-	}
-	body, err := json.Marshal(metadata)
-	if err != nil {
-		return fmt.Errorf("encode admin audit: %w", err)
-	}
-	var id any = resourceID
-	if resourceID == uuid.Nil {
-		id = nil
-	}
-	if _, err := tx.Exec(ctx, `INSERT INTO audit_events(actor_id,action,resource_type,resource_id,reason,request_id,metadata) VALUES($1,$2,$3,$4,$5,$6,$7)`, actorID, action, resourceType, id, reason, requestID, body); err != nil {
-		return fmt.Errorf("write admin audit: %w", err)
-	}
-	return nil
 }
 
 func oneOf(value string, allowed ...string) bool {

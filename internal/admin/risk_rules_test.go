@@ -41,8 +41,7 @@ func TestRiskRuleRevisionsControlSubsequentSignals(t *testing.T) {
 		CommunityReportScore: 42, MediaRejectionScore: 78,
 		AccountLinkScore: 68, AccountLinkMinAccounts: 4, AccountLinkWindowHours: 36,
 		MediumThreshold: 35, HighThreshold: 65, CriticalThreshold: 90,
-		Reason: "Raise disputed-task visibility while retaining bounded refund monitoring.", ExpectedVersion: 1, Confirmed: true,
-	}
+		ExpectedVersion: 1}
 	invalid := valid
 	invalid.MediumThreshold, invalid.HighThreshold = 70, 60
 	if _, err := service.UpdateRiskRulePolicy(ctx, adminID, invalid, "risk-rules-invalid"); !errors.Is(err, admin.ErrInvalid) {
@@ -96,9 +95,5 @@ func TestRiskRuleRevisionsControlSubsequentSignals(t *testing.T) {
 	}
 	if score != 94 || severity != "critical" || revisionID != updated.Current.ID.String() || revisionVersion != 2 {
 		t.Fatalf("signal did not preserve active rule evidence: score=%d severity=%s revision=%s version=%d", score, severity, revisionID, revisionVersion)
-	}
-	var auditCount int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM audit_events WHERE action='admin.risk_rules_updated' AND resource_id=$1 AND request_id='risk-rules-update'`, updated.Current.ID).Scan(&auditCount); err != nil || auditCount != 1 {
-		t.Fatalf("risk rule audit evidence mismatch: count=%d err=%v", auditCount, err)
 	}
 }

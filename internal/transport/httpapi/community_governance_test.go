@@ -66,7 +66,7 @@ func TestCommunityGovernanceHTTPContract(t *testing.T) {
 	}
 	var resolved admin.GovernanceReport
 	response = requestJSON(t, adminClient, http.MethodPost, server.URL+"/api/v1/admin/governance/reports/"+report.ID.String()+"/resolve", map[string]any{
-		"outcome": "hidden", "reason": "Evidence requires temporary removal while provenance is verified.", "confirmed": true,
+		"outcome": "hidden",
 	}, &resolved)
 	if response.StatusCode != http.StatusOK || resolved.Status != "resolved" || resolved.Outcome == nil || *resolved.Outcome != "hidden" {
 		t.Fatalf("admin report resolution failed: status=%d report=%#v", response.StatusCode, resolved)
@@ -88,7 +88,7 @@ func TestCommunityGovernanceHTTPContract(t *testing.T) {
 	}
 	var appealResult admin.GovernanceAppeal
 	response = requestJSON(t, adminClient, http.MethodPost, server.URL+"/api/v1/admin/governance/appeals/"+appeal.ID.String()+"/resolve", map[string]any{
-		"decision": "upheld", "reason": "Verified provenance resolves the disclosure concern and supports restoration.", "confirmed": true,
+		"decision": "upheld",
 	}, &appealResult)
 	if response.StatusCode != http.StatusOK || appealResult.Status != "upheld" {
 		t.Fatalf("admin appeal resolution failed: status=%d appeal=%#v", response.StatusCode, appealResult)

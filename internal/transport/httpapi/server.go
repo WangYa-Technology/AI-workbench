@@ -65,7 +65,7 @@ type Server struct {
 func New(cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger) http.Handler {
 	started := time.Now()
 	metrics := observability.NewMetrics(started)
-	providerRuntimes := providers.NewCatalog(cfg)
+	providerRuntimes := providers.NewCatalogWithRegistry(cfg, pool, cfg.WebhookEncryptionKey)
 	costRuntime, costRuntimeErr := providers.NewOpenAICostsRuntime(cfg)
 	if costRuntimeErr != nil {
 		logger.Error("provider cost reconciliation runtime disabled", "error", costRuntimeErr)
@@ -90,7 +90,7 @@ func New(cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger) http.Handle
 		tasks:         tasks.NewServiceWithPayments(pool, cfg.StripeEnabled),
 		marketplace:   marketplace.NewService(pool),
 		notifications: notifications.NewRepository(pool),
-		admin:         admin.NewServiceWithRuntimes(pool, providerRuntimes),
+		admin:         admin.NewServiceWithRuntimesAndProviderKey(pool, providerRuntimes, cfg.WebhookEncryptionKey),
 		dataRights:    datarights.NewServiceWithMedia(pool, cfg.MediaRoot, mediaStores),
 		developer:     developer.NewService(pool),
 		support:       support.NewService(pool),
@@ -165,6 +165,8 @@ func New(cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger) http.Handle
 		api.Get("/search", server.searchDiscovery)
 		api.Get("/creators/{handle}", server.getCreator)
 		api.Get("/creation/capabilities", server.creationCapabilities)
+		api.Post("/conversations", server.createConversation)
+		api.Get("/conversations", server.listConversations)
 		api.Post("/generations", server.submitGeneration)
 		api.Post("/generations/batch", server.batchGenerations)
 		api.Get("/generations", server.listGenerations)
@@ -173,6 +175,8 @@ func New(cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger) http.Handle
 		api.Post("/generations/{generationID}/retry", server.retryGeneration)
 		api.Put("/generations/{generationID}/favorite", server.favoriteGeneration)
 		api.Get("/billing/statement", server.billingStatement)
+		api.Get("/billing/points", server.pointOverview)
+		api.Post("/billing/subscriptions", server.purchaseSubscription)
 		api.Get("/assets", server.listAssets)
 		api.Get("/assets/saved-works", server.listSavedWorks)
 		api.Post("/assets/uploads", server.uploadAsset)
@@ -195,6 +199,7 @@ func New(cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger) http.Handle
 		api.Delete("/content-drafts/{draftID}", server.discardContentDraft)
 		api.Post("/content-drafts/{draftID}/publish", server.publishContentDraft)
 		api.Get("/community/posts", server.listPosts)
+		api.Get("/community/posts/{postID}", server.getCommunityPost)
 		api.Get("/community/posts/{postID}/comments", server.listComments)
 		api.Post("/community/posts/{postID}/comments", server.createComment)
 		api.Put("/community/posts/{postID}/reactions/{kind}", server.setPostReaction)
@@ -226,6 +231,17 @@ func New(cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger) http.Handle
 		api.Post("/admin/tasks/{taskID}/resolve", server.adminResolveTaskDispute)
 		api.Get("/admin/providers", server.adminListProviders)
 		api.Patch("/admin/providers/{providerID}", server.adminUpdateProvider)
+		api.Get("/admin/provider-configs", server.adminListProviderConfigs)
+		api.Post("/admin/provider-configs", server.adminCreateProviderConfig)
+		api.Patch("/admin/provider-configs/{providerID}", server.adminUpdateProviderConfig)
+		api.Post("/admin/provider-configs/{providerID}/archive", server.adminArchiveProviderConfig)
+		api.Post("/admin/provider-configs/{providerID}/sync-models", server.adminSyncProviderModels)
+		api.Post("/admin/provider-configs/{providerID}/models", server.adminCreateProviderModel)
+		api.Patch("/admin/provider-models/{modelID}", server.adminUpdateProviderModel)
+		api.Post("/admin/provider-models/{modelID}/archive", server.adminArchiveProviderModel)
+		api.Get("/admin/subscription-plans", server.adminListSubscriptionPlans)
+		api.Post("/admin/subscription-plans", server.adminCreateSubscriptionPlan)
+		api.Patch("/admin/subscription-plans/{planID}", server.adminUpdateSubscriptionPlan)
 		api.Get("/admin/models/routes", server.adminGetModelRoutes)
 		api.Post("/admin/models/routes/{mode}", server.adminUpdateModelRoute)
 		api.Get("/admin/settings", server.adminGetSystemSettings)
@@ -250,7 +266,6 @@ func New(cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger) http.Handle
 		api.Post("/admin/discovery/ranking/rollout", server.adminUpdateRankingRollout)
 		api.Get("/admin/discovery/operations", server.adminGetDiscoveryOperations)
 		api.Post("/admin/discovery/index/analyze", server.adminAnalyzeDiscoveryIndex)
-		api.Get("/admin/audit", server.adminListAudit)
 		api.Get("/admin/observability", server.adminGetOperationalDiagnostics)
 		api.Get("/admin/developer/access", server.adminGetDeveloperAccess)
 		api.Put("/admin/developer/control", server.adminUpdateDeveloperControl)
@@ -306,6 +321,10 @@ func (s *Server) meta(w http.ResponseWriter, _ *http.Request) {
 		"localDemoAvailable": s.config.Environment != "production" && s.config.DemoDataEnabled,
 		"localProvider":      map[string]any{"enabled": s.config.LocalProviderEnabled, "label": "Deterministic local test provider"},
 		"paymentProvider":    map[string]any{"enabled": s.config.StripeEnabled, "provider": "stripe", "liveMode": s.config.StripeLiveMode},
+		"providerCostReconciliation": map[string]any{
+			"enabled":  s.reconciliation.Available(),
+			"provider": "openai",
+		},
 	})
 }
 

@@ -37,12 +37,12 @@ func TestDeveloperAccessCredentialLifecycleAndAPIIsolation(t *testing.T) {
 	if response.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("disabled control accepted account creation: %d", response.StatusCode)
 	}
-	response = requestJSON(t, memberClient, http.MethodPut, server.URL+"/api/v1/admin/developer/control", map[string]any{"enabled": true, "maxServiceAccounts": 5, "maxActiveKeys": 3, "defaultTtlDays": 90, "expectedVersion": 1, "reason": "Enable bounded contract testing", "confirmed": true}, nil)
+	response = requestJSON(t, memberClient, http.MethodPut, server.URL+"/api/v1/admin/developer/control", map[string]any{"enabled": true, "maxServiceAccounts": 5, "maxActiveKeys": 3, "defaultTtlDays": 90, "expectedVersion": 1}, nil)
 	if response.StatusCode != http.StatusForbidden {
 		t.Fatalf("member changed Developer Access control: %d", response.StatusCode)
 	}
 	var control developer.Control
-	response = requestJSON(t, adminClient, http.MethodPut, server.URL+"/api/v1/admin/developer/control", map[string]any{"enabled": true, "maxServiceAccounts": 5, "maxActiveKeys": 3, "defaultTtlDays": 90, "expectedVersion": 1, "reason": "Enable bounded contract testing", "confirmed": true}, &control)
+	response = requestJSON(t, adminClient, http.MethodPut, server.URL+"/api/v1/admin/developer/control", map[string]any{"enabled": true, "maxServiceAccounts": 5, "maxActiveKeys": 3, "defaultTtlDays": 90, "expectedVersion": 1}, &control)
 	if response.StatusCode != http.StatusOK || !control.Enabled || control.Version != 2 {
 		t.Fatalf("Admin control update failed: status=%d item=%#v", response.StatusCode, control)
 	}
@@ -99,7 +99,7 @@ func TestDeveloperAccessCredentialLifecycleAndAPIIsolation(t *testing.T) {
 	if response.StatusCode != http.StatusCreated {
 		t.Fatalf("emergency key setup failed: status=%d item=%#v", response.StatusCode, emergencyKey)
 	}
-	transition := map[string]any{"expectedVersion": emergencyKey.Version, "reason": "Revoke credential after confirmed security incident", "confirmed": true}
+	transition := map[string]any{"expectedVersion": emergencyKey.Version}
 	response = requestJSON(t, memberClient, http.MethodPost, server.URL+"/api/v1/admin/developer/keys/"+emergencyKey.ID.String()+"/revoke", transition, nil)
 	if response.StatusCode != http.StatusForbidden {
 		t.Fatalf("member invoked Admin key revocation: %d", response.StatusCode)
@@ -127,13 +127,9 @@ func TestDeveloperAccessCredentialLifecycleAndAPIIsolation(t *testing.T) {
 		t.Fatalf("Admin inventory exposed credential material: status=%d err=%v body=%s", response.StatusCode, err, encodedInventory)
 	}
 	var revokedAccount developer.ServiceAccount
-	response = requestJSON(t, adminClient, http.MethodPost, server.URL+"/api/v1/admin/developer/service-accounts/"+emergencyAccount.ID.String()+"/revoke", map[string]any{"expectedVersion": emergencyAccount.Version, "reason": "Revoke compromised machine identity and all active keys", "confirmed": true}, &revokedAccount)
+	response = requestJSON(t, adminClient, http.MethodPost, server.URL+"/api/v1/admin/developer/service-accounts/"+emergencyAccount.ID.String()+"/revoke", map[string]any{"expectedVersion": emergencyAccount.Version}, &revokedAccount)
 	if response.StatusCode != http.StatusOK || revokedAccount.Status != "revoked" || callDeveloperAPI(t, server.URL+"/api/v1/principal", emergencyAccountKey.PlaintextKey).StatusCode != http.StatusUnauthorized {
 		t.Fatalf("Admin account revocation failed: status=%d item=%#v", response.StatusCode, revokedAccount)
-	}
-	var adminAudits int
-	if err := pool.QueryRow(context.Background(), `SELECT count(*) FROM audit_events WHERE actor_id=$1 AND action IN ('admin.developer_api_key_revoked','admin.developer_service_account_revoked')`, administrator.ID).Scan(&adminAudits); err != nil || adminAudits != 2 {
-		t.Fatalf("Admin developer audit evidence mismatch: count=%d err=%v", adminAudits, err)
 	}
 }
 

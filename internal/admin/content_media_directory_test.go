@@ -70,8 +70,7 @@ func TestAdminContentAndMediaInventoriesTraverseBeyondLegacyWindow(t *testing.T)
 		t.Fatalf("modified content cursor was accepted: %v", err)
 	}
 	moderated, err := service.UpdateContent(ctx, administratorID, oldWorkID, admin.ContentUpdate{
-		Status: "hidden", Reason: "Verified older content evidence beyond the legacy inventory window.", Confirmed: true,
-	}, "content-backlog-review")
+		Status: "hidden"}, "content-backlog-review")
 	if err != nil || moderated.ID != oldWorkID || moderated.Status != "hidden" {
 		t.Fatalf("exact older content moderation response failed: %#v %v", moderated, err)
 	}
@@ -116,8 +115,7 @@ func TestAdminContentAndMediaInventoriesTraverseBeyondLegacyWindow(t *testing.T)
 		t.Fatalf("modified media cursor was accepted: %v", err)
 	}
 	reviewed, err := service.ReviewMedia(ctx, administratorID, oldMediaID, admin.MediaReview{
-		Status: "rejected", Reason: "Verified older media evidence beyond the legacy inventory window.", Confirmed: true,
-	}, "media-backlog-review")
+		Status: "rejected"}, "media-backlog-review")
 	if err != nil || reviewed.ID != oldMediaID || reviewed.ScanStatus != "rejected" || reviewed.ScannedAt == nil {
 		t.Fatalf("exact older media review response failed: %#v %v", reviewed, err)
 	}

@@ -23,7 +23,7 @@ func TestModelRouteRevisionsControlSubsequentGenerations(t *testing.T) {
 	if err != nil || len(initial.Routes) != 4 || initial.Routes["image"].Version != 1 || initial.Routes["image"].ProviderProfileID != "local-image-v1" {
 		t.Fatalf("initial routes mismatch: %#v %v", initial, err)
 	}
-	input := admin.ModelRouteUpdate{ProviderProfileID: "local-image-v1", Name: "Verified image route", TimeoutSeconds: 90, MaxAttempts: 2, Reason: "Activate an attributable Local Test image route for subsequent generations.", ExpectedVersion: 1, Confirmed: true}
+	input := admin.ModelRouteUpdate{ProviderProfileID: "local-image-v1", Name: "Verified image route", TimeoutSeconds: 90, MaxAttempts: 2, ExpectedVersion: 1}
 	stale := input
 	stale.ExpectedVersion = 2
 	if _, err := service.UpdateModelRoute(ctx, actorID, "image", stale, "model-stale"); !errors.Is(err, admin.ErrConflict) {
@@ -58,9 +58,5 @@ func TestModelRouteRevisionsControlSubsequentGenerations(t *testing.T) {
 	}
 	if routeID != updated.Routes["image"].ID || routeVersion != 2 {
 		t.Fatalf("generation route evidence mismatch: %s v%d", routeID, routeVersion)
-	}
-	var auditCount int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM audit_events WHERE action='admin.model_route_updated' AND resource_id=$1`, routeID).Scan(&auditCount); err != nil || auditCount != 1 {
-		t.Fatalf("route audit mismatch: %d %v", auditCount, err)
 	}
 }

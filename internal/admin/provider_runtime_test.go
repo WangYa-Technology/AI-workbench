@@ -26,8 +26,7 @@ func TestConfiguredExternalRuntimeCanBeEnabledAndRouted(t *testing.T) {
 	service := admin.NewServiceWithRuntimes(pool, runtimes)
 
 	provider, err := service.UpdateProvider(ctx, actorID, "openai-image", admin.ProviderUpdate{
-		Enabled: true, Reason: "Enable the verified staging image runtime contract.", Confirmed: true,
-	}, "provider-enable")
+		Enabled: true}, "provider-enable")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,9 +43,7 @@ func TestConfiguredExternalRuntimeCanBeEnabledAndRouted(t *testing.T) {
 		Name:              "Verified staging image route",
 		TimeoutSeconds:    90,
 		MaxAttempts:       2,
-		Reason:            "Route staging image requests through the verified runtime.",
 		ExpectedVersion:   policy.Routes["image"].Version,
-		Confirmed:         true,
 	}, "provider-route")
 	if err != nil {
 		t.Fatal(err)

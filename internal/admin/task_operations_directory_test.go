@@ -76,8 +76,7 @@ func TestAdminTaskOperationsTraverseBeyondLegacyWindow(t *testing.T) {
 	}
 
 	resolved, err := service.ResolveTaskDispute(ctx, administratorID, targetTaskID, admin.TaskDisputeResolution{
-		Decision: "cancel_without_settlement", Reason: "Verified older task evidence beyond the legacy operations window.", ExpectedVersion: 1, Confirmed: true,
-	}, "task-directory-backlog")
+		Decision: "cancel_without_settlement", ExpectedVersion: 1}, "task-directory-backlog")
 	if err != nil || resolved.ID != targetTaskID || resolved.Status != "cancelled" || resolved.DisputeStatus == nil || *resolved.DisputeStatus != "resolved_client" {
 		t.Fatalf("exact older task resolution response failed: %#v %v", resolved, err)
 	}

@@ -48,9 +48,7 @@ type TaskOperation struct {
 
 type TaskDisputeResolution struct {
 	Decision        string `json:"decision"`
-	Reason          string `json:"reason"`
 	ExpectedVersion int    `json:"expectedVersion"`
-	Confirmed       bool   `json:"confirmed"`
 }
 
 type TaskOperationListInput struct {
@@ -147,11 +145,9 @@ func decodeTaskOperationCursor(value string) (taskOperationCursor, error) {
 	return cursor, nil
 }
 
-func (s *Service) ResolveTaskDispute(ctx context.Context, actorID, taskID uuid.UUID, input TaskDisputeResolution, requestID string) (TaskOperation, error) {
+func (s *Service) ResolveTaskDispute(ctx context.Context, actorID, taskID uuid.UUID, input TaskDisputeResolution, _ string) (TaskOperation, error) {
 	input.Decision = strings.TrimSpace(strings.ToLower(input.Decision))
-	input.Reason = strings.TrimSpace(input.Reason)
-	if !input.Confirmed || input.ExpectedVersion < 1 || len(input.Reason) < 10 || len(input.Reason) > 1000 ||
-		!oneOf(input.Decision, "release_creator", "cancel_without_settlement") {
+	if input.ExpectedVersion < 1 || !oneOf(input.Decision, "release_creator", "cancel_without_settlement") {
 		return TaskOperation{}, ErrInvalid
 	}
 	tx, err := s.pool.Begin(ctx)
@@ -199,6 +195,7 @@ func (s *Service) ResolveTaskDispute(ctx context.Context, actorID, taskID uuid.U
 		}
 	}
 
+	note := "Administrative decision: " + input.Decision
 	metadata := map[string]any{"decision": input.Decision, "previousStatus": status, "disputeId": disputeID, "amountCents": 0, "currency": currency, "paymentMode": "local_test"}
 	if providerPayment {
 		metadata["paymentMode"] = "stripe"
@@ -213,7 +210,7 @@ func (s *Service) ResolveTaskDispute(ctx context.Context, actorID, taskID uuid.U
 		err = tx.QueryRow(ctx, `
 			UPDATE deliveries SET status='accepted',review_note=$2,reviewed_at=now(),accepted_at=now(),updated_at=now()
 			WHERE id=(SELECT id FROM deliveries WHERE demand_id=$1 AND status='disputed' ORDER BY version DESC,id DESC LIMIT 1)
-			RETURNING id`, taskID, input.Reason).Scan(&deliveryID)
+			RETURNING id`, taskID, note).Scan(&deliveryID)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return TaskOperation{}, ErrConflict
 		}
@@ -279,10 +276,10 @@ func (s *Service) ResolveTaskDispute(ctx context.Context, actorID, taskID uuid.U
 		}
 	}
 
-	if _, err = tx.Exec(ctx, `UPDATE task_disputes SET status=$2,resolution_note=$3,resolved_by=$4,resolved_at=now(),version=version+1 WHERE id=$1`, disputeID, resolutionStatus, input.Reason, actorID); err != nil {
+	if _, err = tx.Exec(ctx, `UPDATE task_disputes SET status=$2,resolution_note=$3,resolved_by=$4,resolved_at=now(),version=version+1 WHERE id=$1`, disputeID, resolutionStatus, note, actorID); err != nil {
 		return TaskOperation{}, err
 	}
-	if _, err = tx.Exec(ctx, `INSERT INTO task_events(demand_id,actor_id,kind,from_status,to_status,note,metadata) VALUES($1,$2,$3,'disputed',$4,$5,$6)`, taskID, actorID, eventKind, toStatus, input.Reason, metadata); err != nil {
+	if _, err = tx.Exec(ctx, `INSERT INTO task_events(demand_id,actor_id,kind,from_status,to_status,note,metadata) VALUES($1,$2,$3,'disputed',$4,$5,$6)`, taskID, actorID, eventKind, toStatus, note, metadata); err != nil {
 		return TaskOperation{}, err
 	}
 	paymentMode := metadata["paymentMode"].(string)
@@ -290,9 +287,6 @@ func (s *Service) ResolveTaskDispute(ctx context.Context, actorID, taskID uuid.U
 		return TaskOperation{}, err
 	}
 	if err = notifyTaskResolution(ctx, tx, *assigneeID, taskID, disputeID, title, input.Decision, paymentMode, false); err != nil {
-		return TaskOperation{}, err
-	}
-	if err = audit(ctx, tx, actorID, "admin.task_dispute_resolved", "task", taskID, input.Reason, requestID, metadata); err != nil {
 		return TaskOperation{}, err
 	}
 	if err = tx.Commit(ctx); err != nil {

@@ -80,7 +80,7 @@ func TestCommunityGovernanceLifecycle(t *testing.T) {
 
 	adminService := admin.NewService(pool, true)
 	resolved, err := adminService.ResolveReport(ctx, moderatorID, report.ID, admin.ReportResolution{
-		Outcome: "hidden", Reason: "Disclosure evidence requires author clarification before publication.", Confirmed: true,
+		Outcome: "hidden",
 	}, "request-governance-hide")
 	if err != nil || resolved.Status != "resolved" || resolved.Outcome == nil || *resolved.Outcome != "hidden" {
 		t.Fatalf("resolve report: %#v %v", resolved, err)
@@ -102,7 +102,7 @@ func TestCommunityGovernanceLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	appealResult, err := adminService.ResolveAppeal(ctx, moderatorID, appeal.ID, admin.AppealResolution{
-		Decision: "upheld", Reason: "Provenance evidence verifies the disclosure and supports restoration.", Confirmed: true,
+		Decision: "upheld",
 	}, "request-governance-restore")
 	if err != nil || appealResult.Status != "upheld" {
 		t.Fatalf("resolve appeal: %#v %v", appealResult, err)
@@ -113,18 +113,15 @@ func TestCommunityGovernanceLifecycle(t *testing.T) {
 	if workStatus != "published" || postStatus != "published" {
 		t.Fatalf("upheld appeal did not restore content: work=%s post=%s", workStatus, postStatus)
 	}
-	var governanceEvents, auditEvents, notifications int
+	var governanceEvents, notifications int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM governance_events WHERE report_id=$1`, report.ID).Scan(&governanceEvents); err != nil {
-		t.Fatal(err)
-	}
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM audit_events WHERE resource_id IN ($1,$2)`, report.ID, appeal.ID).Scan(&auditEvents); err != nil {
 		t.Fatal(err)
 	}
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM notifications WHERE user_id IN ($1,$2) AND kind LIKE 'community.%'`, authorID, reporterID).Scan(&notifications); err != nil {
 		t.Fatal(err)
 	}
-	if governanceEvents != 4 || auditEvents != 2 || notifications < 5 {
-		t.Fatalf("missing governance evidence: events=%d audit=%d notifications=%d", governanceEvents, auditEvents, notifications)
+	if governanceEvents != 4 || notifications < 5 {
+		t.Fatalf("missing governance events or notifications: events=%d notifications=%d", governanceEvents, notifications)
 	}
 }
 

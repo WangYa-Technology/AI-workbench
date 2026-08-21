@@ -48,7 +48,7 @@ func main() {
 
 	repository := jobs.NewRepository(pool)
 	worker := jobs.NewWorker(repository, "worker-"+uuid.NewString(), logger)
-	providerRuntimes := providers.NewCatalog(cfg)
+	providerRuntimes := providers.NewCatalogWithRegistry(cfg, pool, cfg.WebhookEncryptionKey)
 	costRuntime, err := providers.NewOpenAICostsRuntime(cfg)
 	if err != nil {
 		logger.Error("provider cost reconciliation runtime disabled", "error", err)

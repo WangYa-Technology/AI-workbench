@@ -60,7 +60,7 @@ func TestOwnedAssetUsageHTTPContract(t *testing.T) {
 		if want[usage.Kind] != usage.ResourceID || usage.AssetID != assetID || usage.AssetVersion != 1 {
 			t.Fatalf("unexpected HTTP usage: %#v", usage)
 		}
-		if usage.Kind == "generation" && (usage.TargetPath == nil || *usage.TargetPath != "/workspace/generations?generationId="+generationID.String()) {
+		if usage.Kind == "generation" && (usage.TargetPath == nil || *usage.TargetPath != "/create/image?generationId="+generationID.String()) {
 			t.Fatalf("generation deep link missing: %#v", usage)
 		}
 		if (usage.Kind == "work" || usage.Kind == "product") && usage.TargetPath != nil {

@@ -185,21 +185,14 @@ func (s *Server) adminReleaseDataRightsHold(w http.ResponseWriter, r *http.Reque
 	if !valid {
 		return
 	}
-	var input struct {
-		Reason    string `json:"reason"`
-		Confirmed bool   `json:"confirmed"`
-	}
-	if !httputil.DecodeJSON(w, r, &input) {
-		return
-	}
-	item, err := s.dataRights.ReleaseHold(r.Context(), actor.ID, id, input.Reason, httputil.RequestID(r.Context()), input.Confirmed)
+	item, err := s.dataRights.ReleaseHold(r.Context(), actor.ID, id)
 	s.writeDataRightsAdminResult(w, r, item, err, http.StatusOK)
 }
 
 func (s *Server) writeDataRightsAdminResult(w http.ResponseWriter, r *http.Request, item any, err error, successStatus int) {
 	switch {
 	case errors.Is(err, datarights.ErrInvalid):
-		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_legal_hold", "Provide a user, authority reference, reason, and explicit confirmation.", false)
+		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_legal_hold", "Provide a user and a valid authority reference.", false)
 	case errors.Is(err, datarights.ErrNotFound):
 		httputil.WriteError(w, r, http.StatusNotFound, "legal_hold_not_found", "The legal-hold target could not be found.", false)
 	case errors.Is(err, datarights.ErrConflict):

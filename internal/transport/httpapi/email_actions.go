@@ -141,7 +141,7 @@ func (s *Server) adminCancelEmailAction(w http.ResponseWriter, r *http.Request) 
 func (s *Server) writeEmailActionResult(w http.ResponseWriter, r *http.Request, status int, item any, err error) {
 	switch {
 	case errors.Is(err, emailactions.ErrInvalid):
-		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_email_action", "Review the token, password, confirmation, and operation reason.", false)
+		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_email_action", "Review the token, password, and current version.", false)
 	case errors.Is(err, emailactions.ErrNotFound):
 		httputil.WriteError(w, r, http.StatusNotFound, "email_action_not_found", "This email action is invalid or no longer available.", false)
 	case errors.Is(err, emailactions.ErrExpired):

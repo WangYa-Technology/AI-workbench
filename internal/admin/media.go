@@ -32,9 +32,7 @@ type MediaItem struct {
 }
 
 type MediaReview struct {
-	Status    string `json:"status"`
-	Reason    string `json:"reason"`
-	Confirmed bool   `json:"confirmed"`
+	Status string `json:"status"`
 }
 
 type MediaListInput struct {
@@ -138,10 +136,9 @@ func decodeMediaCursor(value string) (mediaCursor, error) {
 	return cursor, nil
 }
 
-func (s *Service) ReviewMedia(ctx context.Context, actorID, assetID uuid.UUID, input MediaReview, requestID string) (MediaItem, error) {
+func (s *Service) ReviewMedia(ctx context.Context, actorID, assetID uuid.UUID, input MediaReview, _ string) (MediaItem, error) {
 	input.Status = strings.TrimSpace(strings.ToLower(input.Status))
-	input.Reason = strings.TrimSpace(input.Reason)
-	if !input.Confirmed || len(input.Reason) < 10 || len(input.Reason) > 1000 || !oneOf(input.Status, "clean", "review", "rejected") {
+	if !oneOf(input.Status, "clean", "review", "rejected") {
 		return MediaItem{}, ErrInvalid
 	}
 	tx, err := s.pool.Begin(ctx)
@@ -156,7 +153,7 @@ func (s *Service) ReviewMedia(ctx context.Context, actorID, assetID uuid.UUID, i
 	} else if err != nil {
 		return MediaItem{}, err
 	}
-	if _, err := tx.Exec(ctx, `UPDATE assets SET scan_status=$2,scan_reason=$3,scanned_at=now() WHERE id=$1`, assetID, input.Status, input.Reason); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE assets SET scan_status=$2,scan_reason=NULL,scanned_at=now() WHERE id=$1`, assetID, input.Status); err != nil {
 		return MediaItem{}, fmt.Errorf("review uploaded media: %w", err)
 	}
 	if err := notifications.CreateTx(ctx, tx, notifications.CreateInput{
@@ -164,11 +161,6 @@ func (s *Service) ReviewMedia(ctx context.Context, actorID, assetID uuid.UUID, i
 		Body:       "An administrator reviewed your uploaded Asset. Its current scan status is " + input.Status + ".",
 		TargetPath: "/workspace/assets/" + assetID.String(), ResourceType: "asset", ResourceID: &assetID,
 		SourceKey: "asset-admin-review:" + assetID.String() + ":" + input.Status,
-	}); err != nil {
-		return MediaItem{}, err
-	}
-	if err := audit(ctx, tx, actorID, "admin.media_reviewed", "asset", assetID, input.Reason, requestID, map[string]any{
-		"previousStatus": previousStatus, "newStatus": input.Status,
 	}); err != nil {
 		return MediaItem{}, err
 	}

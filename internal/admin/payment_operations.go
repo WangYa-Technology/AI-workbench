@@ -85,8 +85,6 @@ type PaymentDestinationUpdate struct {
 	DestinationID   string `json:"destinationId"`
 	Enabled         bool   `json:"enabled"`
 	ExpectedVersion int    `json:"expectedVersion"`
-	Reason          string `json:"reason"`
-	Confirmed       bool   `json:"confirmed"`
 }
 
 type PaymentOperation struct {
@@ -150,14 +148,10 @@ type paymentOperationCursor struct {
 type PaymentRecovery struct {
 	Action          string `json:"action"`
 	ExpectedVersion int    `json:"expectedVersion"`
-	Reason          string `json:"reason"`
-	Confirmed       bool   `json:"confirmed"`
 }
 
 type PaymentEventReplay struct {
 	ExpectedVersion int    `json:"expectedVersion"`
-	Reason          string `json:"reason"`
-	Confirmed       bool   `json:"confirmed"`
 }
 
 const paymentOperationSelect = `
@@ -333,10 +327,9 @@ func (s *Service) ListPaymentDestinations(ctx context.Context, input PaymentDest
 	return page, nil
 }
 
-func (s *Service) UpdatePaymentDestination(ctx context.Context, actorID, userID uuid.UUID, input PaymentDestinationUpdate, requestID string) (PaymentDestination, error) {
+func (s *Service) UpdatePaymentDestination(ctx context.Context, _ uuid.UUID, userID uuid.UUID, input PaymentDestinationUpdate, _ string) (PaymentDestination, error) {
 	input.DestinationID = strings.TrimSpace(input.DestinationID)
-	input.Reason = strings.TrimSpace(input.Reason)
-	if !input.Confirmed || input.ExpectedVersion < 0 || !stripeAccountPattern.MatchString(input.DestinationID) || len(input.Reason) < 10 || len(input.Reason) > 1000 {
+	if input.ExpectedVersion < 0 || !stripeAccountPattern.MatchString(input.DestinationID) {
 		return PaymentDestination{}, ErrInvalid
 	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
@@ -352,9 +345,8 @@ func (s *Service) UpdatePaymentDestination(ctx context.Context, actorID, userID 
 		return PaymentDestination{}, ErrNotFound
 	}
 	var destinationID uuid.UUID
-	var oldStatus *string
 	var version int
-	err = tx.QueryRow(ctx, `SELECT id,status,version FROM payment_destinations WHERE provider='stripe' AND user_id=$1 FOR UPDATE`, userID).Scan(&destinationID, &oldStatus, &version)
+	err = tx.QueryRow(ctx, `SELECT id,version FROM payment_destinations WHERE provider='stripe' AND user_id=$1 FOR UPDATE`, userID).Scan(&destinationID, &version)
 	if errors.Is(err, pgx.ErrNoRows) {
 		if input.ExpectedVersion != 0 {
 			return PaymentDestination{}, ErrConflict
@@ -390,15 +382,6 @@ func (s *Service) UpdatePaymentDestination(ctx context.Context, actorID, userID 
 			  details_submitted=$4,requirements_due=false,admin_disabled=NOT $4,verified_at=$5,version=version+1,updated_at=now() WHERE id=$1`, destinationID, input.DestinationID, status, input.Enabled, verifiedAt); err != nil {
 			return PaymentDestination{}, ErrConflict
 		}
-	}
-	previous := "missing"
-	if oldStatus != nil {
-		previous = *oldStatus
-	}
-	if err := audit(ctx, tx, actorID, "admin.payment_destination_updated", "payment_destination", destinationID, input.Reason, requestID, map[string]any{
-		"userId": userID, "destinationId": input.DestinationID, "previousStatus": previous, "enabled": input.Enabled, "expectedVersion": input.ExpectedVersion,
-	}); err != nil {
-		return PaymentDestination{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return PaymentDestination{}, err
@@ -438,10 +421,9 @@ func decodePaymentOperationCursor(value string) (paymentOperationCursor, error) 
 	return cursor, nil
 }
 
-func (s *Service) RecoverPayment(ctx context.Context, actorID, paymentID uuid.UUID, input PaymentRecovery, requestID string) (PaymentOperation, error) {
+func (s *Service) RecoverPayment(ctx context.Context, actorID, paymentID uuid.UUID, input PaymentRecovery, _ string) (PaymentOperation, error) {
 	input.Action = strings.ToLower(strings.TrimSpace(input.Action))
-	input.Reason = strings.TrimSpace(input.Reason)
-	if !input.Confirmed || input.ExpectedVersion < 1 || len(input.Reason) < 10 || len(input.Reason) > 1000 || !oneOf(input.Action, "retry_transfer", "retry_refund") {
+	if input.ExpectedVersion < 1 || !oneOf(input.Action, "retry_transfer", "retry_refund") {
 		return PaymentOperation{}, ErrInvalid
 	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
@@ -502,13 +484,13 @@ func (s *Service) RecoverPayment(ctx context.Context, actorID, paymentID uuid.UU
 				}
 				operationID := uuid.New()
 				if _, err := tx.Exec(ctx, `UPDATE orders SET status='refund_requested',refund_reason=$2,refund_idempotency_key=$3,refund_operation_id=$4,refund_requested_at=now(),updated_at=now() WHERE id=$1`,
-					orderID, input.Reason, "admin-recovery:"+operationID.String(), operationID); err != nil {
+					orderID, "Administrative payment recovery", "admin-recovery:"+operationID.String(), operationID); err != nil {
 					return PaymentOperation{}, err
 				}
 				if _, err := tx.Exec(ctx, `UPDATE payment_intents SET status='refund_pending',provider_refund_id=NULL,updated_at=now(),version=version+1 WHERE id=$1`, paymentID); err != nil {
 					return PaymentOperation{}, err
 				}
-				if _, err := tx.Exec(ctx, `INSERT INTO order_events(order_id,actor_id,from_status,to_status,reason,sequence) SELECT $1,$2,'fulfilled','refund_requested',$3,COALESCE(max(sequence),0)+1 FROM order_events WHERE order_id=$1`, orderID, actorID, input.Reason); err != nil {
+				if _, err := tx.Exec(ctx, `INSERT INTO order_events(order_id,actor_id,from_status,to_status,reason,sequence) SELECT $1,$2,'fulfilled','refund_requested',$3,COALESCE(max(sequence),0)+1 FROM order_events WHERE order_id=$1`, orderID, actorID, "Administrative payment recovery"); err != nil {
 					return PaymentOperation{}, err
 				}
 			} else if status == "refund_pending" && orderStatus == "refund_requested" && providerRefundText == nil && orderOperationID != nil {
@@ -533,8 +515,8 @@ func (s *Service) RecoverPayment(ctx context.Context, actorID, paymentID uuid.UU
 	if _, err := tx.Exec(ctx, `INSERT INTO jobs(kind,payload,max_attempts) VALUES($1,jsonb_build_object('paymentId',$2::text),20)`, jobKind, paymentID); err != nil {
 		return PaymentOperation{}, err
 	}
-	if _, err := tx.Exec(ctx, `INSERT INTO payment_intent_events(payment_id,event_type,from_status,to_status,evidence) VALUES($1,$2,$3,$4,jsonb_build_object('actorId',$5::text,'reason',$6::text))`,
-		paymentID, "admin."+input.Action, fromStatus, mapRecoveryStatus(input.Action), actorID, input.Reason); err != nil {
+	if _, err := tx.Exec(ctx, `INSERT INTO payment_intent_events(payment_id,event_type,from_status,to_status,evidence) VALUES($1,$2,$3,$4,jsonb_build_object('actorId',$5::text))`,
+		paymentID, "admin."+input.Action, fromStatus, mapRecoveryStatus(input.Action), actorID); err != nil {
 		return PaymentOperation{}, err
 	}
 	if input.Action == "retry_transfer" {
@@ -542,20 +524,14 @@ func (s *Service) RecoverPayment(ctx context.Context, actorID, paymentID uuid.UU
 			return PaymentOperation{}, err
 		}
 	}
-	if err := audit(ctx, tx, actorID, "admin.payment_"+input.Action, "payment", paymentID, input.Reason, requestID, map[string]any{
-		"action": input.Action, "expectedVersion": input.ExpectedVersion, "jobKind": jobKind,
-	}); err != nil {
-		return PaymentOperation{}, err
-	}
 	if err := tx.Commit(ctx); err != nil {
 		return PaymentOperation{}, err
 	}
 	return s.paymentOperation(ctx, paymentID)
 }
 
-func (s *Service) ReplayPaymentEvent(ctx context.Context, actorID, eventID uuid.UUID, input PaymentEventReplay, requestID string) (PaymentOperation, error) {
-	input.Reason = strings.TrimSpace(input.Reason)
-	if !input.Confirmed || input.ExpectedVersion < 1 || len(input.Reason) < 10 || len(input.Reason) > 1000 {
+func (s *Service) ReplayPaymentEvent(ctx context.Context, _ uuid.UUID, eventID uuid.UUID, input PaymentEventReplay, _ string) (PaymentOperation, error) {
+	if input.ExpectedVersion < 1 {
 		return PaymentOperation{}, ErrInvalid
 	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
@@ -598,11 +574,6 @@ func (s *Service) ReplayPaymentEvent(ctx context.Context, actorID, eventID uuid.
 		}
 	}
 	if _, err := tx.Exec(ctx, `INSERT INTO jobs(kind,payload,max_attempts) VALUES($1,jsonb_build_object('eventId',$2::text),8)`, payments.PaymentEventJobKind, eventID); err != nil {
-		return PaymentOperation{}, err
-	}
-	if err := audit(ctx, tx, actorID, "admin.payment_event_replayed", "payment_provider_event", eventID, input.Reason, requestID, map[string]any{
-		"paymentId": paymentID.String(), "expectedVersion": input.ExpectedVersion, "previousStatus": status,
-	}); err != nil {
 		return PaymentOperation{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {

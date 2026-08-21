@@ -216,7 +216,7 @@ test('keeps the creation workspace in sync with the global theme', async ({ page
   await page.addInitScript(() => localStorage.setItem('hcai-theme', 'light'))
   await page.goto('/create/image')
 
-  const studio = page.locator('.creation-studio')
+  const studio = page.locator('.creation-studio-new')
   await expect(studio).toHaveClass(/is-light/)
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light')
 

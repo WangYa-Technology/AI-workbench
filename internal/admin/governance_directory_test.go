@@ -86,8 +86,7 @@ func TestAdminGovernanceInventoriesTraverseBeyondLegacyWindow(t *testing.T) {
 		t.Fatalf("modified report cursor was accepted: %v", err)
 	}
 	resolvedReport, err := service.ResolveReport(ctx, administratorID, targetReportID, admin.ReportResolution{
-		Outcome: "no_action", Reason: "Verified older report evidence beyond the legacy governance window.", Confirmed: true,
-	}, "governance-backlog-report")
+		Outcome: "no_action"}, "governance-backlog-report")
 	if err != nil || resolvedReport.ID != targetReportID || resolvedReport.Status != "dismissed" {
 		t.Fatalf("exact older report resolution response failed: %#v %v", resolvedReport, err)
 	}
@@ -138,8 +137,7 @@ func TestAdminGovernanceInventoriesTraverseBeyondLegacyWindow(t *testing.T) {
 		t.Fatalf("modified appeal cursor was accepted: %v", err)
 	}
 	resolvedAppeal, err := service.ResolveAppeal(ctx, administratorID, targetAppealID, admin.AppealResolution{
-		Decision: "denied", Reason: "Verified older appeal evidence beyond the legacy governance window.", Confirmed: true,
-	}, "governance-backlog-appeal")
+		Decision: "denied"}, "governance-backlog-appeal")
 	if err != nil || resolvedAppeal.ID != targetAppealID || resolvedAppeal.Status != "denied" || resolvedAppeal.ResolvedAt == nil {
 		t.Fatalf("exact older appeal resolution response failed: %#v %v", resolvedAppeal, err)
 	}

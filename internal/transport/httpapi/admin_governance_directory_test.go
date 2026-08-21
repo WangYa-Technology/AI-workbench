@@ -101,8 +101,7 @@ func TestAdminGovernanceDirectoryHTTPContract(t *testing.T) {
 	}
 	var resolvedReport admin.GovernanceReport
 	response = requestJSON(t, adminClient, http.MethodPost, server.URL+"/api/v1/admin/governance/reports/"+targetReportID.String()+"/resolve", map[string]any{
-		"outcome": "no_action", "reason": "Verified exact HTTP report retrieval beyond the first pages.", "confirmed": true,
-	}, &resolvedReport)
+		"outcome": "no_action"}, &resolvedReport)
 	if response.StatusCode != http.StatusOK || resolvedReport.ID != targetReportID || resolvedReport.Status != "dismissed" {
 		t.Fatalf("exact HTTP report response failed: status=%d item=%#v", response.StatusCode, resolvedReport)
 	}
@@ -148,8 +147,7 @@ func TestAdminGovernanceDirectoryHTTPContract(t *testing.T) {
 	}
 	var resolvedAppeal admin.GovernanceAppeal
 	response = requestJSON(t, adminClient, http.MethodPost, server.URL+"/api/v1/admin/governance/appeals/"+targetAppealID.String()+"/resolve", map[string]any{
-		"decision": "denied", "reason": "Verified exact HTTP appeal retrieval beyond the first pages.", "confirmed": true,
-	}, &resolvedAppeal)
+		"decision": "denied"}, &resolvedAppeal)
 	if response.StatusCode != http.StatusOK || resolvedAppeal.ID != targetAppealID || resolvedAppeal.Status != "denied" {
 		t.Fatalf("exact HTTP appeal response failed: status=%d item=%#v", response.StatusCode, resolvedAppeal)
 	}

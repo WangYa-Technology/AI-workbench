@@ -29,7 +29,7 @@ func TestAdminOperationalDiagnosticsHTTPContract(t *testing.T) {
 	}
 	var diagnostics admin.OperationalDiagnostics
 	response := requestJSON(t, adminClient, http.MethodGet, server.URL+"/api/v1/admin/observability", nil, &diagnostics)
-	if response.StatusCode != http.StatusOK || !diagnostics.DatabaseReady || !diagnostics.Audit.Valid || diagnostics.Requests.Total < 1 || diagnostics.Requests.ByStatus["4xx"] < 1 {
+	if response.StatusCode != http.StatusOK || !diagnostics.DatabaseReady || diagnostics.Requests.Total < 1 || diagnostics.Requests.ByStatus["4xx"] < 1 {
 		t.Fatalf("diagnostics contract mismatch: status=%d item=%#v", response.StatusCode, diagnostics)
 	}
 	if diagnostics.Jobs.ByAttemptStatus == nil || diagnostics.Jobs.AttemptsLast24Hours < 0 || diagnostics.Jobs.LeaseRenewalsLast24Hours < 0 || diagnostics.Jobs.LeaseExpirationsLast24Hours < 0 || diagnostics.Jobs.TerminalFailuresLast24Hours < 0 {

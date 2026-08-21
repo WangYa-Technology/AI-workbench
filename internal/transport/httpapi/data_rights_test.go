@@ -87,7 +87,7 @@ func TestDataRightsHTTPContractAndPermissions(t *testing.T) {
 	}
 	var hold datarights.Hold
 	response = requestJSON(t, adminClient, http.MethodPost, server.URL+"/api/v1/admin/data-rights/holds", map[string]any{
-		"userId": owner.ID, "reason": "Signed legal authority requires bounded preservation for review.", "authorityReference": "LEGAL-HTTP-REFERENCE", "confirmed": true,
+		"userId": owner.ID, "authorityReference": "LEGAL-HTTP-REFERENCE",
 	}, &hold)
 	if response.StatusCode != http.StatusCreated || hold.Status != "active" || len(hold.AuthorityReferenceHash) != 64 {
 		t.Fatalf("create legal hold: status=%d item=%#v", response.StatusCode, hold)

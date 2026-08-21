@@ -113,6 +113,10 @@ type Transition struct {
 	Confirmed       bool   `json:"confirmed"`
 }
 
+type AdminTransition struct {
+	ExpectedVersion int `json:"expectedVersion"`
+}
+
 type DeadLetterListInput struct {
 	Query     string
 	EventType string
@@ -516,8 +520,8 @@ func (s *Service) ListDeadLetters(ctx context.Context, input DeadLetterListInput
 	return page, nil
 }
 
-func (s *Service) Replay(ctx context.Context, actorID, deliveryID uuid.UUID, input Transition, requestID string) (Delivery, error) {
-	if !validTransition(input) {
+func (s *Service) Replay(ctx context.Context, _ uuid.UUID, deliveryID uuid.UUID, input AdminTransition, _ string) (Delivery, error) {
+	if input.ExpectedVersion < 1 {
 		return Delivery{}, ErrInvalid
 	}
 	tx, err := s.pool.Begin(ctx)
@@ -544,9 +548,6 @@ func (s *Service) Replay(ctx context.Context, actorID, deliveryID uuid.UUID, inp
 	}
 	delivery, err := enqueueDeliveryTx(ctx, tx, endpointID, endpointName, eventID, eventType, secretVersion, &deliveryID)
 	if err != nil {
-		return Delivery{}, err
-	}
-	if err := audit(ctx, tx, actorID, "admin.webhook_delivery_replayed", "developer_webhook_delivery", delivery.ID, input.Reason, requestID, map[string]any{"originalDeliveryId": deliveryID, "endpointId": endpointID}); err != nil {
 		return Delivery{}, err
 	}
 	if err := notifications.CreateTx(ctx, tx, notifications.CreateInput{UserID: ownerID, Kind: "security.webhook_replayed", Title: "Webhook delivery replayed", Body: "Operations replayed a dead-letter webhook delivery.", TargetPath: "/settings", ResourceType: "developer_webhook_delivery", ResourceID: &delivery.ID, SourceKey: "webhook-replay:" + delivery.ID.String()}); err != nil {

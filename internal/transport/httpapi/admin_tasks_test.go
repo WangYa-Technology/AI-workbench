@@ -60,16 +60,9 @@ func TestAdminTaskOperationsHTTPContract(t *testing.T) {
 	if response.StatusCode != http.StatusOK || len(queue.Items) != 1 || queue.Items[0].ID != taskID || queue.Items[0].DisputeVersion == nil {
 		t.Fatalf("task operations queue failed: status=%d items=%#v", response.StatusCode, queue.Items)
 	}
-	response = requestJSON(t, adminClient, http.MethodPost, server.URL+"/api/v1/admin/tasks/"+taskID.String()+"/resolve", map[string]any{
-		"decision": "cancel_without_settlement", "reason": "Missing confirmation must fail closed for task operations.", "expectedVersion": 1, "confirmed": false,
-	}, nil)
-	if response.StatusCode != http.StatusUnprocessableEntity {
-		t.Fatalf("unconfirmed task decision status=%d", response.StatusCode)
-	}
 	var resolved admin.TaskOperation
 	response = requestJSON(t, adminClient, http.MethodPost, server.URL+"/api/v1/admin/tasks/"+taskID.String()+"/resolve", map[string]any{
-		"decision": "cancel_without_settlement", "reason": "The HTTP evidence does not support a Local Test creator settlement.", "expectedVersion": 1, "confirmed": true,
-	}, &resolved)
+		"decision": "cancel_without_settlement", "expectedVersion": 1}, &resolved)
 	if response.StatusCode != http.StatusOK || resolved.Status != "cancelled" || resolved.DisputeStatus == nil || *resolved.DisputeStatus != "resolved_client" {
 		t.Fatalf("task resolution contract failed: status=%d item=%#v", response.StatusCode, resolved)
 	}

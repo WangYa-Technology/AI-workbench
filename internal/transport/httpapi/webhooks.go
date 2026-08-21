@@ -139,7 +139,7 @@ func (s *Server) adminReplayWebhookDelivery(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
-	var input webhooks.Transition
+	var input webhooks.AdminTransition
 	if !httputil.DecodeJSON(w, r, &input) {
 		return
 	}
@@ -152,7 +152,7 @@ func (s *Server) writeWebhookResult(w http.ResponseWriter, r *http.Request, stat
 	case errors.Is(err, webhooks.ErrDisabled):
 		httputil.WriteError(w, r, http.StatusServiceUnavailable, "developer_access_disabled", "Developer Access is disabled by an administrator.", false)
 	case errors.Is(err, webhooks.ErrInvalid):
-		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_webhook_command", "Review the endpoint, event selection, confirmation, and reason.", false)
+		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_webhook_command", "Review the endpoint, event selection, and current version.", false)
 	case errors.Is(err, webhooks.ErrNotFound):
 		httputil.WriteError(w, r, http.StatusNotFound, "webhook_resource_not_found", "The webhook resource was not found.", false)
 	case errors.Is(err, webhooks.ErrConflict):

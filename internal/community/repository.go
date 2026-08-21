@@ -465,6 +465,33 @@ func (r *Repository) ListForViewer(ctx context.Context, viewerID uuid.UUID) ([]P
 	return page.Items, err
 }
 
+func (r *Repository) GetPostForViewer(ctx context.Context, viewerID, postID uuid.UUID) (Post, error) {
+	var item Post
+	err := r.pool.QueryRow(ctx, `
+		SELECT p.id,p.body,p.published_at,w.id,w.title,a.media_url,a.kind,w.ai_disclosure,u.id,u.handle,u.display_name,
+		       (SELECT count(*) FROM comments c WHERE c.post_id=p.id AND c.status='published'),
+		       (SELECT count(*) FROM post_reactions pr WHERE pr.post_id=p.id AND pr.kind='like'),
+		       (SELECT count(*) FROM post_reactions pr WHERE pr.post_id=p.id AND pr.kind='bookmark'),
+		       EXISTS(SELECT 1 FROM post_reactions pr WHERE pr.post_id=p.id AND pr.user_id=$1 AND pr.kind='like'),
+		       EXISTS(SELECT 1 FROM post_reactions pr WHERE pr.post_id=p.id AND pr.user_id=$1 AND pr.kind='bookmark'),
+		       EXISTS(SELECT 1 FROM user_follows f WHERE f.follower_id=$1 AND f.following_id=u.id)
+		FROM posts p
+		JOIN works w ON w.id=p.work_id AND w.status='published'
+		JOIN assets a ON a.id=w.asset_id AND a.scan_status='clean'
+		JOIN users u ON u.id=p.author_id
+		WHERE p.id=$2 AND p.status='published'`, viewerID, postID).Scan(
+		&item.ID, &item.Body, &item.PublishedAt, &item.WorkID, &item.WorkTitle, &item.MediaURL,
+		&item.MediaKind, &item.AIDisclosure, &item.AuthorID, &item.AuthorHandle, &item.AuthorName,
+		&item.CommentCount, &item.LikeCount, &item.BookmarkCount, &item.ViewerLiked, &item.ViewerBookmarked, &item.ViewerFollowing)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Post{}, ErrNotFound
+	}
+	if err != nil {
+		return Post{}, fmt.Errorf("get post: %w", err)
+	}
+	return item, nil
+}
+
 func (r *Repository) ListPageForViewer(ctx context.Context, viewerID uuid.UUID, input PostListInput) (PostPage, error) {
 	if input.Limit == 0 {
 		input.Limit = 20

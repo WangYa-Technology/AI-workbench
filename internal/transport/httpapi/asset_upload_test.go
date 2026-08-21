@@ -139,8 +139,7 @@ func TestAssetUploadScanAndAdminMediaHTTPContract(t *testing.T) {
 	}
 	var reviewed admin.MediaItem
 	response = requestJSON(t, adminClient, http.MethodPost, server.URL+"/api/v1/admin/media/"+uploaded.ID.String()+"/review", map[string]any{
-		"status": "rejected", "reason": "Administrator rejected this Local Test upload for contract verification.", "confirmed": true,
-	}, &reviewed)
+		"status": "rejected"}, &reviewed)
 	if response.StatusCode != http.StatusOK || reviewed.ScanStatus != "rejected" {
 		t.Fatalf("Admin media review failed: status=%d item=%#v", response.StatusCode, reviewed)
 	}

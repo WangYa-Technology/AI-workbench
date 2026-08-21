@@ -29,19 +29,10 @@ type JobDiagnostics struct {
 	OldestQueuedAt              *time.Time       `json:"oldestQueuedAt,omitempty"`
 }
 
-type AuditIntegrity struct {
-	Valid                bool   `json:"valid"`
-	EventCount           int64  `json:"eventCount"`
-	HeadSequence         int64  `json:"headSequence"`
-	HeadHash             string `json:"headHash"`
-	FirstInvalidSequence *int64 `json:"firstInvalidSequence,omitempty"`
-}
-
 type OperationalDiagnostics struct {
 	WindowMinutes int                `json:"windowMinutes"`
 	Requests      RequestDiagnostics `json:"requests"`
 	Jobs          JobDiagnostics     `json:"jobs"`
-	Audit         AuditIntegrity     `json:"audit"`
 	DatabaseReady bool               `json:"databaseReady"`
 	AsOf          time.Time          `json:"asOf"`
 }
@@ -133,28 +124,6 @@ func (s *Service) GetOperationalDiagnostics(ctx context.Context) (OperationalDia
 		return result, fmt.Errorf("job attempt diagnostics: %w", err)
 	}
 
-	var invalidCount int64
-	if err := tx.QueryRow(ctx, `
-		WITH checked AS (
-		  SELECT sequence,event_hash,previous_hash,
-		         lag(event_hash) OVER (ORDER BY sequence) AS expected_previous_hash,
-		         audit_event_hash(sequence,previous_hash,id,actor_id,action,resource_type,resource_id,reason,request_id,metadata,created_at) AS expected_event_hash
-		  FROM audit_events
-		), invalid AS (
-		  SELECT sequence FROM checked
-		  WHERE event_hash <> expected_event_hash OR COALESCE(previous_hash,'') <> COALESCE(expected_previous_hash,'')
-		)
-		SELECT (SELECT count(*) FROM audit_events),s.head_sequence,s.head_hash,count(invalid.sequence),min(invalid.sequence)
-		FROM audit_chain_state s LEFT JOIN invalid ON true WHERE s.singleton=true GROUP BY s.head_sequence,s.head_hash`).Scan(
-		&result.Audit.EventCount, &result.Audit.HeadSequence, &result.Audit.HeadHash, &invalidCount, &result.Audit.FirstInvalidSequence); err != nil {
-		return result, fmt.Errorf("audit diagnostics: %w", err)
-	}
-	var actualHeadHash string
-	var actualHeadSequence int64
-	if err := tx.QueryRow(ctx, `SELECT COALESCE(max(sequence),0),COALESCE((array_agg(event_hash ORDER BY sequence DESC))[1],'') FROM audit_events`).Scan(&actualHeadSequence, &actualHeadHash); err != nil {
-		return result, err
-	}
-	result.Audit.Valid = invalidCount == 0 && result.Audit.EventCount == result.Audit.HeadSequence && actualHeadSequence == result.Audit.HeadSequence && actualHeadHash == result.Audit.HeadHash
 	if err := tx.Commit(ctx); err != nil {
 		return result, err
 	}

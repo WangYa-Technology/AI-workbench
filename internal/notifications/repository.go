@@ -410,11 +410,29 @@ func ValidTargetPath(value string) bool {
 		return false
 	}
 	parsed, err := url.ParseRequestURI(value)
-	if err != nil || parsed.IsAbs() || parsed.Host != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+	if err != nil || parsed.IsAbs() || parsed.Host != "" || parsed.Fragment != "" {
 		return false
 	}
+	if parsed.RawQuery != "" {
+		if parsed.Path != "/create/image" {
+			return false
+		}
+		query, queryErr := url.ParseQuery(parsed.RawQuery)
+		if queryErr != nil || len(query) < 1 || len(query) > 2 {
+			return false
+		}
+		for key, values := range query {
+			if (key != "conversationId" && key != "generationId") || len(values) != 1 {
+				return false
+			}
+			parsedID, parseErr := uuid.Parse(values[0])
+			if parseErr != nil || parsedID == uuid.Nil {
+				return false
+			}
+		}
+	}
 	switch parsed.Path {
-	case "/notifications", "/settings", "/support", "/workspace/assets", "/workspace/generations", "/workspace/orders", "/workspace/tasks", "/market", "/market/demands", "/community":
+	case "/notifications", "/settings", "/support", "/create/image", "/workspace/assets", "/workspace/generations", "/workspace/orders", "/workspace/tasks", "/market", "/market/demands", "/community":
 		return true
 	default:
 		return detailTargetPattern.MatchString(parsed.Path)

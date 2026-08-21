@@ -128,6 +128,18 @@ func NewRuntimeCatalog(runtimes ...ProviderRuntime) *RuntimeCatalog {
 	return catalog
 }
 
+// Register replaces the runtime for a provider. It is used by the server to
+// attach a database-backed provider registry after loading built-in runtimes.
+func (c *RuntimeCatalog) Register(runtime ProviderRuntime) {
+	if c == nil || runtime == nil {
+		return
+	}
+	provider := strings.TrimSpace(strings.ToLower(runtime.Provider()))
+	if provider != "" {
+		c.runtimes[provider] = runtime
+	}
+}
+
 func (c *RuntimeCatalog) Available(provider, mode, modelName string) bool {
 	if c == nil {
 		return false

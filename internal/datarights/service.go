@@ -91,7 +91,6 @@ type Hold struct {
 	UserID                 uuid.UUID  `json:"userId"`
 	RequestID              *uuid.UUID `json:"requestId,omitempty"`
 	OwnerHandle            string     `json:"ownerHandle"`
-	Reason                 string     `json:"reason"`
 	AuthorityReferenceHash string     `json:"authorityReferenceHash"`
 	Status                 string     `json:"status"`
 	ReviewAt               time.Time  `json:"reviewAt"`
@@ -101,9 +100,7 @@ type Hold struct {
 
 type HoldInput struct {
 	UserID             uuid.UUID `json:"userId"`
-	Reason             string    `json:"reason"`
 	AuthorityReference string    `json:"authorityReference"`
-	Confirmed          bool      `json:"confirmed"`
 }
 
 type ListInput struct {
@@ -252,7 +249,7 @@ func (s *Service) ListHolds(ctx context.Context, input ListInput) (HoldPage, err
 		cursorPriority, cursorTime, cursorID = &cursor.Priority, &cursor.CreatedAt, &cursor.ID
 	}
 	rows, err := s.pool.Query(ctx, `
-		SELECT h.id,h.user_id,h.request_id,u.handle,h.reason,h.authority_reference_hash,
+		SELECT h.id,h.user_id,h.request_id,u.handle,h.authority_reference_hash,
 		       CASE WHEN h.status='active' AND h.expires_at<=$1 THEN 'expired' ELSE h.status END,
 		       h.review_at,h.expires_at,h.created_at
 		FROM data_rights_legal_holds h JOIN users u ON u.id=h.user_id
@@ -267,7 +264,7 @@ func (s *Service) ListHolds(ctx context.Context, input ListInput) (HoldPage, err
 	items := make([]Hold, 0)
 	for rows.Next() {
 		var item Hold
-		if err := rows.Scan(&item.ID, &item.UserID, &item.RequestID, &item.OwnerHandle, &item.Reason, &item.AuthorityReferenceHash, &item.Status, &item.ReviewAt, &item.ExpiresAt, &item.CreatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.UserID, &item.RequestID, &item.OwnerHandle, &item.AuthorityReferenceHash, &item.Status, &item.ReviewAt, &item.ExpiresAt, &item.CreatedAt); err != nil {
 			return HoldPage{}, err
 		}
 		items = append(items, item)
@@ -289,10 +286,9 @@ func (s *Service) ListHolds(ctx context.Context, input ListInput) (HoldPage, err
 	return page, nil
 }
 
-func (s *Service) CreateHold(ctx context.Context, actorID uuid.UUID, input HoldInput, requestID string) (Hold, error) {
-	input.Reason = strings.TrimSpace(input.Reason)
+func (s *Service) CreateHold(ctx context.Context, actorID uuid.UUID, input HoldInput, _ string) (Hold, error) {
 	input.AuthorityReference = strings.TrimSpace(input.AuthorityReference)
-	if actorID == uuid.Nil || input.UserID == uuid.Nil || !input.Confirmed || len(input.Reason) < 10 || len(input.Reason) > 1000 || len(input.AuthorityReference) < 6 || len(input.AuthorityReference) > 200 {
+	if actorID == uuid.Nil || input.UserID == uuid.Nil || len(input.AuthorityReference) < 6 || len(input.AuthorityReference) > 200 {
 		return Hold{}, ErrInvalid
 	}
 	tx, err := s.pool.Begin(ctx)
@@ -317,8 +313,8 @@ func (s *Service) CreateHold(ctx context.Context, actorID uuid.UUID, input HoldI
 	}
 	now := time.Now().UTC()
 	referenceHash := sha256.Sum256([]byte(input.AuthorityReference))
-	item := Hold{ID: uuid.New(), UserID: input.UserID, RequestID: linkedRequestID, OwnerHandle: handle, Reason: input.Reason, AuthorityReferenceHash: hex.EncodeToString(referenceHash[:]), Status: "active", ReviewAt: now.Add(90 * 24 * time.Hour), ExpiresAt: now.Add(365 * 24 * time.Hour), CreatedAt: now}
-	_, err = tx.Exec(ctx, `INSERT INTO data_rights_legal_holds(id,user_id,request_id,reason,authority_reference_hash,review_at,expires_at,created_by,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, item.ID, item.UserID, item.RequestID, item.Reason, item.AuthorityReferenceHash, item.ReviewAt, item.ExpiresAt, actorID, item.CreatedAt)
+	item := Hold{ID: uuid.New(), UserID: input.UserID, RequestID: linkedRequestID, OwnerHandle: handle, AuthorityReferenceHash: hex.EncodeToString(referenceHash[:]), Status: "active", ReviewAt: now.Add(90 * 24 * time.Hour), ExpiresAt: now.Add(365 * 24 * time.Hour), CreatedAt: now}
+	_, err = tx.Exec(ctx, `INSERT INTO data_rights_legal_holds(id,user_id,request_id,reason,authority_reference_hash,review_at,expires_at,created_by,created_at) VALUES($1,$2,$3,'Administrative legal hold',$4,$5,$6,$7,$8)`, item.ID, item.UserID, item.RequestID, item.AuthorityReferenceHash, item.ReviewAt, item.ExpiresAt, actorID, item.CreatedAt)
 	if isUniqueViolation(err) {
 		return Hold{}, ErrConflict
 	}
@@ -329,12 +325,9 @@ func (s *Service) CreateHold(ctx context.Context, actorID uuid.UUID, input HoldI
 		if _, err := tx.Exec(ctx, `UPDATE data_rights_requests SET status='blocked',version=version+1,updated_at=now() WHERE id=$1`, *linkedRequestID); err != nil {
 			return Hold{}, err
 		}
-		if err := appendEvent(ctx, tx, *linkedRequestID, &actorID, "legal_hold_created", *linkedStatus, "blocked", input.Reason, map[string]any{"holdId": item.ID}); err != nil {
+		if err := appendEvent(ctx, tx, *linkedRequestID, &actorID, "legal_hold_created", *linkedStatus, "blocked", "Administrative legal hold created", map[string]any{"holdId": item.ID}); err != nil {
 			return Hold{}, err
 		}
-	}
-	if _, err := tx.Exec(ctx, `INSERT INTO audit_events(actor_id,action,resource_type,resource_id,reason,request_id,metadata) VALUES($1,'admin.data_rights_hold_created','data_rights_legal_hold',$2,$3,$4,jsonb_build_object('subjectRef',$5::text,'authorityReferenceHash',$6::text,'expiresAt',$7::timestamptz))`, actorID, item.ID, input.Reason, safeRequestID(requestID), subjectRef(input.UserID), item.AuthorityReferenceHash, item.ExpiresAt); err != nil {
-		return Hold{}, err
 	}
 	if err := notifications.CreateTx(ctx, tx, notifications.CreateInput{UserID: input.UserID, Kind: "account.data_rights", Title: "Account deletion is on legal hold", Body: "A controlled legal hold is preserving the scoped account record. Export remains available.", TargetPath: "/settings", ResourceType: "data_rights_legal_hold", ResourceID: &item.ID, SourceKey: "data-rights-hold:" + item.ID.String()}); err != nil {
 		return Hold{}, err
@@ -345,9 +338,8 @@ func (s *Service) CreateHold(ctx context.Context, actorID uuid.UUID, input HoldI
 	return item, nil
 }
 
-func (s *Service) ReleaseHold(ctx context.Context, actorID, holdID uuid.UUID, reason, requestID string, confirmed bool) (Hold, error) {
-	reason = strings.TrimSpace(reason)
-	if actorID == uuid.Nil || holdID == uuid.Nil || !confirmed || len(reason) < 10 || len(reason) > 1000 {
+func (s *Service) ReleaseHold(ctx context.Context, actorID, holdID uuid.UUID) (Hold, error) {
+	if actorID == uuid.Nil || holdID == uuid.Nil {
 		return Hold{}, ErrInvalid
 	}
 	tx, err := s.pool.Begin(ctx)
@@ -356,7 +348,7 @@ func (s *Service) ReleaseHold(ctx context.Context, actorID, holdID uuid.UUID, re
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	var item Hold
-	if err := tx.QueryRow(ctx, `SELECT h.id,h.user_id,h.request_id,u.handle,h.reason,h.authority_reference_hash,h.status,h.review_at,h.expires_at,h.created_at FROM data_rights_legal_holds h JOIN users u ON u.id=h.user_id WHERE h.id=$1 FOR UPDATE`, holdID).Scan(&item.ID, &item.UserID, &item.RequestID, &item.OwnerHandle, &item.Reason, &item.AuthorityReferenceHash, &item.Status, &item.ReviewAt, &item.ExpiresAt, &item.CreatedAt); errors.Is(err, pgx.ErrNoRows) {
+	if err := tx.QueryRow(ctx, `SELECT h.id,h.user_id,h.request_id,u.handle,h.authority_reference_hash,h.status,h.review_at,h.expires_at,h.created_at FROM data_rights_legal_holds h JOIN users u ON u.id=h.user_id WHERE h.id=$1 FOR UPDATE`, holdID).Scan(&item.ID, &item.UserID, &item.RequestID, &item.OwnerHandle, &item.AuthorityReferenceHash, &item.Status, &item.ReviewAt, &item.ExpiresAt, &item.CreatedAt); errors.Is(err, pgx.ErrNoRows) {
 		return Hold{}, ErrNotFound
 	} else if err != nil {
 		return Hold{}, err
@@ -385,13 +377,10 @@ func (s *Service) ReleaseHold(ctx context.Context, actorID, holdID uuid.UUID, re
 			if _, err := tx.Exec(ctx, `INSERT INTO jobs(kind,payload,max_attempts,available_at) VALUES($1,jsonb_build_object('requestId',$2::text),5,$3)`, DeletionJobKind, *item.RequestID, availableAt); err != nil {
 				return Hold{}, err
 			}
-			if err := appendEvent(ctx, tx, *item.RequestID, &actorID, "legal_hold_released", "blocked", "scheduled", reason, map[string]any{"holdId": holdID}); err != nil {
+			if err := appendEvent(ctx, tx, *item.RequestID, &actorID, "legal_hold_released", "blocked", "scheduled", "Administrative legal hold released", map[string]any{"holdId": holdID}); err != nil {
 				return Hold{}, err
 			}
 		}
-	}
-	if _, err := tx.Exec(ctx, `INSERT INTO audit_events(actor_id,action,resource_type,resource_id,reason,request_id,metadata) VALUES($1,'admin.data_rights_hold_released','data_rights_legal_hold',$2,$3,$4,jsonb_build_object('subjectRef',$5::text))`, actorID, holdID, reason, safeRequestID(requestID), subjectRef(item.UserID)); err != nil {
-		return Hold{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Hold{}, err

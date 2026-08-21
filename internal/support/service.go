@@ -90,17 +90,13 @@ type ReplyInput struct {
 
 type AdminReplyInput struct {
 	Body            string `json:"body"`
-	Reason          string `json:"reason"`
 	ExpectedVersion int    `json:"expectedVersion"`
-	Confirmed       bool   `json:"confirmed"`
 }
 
 type AdminUpdateInput struct {
 	Status          string `json:"status"`
 	ResolutionCode  string `json:"resolutionCode"`
-	Reason          string `json:"reason"`
 	ExpectedVersion int    `json:"expectedVersion"`
-	Confirmed       bool   `json:"confirmed"`
 }
 
 type ListFilter struct {
@@ -219,12 +215,12 @@ func (s *Service) GetAdmin(ctx context.Context, caseID uuid.UUID) (Case, error) 
 	return s.get(ctx, caseID, nil)
 }
 
-func (s *Service) AdminReply(ctx context.Context, actorID, caseID uuid.UUID, input AdminReplyInput, requestID string) (Case, error) {
-	input.Body, input.Reason = clean(input.Body), clean(input.Reason)
-	if !input.Confirmed || !validText(input.Body, 2, 4000) || !validText(input.Reason, 10, 500) || input.ExpectedVersion < 1 {
+func (s *Service) AdminReply(ctx context.Context, actorID, caseID uuid.UUID, input AdminReplyInput, _ string) (Case, error) {
+	input.Body = clean(input.Body)
+	if !validText(input.Body, 2, 4000) || input.ExpectedVersion < 1 {
 		return Case{}, ErrInvalid
 	}
-	if hasSensitiveData(input.Body) || hasSensitiveData(input.Reason) {
+	if hasSensitiveData(input.Body) {
 		return Case{}, ErrSensitiveData
 	}
 	tx, err := s.pool.Begin(ctx)
@@ -256,13 +252,10 @@ func (s *Service) AdminReply(ctx context.Context, actorID, caseID uuid.UUID, inp
 	if _, err := tx.Exec(ctx, `UPDATE support_cases SET status=$2,assigned_operator_id=COALESCE(assigned_operator_id,$3),version=version+1,updated_at=now() WHERE id=$1`, caseID, next, actorID); err != nil {
 		return Case{}, err
 	}
-	if _, err := tx.Exec(ctx, `INSERT INTO support_events(case_id,actor_id,kind,from_status,to_status,message_id,reason) VALUES($1,$2,'operator_replied',$3,$4,$5,$6)`, caseID, actorID, status, next, messageID, input.Reason); err != nil {
+	if _, err := tx.Exec(ctx, `INSERT INTO support_events(case_id,actor_id,kind,from_status,to_status,message_id,reason) VALUES($1,$2,'operator_replied',$3,$4,$5,'Operator reply added')`, caseID, actorID, status, next, messageID); err != nil {
 		return Case{}, err
 	}
 	if err := notifyRequester(ctx, tx, requesterID, caseID, "Support replied", "A support operator added a reply to your case.", "reply:"+messageID.String()); err != nil {
-		return Case{}, err
-	}
-	if err := insertAudit(ctx, tx, actorID, "admin.support_replied", caseID, input.Reason, requestID, map[string]any{"fromStatus": status, "toStatus": next}); err != nil {
 		return Case{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -271,18 +264,14 @@ func (s *Service) AdminReply(ctx context.Context, actorID, caseID uuid.UUID, inp
 	return s.GetAdmin(ctx, caseID)
 }
 
-func (s *Service) AdminUpdate(ctx context.Context, actorID, caseID uuid.UUID, input AdminUpdateInput, requestID string) (Case, error) {
+func (s *Service) AdminUpdate(ctx context.Context, actorID, caseID uuid.UUID, input AdminUpdateInput, _ string) (Case, error) {
 	input.Status = strings.TrimSpace(strings.ToLower(input.Status))
 	input.ResolutionCode = strings.TrimSpace(strings.ToLower(input.ResolutionCode))
-	input.Reason = clean(input.Reason)
-	if !input.Confirmed || !validStatus(input.Status) || !validText(input.Reason, 10, 1000) || input.ExpectedVersion < 1 {
+	if !validStatus(input.Status) || input.ExpectedVersion < 1 {
 		return Case{}, ErrInvalid
 	}
 	if oneOf(input.Status, "resolved", "closed") != validResolution(input.ResolutionCode) {
 		return Case{}, ErrInvalid
-	}
-	if hasSensitiveData(input.Reason) {
-		return Case{}, ErrSensitiveData
 	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -303,19 +292,17 @@ func (s *Service) AdminUpdate(ctx context.Context, actorID, caseID uuid.UUID, in
 		return Case{}, ErrConflict
 	}
 	resolved := oneOf(input.Status, "resolved", "closed")
+	statusReason := "Administrative status change: " + input.Status
 	if _, err := tx.Exec(ctx, `
 		UPDATE support_cases SET status=$2,assigned_operator_id=COALESCE(assigned_operator_id,$3),version=version+1,
 		 resolution_code=CASE WHEN $4 THEN $5 ELSE NULL END,resolution_reason=CASE WHEN $4 THEN $6 ELSE NULL END,
-		 resolved_at=CASE WHEN $4 THEN now() ELSE NULL END,updated_at=now() WHERE id=$1`, caseID, input.Status, actorID, resolved, nullable(input.ResolutionCode), input.Reason); err != nil {
+		 resolved_at=CASE WHEN $4 THEN now() ELSE NULL END,updated_at=now() WHERE id=$1`, caseID, input.Status, actorID, resolved, nullable(input.ResolutionCode), statusReason); err != nil {
 		return Case{}, err
 	}
-	if _, err := tx.Exec(ctx, `INSERT INTO support_events(case_id,actor_id,kind,from_status,to_status,reason,metadata) VALUES($1,$2,'status_changed',$3,$4,$5,jsonb_build_object('resolutionCode',NULLIF($6::text,'')))`, caseID, actorID, status, input.Status, input.Reason, input.ResolutionCode); err != nil {
+	if _, err := tx.Exec(ctx, `INSERT INTO support_events(case_id,actor_id,kind,from_status,to_status,reason,metadata) VALUES($1,$2,'status_changed',$3,$4,$5,jsonb_build_object('resolutionCode',NULLIF($6::text,'')))`, caseID, actorID, status, input.Status, statusReason, input.ResolutionCode); err != nil {
 		return Case{}, err
 	}
 	if err := notifyRequester(ctx, tx, requesterID, caseID, "Support case updated", supportStatusBody(input.Status), "status:"+fmt.Sprint(version+1)); err != nil {
-		return Case{}, err
-	}
-	if err := insertAudit(ctx, tx, actorID, "admin.support_status_changed", caseID, input.Reason, requestID, map[string]any{"fromStatus": status, "toStatus": input.Status, "resolutionCode": input.ResolutionCode}); err != nil {
 		return Case{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {

@@ -70,7 +70,7 @@ func TestAdminRankingPolicyChangesPublicSearchScore(t *testing.T) {
 		RecencyWeight: policy.Current.RecencyWeight, CreatorActivityWeight: policy.Current.CreatorActivityWeight,
 		WorkTypeBoost: policy.Current.WorkTypeBoost, CreatorTypeBoost: policy.Current.CreatorTypeBoost,
 		ProductTypeBoost: policy.Current.ProductTypeBoost + 7, DemandTypeBoost: policy.Current.DemandTypeBoost,
-		Reason: "Bounded HTTP verification of a versioned product ranking boost.", ExpectedVersion: 1, Confirmed: true,
+		ExpectedVersion: 1,
 	}
 	stale := input
 	stale.ExpectedVersion = 2
@@ -97,24 +97,23 @@ func TestAdminRankingPolicyChangesPublicSearchScore(t *testing.T) {
 	candidateInput.Name = "Staged product candidate"
 	candidateInput.ProductTypeBoost = updated.Current.ProductTypeBoost + 1
 	candidateInput.ExpectedVersion = updated.Current.Version
-	candidateInput.Reason = "Create an HTTP candidate without changing the active baseline."
 	var candidatePolicy admin.RankingPolicy
 	response = requestJSON(t, adminClient, http.MethodPost, server.URL+"/api/v1/admin/discovery/ranking/candidates", candidateInput, &candidatePolicy)
 	if response.StatusCode != http.StatusOK || candidatePolicy.Candidate == nil || candidatePolicy.Candidate.Version != 3 || candidatePolicy.Current.Version != 2 || candidatePolicy.Rollout.Version != 2 {
 		t.Fatalf("candidate contract failed: status=%d policy=%#v", response.StatusCode, candidatePolicy)
 	}
-	rollout := admin.RankingRolloutUpdate{Percent: 25, ExpectedVersion: candidatePolicy.Rollout.Version, Reason: "Attempt staged traffic before offline evaluation evidence exists.", Confirmed: true}
+	rollout := admin.RankingRolloutUpdate{Percent: 25, ExpectedVersion: candidatePolicy.Rollout.Version}
 	response = requestJSON(t, adminClient, http.MethodPost, server.URL+"/api/v1/admin/discovery/ranking/rollout", rollout, nil)
 	if response.StatusCode != http.StatusConflict {
 		t.Fatalf("unevaluated candidate rollout status: %d", response.StatusCode)
 	}
 	var evaluation admin.RankingEvaluation
-	response = requestJSON(t, adminClient, http.MethodPost, server.URL+"/api/v1/admin/discovery/ranking/evaluations", admin.ConfirmedReason{Reason: "Evaluate exact public HTTP fixtures before staged rollout.", Confirmed: true}, &evaluation)
+	response = requestJSON(t, adminClient, http.MethodPost, server.URL+"/api/v1/admin/discovery/ranking/evaluations", nil, &evaluation)
 	if response.StatusCode != http.StatusOK || evaluation.Status != "passed" || evaluation.CandidateVersion != 3 || evaluation.CaseCount < 1 {
 		t.Fatalf("evaluation contract failed: status=%d evaluation=%#v", response.StatusCode, evaluation)
 	}
 	var indexRun admin.DiscoveryIndexRun
-	response = requestJSON(t, adminClient, http.MethodPost, server.URL+"/api/v1/admin/discovery/index/analyze", admin.ConfirmedReason{Reason: "Refresh HTTP index statistics and capture public coverage evidence.", Confirmed: true}, &indexRun)
+	response = requestJSON(t, adminClient, http.MethodPost, server.URL+"/api/v1/admin/discovery/index/analyze", nil, &indexRun)
 	if response.StatusCode != http.StatusOK || indexRun.DocumentCounts["products"] != 1 || len(indexRun.IndexSizes) != 5 {
 		t.Fatalf("index operation contract failed: status=%d run=%#v", response.StatusCode, indexRun)
 	}
@@ -129,7 +128,6 @@ func TestAdminRankingPolicyChangesPublicSearchScore(t *testing.T) {
 	}
 	rollout.Percent = 100
 	rollout.ExpectedVersion = candidatePolicy.Rollout.Version
-	rollout.Reason = "Promote the evaluated candidate after the bounded HTTP stage."
 	candidatePolicy = admin.RankingPolicy{}
 	response = requestJSON(t, adminClient, http.MethodPost, server.URL+"/api/v1/admin/discovery/ranking/rollout", rollout, &candidatePolicy)
 	if response.StatusCode != http.StatusOK || candidatePolicy.Current.Version != 3 || candidatePolicy.Candidate != nil || candidatePolicy.Rollout.Percent != 0 {

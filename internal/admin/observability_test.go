@@ -5,23 +5,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/hcai-chat/hcai-chat/internal/admin"
 	"github.com/hcai-chat/hcai-chat/internal/observability"
 	"github.com/hcai-chat/hcai-chat/internal/platform/httputil"
 )
 
-func TestOperationalDiagnosticsVerifyAuditChainAndDurableSignals(t *testing.T) {
+func TestOperationalDiagnosticsReportDurableSignals(t *testing.T) {
 	pool, cleanup := testPool(t)
 	defer cleanup()
 	ctx := context.Background()
-	actorID := uuid.New()
-	if _, err := pool.Exec(ctx, `INSERT INTO users(id,email,handle,display_name,role,status) VALUES($1,$2,$3,'Diagnostics Admin','admin','active')`, actorID, actorID.String()+"@test.local", "diagnostics_"+actorID.String()[:8]); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `INSERT INTO audit_events(actor_id,action,resource_type,resource_id,reason,request_id) VALUES($1,'test.first','user',$1,'First chained diagnostic event','diagnostics-1'),($1,'test.second','user',$1,'Second chained diagnostic event','diagnostics-2')`, actorID); err != nil {
-		t.Fatal(err)
-	}
 	recorder := observability.NewRepository(pool)
 	if _, err := pool.Exec(ctx, `INSERT INTO request_observations(request_id,method,route,status,duration_ms,response_bytes,occurred_at) VALUES('expired-observation','GET','/api/v1/expired',200,1,1,now()-interval '8 days')`); err != nil {
 		t.Fatal(err)
@@ -48,9 +40,6 @@ func TestOperationalDiagnosticsVerifyAuditChainAndDurableSignals(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !diagnostics.Audit.Valid || diagnostics.Audit.EventCount != 2 || diagnostics.Audit.HeadSequence != 2 || len(diagnostics.Audit.HeadHash) != 64 {
-		t.Fatalf("audit integrity mismatch: %#v", diagnostics.Audit)
-	}
 	if diagnostics.Requests.Total != 2 || diagnostics.Requests.ServerErrors != 1 || diagnostics.Requests.ByStatus["2xx"] != 1 || diagnostics.Requests.ByStatus["5xx"] != 1 {
 		t.Fatalf("request diagnostics mismatch: %#v", diagnostics.Requests)
 	}
@@ -63,25 +52,6 @@ func TestOperationalDiagnosticsVerifyAuditChainAndDurableSignals(t *testing.T) {
 	var expiredObservations int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM request_observations WHERE request_id='expired-observation'`).Scan(&expiredObservations); err != nil || expiredObservations != 0 {
 		t.Fatalf("expired request observations were not purged: count=%d err=%v", expiredObservations, err)
-	}
-	if _, err := pool.Exec(ctx, `UPDATE audit_events SET reason='tampered' WHERE sequence=1`); err == nil {
-		t.Fatal("audit event mutation was not rejected")
-	}
-	if _, err := pool.Exec(ctx, `ALTER TABLE audit_events DISABLE TRIGGER audit_events_immutable`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `UPDATE audit_events SET event_hash=repeat('0',64) WHERE sequence=1`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `ALTER TABLE audit_events ENABLE TRIGGER audit_events_immutable`); err != nil {
-		t.Fatal(err)
-	}
-	diagnostics, err = service.GetOperationalDiagnostics(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if diagnostics.Audit.Valid || diagnostics.Audit.FirstInvalidSequence == nil || *diagnostics.Audit.FirstInvalidSequence != 1 {
-		t.Fatalf("tampered chain was not detected: %#v", diagnostics.Audit)
 	}
 }
 

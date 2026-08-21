@@ -435,6 +435,7 @@ func (s *Service) List(ctx context.Context, ownerID uuid.UUID, input ListInput) 
 	rows, err := s.pool.Query(ctx, assetSelect+`
 		WHERE a.owner_id=$1
 		  AND (a.source_type<>'purchase' OR EXISTS(SELECT 1 FROM entitlements e WHERE e.asset_id=a.id AND e.user_id=$1 AND e.status='active'))
+		  AND NOT (a.source_type='generation' AND EXISTS(SELECT 1 FROM generations chat_generation WHERE chat_generation.id=a.source_id AND chat_generation.mode='chat'))
 		  AND NOT EXISTS(SELECT 1 FROM assets newer WHERE newer.family_id=a.family_id AND newer.version_number>a.version_number)
 		  AND ($2::timestamptz IS NULL OR (a.created_at,a.id)<($2,$3::uuid))
 		ORDER BY a.created_at DESC,a.id DESC LIMIT $4`, ownerID, cursorTime, cursorID, input.Limit+1)
@@ -600,8 +601,9 @@ func (s *Service) usages(ctx context.Context, ownerID, familyID uuid.UUID, input
 			SELECT id,version_number FROM assets WHERE family_id=$1 AND owner_id=$2
 		), usage_rows AS (
 			SELECT 'generation'::text AS kind,g.id AS resource_id,fa.id AS asset_id,fa.version_number,
-			       left(g.prompt,120) AS title,g.status,
-			       '/workspace/generations?generationId='||g.id::text AS target_path,g.created_at
+			   left(g.prompt,120) AS title,g.status,
+			   CASE WHEN g.conversation_id IS NULL THEN '/create/image?generationId='||g.id::text
+			            ELSE '/create/image?conversationId='||g.conversation_id::text||'&generationId='||g.id::text END AS target_path,g.created_at
 			FROM generations g JOIN family_assets fa ON fa.id=g.source_asset_id
 			WHERE g.owner_id=$2
 			UNION ALL

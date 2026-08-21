@@ -4,7 +4,7 @@ export const router = createRouter({
   history: createWebHistory(),
   scrollBehavior: () => ({ top: 0 }),
   routes: [
-    { path: '/', redirect: '/discover' },
+    { path: '/', name: 'home', component: () => import('../pages/GuestHomePage.vue') },
     { path: '/discover', name: 'discover', component: () => import('../pages/DiscoverPage.vue') },
     { path: '/search', name: 'search', component: () => import('../pages/SearchPage.vue') },
     { path: '/create/:mode?', name: 'create', component: () => import('../pages/CreatePage.vue') },
@@ -15,7 +15,9 @@ export const router = createRouter({
     { path: '/market/demands', name: 'demands', component: () => import('../pages/TaskMarketplacePage.vue') },
     { path: '/market/demands/:id', name: 'demand', component: () => import('../pages/TaskMarketplacePage.vue') },
     { path: '/community', name: 'community', component: () => import('../pages/CommunityPage.vue') },
+    { path: '/community/posts/:id', name: 'community-post', component: () => import('../pages/CommunityPostPage.vue') },
     { path: '/workspace/assets/:assetId', name: 'asset', component: () => import('../pages/WorkspacePage.vue') },
+    { path: '/workspace/generations', redirect: '/create/image' },
     { path: '/workspace/:section?', name: 'workspace', component: () => import('../pages/WorkspacePage.vue') },
     { path: '/publish', name: 'publish', component: () => import('../pages/PublishPage.vue') },
     { path: '/notifications', name: 'notifications', component: () => import('../pages/NotificationsPage.vue') },
@@ -25,6 +27,6 @@ export const router = createRouter({
     { path: '/reset-password', name: 'reset-password', component: () => import('../pages/EmailActionPage.vue') },
     { path: '/admin', name: 'admin', component: () => import('../pages/AdminPage.vue') },
     { path: '/policies/:policy?', name: 'policies', component: () => import('../pages/LegalPage.vue') },
-    { path: '/:pathMatch(.*)*', redirect: '/discover' },
+    { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
 })

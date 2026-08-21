@@ -72,9 +72,7 @@ type Attempt struct {
 }
 
 type Transition struct {
-	ExpectedVersion int    `json:"expectedVersion"`
-	Reason          string `json:"reason"`
-	Confirmed       bool   `json:"confirmed"`
+	ExpectedVersion int `json:"expectedVersion"`
 }
 
 type DeadLetterListInput struct {
@@ -551,7 +549,7 @@ func (s *Service) HandleExpiryJob(ctx context.Context, job jobs.Job) error {
 	return nil
 }
 
-func (s *Service) Retry(ctx context.Context, actorID, actionID uuid.UUID, input Transition, requestID string) (Action, error) {
+func (s *Service) Retry(ctx context.Context, _ uuid.UUID, actionID uuid.UUID, input Transition, _ string) (Action, error) {
 	if !validTransition(input) {
 		return Action{}, ErrInvalid
 	}
@@ -584,10 +582,7 @@ func (s *Service) Retry(ctx context.Context, actorID, actionID uuid.UUID, input 
 	if _, err := tx.Exec(ctx, `INSERT INTO jobs(kind,payload,max_attempts) VALUES($1,$2,$3)`, DeliveryJobKind, payload, remaining); err != nil {
 		return Action{}, err
 	}
-	if err := audit(ctx, tx, &actorID, "admin.identity_email_retried", "identity_email_action", actionID, input.Reason, requestID, map[string]any{"previousAttempts": attemptCount}); err != nil {
-		return Action{}, err
-	}
-	if err := notifications.CreateTx(ctx, tx, notifications.CreateInput{UserID: userID, Kind: "security.email_delivery_retried", Title: "Identity email delivery retried", Body: "Operations retried a failed identity email after recording recovery evidence.", TargetPath: "/settings", ResourceType: "identity_email_action", ResourceID: &actionID, SourceKey: "identity-email-retry:" + actionID.String() + ":" + fmt.Sprint(attemptCount)}); err != nil {
+	if err := notifications.CreateTx(ctx, tx, notifications.CreateInput{UserID: userID, Kind: "security.email_delivery_retried", Title: "Identity email delivery retried", Body: "Operations retried a failed identity email delivery.", TargetPath: "/settings", ResourceType: "identity_email_action", ResourceID: &actionID, SourceKey: "identity-email-retry:" + actionID.String() + ":" + fmt.Sprint(attemptCount)}); err != nil {
 		return Action{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -596,7 +591,7 @@ func (s *Service) Retry(ctx context.Context, actorID, actionID uuid.UUID, input 
 	return s.actionByID(ctx, actionID)
 }
 
-func (s *Service) Cancel(ctx context.Context, actorID, actionID uuid.UUID, input Transition, requestID string) (Action, error) {
+func (s *Service) Cancel(ctx context.Context, _ uuid.UUID, actionID uuid.UUID, input Transition, _ string) (Action, error) {
 	if !validTransition(input) {
 		return Action{}, ErrInvalid
 	}
@@ -614,9 +609,6 @@ func (s *Service) Cancel(ctx context.Context, actorID, actionID uuid.UUID, input
 		return Action{}, err
 	}
 	if _, err := tx.Exec(ctx, `UPDATE jobs SET status='cancelled',updated_at=now() WHERE kind IN ($1,$2) AND status IN ('queued','running') AND payload->>'actionId'=$3`, DeliveryJobKind, ExpiryJobKind, actionID.String()); err != nil {
-		return Action{}, err
-	}
-	if err := audit(ctx, tx, &actorID, "admin.identity_email_cancelled", "identity_email_action", actionID, input.Reason, requestID, nil); err != nil {
 		return Action{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -792,7 +784,7 @@ func maskEmail(value string) string {
 }
 
 func validTransition(input Transition) bool {
-	return input.Confirmed && input.ExpectedVersion > 0 && len(strings.TrimSpace(input.Reason)) >= 10 && len(strings.TrimSpace(input.Reason)) <= 500
+	return input.ExpectedVersion > 0
 }
 
 func audit(ctx context.Context, tx pgx.Tx, actorID *uuid.UUID, action, resourceType string, resourceID uuid.UUID, reason, requestID string, metadata map[string]any) error {

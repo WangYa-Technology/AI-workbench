@@ -11,6 +11,7 @@ import (
 	_ "image/png"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -25,10 +26,16 @@ const (
 )
 
 type OpenAIRuntimeConfig struct {
-	APIKey              string
+	APIKey              string // Backwards-compatible fallback for both capabilities.
+	ChatAPIKey          string
+	ImageAPIKey         string
 	BaseURL             string
+	ChatAPI             string
 	ChatModel           string
 	ImageModel          string
+	ImageAsync          bool
+	ImagePollInterval   time.Duration
+	ImageTimeout        time.Duration
 	ChatMaxOutputTokens int
 	ImageSize           string
 	ImageQuality        string
@@ -60,6 +67,21 @@ func NewOpenAIRuntime(config OpenAIRuntimeConfig) *OpenAIRuntime {
 		client = http.DefaultClient
 	}
 	config.BaseURL = strings.TrimRight(config.BaseURL, "/")
+	if config.ChatAPIKey == "" {
+		config.ChatAPIKey = config.APIKey
+	}
+	if config.ImageAPIKey == "" {
+		config.ImageAPIKey = config.APIKey
+	}
+	if config.ChatAPI == "" {
+		config.ChatAPI = "responses"
+	}
+	if config.ImagePollInterval <= 0 {
+		config.ImagePollInterval = 10 * time.Second
+	}
+	if config.ImageTimeout <= 0 {
+		config.ImageTimeout = 5 * time.Minute
+	}
 	return &OpenAIRuntime{config: config, client: client}
 }
 
@@ -88,6 +110,9 @@ func (r *OpenAIRuntime) Generate(ctx context.Context, request ProviderRequest) (
 }
 
 func (r *OpenAIRuntime) generateChat(ctx context.Context, request ProviderRequest) (ProviderOutput, error) {
+	if r.config.ChatAPI == "chat_completions" {
+		return r.generateChatCompletions(ctx, request)
+	}
 	maxOutputTokens := r.config.ChatMaxOutputTokens
 	if request.Parameters.ResponseLength == "short" && maxOutputTokens > 512 {
 		maxOutputTokens = 512
@@ -111,7 +136,7 @@ func (r *OpenAIRuntime) generateChat(ctx context.Context, request ProviderReques
 		} `json:"output"`
 		Usage *openAIUsage `json:"usage"`
 	}
-	if err := r.postJSON(ctx, "/responses", payload, &response, maxOpenAITextBodyBytes); err != nil {
+	if err := r.postJSONWithKey(ctx, "/responses", payload, &response, maxOpenAITextBodyBytes, r.config.ChatAPIKey); err != nil {
 		return ProviderOutput{}, err
 	}
 	var text strings.Builder
@@ -136,7 +161,58 @@ func (r *OpenAIRuntime) generateChat(ctx context.Context, request ProviderReques
 	}, nil
 }
 
+func (r *OpenAIRuntime) generateChatCompletions(ctx context.Context, request ProviderRequest) (ProviderOutput, error) {
+	maxOutputTokens := r.config.ChatMaxOutputTokens
+	if request.Parameters.ResponseLength == "short" && maxOutputTokens > 512 {
+		maxOutputTokens = 512
+	}
+	messages := request.Messages
+	if len(messages) == 0 {
+		messages = []ProviderMessage{{Role: "user", Content: request.Prompt}}
+	}
+	payload := struct {
+		Model     string            `json:"model"`
+		Messages  []ProviderMessage `json:"messages"`
+		MaxTokens int               `json:"max_tokens"`
+		Stream    bool              `json:"stream"`
+	}{request.ModelName, messages, maxOutputTokens, false}
+	var response struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+		Usage *struct {
+			PromptTokens     int `json:"prompt_tokens"`
+			CompletionTokens int `json:"completion_tokens"`
+			TotalTokens      int `json:"total_tokens"`
+		} `json:"usage"`
+	}
+	if err := r.postJSONWithKey(ctx, "/chat/completions", payload, &response, maxOpenAITextBodyBytes, r.config.ChatAPIKey); err != nil {
+		return ProviderOutput{}, err
+	}
+	if len(response.Choices) == 0 || strings.TrimSpace(response.Choices[0].Message.Content) == "" {
+		return ProviderOutput{}, NewProviderFailure("provider_response_invalid", 0)
+	}
+	result := response.Choices[0].Message.Content
+	var usage *ProviderUsage
+	if response.Usage != nil {
+		candidate := &ProviderUsage{InputTokens: response.Usage.PromptTokens, OutputTokens: response.Usage.CompletionTokens, TotalTokens: response.Usage.TotalTokens}
+		if candidate.InputTokens < 0 || candidate.OutputTokens < 0 || candidate.TotalTokens < candidate.InputTokens+candidate.OutputTokens {
+			return ProviderOutput{}, NewProviderFailure("provider_response_invalid", 0)
+		}
+		usage = candidate
+	}
+	return ProviderOutput{
+		Kind: "document", MIMEType: "text/plain; charset=utf-8", Extension: ".txt",
+		Text: &result, Content: []byte(result), Usage: usage,
+	}, nil
+}
+
 func (r *OpenAIRuntime) generateImage(ctx context.Context, request ProviderRequest) (ProviderOutput, error) {
+	if r.config.ImageAsync {
+		return r.generateAsyncImage(ctx, request)
+	}
 	if request.MaskAssetID != nil {
 		return ProviderOutput{}, NewProviderFailure("provider_invalid_request", 0)
 	}
@@ -175,7 +251,7 @@ func (r *OpenAIRuntime) generateImage(ctx context.Context, request ProviderReque
 		} `json:"data"`
 		Usage *openAIUsage `json:"usage"`
 	}
-	if err := r.postJSON(ctx, "/images/generations", payload, &response, maxOpenAIImageBodyBytes); err != nil {
+	if err := r.postJSONWithKey(ctx, "/images/generations", payload, &response, maxOpenAIImageBodyBytes, r.config.ImageAPIKey); err != nil {
 		return ProviderOutput{}, err
 	}
 	if len(response.Data) == 0 || response.Data[0].B64JSON == "" || base64.StdEncoding.DecodedLen(len(response.Data[0].B64JSON)) > maxProviderOutputBytes {
@@ -203,6 +279,144 @@ func (r *OpenAIRuntime) generateImage(ctx context.Context, request ProviderReque
 	}, nil
 }
 
+type asyncImageTaskEnvelope struct {
+	ID       string `json:"id"`
+	TaskID   string `json:"task_id"`
+	Status   string `json:"status"`
+	ImageURL string `json:"image_url"`
+	Result   struct {
+		Data []struct {
+			URL     string `json:"url"`
+			B64JSON string `json:"b64_json"`
+		} `json:"data"`
+	} `json:"result"`
+	Error struct {
+		Code string `json:"code"`
+		Type string `json:"type"`
+	} `json:"error"`
+}
+
+func (r *OpenAIRuntime) generateAsyncImage(ctx context.Context, request ProviderRequest) (ProviderOutput, error) {
+	if request.MaskAssetID != nil {
+		return ProviderOutput{}, NewProviderFailure("provider_invalid_request", 0)
+	}
+	size := r.config.ImageSize
+	switch request.Parameters.AspectRatio {
+	case "1:1":
+		size = "1024x1024"
+	case "4:5":
+		size = "1024x1536"
+	case "16:9":
+		size = "1536x1024"
+	}
+	payload := struct {
+		Model        string `json:"model"`
+		Prompt       string `json:"prompt"`
+		Size         string `json:"size"`
+		OutputFormat string `json:"output_format"`
+	}{request.ModelName, request.Prompt, size, "png"}
+	var submitted asyncImageTaskEnvelope
+	if err := r.postJSONWithKey(ctx, "/images/generations/async", payload, &submitted, maxOpenAITextBodyBytes, r.config.ImageAPIKey); err != nil {
+		return ProviderOutput{}, err
+	}
+	taskID := submitted.TaskID
+	if taskID == "" {
+		taskID = submitted.ID
+	}
+	if taskID == "" {
+		return ProviderOutput{}, NewProviderFailure("provider_response_invalid", 0)
+	}
+	deadline := time.Now().Add(r.config.ImageTimeout)
+	for {
+		if err := ctx.Err(); err != nil {
+			return ProviderOutput{}, NewProviderFailure("provider_timeout", 0)
+		}
+		if time.Now().After(deadline) {
+			return ProviderOutput{}, NewProviderFailure("provider_timeout", 0)
+		}
+		var status asyncImageTaskEnvelope
+		if err := r.getJSONWithKey(ctx, "/images/tasks/"+url.PathEscape(taskID), &status, maxOpenAITextBodyBytes, r.config.ImageAPIKey); err != nil {
+			return ProviderOutput{}, err
+		}
+		switch strings.ToLower(strings.TrimSpace(status.Status)) {
+		case "completed", "succeeded", "success", "done":
+			if status.ImageURL == "" && len(status.Result.Data) > 0 {
+				status.ImageURL = status.Result.Data[0].URL
+				if status.ImageURL == "" && status.Result.Data[0].B64JSON != "" {
+					content, err := base64.StdEncoding.DecodeString(status.Result.Data[0].B64JSON)
+					if err != nil {
+						return ProviderOutput{}, NewProviderFailure("provider_response_invalid", 0)
+					}
+					return imageProviderOutput(content)
+				}
+			}
+			if status.ImageURL == "" {
+				return ProviderOutput{}, NewProviderFailure("provider_response_invalid", 0)
+			}
+			content, err := r.downloadImage(ctx, status.ImageURL)
+			if err != nil {
+				return ProviderOutput{}, err
+			}
+			return imageProviderOutput(content)
+		case "failed", "failure", "error", "cancelled", "canceled":
+			return ProviderOutput{}, NewProviderFailure("provider_request_failed", 0)
+		}
+		select {
+		case <-ctx.Done():
+			return ProviderOutput{}, NewProviderFailure("provider_timeout", 0)
+		case <-time.After(r.config.ImagePollInterval):
+		}
+	}
+}
+
+func imageProviderOutput(content []byte) (ProviderOutput, error) {
+	if len(content) == 0 || len(content) > maxProviderOutputBytes {
+		return ProviderOutput{}, NewProviderFailure("provider_response_invalid", 0)
+	}
+	imageConfig, format, err := image.DecodeConfig(bytes.NewReader(content))
+	if err != nil || (format != "png" && format != "jpeg") || imageConfig.Width < 1 || imageConfig.Height < 1 {
+		return ProviderOutput{}, NewProviderFailure("provider_response_invalid", 0)
+	}
+	mimeType, extension := "image/png", ".png"
+	if format == "jpeg" {
+		mimeType, extension = "image/jpeg", ".jpg"
+	}
+	return ProviderOutput{Kind: "image", MIMEType: mimeType, Extension: extension, Width: intPtr(imageConfig.Width), Height: intPtr(imageConfig.Height), Content: content}, nil
+}
+
+func (r *OpenAIRuntime) downloadImage(ctx context.Context, rawURL string) ([]byte, error) {
+	u, err := url.Parse(rawURL)
+	if err != nil || u.User != nil || u.Fragment != "" || u.RawQuery != "" {
+		return nil, NewProviderFailure("provider_response_invalid", 0)
+	}
+	base, _ := url.Parse(r.config.BaseURL)
+	loopbackFixture := base != nil && (base.Hostname() == "127.0.0.1" || base.Hostname() == "localhost") && u.Scheme == "http" && u.Host == base.Host
+	allowedHost := base != nil && (u.Hostname() == base.Hostname() || (base.Hostname() == "api.hctopup.com" && strings.HasSuffix(u.Hostname(), ".hctopup.com")))
+	if !loopbackFixture && (u.Scheme != "https" || !allowedHost) {
+		return nil, NewProviderFailure("provider_response_invalid", 0)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return nil, NewProviderFailure("provider_response_invalid", 0)
+	}
+	resp, err := r.client.Do(req)
+	if err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, NewProviderFailure("provider_timeout", 0)
+		}
+		return nil, NewProviderFailure("provider_request_failed", 0)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return nil, classifyOpenAIStatus(resp)
+	}
+	content, tooLarge, err := readBounded(resp.Body, maxOpenAIImageBodyBytes)
+	if err != nil || tooLarge {
+		return nil, NewProviderFailure("provider_response_invalid", 0)
+	}
+	return content, nil
+}
+
 func providerUsageFromOpenAI(value *openAIUsage) (*ProviderUsage, error) {
 	if value == nil {
 		return nil, nil
@@ -219,6 +433,10 @@ func providerUsageFromOpenAI(value *openAIUsage) (*ProviderUsage, error) {
 }
 
 func (r *OpenAIRuntime) postJSON(ctx context.Context, path string, payload, destination any, maxResponseBytes int64) error {
+	return r.postJSONWithKey(ctx, path, payload, destination, maxResponseBytes, r.config.APIKey)
+}
+
+func (r *OpenAIRuntime) postJSONWithKey(ctx context.Context, path string, payload, destination any, maxResponseBytes int64, apiKey string) error {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return NewProviderFailure("provider_invalid_request", 0)
@@ -227,8 +445,41 @@ func (r *OpenAIRuntime) postJSON(ctx context.Context, path string, payload, dest
 	if err != nil {
 		return NewProviderFailure("provider_invalid_request", 0)
 	}
-	request.Header.Set("Authorization", "Bearer "+r.config.APIKey)
+	request.Header.Set("Authorization", "Bearer "+apiKey)
 	request.Header.Set("Content-Type", "application/json")
+	if r.config.Organization != "" {
+		request.Header.Set("OpenAI-Organization", r.config.Organization)
+	}
+	if r.config.Project != "" {
+		request.Header.Set("OpenAI-Project", r.config.Project)
+	}
+	response, err := r.client.Do(request)
+	if err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) {
+			return NewProviderFailure("provider_timeout", 0)
+		}
+		return NewProviderFailure("provider_request_failed", 0)
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return classifyOpenAIStatus(response)
+	}
+	responseBody, tooLarge, err := readBounded(response.Body, maxResponseBytes)
+	if err != nil {
+		return NewProviderFailure("provider_request_failed", 0)
+	}
+	if tooLarge || json.Unmarshal(responseBody, destination) != nil {
+		return NewProviderFailure("provider_response_invalid", 0)
+	}
+	return nil
+}
+
+func (r *OpenAIRuntime) getJSONWithKey(ctx context.Context, path string, destination any, maxResponseBytes int64, apiKey string) error {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, r.config.BaseURL+path, nil)
+	if err != nil {
+		return NewProviderFailure("provider_invalid_request", 0)
+	}
+	request.Header.Set("Authorization", "Bearer "+apiKey)
 	if r.config.Organization != "" {
 		request.Header.Set("OpenAI-Organization", r.config.Organization)
 	}

@@ -14,7 +14,7 @@ import (
 	"github.com/hcai-chat/hcai-chat/internal/transport/httpapi"
 )
 
-func TestSupportCopyrightLifecyclePermissionsAndEvidence(t *testing.T) {
+func TestSupportCopyrightLifecyclePermissions(t *testing.T) {
 	pool, cleanup := httpTestPool(t)
 	defer cleanup()
 	server := httptest.NewServer(httpapi.New(config.Config{
@@ -80,20 +80,17 @@ func TestSupportCopyrightLifecyclePermissionsAndEvidence(t *testing.T) {
 
 	var current support.Case
 	response = requestJSON(t, adminClient, http.MethodPost, server.URL+"/api/v1/admin/support/cases/"+created.ID.String()+"/messages", map[string]any{
-		"body": "We received the report and are reviewing the referenced publication.", "reason": "Initial evidence review has started for this copyright intake.", "expectedVersion": 1, "confirmed": true,
-	}, &current)
+		"body": "We received the report and are reviewing the referenced publication.", "expectedVersion": 1}, &current)
 	if response.StatusCode != http.StatusOK || current.Status != "in_review" || current.Version != 2 || len(current.Messages) != 2 {
 		t.Fatalf("operator reply: status=%d case=%#v", response.StatusCode, current)
 	}
 	response = requestJSON(t, adminClient, http.MethodPatch, server.URL+"/api/v1/admin/support/cases/"+created.ID.String(), map[string]any{
-		"status": "waiting_for_requester", "resolutionCode": "", "reason": "Additional source dates are required before the review can continue.", "expectedVersion": 1, "confirmed": true,
-	}, nil)
+		"status": "waiting_for_requester", "resolutionCode": "", "expectedVersion": 1}, nil)
 	if response.StatusCode != http.StatusConflict {
 		t.Fatalf("stale support mutation was accepted: %d", response.StatusCode)
 	}
 	response = requestJSON(t, adminClient, http.MethodPatch, server.URL+"/api/v1/admin/support/cases/"+created.ID.String(), map[string]any{
-		"status": "waiting_for_requester", "resolutionCode": "", "reason": "Additional source dates are required before the review can continue.", "expectedVersion": 2, "confirmed": true,
-	}, &current)
+		"status": "waiting_for_requester", "resolutionCode": "", "expectedVersion": 2}, &current)
 	if response.StatusCode != http.StatusOK || current.Status != "waiting_for_requester" || current.Version != 3 {
 		t.Fatalf("request more information: status=%d case=%#v", response.StatusCode, current)
 	}
@@ -104,8 +101,7 @@ func TestSupportCopyrightLifecyclePermissionsAndEvidence(t *testing.T) {
 		t.Fatalf("requester reply: status=%d case=%#v", response.StatusCode, current)
 	}
 	response = requestJSON(t, adminClient, http.MethodPatch, server.URL+"/api/v1/admin/support/cases/"+created.ID.String(), map[string]any{
-		"status": "resolved", "resolutionCode": "content_restricted", "reason": "The referenced publication was restricted after the submitted rights evidence was reviewed.", "expectedVersion": 4, "confirmed": true,
-	}, &current)
+		"status": "resolved", "resolutionCode": "content_restricted", "expectedVersion": 4}, &current)
 	if response.StatusCode != http.StatusOK || current.Status != "resolved" || current.Version != 5 || current.ResolvedAt == nil || current.ResolutionCode == nil {
 		t.Fatalf("resolve support case: status=%d case=%#v", response.StatusCode, current)
 	}
@@ -114,15 +110,12 @@ func TestSupportCopyrightLifecyclePermissionsAndEvidence(t *testing.T) {
 		t.Fatalf("resolved case accepted requester reply: %d", response.StatusCode)
 	}
 
-	var notifications, audits int
+	var notifications int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM notifications WHERE user_id=$1 AND kind='support.case_updated' AND resource_id=$2`, requester.ID, created.ID).Scan(&notifications); err != nil {
 		t.Fatal(err)
 	}
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM audit_events WHERE resource_type='support_case' AND resource_id=$1`, created.ID).Scan(&audits); err != nil {
-		t.Fatal(err)
-	}
-	if notifications != 3 || audits != 5 {
-		t.Fatalf("missing notification or audit evidence: notifications=%d audits=%d", notifications, audits)
+	if notifications != 3 {
+		t.Fatalf("missing support notifications: notifications=%d", notifications)
 	}
 	if _, err := pool.Exec(ctx, `UPDATE support_messages SET body='tampered' WHERE case_id=$1`, created.ID); err == nil {
 		t.Fatal("append-only support message was mutable")

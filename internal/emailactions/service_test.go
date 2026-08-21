@@ -186,7 +186,7 @@ func TestEmailDeadLetterDirectoryPaginationAndExactCancellation(t *testing.T) {
 	if _, err := service.ListDeadLetters(ctx, DeadLetterListInput{Cursor: cursor + "modified", Limit: 25}); !errors.Is(err, ErrInvalidDeadLetterFilter) {
 		t.Fatalf("modified email cursor accepted: %v", err)
 	}
-	cancelled, err := service.Cancel(ctx, adminID, oldest.ID, Transition{ExpectedVersion: oldest.Version, Reason: "Scale test confirms exact cancellation outside the former recovery window", Confirmed: true}, "email-scale-cancel")
+	cancelled, err := service.Cancel(ctx, adminID, oldest.ID, Transition{ExpectedVersion: oldest.Version}, "email-scale-cancel")
 	if err != nil || cancelled.ID != oldest.ID || cancelled.Status != "cancelled" {
 		t.Fatalf("oldest email cancellation failed: %#v %v", cancelled, err)
 	}
@@ -219,18 +219,15 @@ func TestIdentityEmailDeadLetterRetryAndCancel(t *testing.T) {
 	if err != nil || len(deadLetters.Items) != 1 || deadLetters.Items[0].AttemptCount != 5 {
 		t.Fatalf("dead-letter evidence mismatch: items=%#v err=%v", deadLetters, err)
 	}
-	retried, err := service.Retry(ctx, adminID, action.ID, Transition{ExpectedVersion: deadLetters.Items[0].Version, Reason: "Verified delivery configuration recovery", Confirmed: true}, "retry-email-action")
+	retried, err := service.Retry(ctx, adminID, action.ID, Transition{ExpectedVersion: deadLetters.Items[0].Version}, "retry-email-action")
 	if err != nil || retried.Status != "queued" {
 		t.Fatalf("admin retry mismatch: item=%#v err=%v", retried, err)
 	}
-	cancelled, err := service.Cancel(ctx, adminID, action.ID, Transition{ExpectedVersion: retried.Version, Reason: "Cancel after recipient support confirmation", Confirmed: true}, "cancel-email-action")
+	cancelled, err := service.Cancel(ctx, adminID, action.ID, Transition{ExpectedVersion: retried.Version}, "cancel-email-action")
 	if err != nil || cancelled.Status != "cancelled" {
 		t.Fatalf("admin cancellation mismatch: item=%#v err=%v", cancelled, err)
 	}
-	var auditCount, notificationCount int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM audit_events WHERE actor_id=$1 AND action IN ('admin.identity_email_retried','admin.identity_email_cancelled')`, adminID).Scan(&auditCount); err != nil || auditCount != 2 {
-		t.Fatalf("admin audit evidence mismatch: count=%d err=%v", auditCount, err)
-	}
+	var notificationCount int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM notifications WHERE user_id=$1 AND kind='security.email_delivery_retried'`, userID).Scan(&notificationCount); err != nil || notificationCount != 1 {
 		t.Fatalf("recovery notification mismatch: count=%d err=%v", notificationCount, err)
 	}

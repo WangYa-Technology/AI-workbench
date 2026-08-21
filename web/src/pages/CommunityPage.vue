@@ -1,33 +1,83 @@
 <script setup lang="ts">
-import { ArrowRight, Bookmark, Flag, Heart, LoaderCircle, MessageCircle, RefreshCw, Sparkles, Upload, UserPlus, X } from 'lucide-vue-next'
-import { onMounted, reactive, ref } from 'vue'
+import { Clock3, Eye, Heart, LayoutGrid, LoaderCircle, MessageCircle, MoreHorizontal, RefreshCw, Search, ShieldCheck, Sparkles, Upload, UserRound, X } from 'lucide-vue-next'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink, useRouter } from 'vue-router'
-import { api, messageFrom, type CommunityComment, type CommunityPost, type CommunityReport } from '../api/client'
+import { api, messageFrom, type CommunityPost, type CommunityReport } from '../api/client'
 import AssetMedia from '../components/domain/AssetMedia.vue'
 import { useSessionStore } from '../stores/session'
 
-const { t } = useI18n()
+const { locale, t } = useI18n()
 const router = useRouter()
 const session = useSessionStore()
 const posts = ref<CommunityPost[]>([])
 const postNextCursor = ref<string | null>(null)
 const postLoadingMore = ref(false)
-const comments = ref<Record<string, CommunityComment[]>>({})
-const commentNextCursors = ref<Record<string, string | null>>({})
-const commentLoadingMore = ref<Record<string, boolean>>({})
 const reports = ref<CommunityReport[]>([])
 const reportNextCursor = ref<string | null>(null)
 const reportLoadingMore = ref(false)
-const commentDrafts = ref<Record<string, string>>({})
 const loading = ref(true)
 const actionLoading = ref('')
 const error = ref('')
 const feedback = ref('')
-const expandedPost = ref('')
+const sortMode = ref<'latest' | 'discussed'>('latest')
+const search = ref('')
+const mediaFilter = ref<'all' | 'image' | 'video' | 'music' | 'other'>('all')
 const showCases = ref(false)
-const reportForm = reactive({ postId: '', category: 'misleading' as CommunityReport['category'], details: '' })
 const appealForm = reactive({ reportId: '', reason: '' })
+
+function formatPublishedAt(value: string) {
+  return new Intl.DateTimeFormat(locale.value, { year: 'numeric', month: 'short', day: 'numeric' }).format(new Date(value))
+}
+
+function formatMediaKind(value: string) {
+  const normalized = normalizeMediaKind(value)
+  if (normalized === 'video') return t('create.modes.video')
+  if (normalized === 'music') return t('create.modes.music')
+  if (normalized === 'image') return t('create.modes.image')
+  return t('community.workTopic')
+}
+
+function normalizeMediaKind(value: string): 'image' | 'video' | 'music' | 'other' {
+  const normalized = value.toLowerCase()
+  if (normalized.includes('video')) return 'video'
+  if (normalized.includes('audio') || normalized.includes('music')) return 'music'
+  if (normalized.includes('image')) return 'image'
+  return 'other'
+}
+
+function formatActivity(value: string) {
+  const elapsed = new Date(value).getTime() - Date.now()
+  const days = Math.round(elapsed / 86_400_000)
+  if (Math.abs(days) >= 1) return new Intl.RelativeTimeFormat(locale.value, { numeric: 'auto' }).format(days, 'day')
+  const hours = Math.round(elapsed / 3_600_000)
+  if (Math.abs(hours) >= 1) return new Intl.RelativeTimeFormat(locale.value, { numeric: 'auto' }).format(hours, 'hour')
+  const minutes = Math.round(elapsed / 60_000)
+  return new Intl.RelativeTimeFormat(locale.value, { numeric: 'auto' }).format(minutes, 'minute')
+}
+
+const displayedPosts = computed(() => {
+  const query = search.value.trim().toLocaleLowerCase(locale.value)
+  const items = posts.value.filter((post) => {
+    const matchesType = mediaFilter.value === 'all' || normalizeMediaKind(post.mediaKind) === mediaFilter.value
+    const matchesSearch = !query || [post.workTitle, post.body, post.authorName, post.authorHandle]
+      .some(value => value.toLocaleLowerCase(locale.value).includes(query))
+    return matchesType && matchesSearch
+  })
+  if (sortMode.value === 'discussed') {
+    return [...items].sort((left, right) => right.commentCount - left.commentCount || right.likeCount - left.likeCount || right.publishedAt.localeCompare(left.publishedAt))
+  }
+  return [...items].sort((left, right) => right.publishedAt.localeCompare(left.publishedAt))
+})
+
+const hasActiveFilters = computed(() => Boolean(search.value.trim()) || mediaFilter.value !== 'all')
+const totalReplyCount = computed(() => posts.value.reduce((total, post) => total + post.commentCount, 0))
+const totalLikeCount = computed(() => posts.value.reduce((total, post) => total + post.likeCount, 0))
+
+function clearFilters() {
+  search.value = ''
+  mediaFilter.value = 'all'
+}
 
 async function load() {
   loading.value = true
@@ -64,121 +114,6 @@ async function requireAccount() {
   if (user) return true
   await router.push('/settings')
   return false
-}
-
-function updatePost(postId: string, update: Partial<CommunityPost>) {
-  posts.value = posts.value.map(post => post.id === postId ? { ...post, ...update } : post)
-}
-
-function mergeComments(postId: string, incoming: CommunityComment[]) {
-  const merged = new Map((comments.value[postId] || []).map(item => [item.id, item]))
-  incoming.forEach(item => merged.set(item.id, item))
-  comments.value = {
-    ...comments.value,
-    [postId]: [...merged.values()].sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id)),
-  }
-}
-
-async function react(post: CommunityPost, kind: 'like' | 'bookmark') {
-  if (!await requireAccount()) return
-  actionLoading.value = `${post.id}:${kind}`
-  feedback.value = ''
-  try {
-    const active = kind === 'like' ? !post.viewerLiked : !post.viewerBookmarked
-    const state = await api.setCommunityReaction(post.id, kind, active)
-    updatePost(post.id, state)
-  } catch (reason) {
-    feedback.value = messageFrom(reason)
-  } finally {
-    actionLoading.value = ''
-  }
-}
-
-async function follow(post: CommunityPost) {
-  if (!await requireAccount()) return
-  actionLoading.value = `${post.id}:follow`
-  feedback.value = ''
-  try {
-    const state = await api.setCommunityFollow(post.authorId, !post.viewerFollowing)
-    posts.value = posts.value.map(item => item.authorId === state.authorId ? { ...item, viewerFollowing: state.following } : item)
-  } catch (reason) {
-    feedback.value = messageFrom(reason)
-  } finally {
-    actionLoading.value = ''
-  }
-}
-
-async function toggleComments(post: CommunityPost) {
-  if (expandedPost.value === post.id) {
-    expandedPost.value = ''
-    return
-  }
-  expandedPost.value = post.id
-  if (comments.value[post.id]) return
-  actionLoading.value = `${post.id}:comments`
-  try {
-	const page = await api.listCommunityComments(post.id, { limit: 20 })
-	comments.value = { ...comments.value, [post.id]: page.items }
-	commentNextCursors.value = { ...commentNextCursors.value, [post.id]: page.nextCursor || null }
-  } catch (reason) {
-    feedback.value = messageFrom(reason)
-  } finally {
-    actionLoading.value = ''
-  }
-}
-
-async function loadMoreComments(postId: string) {
-  const cursor = commentNextCursors.value[postId]
-  if (!cursor || commentLoadingMore.value[postId]) return
-  commentLoadingMore.value = { ...commentLoadingMore.value, [postId]: true }
-  feedback.value = ''
-  try {
-    const page = await api.listCommunityComments(postId, { limit: 20, cursor })
-    mergeComments(postId, page.items)
-    commentNextCursors.value = { ...commentNextCursors.value, [postId]: page.nextCursor || null }
-  } catch (reason) {
-    feedback.value = messageFrom(reason)
-  } finally {
-    commentLoadingMore.value = { ...commentLoadingMore.value, [postId]: false }
-  }
-}
-
-async function addComment(post: CommunityPost) {
-  if (!await requireAccount()) return
-  const body = (commentDrafts.value[post.id] || '').trim()
-  if (!body) return
-  actionLoading.value = `${post.id}:comment`
-  feedback.value = ''
-  try {
-    const item = await api.createCommunityComment(post.id, body)
-	mergeComments(post.id, [item])
-    updatePost(post.id, { commentCount: post.commentCount + 1 })
-    commentDrafts.value = { ...commentDrafts.value, [post.id]: '' }
-  } catch (reason) {
-    feedback.value = messageFrom(reason)
-  } finally {
-    actionLoading.value = ''
-  }
-}
-
-async function openReport(post: CommunityPost) {
-  if (!await requireAccount()) return
-  Object.assign(reportForm, { postId: post.id, category: 'misleading', details: '' })
-}
-
-async function submitReport() {
-  actionLoading.value = `${reportForm.postId}:report`
-  feedback.value = ''
-  try {
-    const item = await api.reportCommunityPost(reportForm.postId, { category: reportForm.category, details: reportForm.details })
-    reports.value = [item, ...reports.value]
-    reportForm.postId = ''
-    feedback.value = t('community.reportSubmitted')
-  } catch (reason) {
-    feedback.value = messageFrom(reason)
-  } finally {
-    actionLoading.value = ''
-  }
 }
 
 async function toggleCases() {
@@ -237,16 +172,27 @@ onMounted(async () => {
 
 <template>
   <section class="community-page content-width">
-    <header class="community-header">
-      <div>
-        <span class="status-label">{{ t('community.networkLabel') }}</span>
+    <header class="page-hero-header page-hero-banner community-header">
+      <div class="page-hero-copy">
+        <span class="page-hero-eyebrow"><Sparkles :size="14" :stroke-width="1.75" aria-hidden="true" />{{ t('community.networkLabel') }}</span>
         <h1>{{ t('community.title') }}</h1>
         <p>{{ t('community.summary') }}</p>
+        <div class="page-hero-stats" :aria-label="t('community.statsLabel')">
+          <article><span class="page-hero-stat-icon" data-tone="blue"><LayoutGrid :size="23" :stroke-width="1.75" aria-hidden="true" /></span><div><strong>{{ posts.length }}</strong><span>{{ t('community.discussionsLabel') }}</span></div></article>
+          <article><span class="page-hero-stat-icon" data-tone="violet"><MessageCircle :size="23" :stroke-width="1.75" aria-hidden="true" /></span><div><strong>{{ totalReplyCount }}</strong><span>{{ t('community.repliesColumn') }}</span></div></article>
+          <article><span class="page-hero-stat-icon" data-tone="green"><Heart :size="23" :stroke-width="1.75" aria-hidden="true" /></span><div><strong>{{ totalLikeCount }}</strong><span>{{ t('community.likesColumn') }}</span></div></article>
+        </div>
       </div>
-      <RouterLink class="command-button primary" to="/publish">
-        <Upload :size="17" :stroke-width="1.75" aria-hidden="true" />
-        {{ t('actions.publishWork') }}
-      </RouterLink>
+      <div class="page-hero-actions">
+        <RouterLink class="command-button primary" to="/publish">
+          <Upload :size="17" :stroke-width="1.75" aria-hidden="true" />
+          {{ t('actions.publishWork') }}
+        </RouterLink>
+      </div>
+      <img class="page-hero-art community-hero-art" src="/community/community-hero.webp" alt="" width="768" height="714" aria-hidden="true" />
+      <div v-if="session.user" class="page-hero-account">
+        <span class="page-hero-avatar"><UserRound :size="22" :stroke-width="1.75" aria-hidden="true" /></span><span><strong>{{ session.user.displayName }}</strong><small>@{{ session.user.handle }}</small></span><ShieldCheck :size="15" :stroke-width="1.75" aria-hidden="true" />
+      </div>
     </header>
     <div v-if="loading" class="community-skeleton" aria-live="polite">
       <span class="sr-only">{{ t('status.loadingCommunity') }}</span>
@@ -263,14 +209,45 @@ onMounted(async () => {
       </button>
     </div>
     <div v-else>
-      <div class="community-feed-toolbar">
-        <strong>{{ t('discover.recent') }}</strong>
-        <span class="community-toolbar-actions"><button class="text-link" type="button" @click="toggleCases">
-          {{ t('community.myCases') }}
-        </button><RouterLink class="text-link" to="/discover">
-          {{ t('actions.browseWorks') }}<ArrowRight :size="16" :stroke-width="1.75" />
-        </RouterLink></span>
+      <div class="view-switcher-bar">
+        <nav v-motion-tabs class="view-switcher t-tabs" role="tablist" :aria-label="t('community.sortLabel')">
+          <span class="t-tabs-pill" aria-hidden="true"></span>
+          <button class="t-tab" type="button" role="tab" :class="{ active: sortMode === 'latest' }" :aria-selected="sortMode === 'latest'" @click="sortMode = 'latest'">
+            <Clock3 :size="16" :stroke-width="1.75" aria-hidden="true" />{{ t('community.latestDiscussions') }}
+          </button>
+          <button class="t-tab" type="button" role="tab" :class="{ active: sortMode === 'discussed' }" :aria-selected="sortMode === 'discussed'" @click="sortMode = 'discussed'">
+            <MessageCircle :size="16" :stroke-width="1.75" aria-hidden="true" />{{ t('community.mostDiscussed') }}
+          </button>
+        </nav>
       </div>
+      <section class="community-toolbar" :aria-label="t('community.filtersLabel')">
+        <label class="community-search-control">
+          <span class="sr-only">{{ t('community.searchLabel') }}</span>
+          <Search :size="18" :stroke-width="1.75" aria-hidden="true" />
+          <input v-model="search" type="search" maxlength="120" :placeholder="t('community.searchPlaceholder')" />
+        </label>
+        <label class="community-type-control">
+          <LayoutGrid :size="17" :stroke-width="1.75" aria-hidden="true" />
+          <span class="sr-only">{{ t('community.typeLabel') }}</span>
+          <select v-model="mediaFilter" :aria-label="t('community.typeLabel')">
+            <option value="all">{{ t('community.allTypes') }}</option>
+            <option value="image">{{ t('create.modes.image') }}</option>
+            <option value="video">{{ t('create.modes.video') }}</option>
+            <option value="music">{{ t('create.modes.music') }}</option>
+            <option value="other">{{ t('community.workTopic') }}</option>
+          </select>
+        </label>
+        <nav class="community-toolbar-actions" :aria-label="t('community.communityActions')">
+          <button type="button" :class="{ active: showCases }" :aria-pressed="showCases" @click="toggleCases">
+            <ShieldCheck :size="17" :stroke-width="1.75" aria-hidden="true" />
+            {{ t('community.myCases') }}
+          </button>
+          <RouterLink to="/discover">
+            <Eye :size="17" :stroke-width="1.75" aria-hidden="true" />
+            {{ t('actions.browseWorks') }}
+          </RouterLink>
+        </nav>
+      </section>
       <p v-if="feedback" class="task-feedback" :class="feedback === t('community.reportSubmitted') || feedback === t('community.appealSubmitted') ? 'success' : 'error'" role="status">
         {{ feedback }}
       </p>
@@ -309,91 +286,68 @@ onMounted(async () => {
           </div>
         </form>
       </section>
-      <div v-if="posts.length" class="community-feed">
-        <article v-for="post in posts" :key="post.id" class="post-row" :data-post-id="post.id">
-          <RouterLink class="post-media" :to="`/works/${post.workId}`" :aria-label="post.workTitle">
-            <AssetMedia :src="post.mediaUrl" :kind="post.mediaKind" :alt="post.workTitle" :width="1200" :height="900" :controls="false" />
-          </RouterLink>
-          <div class="post-copy">
-            <div class="post-author">
-              <span class="post-author-avatar" aria-hidden="true">{{ post.authorName.slice(0, 1) }}</span>
-              <RouterLink class="post-author-identity" :to="`/creators/${post.authorHandle}`">
-                <strong>{{ post.authorName }}</strong>
-                <small>@{{ post.authorHandle }}</small>
+      <div v-if="posts.length" class="community-topics">
+        <div class="community-results-meta">
+          <span>{{ t('community.resultCount', { count: displayedPosts.length }) }}</span>
+          <button v-if="hasActiveFilters" type="button" @click="clearFilters">
+            {{ t('community.clearFilters') }}
+          </button>
+        </div>
+        <div class="community-list-head" aria-hidden="true">
+          <span>{{ t('community.topicColumn') }}</span>
+          <span>{{ t('community.repliesColumn') }}</span>
+          <span>{{ t('community.likesColumn') }}</span>
+          <span>{{ t('community.updatedColumn') }}</span>
+          <span></span>
+        </div>
+        <div v-if="displayedPosts.length" class="community-feed">
+          <article v-for="post in displayedPosts" :key="post.id" class="community-post-row" :data-post-id="post.id">
+            <div class="community-post-topic">
+              <RouterLink class="community-post-thumbnail" :to="`/community/posts/${post.id}`" :aria-label="post.workTitle">
+                <AssetMedia :src="post.mediaUrl" :kind="post.mediaKind" :alt="post.workTitle" :width="720" :height="540" :controls="false" />
               </RouterLink>
-              <button v-if="session.user?.id !== post.authorId" class="post-follow" type="button" :disabled="actionLoading === `${post.id}:follow`" @click="follow(post)">
-                <UserPlus :size="14" />{{ post.viewerFollowing ? t('community.following') : t('community.follow') }}
-              </button>
+              <RouterLink class="community-author-mark" :to="`/creators/${post.authorHandle}`" :aria-label="post.authorName">
+                {{ post.authorName.slice(0, 1) }}
+              </RouterLink>
+              <div class="community-post-copy">
+                <div class="community-post-title-row">
+                  <RouterLink class="community-post-title-link" :to="`/community/posts/${post.id}`">
+                    <h2>{{ post.workTitle }}</h2>
+                  </RouterLink>
+                  <span :data-kind="normalizeMediaKind(post.mediaKind)">{{ formatMediaKind(post.mediaKind) }}</span>
+                </div>
+                <p>{{ post.body }}</p>
+                <div class="community-post-meta">
+                  <RouterLink :to="`/creators/${post.authorHandle}`">
+                    <strong>{{ post.authorName }}</strong>
+                    <small>@{{ post.authorHandle }}</small>
+                  </RouterLink>
+                  <time :datetime="post.publishedAt">{{ formatActivity(post.publishedAt) }}</time>
+                </div>
+              </div>
             </div>
-            <RouterLink class="post-title-link" :to="`/works/${post.workId}`">
-              <h2>{{ post.workTitle }}</h2>
+            <RouterLink class="community-post-stat" :to="`/community/posts/${post.id}`" :aria-label="`${post.commentCount} ${t('community.repliesColumn')}`">
+              <MessageCircle :size="17" :stroke-width="1.75" aria-hidden="true" /><span>{{ post.commentCount }}</span>
             </RouterLink>
-            <p class="post-body">
-              {{ post.body }}
-            </p>
-            <div class="post-actions">
-              <button type="button" :class="{ active: post.viewerLiked }" :aria-label="t('community.like')" :title="t('community.like')" @click="react(post, 'like')">
-                <Heart :size="17" :fill="post.viewerLiked ? 'currentColor' : 'none'" /><span>{{ post.likeCount }}</span>
-              </button>
-              <button type="button" :class="{ active: expandedPost === post.id }" :aria-label="t('community.comments')" :title="t('community.comments')" @click="toggleComments(post)">
-                <MessageCircle :size="17" /><span>{{ post.commentCount }}</span>
-              </button>
-              <button type="button" :class="{ active: post.viewerBookmarked }" :aria-label="t('community.bookmark')" :title="t('community.bookmark')" @click="react(post, 'bookmark')">
-                <Bookmark :size="17" :fill="post.viewerBookmarked ? 'currentColor' : 'none'" /><span>{{ post.bookmarkCount }}</span>
-              </button>
-              <button v-if="session.user?.id !== post.authorId" type="button" :aria-label="t('community.report')" :title="t('community.report')" @click="openReport(post)">
-                <Flag :size="17" />
-              </button>
-            </div>
-            <section v-if="expandedPost === post.id" class="post-comments">
-              <p v-if="actionLoading === `${post.id}:comments`">
-                {{ t('community.loadingComments') }}
-              </p>
-              <div v-else-if="comments[post.id]?.length">
-                <article v-for="comment in comments[post.id]" :key="comment.id">
-                  <strong>{{ comment.authorName }}</strong><span>@{{ comment.authorHandle }}</span><p>{{ comment.body }}</p>
-                </article>
-                <button v-if="commentNextCursors[post.id]" class="command-button secondary" type="button" :disabled="commentLoadingMore[post.id]" @click="loadMoreComments(post.id)">
-                  <LoaderCircle v-if="commentLoadingMore[post.id]" class="spin" :size="16" />{{ t('actions.loadMore') }}
-                </button>
-              </div>
-              <p v-else>
-                {{ t('community.noComments') }}
-              </p>
-              <form @submit.prevent="addComment(post)">
-                <input v-model="commentDrafts[post.id]" name="body" minlength="2" maxlength="1000" required :placeholder="t('community.commentPlaceholder')" /><button class="icon-button" type="submit" :aria-label="t('community.addComment')">
-                  <ArrowRight :size="17" />
-                </button>
-              </form>
-            </section>
-            <form v-if="reportForm.postId === post.id" class="community-governance-form post-report-form" @submit.prevent="submitReport">
-              <header>
-                <strong>{{ t('community.reportPost') }}</strong><button class="icon-button" type="button" :aria-label="t('actions.close')" @click="reportForm.postId = ''">
-                  <X :size="16" />
-                </button>
-              </header>
-              <label>{{ t('community.reportCategory') }}<select v-model="reportForm.category"><option v-for="category in ['spam','harassment','copyright','sexual','violence','misleading','other']" :key="category" :value="category">{{ t(`community.reportCategories.${category}`) }}</option></select></label>
-              <label>{{ t('community.reportDetails') }}<textarea v-model="reportForm.details" rows="3" minlength="10" maxlength="1000" required></textarea></label>
-              <button class="command-button secondary" type="submit" :disabled="actionLoading === `${post.id}:report`">
-                {{ t('community.submitReport') }}
-              </button>
-            </form>
-            <footer class="post-footer">
-              <p class="post-disclosure">
-                <Sparkles :size="15" :stroke-width="1.75" aria-hidden="true" />
-                <span>{{ post.aiDisclosure }}</span>
-              </p>
-              <div class="post-footer-actions">
-                <RouterLink class="text-link" :to="`/create/image?sourceWorkId=${post.workId}`">
-                  <Sparkles :size="15" :stroke-width="1.75" />{{ t('actions.useInCreate') }}
-                </RouterLink>
-                <RouterLink class="text-link" :to="`/works/${post.workId}`">
-                  {{ t('actions.viewWork') }}<ArrowRight :size="16" :stroke-width="1.75" />
-                </RouterLink>
-              </div>
-            </footer>
-          </div>
-        </article>
+            <RouterLink class="community-post-stat" :to="`/community/posts/${post.id}`" :class="{ active: post.viewerLiked }" :aria-label="`${post.likeCount} ${t('community.likesColumn')}`">
+              <Heart :size="17" :stroke-width="1.75" :fill="post.viewerLiked ? 'currentColor' : 'none'" aria-hidden="true" /><span>{{ post.likeCount }}</span>
+            </RouterLink>
+            <RouterLink class="community-post-time" :to="`/community/posts/${post.id}`" :aria-label="formatPublishedAt(post.publishedAt)">
+              <time :datetime="post.publishedAt" :title="formatPublishedAt(post.publishedAt)">{{ formatActivity(post.publishedAt) }}</time>
+            </RouterLink>
+            <RouterLink class="community-post-more" :to="`/community/posts/${post.id}`" :aria-label="t('community.openDiscussion')">
+              <MoreHorizontal :size="19" :stroke-width="1.75" aria-hidden="true" />
+            </RouterLink>
+          </article>
+        </div>
+        <section v-else class="community-filter-empty" :aria-label="t('community.noFilteredResults')">
+          <Search :size="24" :stroke-width="1.5" aria-hidden="true" />
+          <h2>{{ t('community.noFilteredResults') }}</h2>
+          <p>{{ t('community.noFilteredResultsSummary') }}</p>
+          <button class="command-button secondary" type="button" @click="clearFilters">
+            {{ t('community.clearFilters') }}
+          </button>
+        </section>
       </div>
       <button v-if="postNextCursor" class="command-button secondary community-feed-load-more" type="button" :disabled="postLoadingMore" @click="loadMorePosts">
         <LoaderCircle v-if="postLoadingMore" class="spin" :size="16" />{{ t('actions.loadMore') }}

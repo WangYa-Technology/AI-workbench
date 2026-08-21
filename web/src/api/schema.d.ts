@@ -813,6 +813,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/conversations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listConversations"];
+        put?: never;
+        post: operations["createConversation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/generations": {
         parameters: {
             query?: never;
@@ -935,6 +951,38 @@ export interface paths {
         get: operations["getBillingStatement"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/billing/points": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getPointOverview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/billing/subscriptions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["purchaseSubscription"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1242,6 +1290,22 @@ export interface paths {
             cookie?: never;
         };
         get: operations["listCommunityPosts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/community/posts/{postId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getCommunityPost"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1715,6 +1779,150 @@ export interface paths {
         patch: operations["updateAdminProvider"];
         trace?: never;
     };
+    "/admin/provider-configs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listAdminProviderConfigs"];
+        put?: never;
+        post: operations["createAdminProviderConfig"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/provider-configs/{providerId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch: operations["updateAdminProviderConfig"];
+        trace?: never;
+    };
+    "/admin/provider-configs/{providerId}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["archiveAdminProviderConfig"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/provider-configs/{providerId}/sync-models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["syncAdminProviderModels"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/provider-configs/{providerId}/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["createAdminProviderModel"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/provider-models/{modelId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch: operations["updateAdminProviderModel"];
+        trace?: never;
+    };
+    "/admin/provider-models/{modelId}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["archiveAdminProviderModel"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/subscription-plans": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listAdminSubscriptionPlans"];
+        put?: never;
+        post: operations["createAdminSubscriptionPlan"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/subscription-plans/{planId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch: operations["updateAdminSubscriptionPlan"];
+        trace?: never;
+    };
     "/admin/models/routes": {
         parameters: {
             query?: never;
@@ -2029,22 +2237,6 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["analyzeAdminDiscoveryIndex"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/admin/audit": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["listAdminAuditEvents"];
-        put?: never;
-        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2440,6 +2632,11 @@ export interface components {
                 provider: "stripe";
                 liveMode: boolean;
             };
+            providerCostReconciliation: {
+                enabled: boolean;
+                /** @enum {string} */
+                provider: "openai";
+            };
         };
         RegisterRequest: {
             /** Format: email */
@@ -2590,9 +2787,6 @@ export interface components {
         };
         IdentityEmailTransition: {
             expectedVersion: number;
-            reason: string;
-            /** @constant */
-            confirmed: true;
         };
         DataRightsCreate: {
             /** @enum {string} */
@@ -2655,11 +2849,8 @@ export interface components {
         DataRightsLegalHoldCreate: {
             /** Format: uuid */
             userId: string;
-            reason: string;
             /** @description Hashed before persistence and never returned */
             authorityReference: string;
-            /** @constant */
-            confirmed: true;
         };
         DataRightsLegalHold: {
             /** Format: uuid */
@@ -2669,7 +2860,6 @@ export interface components {
             /** Format: uuid */
             requestId?: string;
             ownerHandle: string;
-            reason: string;
             authorityReferenceHash: string;
             /** @enum {string} */
             status: "active" | "released" | "expired";
@@ -2683,11 +2873,6 @@ export interface components {
         DataRightsLegalHoldPage: {
             items: components["schemas"]["DataRightsLegalHold"][];
             nextCursor?: string;
-        };
-        ControlledReason: {
-            reason: string;
-            /** @constant */
-            confirmed: true;
         };
         OAuthProvider: {
             /** @enum {string} */
@@ -2767,19 +2952,13 @@ export interface components {
         };
         AdminSupportReply: {
             body: string;
-            reason: string;
             expectedVersion: number;
-            /** @constant */
-            confirmed: true;
         };
         AdminSupportUpdate: {
             status: components["schemas"]["SupportStatus"];
             /** @enum {string} */
             resolutionCode: "" | "answered" | "fixed" | "refund_guidance" | "content_restricted" | "no_action" | "duplicate" | "withdrawn";
-            reason: string;
             expectedVersion: number;
-            /** @constant */
-            confirmed: true;
         };
         SupportMessage: {
             /** Format: uuid */
@@ -2946,6 +3125,45 @@ export interface components {
             /** @enum {string} */
             responseLength?: "short" | "balanced" | "detailed";
         };
+        ModelCapabilities: {
+            aspectRatios: string[];
+            qualities: string[];
+            durationSeconds: number[];
+            outputFormats: string[];
+            resultFormats: string[];
+            referenceKinds: string[];
+            supportsMask: boolean;
+        };
+        ImageResolutionPointPrice: {
+            resolution: string;
+            points: number;
+        };
+        ModelPointPricing: {
+            /** Format: uuid */
+            id?: string;
+            /** @enum {string} */
+            mode: "chat" | "image" | "video" | "music";
+            inputPointsPer1KTokens: number;
+            outputPointsPer1KTokens: number;
+            pointsPerSecond: number;
+            minimumPoints: number;
+            imageResolutionPrices: components["schemas"]["ImageResolutionPointPrice"][];
+            version: number;
+        };
+        CreationModel: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            providerId: string;
+            providerName: string;
+            provider: string;
+            modelName: string;
+            displayName: string;
+            description: string;
+            available: boolean;
+            capabilities: components["schemas"]["ModelCapabilities"];
+            pointPricing: components["schemas"]["ModelPointPricing"];
+        };
         CreationCapability: {
             /** @enum {string} */
             mode: "chat" | "image" | "video" | "music";
@@ -2959,15 +3177,39 @@ export interface components {
             resultFormats: ("txt" | "jpeg" | "png" | "mp4" | "wav" | "mp3")[];
             referenceKinds: ("image" | "video" | "audio" | "document")[];
             supportsMask: boolean;
+            models: components["schemas"]["CreationModel"][];
         };
         CreationCapabilities: {
             items: components["schemas"]["CreationCapability"][];
         };
+        ConversationCreate: {
+            title?: string;
+        };
+        Conversation: {
+            /** Format: uuid */
+            id: string;
+            title: string;
+            modes: ("chat" | "image" | "video" | "music")[];
+            generationCount: number;
+            /** Format: date-time */
+            latestGenerationAt?: string;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        ConversationPage: {
+            items: components["schemas"]["Conversation"][];
+        };
         GenerationCreate: {
+            /** Format: uuid */
+            conversationId?: string | null;
             /** @enum {string} */
             mode: "chat" | "image" | "video" | "music";
             prompt: string;
             parameters?: components["schemas"]["GenerationParameters"];
+            /** Format: uuid */
+            modelId?: string | null;
             /** Format: uuid */
             sourceWorkId?: string | null;
             /** Format: uuid */
@@ -2983,6 +3225,8 @@ export interface components {
         Generation: {
             /** Format: uuid */
             id: string;
+            /** Format: uuid */
+            conversationId?: string;
             mode: string;
             provider: string;
             modelName: string;
@@ -2993,6 +3237,10 @@ export interface components {
             progress: number;
             estimatedCostCents: number;
             chargedCostCents: number;
+            /** Format: int64 */
+            estimatedPoints: number;
+            /** Format: int64 */
+            chargedPoints: number;
             providerUsage?: components["schemas"]["ProviderUsageEvidence"];
             /** Format: uuid */
             outputAssetId?: string;
@@ -3735,6 +3983,119 @@ export interface components {
             entries: components["schemas"]["BillingEntry"][];
             nextCursor?: string;
         };
+        PointAccount: {
+            /** Format: uuid */
+            userId: string;
+            /** Format: int64 */
+            balancePoints: number;
+            /** Format: int64 */
+            reservedPoints: number;
+            /** Format: int64 */
+            availablePoints: number;
+            /** Format: int64 */
+            lifetimeEarnedPoints: number;
+            /** Format: int64 */
+            lifetimeSpentPoints: number;
+            /** Format: int64 */
+            version: number;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        PointEntry: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            operationId: string;
+            /** @enum {string} */
+            entryType: "subscription_credit" | "generation_charge" | "admin_adjustment" | "migration_grant";
+            /** @enum {string} */
+            direction: "debit" | "credit";
+            /** Format: int64 */
+            amountPoints: number;
+            /** Format: int64 */
+            balanceAfterPoints: number;
+            description: string;
+            metadata: {
+                [key: string]: unknown;
+            };
+            /** Format: date-time */
+            createdAt: string;
+        };
+        SubscriptionPlan: {
+            /** Format: uuid */
+            id: string;
+            tierCode: string;
+            name: string;
+            description: string;
+            priceCents: number;
+            /** @enum {string} */
+            currency: "USD";
+            /** Format: int64 */
+            includedPoints: number;
+            billingPeriodDays: number;
+            sortOrder: number;
+            active: boolean;
+            modelIds: string[];
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        UserSubscription: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            userId: string;
+            /** Format: uuid */
+            planId: string;
+            planName: string;
+            tierCode: string;
+            /** @enum {string} */
+            status: "active" | "expired" | "cancelled";
+            priceCents: number;
+            /** @enum {string} */
+            currency: "USD";
+            /** Format: int64 */
+            grantedPoints: number;
+            /** Format: date-time */
+            startedAt: string;
+            /** Format: date-time */
+            currentPeriodEnd: string;
+        };
+        PointOverview: {
+            account: components["schemas"]["PointAccount"];
+            currentSubscription?: components["schemas"]["UserSubscription"];
+            plans: components["schemas"]["SubscriptionPlan"][];
+            entries: components["schemas"]["PointEntry"][];
+        };
+        SubscriptionPlanInput: {
+            tierCode: string;
+            name: string;
+            description: string;
+            priceCents: number;
+            /** @enum {string} */
+            currency: "USD";
+            /** Format: int64 */
+            includedPoints: number;
+            billingPeriodDays: number;
+            sortOrder: number;
+            active: boolean;
+            modelIds: string[];
+        };
+        SubscriptionPlanUpdate: {
+            tierCode?: string;
+            name?: string;
+            description?: string;
+            priceCents?: number;
+            /** @enum {string} */
+            currency?: "USD";
+            /** Format: int64 */
+            includedPoints?: number;
+            billingPeriodDays?: number;
+            sortOrder?: number;
+            active?: boolean;
+            modelIds?: string[];
+        };
         AdminCountBreakdown: {
             /** Format: int64 */
             total: number;
@@ -3780,8 +4141,6 @@ export interface components {
             role: "member" | "creator" | "publisher" | "moderator" | "admin";
             /** @enum {string} */
             status: "active" | "suspended" | "deleted";
-            reason: string;
-            confirmed: boolean;
         };
         AdminContent: {
             /** Format: uuid */
@@ -3803,8 +4162,6 @@ export interface components {
         AdminContentUpdate: {
             /** @enum {string} */
             status: "published" | "hidden" | "removed";
-            reason: string;
-            confirmed: boolean;
         };
         AdminMediaItem: {
             /** Format: uuid */
@@ -3831,17 +4188,11 @@ export interface components {
         AdminMediaReview: {
             /** @enum {string} */
             status: "clean" | "review" | "rejected";
-            reason: string;
-            confirmed: boolean;
         };
         AdminGeneration: components["schemas"]["Generation"] & {
             /** Format: email */
             ownerEmail: string;
             ownerHandle: string;
-        };
-        AdminConfirmedReason: {
-            reason: string;
-            confirmed: boolean;
         };
         AdminTaskOperation: {
             /** Format: uuid */
@@ -3891,9 +4242,86 @@ export interface components {
         AdminTaskDisputeResolution: {
             /** @enum {string} */
             decision: "release_creator" | "cancel_without_settlement";
-            reason: string;
             expectedVersion: number;
-            confirmed: boolean;
+        };
+        AdminProviderModel: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            providerId: string;
+            /** @enum {string} */
+            mode: "chat" | "image" | "video" | "music";
+            modelName: string;
+            displayName: string;
+            description: string;
+            estimatedCostCents: number;
+            pointPricing: components["schemas"]["ModelPointPricing"];
+            capabilities: components["schemas"]["ModelCapabilities"];
+            adminEnabled: boolean;
+            archived: boolean;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        AdminProviderConfig: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            /** @enum {string} */
+            protocol: "openai_responses" | "openai_chat_completions" | "openai_images" | "hctopup_async_image" | "custom";
+            /** Format: uri */
+            endpoint: string;
+            runtimeProvider: string;
+            credentialConfigured: boolean;
+            credentialHint?: string;
+            adminEnabled: boolean;
+            archived: boolean;
+            models: components["schemas"]["AdminProviderModel"][];
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        AdminProviderConfigCreate: {
+            name: string;
+            /** @enum {string} */
+            protocol: "openai_responses" | "openai_chat_completions" | "openai_images" | "hctopup_async_image" | "custom";
+            /** Format: uri */
+            endpoint: string;
+            apiKey: string;
+            adminEnabled: boolean;
+        };
+        AdminProviderConfigUpdate: {
+            name?: string;
+            /** @enum {string} */
+            protocol?: "openai_responses" | "openai_chat_completions" | "openai_images" | "hctopup_async_image" | "custom";
+            /** Format: uri */
+            endpoint?: string;
+            apiKey?: string;
+            adminEnabled?: boolean;
+        };
+        AdminProviderModelCreate: {
+            /** @enum {string} */
+            mode: "chat" | "image" | "video" | "music";
+            modelName: string;
+            displayName: string;
+            description: string;
+            estimatedCostCents?: number;
+            pointPricing: components["schemas"]["ModelPointPricing"];
+            capabilities: components["schemas"]["ModelCapabilities"];
+            adminEnabled: boolean;
+        };
+        AdminProviderModelUpdate: {
+            /** @enum {string} */
+            mode?: "chat" | "image" | "video" | "music";
+            modelName?: string;
+            displayName?: string;
+            description?: string;
+            estimatedCostCents?: number;
+            pointPricing?: components["schemas"]["ModelPointPricing"];
+            capabilities?: components["schemas"]["ModelCapabilities"];
+            adminEnabled?: boolean;
         };
         AdminProvider: {
             id: string;
@@ -3915,8 +4343,10 @@ export interface components {
         };
         AdminProviderUpdate: {
             enabled: boolean;
-            reason: string;
-            confirmed: boolean;
+            modelName?: string;
+            displayName?: string;
+            description?: string;
+            estimatedCostCents?: number;
         };
         AdminModelRouteRevision: {
             /** Format: uuid */
@@ -3936,7 +4366,6 @@ export interface components {
             name: string;
             timeoutSeconds: number;
             maxAttempts: number;
-            reason: string;
             /** Format: uuid */
             createdBy?: string;
             createdByHandle?: string;
@@ -3959,9 +4388,7 @@ export interface components {
             name: string;
             timeoutSeconds: number;
             maxAttempts: number;
-            reason: string;
             expectedVersion: number;
-            confirmed: boolean;
         };
         AdminSystemSettingRevision: {
             /** Format: uuid */
@@ -3976,7 +4403,6 @@ export interface components {
             marketplaceCheckoutEnabled: boolean;
             taskCreationEnabled: boolean;
             publicNotice: string;
-            reason: string;
             /** Format: uuid */
             createdBy?: string;
             createdByHandle?: string;
@@ -3996,9 +4422,7 @@ export interface components {
             marketplaceCheckoutEnabled: boolean;
             taskCreationEnabled: boolean;
             publicNotice: string;
-            reason: string;
             expectedVersion: number;
-            confirmed: boolean;
         };
         AdminFinanceAccount: components["schemas"]["BillingAccount"] & {
             /** Format: email */
@@ -4010,8 +4434,6 @@ export interface components {
             deltaCents: number;
             /** @enum {string} */
             currency: "USD";
-            reason: string;
-            confirmed: boolean;
         };
         AdminProviderCostReconciliation: {
             /** Format: uuid */
@@ -4035,7 +4457,6 @@ export interface components {
             overageThresholdMicros: number;
             /** @enum {string} */
             status: "queued" | "running" | "matched" | "overage" | "failed";
-            requestReason: string;
             /** Format: uuid */
             requestedBy: string;
             /** Format: uuid */
@@ -4068,8 +4489,6 @@ export interface components {
              * @description Exact 00:00:00 UTC exclusive end
              */
             periodEnd: string;
-            reason: string;
-            confirmed: boolean;
         };
         AdminPaymentWorkerJob: {
             /** Format: uuid */
@@ -4188,20 +4607,14 @@ export interface components {
             /** @enum {string} */
             action: "retry_transfer" | "retry_refund";
             expectedVersion: number;
-            reason: string;
-            confirmed: boolean;
         };
         AdminPaymentEventReplay: {
             expectedVersion: number;
-            reason: string;
-            confirmed: boolean;
         };
         AdminPaymentDestinationUpdate: {
             destinationId: string;
             enabled: boolean;
             expectedVersion: number;
-            reason: string;
-            confirmed: boolean;
         };
         AdminPaymentDestinationPage: {
             items: components["schemas"]["AdminPaymentDestination"][];
@@ -4267,9 +4680,7 @@ export interface components {
         AdminRiskReview: {
             /** @enum {string} */
             decision: "monitor" | "no_action" | "escalated";
-            reason: string;
             expectedVersion: number;
-            confirmed: boolean;
         };
         AdminRiskRuleRevision: {
             /** Format: uuid */
@@ -4288,7 +4699,6 @@ export interface components {
             mediumThreshold: number;
             highThreshold: number;
             criticalThreshold: number;
-            reason: string;
             /** Format: uuid */
             createdBy?: string;
             createdByHandle?: string;
@@ -4312,9 +4722,7 @@ export interface components {
             mediumThreshold: number;
             highThreshold: number;
             criticalThreshold: number;
-            reason: string;
             expectedVersion: number;
-            confirmed: boolean;
         };
         AdminRankingRevision: {
             /** Format: uuid */
@@ -4336,7 +4744,6 @@ export interface components {
             creatorTypeBoost: number;
             productTypeBoost: number;
             demandTypeBoost: number;
-            reason: string;
             /** Format: uuid */
             createdBy?: string;
             createdByHandle?: string;
@@ -4361,8 +4768,6 @@ export interface components {
             /** @enum {integer} */
             percent: 0 | 5 | 10 | 25 | 50 | 100;
             expectedVersion: number;
-            reason: string;
-            confirmed: boolean;
         };
         AdminRankingUpdate: {
             name: string;
@@ -4379,9 +4784,7 @@ export interface components {
             creatorTypeBoost: number;
             productTypeBoost: number;
             demandTypeBoost: number;
-            reason: string;
             expectedVersion: number;
-            confirmed: boolean;
         };
         AdminDiscoveryIndexRun: {
             /** Format: uuid */
@@ -4397,7 +4800,6 @@ export interface components {
                 [key: string]: number;
             };
             errorCode?: string;
-            reason: string;
             /** Format: uuid */
             createdBy?: string;
             createdByHandle?: string;
@@ -4426,7 +4828,6 @@ export interface components {
             metrics: {
                 [key: string]: unknown;
             };
-            reason: string;
             /** Format: uuid */
             createdBy?: string;
             createdByHandle?: string;
@@ -4438,28 +4839,6 @@ export interface components {
             indexNextCursor?: string;
             evaluations: components["schemas"]["AdminRankingEvaluation"][];
             evaluationNextCursor?: string;
-        };
-        AdminAuditEvent: {
-            /** Format: uuid */
-            id: string;
-            /** Format: int64 */
-            sequence: number;
-            previousHash?: string;
-            eventHash: string;
-            /** Format: uuid */
-            actorId?: string;
-            actorHandle?: string;
-            action: string;
-            resourceType: string;
-            /** Format: uuid */
-            resourceId?: string;
-            reason?: string;
-            requestId: string;
-            metadata: {
-                [key: string]: unknown;
-            };
-            /** Format: date-time */
-            createdAt: string;
         };
         AdminRequestDiagnostics: {
             /** Format: int64 */
@@ -4496,21 +4875,10 @@ export interface components {
             /** Format: date-time */
             oldestQueuedAt?: string;
         };
-        AdminAuditIntegrity: {
-            valid: boolean;
-            /** Format: int64 */
-            eventCount: number;
-            /** Format: int64 */
-            headSequence: number;
-            headHash: string;
-            /** Format: int64 */
-            firstInvalidSequence?: number;
-        };
         AdminOperationalDiagnostics: {
             windowMinutes: number;
             requests: components["schemas"]["AdminRequestDiagnostics"];
             jobs: components["schemas"]["AdminJobDiagnostics"];
-            audit: components["schemas"]["AdminAuditIntegrity"];
             databaseReady: boolean;
             /** Format: date-time */
             asOf: string;
@@ -4551,8 +4919,6 @@ export interface components {
         AdminReportResolution: {
             /** @enum {string} */
             outcome: "no_action" | "hidden" | "removed";
-            reason: string;
-            confirmed: boolean;
         };
         AdminGovernanceAppeal: {
             /** Format: uuid */
@@ -4581,8 +4947,6 @@ export interface components {
         AdminAppealResolution: {
             /** @enum {string} */
             decision: "upheld" | "denied";
-            reason: string;
-            confirmed: boolean;
         };
         DeveloperControl: {
             enabled: boolean;
@@ -4652,6 +5016,9 @@ export interface components {
             reason: string;
             confirmed: boolean;
         };
+        AdminVersionTransition: {
+            expectedVersion: number;
+        };
         DeveloperKeyRotate: components["schemas"]["DeveloperKeyCreate"] & components["schemas"]["DeveloperTransition"];
         DeveloperControlUpdate: {
             enabled: boolean;
@@ -4659,8 +5026,6 @@ export interface components {
             maxActiveKeys: number;
             defaultTtlDays: number;
             expectedVersion: number;
-            reason: string;
-            confirmed: boolean;
         };
         DeveloperWebhookAttempt: {
             /** Format: uuid */
@@ -6189,9 +6554,57 @@ export interface operations {
             404: components["responses"]["NotFound"];
         };
     };
+    listConversations: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Conversation history owned by the current user */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationPage"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    createConversation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ConversationCreate"];
+            };
+        };
+        responses: {
+            /** @description New empty conversation */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Conversation"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
     listGenerations: {
         parameters: {
             query?: {
+                conversationId?: string;
                 mode?: "chat" | "image" | "video" | "music";
                 status?: "queued" | "running" | "succeeded" | "failed" | "cancelled";
                 dateFrom?: string;
@@ -6429,7 +6842,7 @@ export interface operations {
         parameters: {
             query?: {
                 direction?: "debit" | "credit";
-                entryType?: "generation_charge" | "product_purchase" | "product_sale" | "product_refund" | "task_payment" | "task_earning" | "admin_adjustment" | "initial_credit";
+                entryType?: "generation_charge" | "product_purchase" | "product_sale" | "product_refund" | "task_payment" | "task_earning" | "admin_adjustment" | "initial_credit" | "subscription_purchase";
                 dateFrom?: string;
                 dateTo?: string;
                 /** @description Opaque stable pagination cursor returned by the previous statement page. */
@@ -6452,6 +6865,67 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    getPointOverview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current point balance */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PointOverview"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    purchaseSubscription: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: uuid */
+                    planId: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Subscription purchased and included points credited atomically */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PointOverview"];
+                };
+            };
+            /** @description Insufficient USD wallet balance */
+            402: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: components["responses"]["Conflict"];
             422: components["responses"]["ValidationFailed"];
         };
     };
@@ -7137,6 +7611,29 @@ export interface operations {
             422: components["responses"]["ValidationFailed"];
         };
     };
+    getCommunityPost: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                postId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Published Community post with viewer interaction state */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommunityPost"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
     listCommunityComments: {
         parameters: {
             query?: {
@@ -7739,7 +8236,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description User role and access state updated with audit evidence */
+            /** @description User role and access state updated */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -7800,7 +8297,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Content status updated with reason and audit evidence */
+            /** @description Content status updated */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -7859,7 +8356,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Upload scan state reviewed with owner notification and audit evidence */
+            /** @description Upload scan state reviewed with owner notification */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -7913,11 +8410,7 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AdminConfirmedReason"];
-            };
-        };
+        requestBody?: never;
         responses: {
             /** @description Active generation cancelled and reservation released */
             200: {
@@ -7978,7 +8471,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Disputed task resolved with Local Test settlement or cancellation */
+            /** @description Disputed task resolved with Local Test settlement or cancellation and participant notifications */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -8039,6 +8532,304 @@ export interface operations {
                 };
             };
             503: components["responses"]["Unavailable"];
+        };
+    };
+    listAdminProviderConfigs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Configured Providers and their active model catalog */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["AdminProviderConfig"][];
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    createAdminProviderConfig: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminProviderConfigCreate"];
+            };
+        };
+        responses: {
+            /** @description Provider configuration created */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminProviderConfig"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    updateAdminProviderConfig: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                providerId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminProviderConfigUpdate"];
+            };
+        };
+        responses: {
+            /** @description Provider configuration updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminProviderConfig"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    archiveAdminProviderConfig: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                providerId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Provider configuration and active models archived */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        archived: boolean;
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    syncAdminProviderModels: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                providerId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @enum {string} */
+                    mode: "chat" | "image" | "video" | "music";
+                };
+            };
+        };
+        responses: {
+            /** @description Upstream model catalog synchronized as disabled models */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminProviderConfig"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    createAdminProviderModel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                providerId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminProviderModelCreate"];
+            };
+        };
+        responses: {
+            /** @description Provider model created */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminProviderModel"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    updateAdminProviderModel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                modelId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminProviderModelUpdate"];
+            };
+        };
+        responses: {
+            /** @description Provider model and capabilities updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminProviderModel"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    archiveAdminProviderModel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                modelId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Provider model archived */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        archived: boolean;
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    listAdminSubscriptionPlans: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description All subscription tiers including inactive plans */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["SubscriptionPlan"][];
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    createAdminSubscriptionPlan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SubscriptionPlanInput"];
+            };
+        };
+        responses: {
+            /** @description Subscription plan created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubscriptionPlan"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    updateAdminSubscriptionPlan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                planId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SubscriptionPlanUpdate"];
+            };
+        };
+        responses: {
+            /** @description Subscription plan updated for subsequent purchases */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubscriptionPlan"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationFailed"];
         };
     };
     getAdminModelRoutes: {
@@ -8138,7 +8929,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description New immutable platform availability revision activated with audit evidence */
+            /** @description New platform availability revision activated */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -8199,7 +8990,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Local Test credit balance adjusted with audit evidence */
+            /** @description Local Test credit balance adjusted */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -8251,7 +9042,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Reconciliation job queued with immutable threshold and request evidence */
+            /** @description Reconciliation job queued for the selected period */
             201: {
                 headers: {
                     [name: string]: unknown;
@@ -8313,7 +9104,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Payment recovery job queued with optimistic version and audit evidence */
+            /** @description Payment recovery job queued with optimistic version control */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -8402,7 +9193,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Creator payout destination updated with optimistic version and audit evidence */
+            /** @description Creator payout destination updated with optimistic version control */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -8468,7 +9259,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Risk signal reviewed with optimistic version and audit evidence */
+            /** @description Risk signal reviewed with optimistic version control */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -8520,7 +9311,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description New immutable risk rule revision activated for subsequent signals with audit evidence */
+            /** @description New risk rule revision activated for subsequent signals */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -8573,7 +9364,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description New immutable ranking revision activated with audit evidence */
+            /** @description New ranking revision activated */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -8619,11 +9410,7 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AdminConfirmedReason"];
-            };
-        };
+        requestBody?: never;
         responses: {
             /** @description Immutable offline evaluation comparing candidate and baseline */
             200: {
@@ -8699,11 +9486,7 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AdminConfirmedReason"];
-            };
-        };
+        requestBody?: never;
         responses: {
             /** @description Search statistics refreshed and public-document/index-size evidence recorded */
             200: {
@@ -8714,41 +9497,6 @@ export interface operations {
                     "application/json": components["schemas"]["AdminDiscoveryIndexRun"];
                 };
             };
-            422: components["responses"]["ValidationFailed"];
-        };
-    };
-    listAdminAuditEvents: {
-        parameters: {
-            query?: {
-                /** @description Case-insensitive action */
-                q?: string;
-                /** @description Exact immutable action identifier */
-                action?: string;
-                /** @description Exact immutable resource type */
-                resourceType?: string;
-                limit?: number;
-                /** @description Opaque audit-chain sequence cursor */
-                cursor?: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Filtered and stably paginated immutable operations audit events */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        items: components["schemas"]["AdminAuditEvent"][];
-                        nextCursor?: string;
-                    };
-                };
-            };
-            403: components["responses"]["Forbidden"];
             422: components["responses"]["ValidationFailed"];
         };
     };
@@ -8807,7 +9555,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Developer Access control updated with audit evidence */
+            /** @description Developer Access control updated */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -8831,11 +9579,11 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["DeveloperTransition"];
+                "application/json": components["schemas"]["AdminVersionTransition"];
             };
         };
         responses: {
-            /** @description Single Service Account and active keys revoked with audit evidence */
+            /** @description Single Service Account and active keys revoked */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -8859,11 +9607,11 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["DeveloperTransition"];
+                "application/json": components["schemas"]["AdminVersionTransition"];
             };
         };
         responses: {
-            /** @description Single active API key revoked with audit evidence */
+            /** @description Single active API key revoked */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -8919,7 +9667,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["DeveloperTransition"];
+                "application/json": components["schemas"]["AdminVersionTransition"];
             };
         };
         responses: {
@@ -8983,7 +9731,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Failed action requeued after optimistic concurrency and audited confirmation */
+            /** @description Failed action requeued after optimistic concurrency validation */
             202: {
                 headers: {
                     [name: string]: unknown;
@@ -9087,7 +9835,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Legal hold created with request blocking */
+            /** @description Legal hold created with request blocking and notification */
             201: {
                 headers: {
                     [name: string]: unknown;
@@ -9109,11 +9857,7 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ControlledReason"];
-            };
-        };
+        requestBody?: never;
         responses: {
             /** @description Legal hold released and eligible deletion requeued */
             200: {
@@ -9177,7 +9921,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Report resolved with content action */
+            /** @description Report resolved with content action and notifications */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -9321,7 +10065,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Controlled state decision recorded with notification and audit evidence */
+            /** @description Support state updated with notification */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -9350,7 +10094,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Controlled operator reply recorded with notification and audit evidence */
+            /** @description Operator reply recorded with notification */
             200: {
                 headers: {
                     [name: string]: unknown;

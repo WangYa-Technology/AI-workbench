@@ -1,12 +1,21 @@
 package providers
 
 import (
+	"github.com/jackc/pgx/v5/pgxpool"
 	"time"
 
 	"github.com/hcai-chat/hcai-chat/internal/creation"
 	"github.com/hcai-chat/hcai-chat/internal/platform/config"
 	"github.com/hcai-chat/hcai-chat/internal/reconciliation"
 )
+
+func NewCatalogWithRegistry(cfg config.Config, pool *pgxpool.Pool, providerKey []byte) *creation.RuntimeCatalog {
+	catalog := NewCatalog(cfg)
+	if runtime := NewRegistryRuntime(pool, providerKey); runtime != nil {
+		catalog.Register(runtime)
+	}
+	return catalog
+}
 
 func NewCatalog(cfg config.Config) *creation.RuntimeCatalog {
 	runtimes := make([]creation.ProviderRuntime, 0, 4)
@@ -15,8 +24,12 @@ func NewCatalog(cfg config.Config) *creation.RuntimeCatalog {
 	}
 	if cfg.OpenAIEnabled {
 		runtimes = append(runtimes, creation.NewOpenAIRuntime(creation.OpenAIRuntimeConfig{
-			APIKey: cfg.OpenAIAPIKey, BaseURL: cfg.OpenAIBaseURL,
+			APIKey: cfg.OpenAIAPIKey, ChatAPIKey: cfg.OpenAIChatAPIKey, ImageAPIKey: cfg.OpenAIImageAPIKey, BaseURL: cfg.OpenAIBaseURL,
+			ChatAPI:   cfg.OpenAIChatAPI,
 			ChatModel: cfg.OpenAIChatModel, ImageModel: cfg.OpenAIImageModel,
+			ImageAsync:          cfg.OpenAIImageAsync,
+			ImagePollInterval:   time.Duration(cfg.OpenAIImagePollIntervalSeconds) * time.Second,
+			ImageTimeout:        time.Duration(cfg.OpenAIImageTimeoutSeconds) * time.Second,
 			ChatMaxOutputTokens: cfg.OpenAIChatMaxOutputTokens,
 			ImageSize:           cfg.OpenAIImageSize, ImageQuality: cfg.OpenAIImageQuality,
 			Organization: cfg.OpenAIOrganization, Project: cfg.OpenAIProject,

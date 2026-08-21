@@ -136,7 +136,7 @@ func TestWebhookHTTPIsolationOneTimeSecretsAndAdminReplay(t *testing.T) {
 		t.Fatalf("modified Admin Webhook cursor was accepted: %d", response.StatusCode)
 	}
 
-	replayInput := map[string]any{"expectedVersion": deadLetters.Items[0].Version, "reason": "Receiver configuration recovery was independently verified", "confirmed": true}
+	replayInput := map[string]any{"expectedVersion": deadLetters.Items[0].Version}
 	response = requestJSON(t, ownerClient, http.MethodPost, server.URL+"/api/v1/admin/developer/webhooks/deliveries/"+delivery.ID.String()+"/replay", replayInput, nil)
 	if response.StatusCode != http.StatusForbidden {
 		t.Fatalf("member replayed an Admin Webhook delivery: %d", response.StatusCode)
@@ -160,14 +160,11 @@ func TestWebhookHTTPIsolationOneTimeSecretsAndAdminReplay(t *testing.T) {
 		t.Fatalf("rotated one-time secret reappeared in inventory: status=%d err=%v body=%s", response.StatusCode, err, encodedOwnerAccess)
 	}
 
-	var auditCount, notificationCount int
-	if err := pool.QueryRow(context.Background(), `SELECT count(*) FROM audit_events WHERE actor_id=$1 AND action='admin.webhook_delivery_replayed' AND resource_id=$2`, administrator.ID, replayed.ID).Scan(&auditCount); err != nil {
-		t.Fatal(err)
-	}
+	var notificationCount int
 	if err := pool.QueryRow(context.Background(), `SELECT count(*) FROM notifications WHERE user_id=$1 AND kind='security.webhook_replayed' AND resource_id=$2`, owner.ID, replayed.ID).Scan(&notificationCount); err != nil {
 		t.Fatal(err)
 	}
-	if auditCount != 1 || notificationCount != 1 || other.ID == owner.ID {
-		t.Fatalf("Webhook replay audit/notification evidence mismatch: audit=%d notifications=%d", auditCount, notificationCount)
+	if notificationCount != 1 || other.ID == owner.ID {
+		t.Fatalf("Webhook replay notification evidence mismatch: notifications=%d", notificationCount)
 	}
 }

@@ -35,12 +35,7 @@ func TestAdminModelRoutesHTTPContract(t *testing.T) {
 	if response.StatusCode != http.StatusOK || len(initial.Routes) != 4 {
 		t.Fatalf("initial route contract: %d %#v", response.StatusCode, initial)
 	}
-	input := map[string]any{"providerProfileId": "local-chat-v1", "name": "HTTP chat route", "timeoutSeconds": 75, "maxAttempts": 2, "reason": "Activate a bounded Local Test chat route through the HTTP control plane.", "expectedVersion": 1, "confirmed": false}
-	response = requestJSON(t, adminClient, http.MethodPost, server.URL+"/api/v1/admin/models/routes/chat", input, nil)
-	if response.StatusCode != http.StatusUnprocessableEntity {
-		t.Fatalf("unconfirmed route status: %d", response.StatusCode)
-	}
-	input["confirmed"] = true
+	input := map[string]any{"providerProfileId": "local-chat-v1", "name": "HTTP chat route", "timeoutSeconds": 75, "maxAttempts": 2, "expectedVersion": 1}
 	var updated admin.ModelRoutePolicy
 	response = requestJSON(t, adminClient, http.MethodPost, server.URL+"/api/v1/admin/models/routes/chat", input, &updated)
 	if response.StatusCode != http.StatusOK || updated.Routes["chat"].Version != 2 {

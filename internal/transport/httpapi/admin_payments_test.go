@@ -112,13 +112,7 @@ func TestAdminPaymentOperationsHTTPContract(t *testing.T) {
 
 	destinationInput := map[string]any{
 		"destinationId": "acct_http_payment_creator", "enabled": true, "expectedVersion": 0,
-		"reason": "Verify the Sandbox creator destination for HTTP recovery evidence.", "confirmed": false,
 	}
-	response = requestJSON(t, adminClient, http.MethodPut, server.URL+"/api/v1/admin/payment-destinations/"+creator.ID.String(), destinationInput, nil)
-	if response.StatusCode != http.StatusUnprocessableEntity {
-		t.Fatalf("unconfirmed destination update accepted: %d", response.StatusCode)
-	}
-	destinationInput["confirmed"] = true
 	var destination admin.PaymentDestination
 	response = requestJSON(t, adminClient, http.MethodPut, server.URL+"/api/v1/admin/payment-destinations/"+creator.ID.String(), destinationInput, &destination)
 	if response.StatusCode != http.StatusOK || destination.Status != "verified" || destination.Version != 1 {
@@ -136,21 +130,14 @@ func TestAdminPaymentOperationsHTTPContract(t *testing.T) {
 
 	transferInput := map[string]any{
 		"action": "retry_transfer", "expectedVersion": 1,
-		"reason": "Retry the task transfer after verifying the creator destination.", "confirmed": false,
 	}
-	response = requestJSON(t, adminClient, http.MethodPost, server.URL+"/api/v1/admin/payments/"+transferPaymentID.String()+"/recover", transferInput, nil)
-	if response.StatusCode != http.StatusUnprocessableEntity {
-		t.Fatalf("unconfirmed transfer recovery accepted: %d", response.StatusCode)
-	}
-	transferInput["confirmed"] = true
 	var transfer admin.PaymentOperation
 	response = requestJSON(t, adminClient, http.MethodPost, server.URL+"/api/v1/admin/payments/"+transferPaymentID.String()+"/recover", transferInput, &transfer)
 	if response.StatusCode != http.StatusOK || transfer.Version != 2 || transfer.Job == nil || transfer.Job.Kind != payments.TaskTransferJobKind || transfer.Job.Status != "queued" {
 		t.Fatalf("transfer recovery mismatch: status=%d payment=%#v", response.StatusCode, transfer)
 	}
 	response = requestJSON(t, adminClient, http.MethodPost, server.URL+"/api/v1/admin/payments/"+transferPaymentID.String()+"/recover", map[string]any{
-		"action": "retry_transfer", "expectedVersion": 2, "reason": "A queued transfer must not be enqueued twice.", "confirmed": true,
-	}, nil)
+		"action": "retry_transfer", "expectedVersion": 2}, nil)
 	if response.StatusCode != http.StatusConflict {
 		t.Fatalf("duplicate transfer recovery accepted: %d", response.StatusCode)
 	}
@@ -158,7 +145,6 @@ func TestAdminPaymentOperationsHTTPContract(t *testing.T) {
 	var productRefund admin.PaymentOperation
 	response = requestJSON(t, adminClient, http.MethodPost, server.URL+"/api/v1/admin/payments/"+productPaymentID.String()+"/recover", map[string]any{
 		"action": "retry_refund", "expectedVersion": 1,
-		"reason": "Retry the failed product Provider refund through the controlled operations queue.", "confirmed": true,
 	}, &productRefund)
 	if response.StatusCode != http.StatusOK || productRefund.Status != "refund_pending" || productRefund.Version != 2 || productRefund.Job == nil || productRefund.Job.Kind != payments.ProductRefundJobKind {
 		t.Fatalf("product refund recovery mismatch: status=%d payment=%#v", response.StatusCode, productRefund)
@@ -181,21 +167,14 @@ func TestAdminPaymentOperationsHTTPContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	replayInput := map[string]any{
-		"expectedVersion": 1, "reason": "Replay the failed signed event after correcting internal processing evidence.", "confirmed": false,
-	}
-	response = requestJSON(t, adminClient, http.MethodPost, server.URL+"/api/v1/admin/payments/events/"+eventID.String()+"/replay", replayInput, nil)
-	if response.StatusCode != http.StatusUnprocessableEntity {
-		t.Fatalf("unconfirmed payment event replay accepted: %d", response.StatusCode)
-	}
-	replayInput["confirmed"] = true
+		"expectedVersion": 1}
 	var replayed admin.PaymentOperation
 	response = requestJSON(t, adminClient, http.MethodPost, server.URL+"/api/v1/admin/payments/events/"+eventID.String()+"/replay", replayInput, &replayed)
 	if response.StatusCode != http.StatusOK || replayed.ProviderEvent == nil || replayed.ProviderEvent.Version != 2 || replayed.ProviderEvent.ReplayCount != 1 || replayed.ProviderEvent.Job == nil || replayed.ProviderEvent.Job.Status != "queued" {
 		t.Fatalf("payment event replay mismatch: status=%d payment=%#v", response.StatusCode, replayed)
 	}
 	response = requestJSON(t, adminClient, http.MethodPost, server.URL+"/api/v1/admin/payments/events/"+eventID.String()+"/replay", map[string]any{
-		"expectedVersion": 2, "reason": "An active replay job must not be duplicated.", "confirmed": true,
-	}, nil)
+		"expectedVersion": 2}, nil)
 	if response.StatusCode != http.StatusConflict {
 		t.Fatalf("duplicate payment event replay accepted: %d", response.StatusCode)
 	}

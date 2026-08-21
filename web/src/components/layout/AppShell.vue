@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { Bell, CircleUserRound, ClipboardList, Compass, Headphones, History, Images, Languages, ListChecks, Moon, ReceiptText, Search, ShoppingBag, Store, Sun, Upload, UsersRound, WalletCards, WandSparkles } from 'lucide-vue-next'
+import { Bell, CircleUserRound, ClipboardList, Compass, Headphones, Images, Languages, ListChecks, Moon, PanelLeftClose, PanelLeftOpen, ReceiptText, Search, ShieldAlert, ShoppingBag, Store, Sun, Upload, UsersRound, WalletCards, WandSparkles } from 'lucide-vue-next'
 import { computed, nextTick, onMounted, ref, useTemplateRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import { usePreferencesStore } from '../../stores/preferences'
 import { useNotificationsStore } from '../../stores/notifications'
 import { useSessionStore } from '../../stores/session'
+import BrandLogo from '../brand/BrandLogo.vue'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -17,6 +18,8 @@ const searchQuery = ref(String(route.query.q || ''))
 const mainContent = useTemplateRef('mainContent')
 const routeAnnouncement = ref('')
 let routeFocusReady = false
+const isGuestHome = computed(() => route.name === 'home')
+const brandTarget = computed(() => session.user ? '/discover' : '/')
 
 onMounted(async () => {
   const user = await session.ensure()
@@ -39,7 +42,6 @@ const communityNav = computed(() => [
 const workbenchNav = computed(() => [
   { key: 'create', label: t('nav.aiCreate'), to: '/create/image', icon: WandSparkles },
   { key: 'assets', label: t('workspace.assets'), to: '/workspace/assets', icon: Images },
-  { key: 'generations', label: t('workspace.generations'), to: '/workspace/generations', icon: History },
   { key: 'purchases', label: t('workspace.purchases'), to: '/workspace/purchases', icon: ShoppingBag },
   { key: 'orders', label: t('workspace.orders'), to: '/workspace/orders', icon: ReceiptText },
   { key: 'taskDesk', label: t('workspace.tasks'), to: '/workspace/tasks', icon: ListChecks },
@@ -47,6 +49,10 @@ const workbenchNav = computed(() => [
   { key: 'publish', label: t('actions.publishWork'), to: '/publish', icon: Upload },
   { key: 'support', label: t('nav.support'), to: '/support', icon: Headphones },
 ])
+
+const adminNav = computed(() => session.user?.permissions.includes('admin:access') ? [
+  { key: 'admin', label: t('nav.operations'), to: '/admin', icon: ShieldAlert },
+] : [])
 
 const mobileNav = computed(() => [
   { key: 'inspiration', label: t('nav.inspirationShort'), to: '/discover', icon: Compass },
@@ -70,7 +76,6 @@ const active = (key: string) => {
   if (key === 'tasks') return ['demands', 'demand'].includes(name)
   if (key === 'marketplace') return ['marketplace', 'product'].includes(name)
   if (key === 'assets') return (name === 'workspace' && (!route.params.section || route.params.section === 'assets')) || name === 'asset'
-  if (key === 'generations') return name === 'workspace' && route.params.section === 'generations'
   if (key === 'purchases') return name === 'workspace' && route.params.section === 'purchases'
   if (key === 'orders') return name === 'workspace' && route.params.section === 'orders'
   if (key === 'taskDesk') return name === 'workspace' && route.params.section === 'tasks'
@@ -88,6 +93,7 @@ watch(() => route.path, async () => {
   await new Promise<void>((resolve) => globalThis.requestAnimationFrame(() => resolve()))
   const heading = mainContent.value?.querySelector('h1')?.textContent?.trim()
   routeAnnouncement.value = heading || t('accessibility.pageChanged')
+  if (mainContent.value) mainContent.value.scrollTop = 0
   mainContent.value?.focus({ preventScroll: true })
 })
 
@@ -100,42 +106,75 @@ const submitSearch = () => {
   const q = searchQuery.value.trim()
   if (q.length >= 2) void router.push({ path: '/search', query: { q } })
 }
+
 </script>
 
 <template>
-  <div class="app-shell">
+  <div v-if="isGuestHome" class="guest-shell">
+    <a class="skip-link" href="#main-content">{{ t('accessibility.skipToContent') }}</a>
+    <p class="sr-only" aria-live="polite" aria-atomic="true">
+      {{ routeAnnouncement }}
+    </p>
+    <main id="main-content" ref="mainContent" tabindex="-1">
+      <RouterView />
+    </main>
+  </div>
+
+  <div v-else class="app-shell" :class="{ 'is-sidebar-collapsed': preferences.sidebarCollapsed }">
     <a class="skip-link" href="#main-content">{{ t('accessibility.skipToContent') }}</a>
     <p class="sr-only" aria-live="polite" aria-atomic="true">
       {{ routeAnnouncement }}
     </p>
     <aside class="site-sidebar">
-      <RouterLink class="brand" to="/discover" :aria-label="t('brand')">
-        <span class="brand-mark"><WandSparkles :size="18" :stroke-width="1.75" /></span>
+      <RouterLink class="brand" :to="brandTarget" :aria-label="t('brand')">
+        <BrandLogo class="brand-mark" />
         <strong>{{ t('brand') }}</strong>
       </RouterLink>
 
-      <nav class="primary-nav" :aria-label="t('accessibility.primaryNavigation')">
+      <nav id="primary-navigation" class="primary-nav" :aria-label="t('accessibility.primaryNavigation')">
         <section class="nav-section">
           <span class="nav-section-label">{{ t('nav.communityArea') }}</span>
-          <RouterLink v-for="item in communityNav" :key="item.key" :to="item.to" :class="{ active: active(item.key) }" :aria-current="active(item.key) ? 'page' : undefined">
+          <RouterLink v-for="item in communityNav" :key="item.key" :to="item.to" :class="{ active: active(item.key) }" :aria-current="active(item.key) ? 'page' : undefined" :aria-label="preferences.sidebarCollapsed ? item.label : undefined" :title="preferences.sidebarCollapsed ? item.label : undefined">
             <component :is="item.icon" :size="18" :stroke-width="1.75" />
             <span>{{ item.label }}</span>
           </RouterLink>
         </section>
         <section class="nav-section">
           <span class="nav-section-label">{{ t('nav.workbench') }}</span>
-          <RouterLink v-for="item in workbenchNav" :key="item.key" :to="item.to" :class="{ active: active(item.key) }" :aria-current="active(item.key) ? 'page' : undefined">
+          <RouterLink v-for="item in workbenchNav" :key="item.key" :to="item.to" :class="{ active: active(item.key) }" :aria-current="active(item.key) ? 'page' : undefined" :aria-label="preferences.sidebarCollapsed ? item.label : undefined" :title="preferences.sidebarCollapsed ? item.label : undefined">
+            <component :is="item.icon" :size="18" :stroke-width="1.75" />
+            <span>{{ item.label }}</span>
+          </RouterLink>
+        </section>
+        <section v-if="adminNav.length" class="nav-section nav-section-admin">
+          <span class="nav-section-label">{{ t('nav.operationsArea') }}</span>
+          <RouterLink v-for="item in adminNav" :key="item.key" :to="item.to" :class="{ active: active(item.key) }" :aria-current="active(item.key) ? 'page' : undefined" :aria-label="preferences.sidebarCollapsed ? item.label : undefined" :title="preferences.sidebarCollapsed ? item.label : undefined">
             <component :is="item.icon" :size="18" :stroke-width="1.75" />
             <span>{{ item.label }}</span>
           </RouterLink>
         </section>
       </nav>
+
+      <button
+        class="sidebar-collapse-control"
+        type="button"
+        aria-controls="primary-navigation"
+        :aria-expanded="!preferences.sidebarCollapsed"
+        :aria-label="t(preferences.sidebarCollapsed ? 'actions.expandSidebar' : 'actions.collapseSidebar')"
+        :title="t(preferences.sidebarCollapsed ? 'actions.expandSidebar' : 'actions.collapseSidebar')"
+        @click="preferences.toggleSidebar"
+      >
+        <span class="t-icon-swap" :data-state="preferences.sidebarCollapsed ? 'a' : 'b'" aria-hidden="true">
+          <span class="t-icon" data-icon="a"><PanelLeftOpen :size="18" :stroke-width="1.75" /></span>
+          <span class="t-icon" data-icon="b"><PanelLeftClose :size="18" :stroke-width="1.75" /></span>
+        </span>
+      </button>
     </aside>
 
-    <div class="app-main">
+    <div class="app-main" :class="{ 'is-create-route': route.name === 'create' }">
       <header class="site-header">
-        <RouterLink class="mobile-brand" to="/discover" :aria-label="t('brand')">
-          <span class="brand-mark"><WandSparkles :size="18" :stroke-width="1.75" /></span>
+        <RouterLink class="mobile-brand" :to="brandTarget" :aria-label="t('brand')">
+          <BrandLogo class="brand-mark" />
           <strong>{{ t('brand') }}</strong>
         </RouterLink>
 
@@ -158,7 +197,9 @@ const submitSearch = () => {
           </RouterLink>
           <RouterLink class="icon-button notification-action" to="/notifications" :aria-label="t('actions.notifications')" :title="t('actions.notifications')">
             <Bell :size="19" :stroke-width="1.75" />
-            <span v-if="notifications.unreadCount" class="notification-badge" :aria-label="t('notifications.unreadCount', { count: notifications.unreadCount })">{{ notifications.unreadCount > 99 ? '99+' : notifications.unreadCount }}</span>
+            <span class="t-badge" :data-open="String(Boolean(notifications.unreadCount))">
+              <span class="t-badge-dot notification-badge" :aria-label="notifications.unreadCount ? t('notifications.unreadCount', { count: notifications.unreadCount }) : undefined">{{ notifications.unreadCount ? (notifications.unreadCount > 99 ? '99+' : notifications.unreadCount) : '' }}</span>
+            </span>
           </RouterLink>
           <button class="icon-button desktop-utility" type="button" :aria-label="t('actions.language')" :title="t('actions.language')" @click="preferences.toggleLocale">
             <Languages :size="18" :stroke-width="1.75" />
@@ -174,14 +215,14 @@ const submitSearch = () => {
       </header>
 
       <main id="main-content" ref="mainContent" tabindex="-1">
-        <RouterView v-slot="{ Component }">
-          <Transition name="page" mode="out-in">
-            <component :is="Component" />
-          </Transition>
-        </RouterView>
+        <RouterView />
       </main>
 
-      <footer v-if="route.name !== 'create'" class="site-footer">
+      <footer v-if="route.name === 'create'" class="site-footer creation-site-footer">
+        <p>{{ t('create.footerDisclaimer') }}</p>
+      </footer>
+
+      <footer v-else class="site-footer">
         <nav :aria-label="t('legal.footerLabel')">
           <RouterLink v-for="item in trustLinks" :key="item.to" :to="item.to">
             {{ item.label }}

@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import {
-  AlertTriangle, ArrowLeft, BriefcaseBusiness, CalendarDays, Check, ChevronRight,
-  CircleDollarSign, Clock3, FileCheck2, Filter, LoaderCircle, LogIn, Plus, RefreshCw, Search, ShieldCheck, UserPlus, UserRound, WandSparkles, X,
+  AlertTriangle, ArrowLeft, BriefcaseBusiness, CalendarDays, Check, ChevronDown, ChevronRight,
+  CircleDollarSign, Clock3, FileCheck2, Filter, Grid2X2, Image as ImageIcon, List, LoaderCircle, LogIn,
+  MessageSquareText, Music2, Play, Plus, RefreshCw, Search, Shapes, ShieldCheck, Sparkles, UserPlus,
+  UserRound, Video, WandSparkles, Workflow, X,
 } from 'lucide-vue-next'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -17,6 +19,7 @@ const route = useRoute()
 const router = useRouter()
 const session = useSessionStore()
 const tasks = ref<TaskSummary[]>([])
+const catalogTasks = ref<TaskSummary[]>([])
 const detail = ref<TaskDetail | null>(null)
 const assets = ref<Asset[]>([])
 const loading = ref(true)
@@ -39,6 +42,7 @@ const deliverableType = ref(String(route.query.type || ''))
 const view = ref(route.query.view === 'mine' ? 'mine' : 'available')
 const status = ref(String(route.query.status ?? (view.value === 'mine' ? '' : 'open')))
 const sort = ref(String(route.query.sort || 'newest'))
+const layoutMode = ref<'list' | 'grid'>('list')
 const taskID = computed(() => String(route.params.id || ''))
 const isDetail = computed(() => Boolean(taskID.value))
 const canPublishBrief = computed(() => Boolean(session.user && ['publisher', 'admin'].includes(session.user.role)))
@@ -78,6 +82,13 @@ const draft = reactive({
 
 const types = ['image', 'video', 'audio', 'prompt', 'workflow', 'mixed']
 const statuses = ['open', 'assigned', 'submitted', 'revision', 'accepted', 'disputed', 'cancelled']
+const openTaskCount = computed(() => catalogTasks.value.filter((item) => item.status === 'open').length)
+const totalTaskReward = computed(() => catalogTasks.value.reduce((total, item) => total + item.budgetCents, 0))
+const totalProposalCount = computed(() => catalogTasks.value.reduce((total, item) => total + item.proposalCount, 0))
+const taskTypeCounts = computed(() => Object.fromEntries(types.map((type) => [
+  type,
+  catalogTasks.value.filter((item) => item.deliverableType === type).length,
+])))
 const timezoneOptions = Array.from(new Set([
   Intl.DateTimeFormat().resolvedOptions().timeZone,
   'UTC', 'America/Los_Angeles', 'America/New_York', 'Europe/London', 'Europe/Berlin', 'Asia/Shanghai', 'Asia/Tokyo', 'Australia/Sydney',
@@ -100,6 +111,22 @@ function eventLabel(kind: string) {
   return t(`tasks.events.${kind}`)
 }
 
+function taskTypeIcon(kind: string) {
+  if (kind === 'image') return ImageIcon
+  if (kind === 'video') return Video
+  if (kind === 'audio') return Music2
+  if (kind === 'prompt') return MessageSquareText
+  if (kind === 'workflow') return Workflow
+  return Shapes
+}
+
+function taskThumbnail(kind: string) {
+  if (kind === 'video') return '/tasks/task-video.webp'
+  if (kind === 'audio') return '/tasks/task-audio.webp'
+  if (kind === 'image') return '/tasks/task-image.webp'
+  return '/tasks/task-hero-transparent.webp'
+}
+
 async function load() {
   loading.value = true
   error.value = ''
@@ -117,14 +144,22 @@ async function load() {
       }
       applyPaymentReturnState()
     } else {
-      const response = await api.listTasks({
-        q: search.value,
-        type: deliverableType.value,
-        status: status.value,
-        sort: sort.value,
-        mine: view.value === 'mine',
-      })
+      const [response, catalog] = await Promise.all([
+        api.listTasks({
+          q: search.value,
+          type: deliverableType.value,
+          status: status.value,
+          sort: sort.value,
+          mine: view.value === 'mine',
+        }),
+        api.listTasks({
+          status: view.value === 'mine' ? '' : 'open',
+          sort: 'newest',
+          mine: view.value === 'mine',
+        }),
+      ])
       tasks.value = response.items
+      catalogTasks.value = catalog.items
       detail.value = null
     }
   } catch (reason) {
@@ -232,6 +267,12 @@ async function selectView(nextView: 'available' | 'mine') {
   if (view.value === nextView) return
   view.value = nextView
   status.value = nextView === 'mine' ? '' : 'open'
+  await applyFilters()
+}
+
+async function selectTaskType(nextType: string) {
+  if (deliverableType.value === nextType) return
+  deliverableType.value = nextType
   await applyFilters()
 }
 
@@ -403,15 +444,20 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="task-market content-width">
+  <section class="task-market content-width" :class="{ 'is-detail': isDetail }">
     <template v-if="!isDetail">
-      <header class="task-market-header">
-        <div>
-          <span class="status-label"><ShieldCheck :size="14" />{{ paymentEnabled ? t(paymentLiveMode ? 'tasks.providerLiveShort' : 'tasks.providerTestShort') : t('tasks.localTestShort') }}</span>
+      <header class="page-hero-header page-hero-banner task-market-header">
+        <div class="page-hero-copy">
+          <span class="page-hero-eyebrow"><ShieldCheck :size="14" />{{ paymentEnabled ? t(paymentLiveMode ? 'tasks.providerLiveShort' : 'tasks.providerTestShort') : t('tasks.localTestShort') }}</span>
           <h1>{{ t('tasks.title') }}</h1>
           <p>{{ t('tasks.summary') }}</p>
+          <div class="page-hero-stats" :aria-label="t('tasks.taskStats')">
+            <article><span class="page-hero-stat-icon" data-tone="blue"><BriefcaseBusiness :size="23" /></span><div><strong>{{ openTaskCount }}</strong><span>{{ t('tasks.openTasks') }}</span></div></article>
+            <article><span class="page-hero-stat-icon" data-tone="violet"><CircleDollarSign :size="23" /></span><div><strong>{{ money(totalTaskReward) }}</strong><span>{{ t('tasks.totalReward') }}</span></div></article>
+            <article><span class="page-hero-stat-icon" data-tone="green"><UserRound :size="23" /></span><div><strong>{{ totalProposalCount }}</strong><span>{{ t('tasks.totalProposals') }}</span></div></article>
+          </div>
         </div>
-        <div class="task-header-actions">
+        <div class="page-hero-actions">
           <RouterLink v-if="session.user" class="command-button secondary" to="/workspace/tasks">
             <BriefcaseBusiness :size="17" />{{ t('tasks.myTasks') }}
           </RouterLink>
@@ -425,29 +471,40 @@ onBeforeUnmount(() => {
             <UserPlus :size="17" />{{ t('account.createAccount') }}
           </RouterLink>
         </div>
+        <img class="page-hero-art task-market-hero-art" src="/tasks/task-hero-transparent.webp" alt="" aria-hidden="true" />
+        <div v-if="session.user" class="page-hero-account">
+          <span class="page-hero-avatar"><UserRound :size="22" /></span><span><strong>{{ session.user.displayName }}</strong><small>@{{ session.user.handle }}</small></span><ShieldCheck :size="15" />
+        </div>
       </header>
 
-      <div v-if="session.user" class="task-workspace-bar">
-        <div class="task-view-tabs" role="tablist" :aria-label="t('tasks.views')">
-          <button type="button" role="tab" :aria-selected="view === 'available'" :class="{ active: view === 'available' }" @click="selectView('available')">
+      <div v-if="session.user" class="view-switcher-bar">
+        <div v-motion-tabs class="view-switcher t-tabs" role="tablist" :aria-label="t('tasks.views')">
+          <span class="t-tabs-pill" aria-hidden="true"></span>
+          <button class="t-tab" type="button" role="tab" :aria-selected="view === 'available'" :class="{ active: view === 'available' }" @click="selectView('available')">
             <Search :size="16" />{{ t('tasks.availableWork') }}
           </button>
-          <button type="button" role="tab" :aria-selected="view === 'mine'" :class="{ active: view === 'mine' }" @click="selectView('mine')">
+          <button class="t-tab" type="button" role="tab" :aria-selected="view === 'mine'" :class="{ active: view === 'mine' }" @click="selectView('mine')">
             <BriefcaseBusiness :size="16" />{{ t('tasks.myActivity') }}
           </button>
-        </div>
-        <div class="task-account-context">
-          <UserRound :size="16" /><span><strong>{{ session.user.displayName }}</strong><small>@{{ session.user.handle }}</small></span>
         </div>
       </div>
 
       <form class="task-filters" role="search" @submit.prevent="applyFilters">
         <label class="task-search"><span class="sr-only">{{ t('actions.search') }}</span><Search :size="17" /><input v-model="search" type="search" :placeholder="t('tasks.searchPlaceholder')" /></label>
-        <label><span class="sr-only">{{ t('tasks.allTypes') }}</span><Filter :size="16" /><select v-model="deliverableType" @change="applyFilters"><option value="">{{ t('tasks.allTypes') }}</option><option v-for="item in types" :key="item" :value="item">{{ t(`tasks.types.${item}`) }}</option></select></label>
-        <label><span class="sr-only">{{ t('tasks.allStatuses') }}</span><select v-model="status" @change="applyFilters"><option value="">{{ t('tasks.allStatuses') }}</option><option v-for="item in statuses" :key="item" :value="item">{{ t(`tasks.status.${item}`) }}</option></select></label>
-        <label><span class="sr-only">{{ t('tasks.sortNewest') }}</span><select v-model="sort" @change="applyFilters"><option value="newest">{{ t('tasks.sortNewest') }}</option><option value="deadline">{{ t('tasks.sortDeadline') }}</option><option value="budget_desc">{{ t('tasks.sortBudget') }}</option></select></label>
-        <button class="icon-button" type="submit" :aria-label="t('actions.search')">
-          <Search :size="17" />
+        <label class="task-filter-control">
+          <span class="task-filter-display" aria-hidden="true"><Filter :size="15" /><span>{{ deliverableType ? t(`tasks.types.${deliverableType}`) : t('tasks.allTypes') }}</span><ChevronDown :size="14" /></span>
+          <select v-model="deliverableType" :aria-label="t('tasks.allTypes')" @change="applyFilters"><option value="">{{ t('tasks.allTypes') }}</option><option v-for="item in types" :key="item" :value="item">{{ t(`tasks.types.${item}`) }}</option></select>
+        </label>
+        <label class="task-filter-control">
+          <span class="task-filter-display" aria-hidden="true"><span>{{ status ? t(`tasks.status.${status}`) : t('tasks.allStatuses') }}</span><ChevronDown :size="14" /></span>
+          <select v-model="status" :aria-label="t('tasks.allStatuses')" @change="applyFilters"><option value="">{{ t('tasks.allStatuses') }}</option><option v-for="item in statuses" :key="item" :value="item">{{ t(`tasks.status.${item}`) }}</option></select>
+        </label>
+        <label class="task-filter-control">
+          <span class="task-filter-display" aria-hidden="true"><span>{{ sort === 'deadline' ? t('tasks.sortDeadline') : sort === 'budget_desc' ? t('tasks.sortBudget') : t('tasks.sortNewest') }}</span><ChevronDown :size="14" /></span>
+          <select v-model="sort" :aria-label="t('tasks.sortNewest')" @change="applyFilters"><option value="newest">{{ t('tasks.sortNewest') }}</option><option value="deadline">{{ t('tasks.sortDeadline') }}</option><option value="budget_desc">{{ t('tasks.sortBudget') }}</option></select>
+        </label>
+        <button class="command-button primary task-filter-submit" type="submit">
+          <Search :size="17" />{{ t('actions.search') }}
         </button>
       </form>
 
@@ -459,48 +516,70 @@ onBeforeUnmount(() => {
           <RefreshCw :size="17" />{{ t('actions.retry') }}
         </button>
       </div>
-      <div v-else class="task-results">
-        <div class="task-results-meta">
-          <div><strong>{{ tasks.length }} {{ t('tasks.results') }}</strong><span>{{ t(view === 'mine' ? 'tasks.myActivitySummary' : 'tasks.availableWorkSummary') }}</span></div>
-          <button v-if="search || deliverableType || status !== (view === 'mine' ? '' : 'open') || sort !== 'newest'" class="text-link" type="button" @click="clearFilters">
-            {{ t('tasks.clearFilters') }}
-          </button>
-        </div>
-        <RouterLink v-for="item in tasks" :key="item.id" class="task-row" :class="{ 'is-direct': item.allowDirectAccept && item.status === 'open' }" :data-type="item.deliverableType" :to="`/market/demands/${item.id}`">
-          <span class="task-type"><span><component :is="item.deliverableType === 'image' ? WandSparkles : FileCheck2" :size="18" /></span></span>
-          <span class="task-row-copy">
-            <span class="task-row-heading"><span>{{ t(`tasks.types.${item.deliverableType}`) }}</span><span class="task-status" :data-status="item.status">{{ t(`tasks.status.${item.status}`) }}</span></span>
-            <strong>{{ item.title }}</strong><small>{{ item.summary }}</small>
-            <span class="task-row-byline"><span>@{{ item.client.handle }}</span><span>{{ item.proposalCount }} {{ t('tasks.proposalCount') }}</span><span v-if="item.allowDirectAccept && item.status === 'open'">{{ t('tasks.direct') }}</span></span>
-          </span>
-          <span class="task-row-data"><small>{{ paymentEnabled ? t('tasks.providerReward') : t('tasks.reward') }}</small><strong>{{ money(item.budgetCents, item.currency) }}</strong></span>
-          <span class="task-row-data"><small>{{ t('tasks.deadline') }}</small><strong>{{ date(item.deadline, item.clientTimezone) }}</strong></span>
-          <span class="command-button secondary task-row-action">{{ t('tasks.reviewBrief') }}<ChevronRight :size="16" /></span>
-        </RouterLink>
-        <div v-if="!tasks.length" class="task-market-state task-market-empty">
-          <span><component :is="view === 'mine' ? BriefcaseBusiness : Search" :size="20" /></span><strong>{{ t(view === 'mine' ? 'tasks.noMyActivity' : 'tasks.noResults') }}</strong><button v-if="view === 'available'" class="text-link" type="button" @click="clearFilters">
-            {{ t('tasks.clearFilters') }}
-          </button>
-          <p>{{ t(view === 'mine' ? 'tasks.noMyActivitySummary' : 'tasks.emptySummary') }}</p>
-          <div class="task-empty-actions">
-            <button v-if="view === 'mine'" class="command-button secondary" type="button" @click="selectView('available')">
-              <Search :size="17" />{{ t('tasks.browseTasks') }}
-            </button>
-            <RouterLink v-else class="command-button secondary" to="/create/image">
-              <WandSparkles :size="17" />{{ t('tasks.createInstead') }}
-            </RouterLink>
-            <button v-if="canPublishBrief" class="command-button primary" type="button" @click="createOpen = true">
-              <Plus :size="17" />{{ t('tasks.publishBrief') }}
-            </button>
+      <div v-else class="task-browser-layout">
+        <aside class="task-category-panel" :aria-label="t('tasks.categories')">
+          <h2>{{ t('tasks.categories') }}</h2>
+          <nav>
+            <button type="button" :class="{ active: !deliverableType }" @click="selectTaskType('')"><BriefcaseBusiness :size="17" /><span>{{ t('tasks.allTasks') }}</span><small>{{ catalogTasks.length }}</small></button>
+            <button v-for="type in types" :key="type" type="button" :class="{ active: deliverableType === type }" @click="selectTaskType(type)"><component :is="taskTypeIcon(type)" :size="17" /><span>{{ t(`tasks.types.${type}`) }}</span><small>{{ taskTypeCounts[type] || 0 }}</small></button>
+          </nav>
+          <section class="task-creator-program"><span><Sparkles :size="20" /></span><div><strong>{{ t('tasks.creatorProgram') }}</strong><p>{{ t('tasks.creatorProgramSummary') }}</p></div><RouterLink class="text-link" to="/settings">{{ t('tasks.learnMore') }}<ChevronRight :size="15" /></RouterLink></section>
+        </aside>
+
+        <div class="task-results">
+          <div class="task-results-meta">
+            <div><strong>{{ tasks.length }} {{ t('tasks.results') }}</strong><span>{{ t(view === 'mine' ? 'tasks.myActivitySummary' : 'tasks.availableWorkSummary') }}</span></div>
+            <div class="task-results-actions">
+              <button v-if="search || deliverableType || status !== (view === 'mine' ? '' : 'open') || sort !== 'newest'" class="text-link" type="button" @click="clearFilters">{{ t('tasks.clearFilters') }}</button>
+              <div class="task-layout-switcher" :aria-label="t('tasks.layout')">
+                <button type="button" :class="{ active: layoutMode === 'list' }" :aria-label="t('tasks.listView')" :title="t('tasks.listView')" @click="layoutMode = 'list'"><List :size="17" /></button>
+                <button type="button" :class="{ active: layoutMode === 'grid' }" :aria-label="t('tasks.gridView')" :title="t('tasks.gridView')" @click="layoutMode = 'grid'"><Grid2X2 :size="16" /></button>
+              </div>
+            </div>
           </div>
+          <div class="task-result-list" :class="{ 'is-grid': layoutMode === 'grid' }">
+            <RouterLink v-for="item in tasks" :key="item.id" class="task-row" :class="{ 'is-direct': item.allowDirectAccept && item.status === 'open' }" :data-type="item.deliverableType" :to="`/market/demands/${item.id}`">
+              <span class="task-row-media"><img :src="taskThumbnail(item.deliverableType)" :alt="item.title" /><span v-if="item.deliverableType === 'video'" class="task-media-play"><Play :size="18" fill="currentColor" /></span></span>
+              <span class="task-row-copy">
+                <span class="task-row-heading"><span class="task-type-badge"><component :is="taskTypeIcon(item.deliverableType)" :size="13" />{{ t(`tasks.types.${item.deliverableType}`) }}</span><span class="task-status" :data-status="item.status">{{ t(`tasks.status.${item.status}`) }}</span></span>
+                <strong>{{ item.title }}</strong><small>{{ item.summary }}</small>
+                <span class="task-row-byline"><span>@{{ item.client.handle }}</span><span>{{ item.proposalCount }} {{ t('tasks.proposalCount') }}</span><span v-if="item.allowDirectAccept && item.status === 'open'">{{ t('tasks.direct') }}</span></span>
+              </span>
+              <span class="task-row-commercial">
+                <span class="task-row-data"><small>{{ paymentEnabled ? t('tasks.providerReward') : t('tasks.reward') }}</small><strong>{{ money(item.budgetCents, item.currency) }}</strong></span>
+                <span class="task-row-data"><small><Clock3 :size="13" />{{ t('tasks.deadline') }}</small><strong>{{ date(item.deadline, item.clientTimezone) }}</strong></span>
+                <span class="command-button primary task-row-action">{{ t('tasks.reviewBrief') }}<ChevronRight :size="16" /></span>
+              </span>
+            </RouterLink>
+            <div v-if="!tasks.length" class="task-market-state task-market-empty">
+              <span><component :is="view === 'mine' ? BriefcaseBusiness : Search" :size="20" /></span><strong>{{ t(view === 'mine' ? 'tasks.noMyActivity' : 'tasks.noResults') }}</strong><button v-if="view === 'available'" class="text-link" type="button" @click="clearFilters">{{ t('tasks.clearFilters') }}</button>
+              <p>{{ t(view === 'mine' ? 'tasks.noMyActivitySummary' : 'tasks.emptySummary') }}</p>
+              <div class="task-empty-actions">
+                <button v-if="view === 'mine'" class="command-button secondary" type="button" @click="selectView('available')"><Search :size="17" />{{ t('tasks.browseTasks') }}</button>
+                <RouterLink v-else class="command-button secondary" to="/create/image"><WandSparkles :size="17" />{{ t('tasks.createInstead') }}</RouterLink>
+                <button v-if="canPublishBrief" class="command-button primary" type="button" @click="createOpen = true"><Plus :size="17" />{{ t('tasks.publishBrief') }}</button>
+              </div>
+            </div>
+          </div>
+          <section v-if="canPublishBrief" class="task-publish-cta"><span><Sparkles :size="20" /></span><div><strong>{{ t('tasks.publishIdea') }}</strong><p>{{ t('tasks.publishIdeaSummary') }}</p></div><button class="command-button primary" type="button" @click="createOpen = true"><Plus :size="17" />{{ t('tasks.publishBrief') }}</button></section>
         </div>
       </div>
     </template>
 
     <template v-else>
-      <RouterLink class="text-link task-back" to="/market/demands">
-        <ArrowLeft :size="17" />{{ t('tasks.back') }}
-      </RouterLink>
+      <div class="task-detail-toolbar">
+        <RouterLink class="text-link task-back" to="/market/demands">
+          <ArrowLeft :size="17" />{{ t('tasks.back') }}
+        </RouterLink>
+        <div v-if="detail" class="task-detail-toolbar-actions">
+          <RouterLink class="command-button primary" :to="`/create/image?taskId=${detail.id}`">
+            <WandSparkles :size="17" />{{ t('tasks.startCreating') }}
+          </RouterLink>
+          <RouterLink class="command-button secondary" to="/market/demands">
+            <BriefcaseBusiness :size="17" />{{ t('tasks.findTasks') }}
+          </RouterLink>
+        </div>
+      </div>
       <div v-if="loading" class="page-state" aria-live="polite">
         <LoaderCircle class="spin" :size="20" />{{ t('tasks.loading') }}
       </div>
@@ -516,19 +595,19 @@ onBeforeUnmount(() => {
               <span class="task-status" :data-status="detail.status">{{ t(`tasks.status.${detail.status}`) }}</span><span v-if="detail.allowDirectAccept && detail.status === 'open' && (!paymentEnabled || directFundingConfirmed || detail.viewerRole === 'client')" class="task-direct-signal"><BriefcaseBusiness :size="14" />{{ t(paymentEnabled && !directFundingConfirmed ? 'tasks.directFundingRequired' : 'tasks.direct') }}</span>
             </div><h1>{{ detail.title }}</h1><p>{{ detail.summary }}</p>
           </header>
-          <section><h2>{{ t('tasks.brief') }}</h2><p>{{ detail.brief }}</p></section>
+          <section class="task-brief-overview"><div class="task-section-heading"><FileCheck2 :size="19" /><h2>{{ t('tasks.brief') }}</h2></div><p>{{ detail.brief }}</p></section>
           <div class="task-rule-grid">
-            <section>
-              <h2>{{ t('tasks.deliverables') }}</h2><ul>
+            <section class="task-rule-card" data-tone="blue">
+              <header><span><Play v-if="detail.deliverableType === 'video'" :size="13" fill="currentColor" /><component :is="taskTypeIcon(detail.deliverableType)" v-else :size="15" /></span><h2>{{ t('tasks.deliverables') }}</h2></header><ul>
                 <li v-for="item in detail.deliverables" :key="item">
                   <Check :size="16" />{{ item }}
                 </li>
               </ul>
             </section>
-            <section>
-              <h2>{{ t('tasks.acceptance') }}</h2><ul>
+            <section class="task-rule-card" data-tone="green">
+              <header><span><ShieldCheck :size="16" /></span><h2>{{ t('tasks.acceptance') }}</h2></header><ul>
                 <li v-for="item in detail.acceptanceRules" :key="item">
-                  <FileCheck2 :size="16" />{{ item }}
+                  <Check :size="16" />{{ item }}
                 </li>
               </ul>
             </section>
@@ -566,9 +645,9 @@ onBeforeUnmount(() => {
           </section>
 
           <section class="task-history">
-            <h2>{{ t('tasks.history') }}</h2><ol>
+            <div class="task-section-heading"><Clock3 :size="19" /><h2>{{ t('tasks.history') }}</h2></div><ol>
               <li v-for="event in detail.events" :key="event.id">
-                <span><Clock3 :size="15" /></span><div>
+                <span aria-hidden="true"></span><div>
                   <strong>{{ eventLabel(event.kind) }}</strong><p v-if="event.note">
                     {{ event.note }}
                   </p><small>{{ date(event.createdAt) }}<template v-if="event.actor"> / {{ event.actor.displayName }}</template></small>
@@ -580,7 +659,9 @@ onBeforeUnmount(() => {
 
         <aside id="task-actions" class="task-action-rail">
           <div class="task-reward">
-            <span>{{ paymentEnabled ? t('tasks.providerReward') : t('tasks.reward') }}</span><strong>{{ money(detail.budgetCents, detail.currency) }}</strong><small>{{ paymentEnabled ? t(paymentLiveMode ? 'tasks.providerLive' : 'tasks.providerTest') : t('tasks.localTest') }}</small>
+            <div><span>{{ paymentEnabled ? t('tasks.providerReward') : t('tasks.reward') }}</span><strong>{{ money(detail.budgetCents, detail.currency) }}</strong></div>
+            <img src="/tasks/task-reward.webp" alt="" aria-hidden="true" />
+            <p><ShieldCheck :size="16" /><span>{{ paymentEnabled ? t(paymentLiveMode ? 'tasks.providerLive' : 'tasks.providerTest') : t('tasks.localTest') }}</span></p>
           </div>
           <dl class="task-facts">
             <div><dt><UserRound :size="16" />{{ t('tasks.commissioner') }}</dt><dd>{{ detail.client.displayName }}<small>@{{ detail.client.handle }}</small></dd></div><div><dt><CalendarDays :size="16" />{{ t('tasks.deadline') }}</dt><dd>{{ date(detail.deadline, detail.clientTimezone) }}<small>{{ detail.clientTimezone }}</small></dd></div><div v-if="detail.assignee">
@@ -616,7 +697,7 @@ onBeforeUnmount(() => {
           <button v-if="canClaim" class="command-button primary wide" type="button" :disabled="actionLoading" @click="claimTask">
             <BriefcaseBusiness :size="17" />{{ t('tasks.acceptTask') }}
           </button>
-          <button v-if="canPropose && !proposalOpen" class="command-button secondary wide" type="button" @click="showProposalForm">
+          <button v-if="canPropose && !proposalOpen" class="command-button primary wide" type="button" @click="showProposalForm">
             <Plus :size="17" />{{ t('tasks.submitProposal') }}
           </button>
           <form v-if="proposalOpen" class="task-action-form" @submit.prevent="submitProposal">
@@ -672,7 +753,7 @@ onBeforeUnmount(() => {
           <div v-if="detail.settlement" class="task-settlement">
             <CircleDollarSign :size="19" /><div><strong>{{ t('tasks.settlement') }}</strong><span>{{ money(detail.settlement.amountCents, detail.settlement.currency) }} / {{ t(`tasks.settlementMode.${detail.settlement.mode}`) }}</span></div>
           </div><p v-else class="task-payment-note">
-            {{ t(paymentEnabled ? 'tasks.providerUnsettled' : 'tasks.unsettled') }}
+            <ShieldCheck :size="17" /><span>{{ t(paymentEnabled ? 'tasks.providerUnsettled' : 'tasks.unsettled') }}</span>
           </p>
 
           <div v-if="session.user" class="demo-actor-switch">

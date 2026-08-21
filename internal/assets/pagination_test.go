@@ -115,6 +115,37 @@ func TestAssetListStablePaginationAppliesOwnershipVersionAndEntitlementFirst(t *
 	}
 }
 
+func TestAssetListExcludesChatGenerationOutputs(t *testing.T) {
+	pool, cleanup := assetTestPool(t)
+	defer cleanup()
+	ctx := context.Background()
+	ownerID, assetID, generationID := uuid.New(), uuid.New(), uuid.New()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO users(id,email,handle,display_name,role,status)
+		VALUES($1,$2,$3,'Chat Asset Owner','creator','active')`,
+		ownerID, ownerID.String()+"@test.local", "chat_asset_"+ownerID.String()[:8]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,scan_status,source_type,source_id,license_code,storage_backend,storage_key)
+		VALUES($1,$2,'document','Historical chat response','/api/v1/assets/chat-history/content','text/plain; charset=utf-8','clean','generation',$3,'creator-owned','local_file','chat-history.txt')`, assetID, ownerID, generationID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO generations(id,owner_id,mode,provider,model_name,prompt,status,progress,output_asset_id)
+		VALUES($1,$2,'chat','openai','gpt-chat','Historical chat response','succeeded',100,$3)`, generationID, ownerID, assetID); err != nil {
+		t.Fatal(err)
+	}
+
+	page, err := assets.NewService(pool, t.TempDir()).List(ctx, ownerID, assets.ListInput{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Items) != 0 {
+		t.Fatalf("chat generation output leaked into asset library: %#v", page.Items)
+	}
+}
+
 func TestSavedWorkStablePaginationAppliesVisibilityAndAccountFirst(t *testing.T) {
 	pool, cleanup := assetTestPool(t)
 	defer cleanup()

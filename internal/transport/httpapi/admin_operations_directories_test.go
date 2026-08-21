@@ -30,7 +30,7 @@ func TestAdminOperationsDirectoriesHTTPContract(t *testing.T) {
 	if _, err := pool.Exec(ctx, `UPDATE users SET role='admin' WHERE id=$1`, administrator.ID); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{"/api/v1/admin/generations", "/api/v1/admin/finance/accounts", "/api/v1/admin/audit"} {
+	for _, path := range []string{"/api/v1/admin/generations", "/api/v1/admin/finance/accounts"} {
 		response := requestJSON(t, memberClient, http.MethodGet, server.URL+path, nil, nil)
 		if response.StatusCode != http.StatusForbidden {
 			t.Fatalf("member accessed %s: %d", path, response.StatusCode)
@@ -74,9 +74,7 @@ func TestAdminOperationsDirectoriesHTTPContract(t *testing.T) {
 		t.Fatalf("invalid generation filter status: %d", response.StatusCode)
 	}
 	var cancelled admin.GenerationItem
-	response = requestJSON(t, adminClient, http.MethodPost, server.URL+"/api/v1/admin/generations/"+targetGenerationID.String()+"/cancel", map[string]any{
-		"reason": "Verified exact HTTP generation retrieval beyond the first pages.", "confirmed": true,
-	}, &cancelled)
+	response = requestJSON(t, adminClient, http.MethodPost, server.URL+"/api/v1/admin/generations/"+targetGenerationID.String()+"/cancel", map[string]any{}, &cancelled)
 	if response.StatusCode != http.StatusOK || cancelled.ID != targetGenerationID || cancelled.Status != "cancelled" {
 		t.Fatalf("exact generation response failed: status=%d item=%#v", response.StatusCode, cancelled)
 	}
@@ -124,40 +122,9 @@ func TestAdminOperationsDirectoriesHTTPContract(t *testing.T) {
 	}
 	var adjusted admin.FinanceAccount
 	response = requestJSON(t, adminClient, http.MethodPost, server.URL+"/api/v1/admin/finance/accounts/"+targetFinanceID.String()+"/adjust", map[string]any{
-		"deltaCents": 1, "currency": "USD", "reason": "Verified exact HTTP finance retrieval beyond the first pages.", "confirmed": true,
-	}, &adjusted)
+		"deltaCents": 1, "currency": "USD"}, &adjusted)
 	if response.StatusCode != http.StatusOK || adjusted.UserID != targetFinanceID || adjusted.BalanceCents != 250001 {
 		t.Fatalf("exact finance response failed: status=%d item=%#v", response.StatusCode, adjusted)
 	}
 
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO audit_events(actor_id,action,resource_type,reason,request_id,metadata)
-		SELECT $1,'admin.http_directory_probe','http_probe','HTTP audit directory backlog '||value,'http-audit-'||value,jsonb_build_object('ordinal',value)
-		FROM generate_series(1,21) value`, administrator.ID); err != nil {
-		t.Fatal(err)
-	}
-	type auditPage struct {
-		Items      []admin.AuditEvent `json:"items"`
-		NextCursor *string            `json:"nextCursor"`
-	}
-	auditPath := server.URL + "/api/v1/admin/audit?q=http+audit+directory&action=admin.http_directory_probe&resourceType=http_probe&limit=10"
-	var auditOne auditPage
-	response = requestJSON(t, adminClient, http.MethodGet, auditPath, nil, &auditOne)
-	if response.StatusCode != http.StatusOK || len(auditOne.Items) != 10 || auditOne.NextCursor == nil {
-		t.Fatalf("first audit page failed: status=%d page=%#v", response.StatusCode, auditOne)
-	}
-	var auditTwo auditPage
-	response = requestJSON(t, adminClient, http.MethodGet, auditPath+"&cursor="+url.QueryEscape(*auditOne.NextCursor), nil, &auditTwo)
-	if response.StatusCode != http.StatusOK || len(auditTwo.Items) != 10 || auditTwo.NextCursor == nil {
-		t.Fatalf("second audit page failed: status=%d page=%#v", response.StatusCode, auditTwo)
-	}
-	var auditThree auditPage
-	response = requestJSON(t, adminClient, http.MethodGet, auditPath+"&cursor="+url.QueryEscape(*auditTwo.NextCursor), nil, &auditThree)
-	if response.StatusCode != http.StatusOK || len(auditThree.Items) != 1 || auditThree.NextCursor != nil {
-		t.Fatalf("third audit page failed: status=%d page=%#v", response.StatusCode, auditThree)
-	}
-	response = requestJSON(t, adminClient, http.MethodGet, server.URL+"/api/v1/admin/audit?action=contains+spaces", nil, nil)
-	if response.StatusCode != http.StatusUnprocessableEntity {
-		t.Fatalf("invalid audit filter status: %d", response.StatusCode)
-	}
 }

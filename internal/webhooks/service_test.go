@@ -192,13 +192,9 @@ func TestWebhookEncryptedSecretSignedDeliveryDeadLetterAndReplay(t *testing.T) {
 	if err != nil || len(deadLetters.Items) != 1 || deadLetters.Items[0].ID != failed.ID || deadLetters.Items[0].LastStatusCode == nil || *deadLetters.Items[0].LastStatusCode != http.StatusBadRequest {
 		t.Fatalf("dead-letter evidence mismatch: items=%#v err=%v", deadLetters, err)
 	}
-	replayed, err := service.Replay(ctx, ownerID, failed.ID, Transition{ExpectedVersion: deadLetters.Items[0].Version, Reason: "Receiver configuration was repaired and verified", Confirmed: true}, "webhook-replay-request")
+	replayed, err := service.Replay(ctx, ownerID, failed.ID, AdminTransition{ExpectedVersion: deadLetters.Items[0].Version}, "webhook-replay-request")
 	if err != nil || replayed.OriginalDeliveryID == nil || *replayed.OriginalDeliveryID != failed.ID {
 		t.Fatalf("Admin replay mismatch: item=%#v err=%v", replayed, err)
-	}
-	var adminAuditCount int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM audit_events WHERE actor_id=$1 AND action='admin.webhook_delivery_replayed' AND resource_id=$2`, ownerID, replayed.ID).Scan(&adminAuditCount); err != nil || adminAuditCount != 1 {
-		t.Fatalf("replay audit mismatch: count=%d err=%v", adminAuditCount, err)
 	}
 	if _, err := pool.Exec(ctx, `UPDATE developer_webhook_delivery_attempts SET duration_ms=0 WHERE delivery_id=$1`, failed.ID); err == nil {
 		t.Fatal("Webhook attempt evidence accepted mutation")
@@ -303,7 +299,7 @@ func TestWebhookDeadLetterDirectoryPaginationAndExactReplay(t *testing.T) {
 	if _, err := service.ListDeadLetters(ctx, DeadLetterListInput{Cursor: cursor + "modified", Limit: 25}); !errors.Is(err, ErrInvalidDeadLetterFilter) {
 		t.Fatalf("modified Webhook cursor accepted: %v", err)
 	}
-	replayed, err := service.Replay(ctx, ownerID, oldest.ID, Transition{ExpectedVersion: oldest.Version, Reason: "Scale test confirms exact replay outside the former recovery window", Confirmed: true}, "webhook-scale-replay")
+	replayed, err := service.Replay(ctx, ownerID, oldest.ID, AdminTransition{ExpectedVersion: oldest.Version}, "webhook-scale-replay")
 	if err != nil || replayed.OriginalDeliveryID == nil || *replayed.OriginalDeliveryID != oldest.ID {
 		t.Fatalf("oldest Webhook replay failed: %#v %v", replayed, err)
 	}

@@ -36,9 +36,7 @@ type GovernanceReport struct {
 }
 
 type ReportResolution struct {
-	Outcome   string `json:"outcome"`
-	Reason    string `json:"reason"`
-	Confirmed bool   `json:"confirmed"`
+	Outcome string `json:"outcome"`
 }
 
 type GovernanceReportListInput struct {
@@ -72,9 +70,7 @@ type GovernanceAppeal struct {
 }
 
 type AppealResolution struct {
-	Decision  string `json:"decision"`
-	Reason    string `json:"reason"`
-	Confirmed bool   `json:"confirmed"`
+	Decision string `json:"decision"`
 }
 
 type GovernanceAppealListInput struct {
@@ -152,10 +148,9 @@ func (s *Service) ListReports(ctx context.Context, input GovernanceReportListInp
 	return page, nil
 }
 
-func (s *Service) ResolveReport(ctx context.Context, actorID, reportID uuid.UUID, input ReportResolution, requestID string) (GovernanceReport, error) {
+func (s *Service) ResolveReport(ctx context.Context, actorID, reportID uuid.UUID, input ReportResolution, _ string) (GovernanceReport, error) {
 	input.Outcome = strings.TrimSpace(strings.ToLower(input.Outcome))
-	input.Reason = strings.TrimSpace(input.Reason)
-	if !input.Confirmed || len(input.Reason) < 10 || len(input.Reason) > 1000 || !oneOf(input.Outcome, "no_action", "hidden", "removed") {
+	if !oneOf(input.Outcome, "no_action", "hidden", "removed") {
 		return GovernanceReport{}, ErrInvalid
 	}
 	tx, err := s.pool.Begin(ctx)
@@ -194,12 +189,12 @@ func (s *Service) ResolveReport(ctx context.Context, actorID, reportID uuid.UUID
 	if _, err := tx.Exec(ctx, `
 		UPDATE content_reports
 		SET status=$2,outcome=$3,previous_status=$4,moderator_id=$5,resolution_reason=$6,updated_at=now(),resolved_at=now()
-		WHERE id=$1`, reportID, nextStatus, input.Outcome, previousStatus, actorID, input.Reason); err != nil {
+		WHERE id=$1`, reportID, nextStatus, input.Outcome, previousStatus, actorID, "Administrative decision: "+input.Outcome); err != nil {
 		return GovernanceReport{}, fmt.Errorf("resolve governance report: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO governance_events(report_id,actor_id,kind,from_status,to_status,reason,metadata)
-		VALUES($1,$2,$3,$4,$5,$6,jsonb_build_object('outcome',$7::text))`, reportID, actorID, eventKind, status, nextStatus, input.Reason, input.Outcome); err != nil {
+		VALUES($1,$2,$3,$4,$5,$6,jsonb_build_object('outcome',$7::text))`, reportID, actorID, eventKind, status, nextStatus, "Administrative decision: "+input.Outcome, input.Outcome); err != nil {
 		return GovernanceReport{}, fmt.Errorf("record governance resolution: %w", err)
 	}
 	if err := notifyModerationDecision(ctx, tx, reporterID, reportID, "Report reviewed", reportDecisionBody(input.Outcome, true), "reporter"); err != nil {
@@ -209,11 +204,6 @@ func (s *Service) ResolveReport(ctx context.Context, actorID, reportID uuid.UUID
 		if err := notifyModerationDecision(ctx, tx, subjectID, reportID, "Content review completed", reportDecisionBody(input.Outcome, false), "subject"); err != nil {
 			return GovernanceReport{}, err
 		}
-	}
-	if err := audit(ctx, tx, actorID, "admin.governance_report_resolved", "content_report", reportID, input.Reason, requestID, map[string]any{
-		"resourceType": resourceType, "resourceId": resourceID, "previousStatus": previousStatus, "outcome": input.Outcome,
-	}); err != nil {
-		return GovernanceReport{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return GovernanceReport{}, err
@@ -289,10 +279,9 @@ func decodeGovernanceCursor(value string, invalid error) (governanceCursor, erro
 	return cursor, nil
 }
 
-func (s *Service) ResolveAppeal(ctx context.Context, actorID, appealID uuid.UUID, input AppealResolution, requestID string) (GovernanceAppeal, error) {
+func (s *Service) ResolveAppeal(ctx context.Context, actorID, appealID uuid.UUID, input AppealResolution, _ string) (GovernanceAppeal, error) {
 	input.Decision = strings.TrimSpace(strings.ToLower(input.Decision))
-	input.Reason = strings.TrimSpace(input.Reason)
-	if !input.Confirmed || len(input.Reason) < 10 || len(input.Reason) > 1000 || !oneOf(input.Decision, "upheld", "denied") {
+	if !oneOf(input.Decision, "upheld", "denied") {
 		return GovernanceAppeal{}, ErrInvalid
 	}
 	tx, err := s.pool.Begin(ctx)
@@ -327,21 +316,16 @@ func (s *Service) ResolveAppeal(ctx context.Context, actorID, appealID uuid.UUID
 		}
 	}
 	if _, err := tx.Exec(ctx, `
-		UPDATE moderation_appeals SET status=$2,reviewer_id=$3,resolution_reason=$4,resolved_at=now() WHERE id=$1`, appealID, input.Decision, actorID, input.Reason); err != nil {
+		UPDATE moderation_appeals SET status=$2,reviewer_id=$3,resolution_reason=$4,resolved_at=now() WHERE id=$1`, appealID, input.Decision, actorID, "Administrative decision: "+input.Decision); err != nil {
 		return GovernanceAppeal{}, fmt.Errorf("resolve governance appeal: %w", err)
 	}
 	eventKind := "appeal_" + input.Decision
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO governance_events(report_id,appeal_id,actor_id,kind,from_status,to_status,reason)
-		VALUES($1,$2,$3,$4,$5,$6,$7)`, reportID, appealID, actorID, eventKind, appealStatus, input.Decision, input.Reason); err != nil {
+		VALUES($1,$2,$3,$4,$5,$6,$7)`, reportID, appealID, actorID, eventKind, appealStatus, input.Decision, "Administrative decision: "+input.Decision); err != nil {
 		return GovernanceAppeal{}, fmt.Errorf("record appeal resolution: %w", err)
 	}
 	if err := notifyModerationDecision(ctx, tx, appellantID, reportID, "Appeal reviewed", appealDecisionBody(input.Decision), "appeal:"+appealID.String()); err != nil {
-		return GovernanceAppeal{}, err
-	}
-	if err := audit(ctx, tx, actorID, "admin.governance_appeal_resolved", "moderation_appeal", appealID, input.Reason, requestID, map[string]any{
-		"reportId": reportID, "resourceType": resourceType, "resourceId": resourceID, "decision": input.Decision,
-	}); err != nil {
 		return GovernanceAppeal{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {

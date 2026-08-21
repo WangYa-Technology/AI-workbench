@@ -26,7 +26,6 @@ type RiskRuleRevision struct {
 	MediumThreshold        int        `json:"mediumThreshold"`
 	HighThreshold          int        `json:"highThreshold"`
 	CriticalThreshold      int        `json:"criticalThreshold"`
-	Reason                 string     `json:"reason"`
 	CreatedBy              *uuid.UUID `json:"createdBy,omitempty"`
 	CreatedByHandle        *string    `json:"createdByHandle,omitempty"`
 	CreatedAt              time.Time  `json:"createdAt"`
@@ -50,9 +49,7 @@ type RiskRuleUpdate struct {
 	MediumThreshold        int    `json:"mediumThreshold"`
 	HighThreshold          int    `json:"highThreshold"`
 	CriticalThreshold      int    `json:"criticalThreshold"`
-	Reason                 string `json:"reason"`
 	ExpectedVersion        int    `json:"expectedVersion"`
-	Confirmed              bool   `json:"confirmed"`
 }
 
 func (s *Service) GetRiskRulePolicy(ctx context.Context, inputs ...RevisionHistoryInput) (RiskRulePolicy, error) {
@@ -84,13 +81,13 @@ func (s *Service) GetRiskRulePolicy(ctx context.Context, inputs ...RevisionHisto
 	err := s.pool.QueryRow(ctx, `
 		SELECT r.id,r.version,r.parent_revision_id,r.name,r.task_dispute_score,r.transaction_refund_score,
 		       r.community_report_score,r.media_rejection_score,r.account_link_score,r.account_link_min_accounts,r.account_link_window_hours,
-		       r.medium_threshold,r.high_threshold,r.critical_threshold,r.reason,r.created_by,u.handle,r.created_at
+		       r.medium_threshold,r.high_threshold,r.critical_threshold,r.created_by,u.handle,r.created_at
 		FROM risk_rule_revisions r LEFT JOIN users u ON u.id=r.created_by WHERE r.id=$1`, activeID).Scan(
 		&policy.Current.ID, &policy.Current.Version, &policy.Current.ParentRevisionID, &policy.Current.Name, &policy.Current.TaskDisputeScore,
 		&policy.Current.TransactionRefundScore, &policy.Current.CommunityReportScore, &policy.Current.MediaRejectionScore,
 		&policy.Current.AccountLinkScore, &policy.Current.AccountLinkMinAccounts, &policy.Current.AccountLinkWindowHours,
 		&policy.Current.MediumThreshold, &policy.Current.HighThreshold, &policy.Current.CriticalThreshold,
-		&policy.Current.Reason, &policy.Current.CreatedBy, &policy.Current.CreatedByHandle, &policy.Current.CreatedAt,
+		&policy.Current.CreatedBy, &policy.Current.CreatedByHandle, &policy.Current.CreatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return RiskRulePolicy{}, ErrNotFound
@@ -100,7 +97,7 @@ func (s *Service) GetRiskRulePolicy(ctx context.Context, inputs ...RevisionHisto
 	rows, err := s.pool.Query(ctx, `
 		SELECT r.id,r.version,r.parent_revision_id,r.name,r.task_dispute_score,r.transaction_refund_score,
 		       r.community_report_score,r.media_rejection_score,r.account_link_score,r.account_link_min_accounts,r.account_link_window_hours,
-		       r.medium_threshold,r.high_threshold,r.critical_threshold,r.reason,r.created_by,u.handle,r.created_at
+		       r.medium_threshold,r.high_threshold,r.critical_threshold,r.created_by,u.handle,r.created_at
 		FROM risk_rule_revisions r LEFT JOIN users u ON u.id=r.created_by
 		WHERE ($1::int IS NULL OR r.version < $1) ORDER BY r.version DESC LIMIT $2`, cursorVersion, input.Limit+1)
 	if err != nil {
@@ -113,7 +110,7 @@ func (s *Service) GetRiskRulePolicy(ctx context.Context, inputs ...RevisionHisto
 			&item.TransactionRefundScore, &item.CommunityReportScore, &item.MediaRejectionScore,
 			&item.AccountLinkScore, &item.AccountLinkMinAccounts, &item.AccountLinkWindowHours,
 			&item.MediumThreshold, &item.HighThreshold, &item.CriticalThreshold,
-			&item.Reason, &item.CreatedBy, &item.CreatedByHandle, &item.CreatedAt); err != nil {
+			&item.CreatedBy, &item.CreatedByHandle, &item.CreatedAt); err != nil {
 			return RiskRulePolicy{}, err
 		}
 		policy.History = append(policy.History, item)
@@ -129,10 +126,9 @@ func (s *Service) GetRiskRulePolicy(ctx context.Context, inputs ...RevisionHisto
 	return policy, nil
 }
 
-func (s *Service) UpdateRiskRulePolicy(ctx context.Context, actorID uuid.UUID, input RiskRuleUpdate, requestID string) (RiskRulePolicy, error) {
+func (s *Service) UpdateRiskRulePolicy(ctx context.Context, actorID uuid.UUID, input RiskRuleUpdate, _ string) (RiskRulePolicy, error) {
 	input.Name = strings.TrimSpace(input.Name)
-	input.Reason = strings.TrimSpace(input.Reason)
-	if !input.Confirmed || input.ExpectedVersion < 1 || len(input.Name) < 3 || len(input.Name) > 80 || len(input.Reason) < 10 || len(input.Reason) > 500 ||
+	if input.ExpectedVersion < 1 || len(input.Name) < 3 || len(input.Name) > 80 ||
 		input.TaskDisputeScore < 0 || input.TaskDisputeScore > 100 || input.TransactionRefundScore < 0 || input.TransactionRefundScore > 100 ||
 		input.CommunityReportScore < 0 || input.CommunityReportScore > 100 || input.MediaRejectionScore < 0 || input.MediaRejectionScore > 100 ||
 		input.AccountLinkScore < 0 || input.AccountLinkScore > 100 || input.AccountLinkMinAccounts < 2 || input.AccountLinkMinAccounts > 20 ||
@@ -159,14 +155,10 @@ func (s *Service) UpdateRiskRulePolicy(ctx context.Context, actorID uuid.UUID, i
 		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`, newID, newVersion, activeID, input.Name, input.TaskDisputeScore,
 		input.TransactionRefundScore, input.CommunityReportScore, input.MediaRejectionScore,
 		input.AccountLinkScore, input.AccountLinkMinAccounts, input.AccountLinkWindowHours,
-		input.MediumThreshold, input.HighThreshold, input.CriticalThreshold, input.Reason, actorID); err != nil {
+		input.MediumThreshold, input.HighThreshold, input.CriticalThreshold, "Administrative configuration update", actorID); err != nil {
 		return RiskRulePolicy{}, err
 	}
 	if _, err := tx.Exec(ctx, `UPDATE risk_rule_state SET active_revision_id=$1,version=$2,updated_at=now() WHERE singleton=true`, newID, newVersion); err != nil {
-		return RiskRulePolicy{}, err
-	}
-	if err := audit(ctx, tx, actorID, "admin.risk_rules_updated", "risk_rule_revision", newID, input.Reason, requestID,
-		map[string]any{"previousRevisionId": activeID, "previousVersion": version, "newVersion": newVersion}); err != nil {
 		return RiskRulePolicy{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {

@@ -161,7 +161,16 @@ func (s *Server) submitGeneration(w http.ResponseWriter, r *http.Request) {
 		httputil.WriteError(w, r, http.StatusConflict, "idempotency_conflict", "This request key was already used for a different generation command.", false)
 		return
 	case errors.Is(err, billing.ErrInsufficientFunds):
-		httputil.WriteError(w, r, http.StatusPaymentRequired, "insufficient_credits", "Add Local Test credits before starting this generation.", false)
+		httputil.WriteError(w, r, http.StatusPaymentRequired, "insufficient_points", "Purchase a subscription or choose a lower-cost model before starting this generation.", false)
+		return
+	case errors.Is(err, billing.ErrSubscriptionRequired):
+		httputil.WriteError(w, r, http.StatusPaymentRequired, "subscription_required", "Purchase an active subscription before using creation models.", false)
+		return
+	case errors.Is(err, billing.ErrModelNotIncluded):
+		httputil.WriteError(w, r, http.StatusForbidden, "model_not_in_subscription", "The selected model is not included in your current subscription.", false)
+		return
+	case errors.Is(err, billing.ErrPricingNotConfigured):
+		httputil.WriteError(w, r, http.StatusServiceUnavailable, "model_pricing_unavailable", "The selected model does not have a valid point pricing rule.", false)
 		return
 	case errors.Is(err, creation.ErrProviderOff):
 		httputil.WriteError(w, r, http.StatusServiceUnavailable, "provider_unavailable", "No provider is available for this creation mode in the current environment.", true)
@@ -175,6 +184,40 @@ func (s *Server) submitGeneration(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Location", "/api/v1/generations/"+generation.ID.String())
 	httputil.JSON(w, http.StatusAccepted, generation)
+}
+
+func (s *Server) createConversation(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.requireUser(w, r)
+	if !ok {
+		return
+	}
+	var input creation.ConversationCreateInput
+	if !httputil.DecodeJSON(w, r, &input) {
+		return
+	}
+	conversation, err := s.creation.CreateConversation(r.Context(), user.ID, input)
+	if errors.Is(err, creation.ErrInvalid) {
+		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_conversation", "Enter a conversation title of no more than 120 characters.", false)
+		return
+	}
+	if err != nil {
+		s.internalError(w, r, "create conversation", err)
+		return
+	}
+	httputil.JSON(w, http.StatusCreated, conversation)
+}
+
+func (s *Server) listConversations(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.requireUser(w, r)
+	if !ok {
+		return
+	}
+	page, err := s.creation.ListConversations(r.Context(), user.ID)
+	if err != nil {
+		s.internalError(w, r, "list conversations", err)
+		return
+	}
+	httputil.JSON(w, http.StatusOK, page)
 }
 
 func (s *Server) creationCapabilities(w http.ResponseWriter, r *http.Request) {
@@ -286,7 +329,11 @@ func writeGenerationCommandResult(w http.ResponseWriter, r *http.Request, s *Ser
 	case errors.Is(err, creation.ErrProviderOff):
 		httputil.WriteError(w, r, http.StatusServiceUnavailable, "provider_unavailable", "No provider is available for this creation mode in the current environment.", true)
 	case errors.Is(err, billing.ErrInsufficientFunds):
-		httputil.WriteError(w, r, http.StatusPaymentRequired, "insufficient_credits", "Add Local Test credits before retrying this generation.", false)
+		httputil.WriteError(w, r, http.StatusPaymentRequired, "insufficient_points", "Purchase a subscription or choose a lower-cost model before retrying this generation.", false)
+	case errors.Is(err, billing.ErrSubscriptionRequired):
+		httputil.WriteError(w, r, http.StatusPaymentRequired, "subscription_required", "Purchase an active subscription before using creation models.", false)
+	case errors.Is(err, billing.ErrModelNotIncluded):
+		httputil.WriteError(w, r, http.StatusForbidden, "model_not_in_subscription", "The selected model is not included in your current subscription.", false)
 	case err != nil:
 		s.internalError(w, r, "change generation", err)
 	default:
@@ -337,6 +384,51 @@ func (s *Server) billingStatement(w http.ResponseWriter, r *http.Request) {
 	httputil.JSON(w, http.StatusOK, statement)
 }
 
+func (s *Server) pointOverview(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.requireUser(w, r)
+	if !ok {
+		return
+	}
+	overview, err := s.billing.PointOverview(r.Context(), user.ID)
+	if errors.Is(err, billing.ErrPointAccountNotFound) {
+		httputil.WriteError(w, r, http.StatusNotFound, "point_account_not_found", "The point account was not found.", false)
+		return
+	}
+	if err != nil {
+		s.internalError(w, r, "get point overview", err)
+		return
+	}
+	httputil.JSON(w, http.StatusOK, overview)
+}
+
+func (s *Server) purchaseSubscription(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.requireUser(w, r)
+	if !ok {
+		return
+	}
+	var input struct {
+		PlanID uuid.UUID `json:"planId"`
+	}
+	if !httputil.DecodeJSON(w, r, &input) {
+		return
+	}
+	overview, err := s.billing.PurchaseSubscription(r.Context(), user.ID, input.PlanID, r.Header.Get("Idempotency-Key"))
+	switch {
+	case errors.Is(err, billing.ErrInvalidPlan):
+		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_subscription", "Choose an active subscription plan and provide a valid idempotency key.", false)
+	case errors.Is(err, billing.ErrSubscriptionReplay):
+		httputil.WriteError(w, r, http.StatusConflict, "idempotency_conflict", "This request key was already used for a different subscription.", false)
+	case errors.Is(err, billing.ErrSubscriptionActive):
+		httputil.WriteError(w, r, http.StatusConflict, "subscription_already_active", "This subscription plan is already active for the current billing period.", false)
+	case errors.Is(err, billing.ErrInsufficientFunds):
+		httputil.WriteError(w, r, http.StatusPaymentRequired, "insufficient_wallet_balance", "Add funds to the USD wallet before purchasing this subscription.", false)
+	case err != nil:
+		s.internalError(w, r, "purchase subscription", err)
+	default:
+		httputil.JSON(w, http.StatusCreated, overview)
+	}
+}
+
 func (s *Server) listGenerations(w http.ResponseWriter, r *http.Request) {
 	user, ok := s.requireUser(w, r)
 	if !ok {
@@ -345,6 +437,14 @@ func (s *Server) listGenerations(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	input := creation.GenerationListInput{
 		Mode: query.Get("mode"), Status: query.Get("status"), Cursor: query.Get("cursor"),
+	}
+	if raw := strings.TrimSpace(query.Get("conversationId")); raw != "" {
+		conversationID, err := uuid.Parse(raw)
+		if err != nil || conversationID == uuid.Nil {
+			httputil.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_generation_filters", "Use a valid conversation id and supported generation filters.", false)
+			return
+		}
+		input.ConversationID = &conversationID
 	}
 	if raw := strings.TrimSpace(query.Get("limit")); raw != "" {
 		limit, err := strconv.Atoi(raw)

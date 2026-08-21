@@ -75,8 +75,7 @@ func TestAdminUserDirectoryHTTPContract(t *testing.T) {
 
 	var updated admin.User
 	response = requestJSON(t, adminClient, http.MethodPatch, server.URL+"/api/v1/admin/users/"+targetID.String(), map[string]any{
-		"role": "creator", "status": "suspended", "reason": "Verified HTTP directory access beyond the first page.", "confirmed": true,
-	}, &updated)
+		"role": "creator", "status": "suspended"}, &updated)
 	if response.StatusCode != http.StatusOK || updated.ID != targetID || updated.Status != "suspended" {
 		t.Fatalf("exact user update response failed: status=%d user=%#v", response.StatusCode, updated)
 	}

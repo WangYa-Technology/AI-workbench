@@ -8,8 +8,8 @@ type CreationMode = 'chat' | 'image' | 'video' | 'music'
 const route = useRoute()
 const modes: CreationMode[] = ['chat', 'image', 'video', 'music']
 const activeMode = computed<CreationMode>(() => {
-  const requested = String(route.params.mode || 'image')
-  return modes.includes(requested as CreationMode) ? requested as CreationMode : 'image'
+  const requested = String(route.params.mode || 'chat')
+  return modes.includes(requested as CreationMode) ? requested as CreationMode : 'chat'
 })
 </script>
 

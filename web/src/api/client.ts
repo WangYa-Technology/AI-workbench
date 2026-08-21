@@ -11,7 +11,12 @@ export type CreatorProduct = components['schemas']['CreatorProduct']
 export type Generation = components['schemas']['Generation']
 export type GenerationPage = components['schemas']['GenerationPage']
 export type CreationCapability = components['schemas']['CreationCapability']
+export type CreationModel = components['schemas']['CreationModel']
+export type ModelCapabilities = components['schemas']['ModelCapabilities']
 export type CreationCapabilities = components['schemas']['CreationCapabilities']
+export type Conversation = components['schemas']['Conversation']
+export type ConversationPage = components['schemas']['ConversationPage']
+export type ConversationCreate = components['schemas']['ConversationCreate']
 export type GenerationCreate = components['schemas']['GenerationCreate']
 export type GenerationBatchInput = components['schemas']['GenerationBatchInput']
 export type GenerationBatchResult = components['schemas']['GenerationBatchResult']
@@ -76,6 +81,7 @@ export type DeveloperCredential = components['schemas']['DeveloperCredential']
 export type DeveloperKeyCreate = components['schemas']['DeveloperKeyCreate']
 export type DeveloperKeyRotate = components['schemas']['DeveloperKeyRotate']
 export type DeveloperTransition = components['schemas']['DeveloperTransition']
+export type AdminVersionTransition = components['schemas']['AdminVersionTransition']
 export type DeveloperControlUpdate = components['schemas']['DeveloperControlUpdate']
 export type DeveloperWebhookAccess = components['schemas']['DeveloperWebhookAccess']
 export type DeveloperWebhookEndpoint = components['schemas']['DeveloperWebhookEndpoint']
@@ -107,6 +113,11 @@ export type AdminSupportReply = components['schemas']['AdminSupportReply']
 export type AdminSupportUpdate = components['schemas']['AdminSupportUpdate']
 export type AdminSupportQuery = NonNullable<operations['listAdminSupportCases']['parameters']['query']>
 export type BillingStatement = components['schemas']['BillingStatement']
+export type PointOverview = components['schemas']['PointOverview']
+export type SubscriptionPlan = components['schemas']['SubscriptionPlan']
+export type SubscriptionPlanInput = components['schemas']['SubscriptionPlanInput']
+export type SubscriptionPlanUpdate = components['schemas']['SubscriptionPlanUpdate']
+export type ModelPointPricing = components['schemas']['ModelPointPricing']
 export type AdminOverview = components['schemas']['AdminOverview']
 export type AdminUser = components['schemas']['AdminUser']
 export type AdminUserUpdate = components['schemas']['AdminUserUpdate']
@@ -124,6 +135,12 @@ export type AdminTaskDisputeResolution = components['schemas']['AdminTaskDispute
 export type AdminTaskQuery = NonNullable<operations['listAdminTasks']['parameters']['query']>
 export type AdminProvider = components['schemas']['AdminProvider']
 export type AdminProviderUpdate = components['schemas']['AdminProviderUpdate']
+export type AdminProviderModel = components['schemas']['AdminProviderModel']
+export type AdminProviderConfig = components['schemas']['AdminProviderConfig']
+export type AdminProviderConfigCreate = components['schemas']['AdminProviderConfigCreate']
+export type AdminProviderConfigUpdate = components['schemas']['AdminProviderConfigUpdate']
+export type AdminProviderModelCreate = components['schemas']['AdminProviderModelCreate']
+export type AdminProviderModelUpdate = components['schemas']['AdminProviderModelUpdate']
 export type AdminModelRoutePolicy = components['schemas']['AdminModelRoutePolicy']
 export type AdminModelRouteQuery = NonNullable<operations['getAdminModelRoutes']['parameters']['query']>
 export type AdminModelRouteRevision = components['schemas']['AdminModelRouteRevision']
@@ -163,8 +180,6 @@ export type AdminRankingEvaluation = components['schemas']['AdminRankingEvaluati
 export type AdminDiscoveryIndexRun = components['schemas']['AdminDiscoveryIndexRun']
 export type AdminDiscoveryOperations = components['schemas']['AdminDiscoveryOperations']
 export type AdminDiscoveryHistoryQuery = NonNullable<operations['getAdminDiscoveryOperations']['parameters']['query']>
-export type AdminAuditEvent = components['schemas']['AdminAuditEvent']
-export type AdminAuditQuery = NonNullable<operations['listAdminAuditEvents']['parameters']['query']>
 export type AdminOperationalDiagnostics = components['schemas']['AdminOperationalDiagnostics']
 export type AdminGovernanceReport = components['schemas']['AdminGovernanceReport']
 export type AdminReportResolution = components['schemas']['AdminReportResolution']
@@ -319,13 +334,17 @@ export const api = {
     return request<SearchPage>(`/search?${params}`)
   },
   getCreator: (handle: string) => request<CreatorProfile>(`/creators/${encodeURIComponent(handle)}`),
+  createConversation: (input: ConversationCreate = {}) => request<Conversation>('/conversations', {
+    method: 'POST', body: JSON.stringify(input),
+  }),
+  listConversations: () => request<ConversationPage>('/conversations'),
   createGeneration: (input: GenerationCreate) => request<Generation>('/generations', {
     method: 'POST', headers: { 'Idempotency-Key': crypto.randomUUID() }, body: JSON.stringify(input),
   }),
   favoriteGeneration: (id: string, active: boolean) => request<Generation>(`/generations/${encodeURIComponent(id)}/favorite`, { method: 'PUT', body: JSON.stringify({ active }) }),
   batchGenerations: (input: GenerationBatchInput) => generationCommand<GenerationBatchResult>('/generations/batch', input),
   getGeneration: (id: string) => request<Generation>(`/generations/${encodeURIComponent(id)}`),
-  listGenerations: (query: { mode?: string; status?: string; dateFrom?: string; dateTo?: string; cursor?: string; limit?: number } = {}) => {
+  listGenerations: (query: { conversationId?: string; mode?: string; status?: string; dateFrom?: string; dateTo?: string; cursor?: string; limit?: number } = {}) => {
     const params = new URLSearchParams()
     Object.entries(query).forEach(([key, value]) => {
       if (value !== undefined && value !== '') params.set(key, String(value))
@@ -341,6 +360,8 @@ export const api = {
     })
     return request<BillingStatement>(`/billing/statement${params.size ? `?${params}` : ''}`)
   },
+	pointOverview: () => request<PointOverview>('/billing/points'),
+	purchaseSubscription: (planId: string) => request<PointOverview>('/billing/subscriptions', { method: 'POST', headers: { 'Idempotency-Key': crypto.randomUUID() }, body: JSON.stringify({ planId }) }),
 	listAssets: (query: AssetListQuery = {}) => {
 		const params = new URLSearchParams()
 		if (query.cursor) params.set('cursor', query.cursor)
@@ -382,6 +403,7 @@ export const api = {
     if (query.limit) params.set('limit', String(query.limit))
     return request<CommunityPostPage>(`/community/posts${params.size ? `?${params}` : ''}`)
   },
+  getCommunityPost: (postId: string) => request<CommunityPost>(`/community/posts/${encodeURIComponent(postId)}`),
   listCommunityComments: (postId: string, query: CommunityCommentQuery = {}) => {
     const params = new URLSearchParams()
     if (query.cursor) params.set('cursor', query.cursor)
@@ -479,7 +501,7 @@ export const api = {
     })
     return request<{ items: AdminGeneration[]; nextCursor?: string }>(`/admin/generations${params.size ? `?${params}` : ''}`)
   },
-  adminCancelGeneration: (id: string, reason: string) => request<AdminGeneration>(`/admin/generations/${encodeURIComponent(id)}/cancel`, { method: 'POST', body: JSON.stringify({ reason, confirmed: true }) }),
+  adminCancelGeneration: (id: string) => request<AdminGeneration>(`/admin/generations/${encodeURIComponent(id)}/cancel`, { method: 'POST' }),
   adminListTasks: (query: AdminTaskQuery = {}) => {
     const params = new URLSearchParams()
     Object.entries(query).forEach(([key, value]) => {
@@ -507,6 +529,17 @@ export const api = {
   adminUpdatePaymentDestination: (userId: string, input: AdminPaymentDestinationUpdate) => request<AdminPaymentDestination>(`/admin/payment-destinations/${encodeURIComponent(userId)}`, { method: 'PUT', body: JSON.stringify(input) }),
   adminListProviders: () => request<{ items: AdminProvider[] }>('/admin/providers'),
   adminUpdateProvider: (id: string, input: AdminProviderUpdate) => request<AdminProvider>(`/admin/providers/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(input) }),
+  adminListProviderConfigs: () => request<{ items: AdminProviderConfig[] }>('/admin/provider-configs'),
+  adminCreateProviderConfig: (input: AdminProviderConfigCreate) => request<AdminProviderConfig>('/admin/provider-configs', { method: 'POST', body: JSON.stringify(input) }),
+  adminUpdateProviderConfig: (id: string, input: AdminProviderConfigUpdate) => request<AdminProviderConfig>(`/admin/provider-configs/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(input) }),
+  adminArchiveProviderConfig: (id: string) => request<{ archived: boolean }>(`/admin/provider-configs/${encodeURIComponent(id)}/archive`, { method: 'POST' }),
+  adminSyncProviderModels: (id: string, input: { mode: 'chat' | 'image' | 'video' | 'music' }) => request<AdminProviderConfig>(`/admin/provider-configs/${encodeURIComponent(id)}/sync-models`, { method: 'POST', body: JSON.stringify(input) }),
+  adminCreateProviderModel: (providerId: string, input: AdminProviderModelCreate) => request<AdminProviderModel>(`/admin/provider-configs/${encodeURIComponent(providerId)}/models`, { method: 'POST', body: JSON.stringify(input) }),
+  adminUpdateProviderModel: (id: string, input: AdminProviderModelUpdate) => request<AdminProviderModel>(`/admin/provider-models/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(input) }),
+  adminArchiveProviderModel: (modelId: string) => request<{ archived: boolean }>(`/admin/provider-models/${encodeURIComponent(modelId)}/archive`, { method: 'POST' }),
+  adminListSubscriptionPlans: () => request<{ items: SubscriptionPlan[] }>('/admin/subscription-plans'),
+  adminCreateSubscriptionPlan: (input: SubscriptionPlanInput) => request<SubscriptionPlan>('/admin/subscription-plans', { method: 'POST', body: JSON.stringify(input) }),
+  adminUpdateSubscriptionPlan: (id: string, input: SubscriptionPlanUpdate) => request<SubscriptionPlan>(`/admin/subscription-plans/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(input) }),
   adminGetModelRoutes: (query: AdminModelRouteQuery = {}) => {
     const params = new URLSearchParams()
     if (query.mode) params.set('mode', query.mode)
@@ -564,7 +597,7 @@ export const api = {
   },
   adminUpdateRankingPolicy: (input: AdminRankingUpdate) => request<AdminRankingPolicy>('/admin/discovery/ranking', { method: 'POST', body: JSON.stringify(input) }),
   adminCreateRankingCandidate: (input: AdminRankingUpdate) => request<AdminRankingPolicy>('/admin/discovery/ranking/candidates', { method: 'POST', body: JSON.stringify(input) }),
-  adminRunRankingEvaluation: (reason: string) => request<AdminRankingEvaluation>('/admin/discovery/ranking/evaluations', { method: 'POST', body: JSON.stringify({ reason, confirmed: true }) }),
+  adminRunRankingEvaluation: () => request<AdminRankingEvaluation>('/admin/discovery/ranking/evaluations', { method: 'POST' }),
   adminUpdateRankingRollout: (input: AdminRankingRolloutUpdate) => request<AdminRankingPolicy>('/admin/discovery/ranking/rollout', { method: 'POST', body: JSON.stringify(input) }),
   adminGetDiscoveryOperations: (query: AdminDiscoveryHistoryQuery = {}) => {
     const params = new URLSearchParams()
@@ -573,19 +606,12 @@ export const api = {
     })
     return request<AdminDiscoveryOperations>(`/admin/discovery/operations${params.size ? `?${params}` : ''}`)
   },
-  adminAnalyzeDiscoveryIndex: (reason: string) => request<AdminDiscoveryIndexRun>('/admin/discovery/index/analyze', { method: 'POST', body: JSON.stringify({ reason, confirmed: true }) }),
-  adminListAudit: (query: AdminAuditQuery = {}) => {
-    const params = new URLSearchParams()
-    Object.entries(query).forEach(([key, value]) => {
-      if (value !== undefined && value !== '') params.set(key, String(value))
-    })
-    return request<{ items: AdminAuditEvent[]; nextCursor?: string }>(`/admin/audit${params.size ? `?${params}` : ''}`)
-  },
+  adminAnalyzeDiscoveryIndex: () => request<AdminDiscoveryIndexRun>('/admin/discovery/index/analyze', { method: 'POST' }),
   adminGetOperationalDiagnostics: () => request<AdminOperationalDiagnostics>('/admin/observability'),
   adminGetDeveloperAccess: () => request<DeveloperAccess>('/admin/developer/access'),
   adminUpdateDeveloperControl: (input: DeveloperControlUpdate) => request<DeveloperAccess['control']>('/admin/developer/control', { method: 'PUT', body: JSON.stringify(input) }),
-  adminRevokeDeveloperServiceAccount: (id: string, input: DeveloperTransition) => request<DeveloperServiceAccount>(`/admin/developer/service-accounts/${encodeURIComponent(id)}/revoke`, { method: 'POST', body: JSON.stringify(input) }),
-  adminRevokeDeveloperAPIKey: (id: string, input: DeveloperTransition) => request<DeveloperAPIKey>(`/admin/developer/keys/${encodeURIComponent(id)}/revoke`, { method: 'POST', body: JSON.stringify(input) }),
+  adminRevokeDeveloperServiceAccount: (id: string, input: AdminVersionTransition) => request<DeveloperServiceAccount>(`/admin/developer/service-accounts/${encodeURIComponent(id)}/revoke`, { method: 'POST', body: JSON.stringify(input) }),
+  adminRevokeDeveloperAPIKey: (id: string, input: AdminVersionTransition) => request<DeveloperAPIKey>(`/admin/developer/keys/${encodeURIComponent(id)}/revoke`, { method: 'POST', body: JSON.stringify(input) }),
 	adminListWebhookDeadLetters: (query: AdminWebhookRecoveryQuery = {}) => {
 		const params = new URLSearchParams()
 		Object.entries(query).forEach(([key, value]) => {
@@ -593,7 +619,7 @@ export const api = {
 		})
 		return request<{ items: DeveloperWebhookDelivery[]; nextCursor?: string }>(`/admin/developer/webhooks/dead-letters${params.size ? `?${params}` : ''}`)
 	},
-	adminReplayWebhookDelivery: (id: string, input: DeveloperTransition) => request<DeveloperWebhookDelivery>(`/admin/developer/webhooks/deliveries/${encodeURIComponent(id)}/replay`, { method: 'POST', body: JSON.stringify(input) }),
+	adminReplayWebhookDelivery: (id: string, input: AdminVersionTransition) => request<DeveloperWebhookDelivery>(`/admin/developer/webhooks/deliveries/${encodeURIComponent(id)}/replay`, { method: 'POST', body: JSON.stringify(input) }),
 	adminListEmailActionDeadLetters: (query: AdminEmailRecoveryQuery = {}) => {
 		const params = new URLSearchParams()
 		Object.entries(query).forEach(([key, value]) => {
@@ -618,7 +644,7 @@ export const api = {
     return request<DataRightsLegalHoldPage>(`/admin/data-rights/holds${params.size ? `?${params}` : ''}`)
   },
   adminCreateDataRightsHold: (input: DataRightsLegalHoldCreate) => request<DataRightsLegalHold>('/admin/data-rights/holds', { method: 'POST', body: JSON.stringify(input) }),
-  adminReleaseDataRightsHold: (id: string, reason: string) => request<DataRightsLegalHold>(`/admin/data-rights/holds/${encodeURIComponent(id)}/release`, { method: 'POST', body: JSON.stringify({ reason, confirmed: true }) }),
+  adminReleaseDataRightsHold: (id: string) => request<DataRightsLegalHold>(`/admin/data-rights/holds/${encodeURIComponent(id)}/release`, { method: 'POST' }),
   adminListGovernanceReports: (query: AdminGovernanceReportQuery = {}) => {
     const params = new URLSearchParams()
     Object.entries(query).forEach(([key, value]) => {

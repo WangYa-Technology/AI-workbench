@@ -81,8 +81,7 @@ func TestAdminContentAndMediaDirectoryHTTPContract(t *testing.T) {
 	}
 	var moderated admin.ContentItem
 	response = requestJSON(t, adminClient, http.MethodPatch, server.URL+"/api/v1/admin/content/"+oldWorkID.String(), map[string]any{
-		"status": "hidden", "reason": "Verified exact HTTP content retrieval beyond the first pages.", "confirmed": true,
-	}, &moderated)
+		"status": "hidden"}, &moderated)
 	if response.StatusCode != http.StatusOK || moderated.ID != oldWorkID || moderated.Status != "hidden" {
 		t.Fatalf("exact HTTP content response failed: status=%d item=%#v", response.StatusCode, moderated)
 	}
@@ -125,8 +124,7 @@ func TestAdminContentAndMediaDirectoryHTTPContract(t *testing.T) {
 	}
 	var reviewed admin.MediaItem
 	response = requestJSON(t, adminClient, http.MethodPost, server.URL+"/api/v1/admin/media/"+oldMediaID.String()+"/review", map[string]any{
-		"status": "rejected", "reason": "Verified exact HTTP media retrieval beyond the first pages.", "confirmed": true,
-	}, &reviewed)
+		"status": "rejected"}, &reviewed)
 	if response.StatusCode != http.StatusOK || reviewed.ID != oldMediaID || reviewed.ScanStatus != "rejected" || reviewed.ScannedAt == nil {
 		t.Fatalf("exact HTTP media response failed: status=%d item=%#v", response.StatusCode, reviewed)
 	}

@@ -1,20 +1,20 @@
 <script setup lang="ts">
 import {
   Activity, Ban, BriefcaseBusiness, CircleDollarSign, Database, FileCheck2, FileKey2, FlaskConical, Gauge, LoaderCircle, RefreshCw,
-  Headphones, KeyRound, ListFilter, MessageSquare, Send, Settings2, ShieldAlert, ShieldCheck, SlidersHorizontal, Undo2, Users, WandSparkles, X,
+  Headphones, KeyRound, ListFilter, MessageSquare, Pencil, Plus, Send, Settings2, ShieldAlert, ShieldCheck, SlidersHorizontal, Trash2, Undo2, Users, WandSparkles, X,
 } from 'lucide-vue-next'
 import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import {
-  api, messageFrom, type AdminAuditEvent, type AdminContent, type AdminFinanceAccount, type AdminOperationalDiagnostics, type AdminPaymentDestination, type AdminPaymentOperation,
-  type AdminGeneration, type AdminGovernanceAppeal, type AdminGovernanceReport, type AdminMediaItem, type AdminModelRoutePolicy, type AdminModelRouteUpdate, type AdminOverview, type AdminProvider, type AdminUser,
-  type AdminDiscoveryOperations, type AdminProviderCostReconciliation, type AdminRankingPolicy, type AdminRankingUpdate, type AdminRiskRulePolicy, type AdminRiskRuleUpdate, type AdminRiskSignal, type AdminSystemSettingPolicy, type AdminSystemSettingUpdate, type AdminTaskOperation, type DataRightsLegalHold, type DataRightsRequest, type DeveloperAccess, type DeveloperControlUpdate, type DeveloperWebhookDelivery, type IdentityEmailAction, type SupportCase,
+  api, messageFrom, type AdminContent, type AdminFinanceAccount, type AdminOperationalDiagnostics, type AdminPaymentDestination, type AdminPaymentOperation,
+  type AdminGeneration, type AdminGovernanceAppeal, type AdminGovernanceReport, type AdminMediaItem, type AdminModelRoutePolicy, type AdminModelRouteUpdate, type AdminOverview, type AdminProvider, type AdminProviderConfig, type AdminProviderConfigCreate, type AdminProviderConfigUpdate, type AdminProviderModel, type ModelCapabilities, type AdminUser,
+  type AdminDiscoveryOperations, type AdminProviderCostReconciliation, type AdminRankingPolicy, type AdminRankingUpdate, type AdminRiskRulePolicy, type AdminRiskRuleUpdate, type AdminRiskSignal, type AdminSystemSettingPolicy, type AdminSystemSettingUpdate, type AdminTaskOperation, type DataRightsLegalHold, type DataRightsRequest, type DeveloperAccess, type DeveloperControlUpdate, type DeveloperWebhookDelivery, type IdentityEmailAction, type ModelPointPricing, type SubscriptionPlan, type SubscriptionPlanInput, type SupportCase,
 } from '../api/client'
 import { formatCurrency, formatDateTime } from '../lib/format'
 import { useSessionStore } from '../stores/session'
 
-type Tab = 'overview' | 'users' | 'content' | 'media' | 'governance' | 'support' | 'generations' | 'tasks' | 'providers' | 'models' | 'settings' | 'developer' | 'finance' | 'risk' | 'riskRules' | 'ranking' | 'dataRights' | 'diagnostics' | 'audit'
+type Tab = 'overview' | 'users' | 'content' | 'media' | 'governance' | 'support' | 'generations' | 'tasks' | 'providers' | 'models' | 'settings' | 'developer' | 'finance' | 'risk' | 'riskRules' | 'ranking' | 'dataRights' | 'diagnostics'
 type CommandKind = 'user' | 'content' | 'media' | 'report' | 'appeal' | 'generation' | 'task' | 'provider' | 'finance' | 'payment' | 'paymentEvent' | 'paymentDestination' | 'risk' | 'dataRightsHold' | 'holdRelease'
 type OverviewKey = 'users' | 'works' | 'generations' | 'orders' | 'tasks' | 'risks' | 'providers'
 
@@ -53,6 +53,34 @@ const taskDisputeStatus = ref('')
 const taskNextCursor = ref<string | null>(null)
 const taskLoadingMore = ref(false)
 const providers = ref<AdminProvider[]>([])
+const providerConfigs = ref<AdminProviderConfig[]>([])
+const initializedProviderSwitches = ref(new Set<string>())
+const providerSyncModes = reactive<Record<string, 'chat' | 'image' | 'video' | 'music'>>({})
+const providerConfigForm = reactive<AdminProviderConfigCreate & { id: string }>({ id: '', name: '', protocol: 'openai_chat_completions', endpoint: '', apiKey: '', adminEnabled: true })
+type EditableProviderModel = { id: string; providerId: string; mode: 'chat' | 'image' | 'video' | 'music'; modelName: string; displayName: string; description: string; estimatedCostCents: number; pointPricing: ModelPointPricing; capabilities: ModelCapabilities; adminEnabled: boolean }
+const defaultModelCapabilities = (mode: EditableProviderModel['mode']): ModelCapabilities => ({
+  aspectRatios: ['image', 'video'].includes(mode) ? ['auto', '1:1', '4:5', '16:9'] : [],
+  qualities: mode === 'chat' ? [] : ['auto', 'standard', 'high'],
+  durationSeconds: (mode === 'video' ? [5, 10, 30] : mode === 'music' ? [5, 10, 30, 60] : []) as ModelCapabilities['durationSeconds'],
+  outputFormats: mode === 'chat' ? ['txt'] : mode === 'image' ? ['jpeg', 'png'] : mode === 'video' ? ['mp4'] : ['wav'],
+  resultFormats: mode === 'chat' ? ['txt'] : mode === 'image' ? ['jpeg', 'png'] : mode === 'video' ? ['mp4'] : ['wav'],
+  referenceKinds: mode === 'chat' ? ['document'] : mode === 'music' ? ['audio'] : ['image'],
+  supportsMask: mode === 'image',
+})
+const defaultModelPointPricing = (mode: EditableProviderModel['mode']): ModelPointPricing => ({
+  mode, inputPointsPer1KTokens: mode === 'chat' ? 2 : 0, outputPointsPer1KTokens: mode === 'chat' ? 8 : 0,
+  pointsPerSecond: ['video', 'music'].includes(mode) ? 2 : 0, minimumPoints: mode === 'image' ? 10 : 1, version: 0,
+  imageResolutionPrices: mode === 'image' ? [{ resolution: '1024x1024', points: 10 }, { resolution: '1024x1536', points: 15 }, { resolution: '1536x1024', points: 15 }] : [],
+})
+const cloneModelPointPricing = (pricing: ModelPointPricing): ModelPointPricing => ({
+  ...pricing,
+  imageResolutionPrices: pricing.imageResolutionPrices.map(item => ({ ...item })),
+})
+const providerModelForm = reactive<EditableProviderModel>({ id: '', providerId: '', mode: 'chat', modelName: '', displayName: '', description: '', estimatedCostCents: 0, pointPricing: defaultModelPointPricing('chat'), capabilities: defaultModelCapabilities('chat'), adminEnabled: true })
+const providerOutputFormats = computed(() => ({ chat: ['txt'], image: ['jpeg', 'png'], video: ['mp4'], music: ['wav'] } as const)[providerModelForm.mode])
+const providerDurationOptions = computed(() => (providerModelForm.mode === 'music' ? [5, 10, 30, 60] : [5, 10, 30]) as ModelCapabilities['durationSeconds'])
+const providerConfigEditorOpen = ref(false)
+const providerModelEditorOpen = ref(false)
 const modelRoutePolicy = ref<AdminModelRoutePolicy | null>(null)
 const modelRouteLoadingMore = ref<Record<string, boolean>>({})
 const systemSettingPolicy = ref<AdminSystemSettingPolicy | null>(null)
@@ -60,6 +88,9 @@ const systemSettingNextCursor = ref<string | null>(null)
 const systemSettingLoadingMore = ref(false)
 const modelRouteMode = ref<'chat' | 'image' | 'video' | 'music'>('image')
 const finance = ref<AdminFinanceAccount[]>([])
+const subscriptionPlans = ref<SubscriptionPlan[]>([])
+const subscriptionPlanEditorOpen = ref(false)
+const subscriptionPlanForm = reactive<SubscriptionPlanInput & { id: string }>({ id: '', tierCode: '', name: '', description: '', priceCents: 0, currency: 'USD', includedPoints: 10000, billingPeriodDays: 30, sortOrder: 0, active: true, modelIds: [] })
 const financeQuery = ref('')
 const financeState = ref('')
 const financeNextCursor = ref<string | null>(null)
@@ -77,7 +108,7 @@ const paymentDestinationNextCursor = ref<string | null>(null)
 const providerCostReconciliations = ref<AdminProviderCostReconciliation[]>([])
 const providerCostReconciliationAvailable = ref(false)
 const providerCostReconciliationLoading = ref(false)
-const providerCostReconciliationForm = reactive({ periodStart: '', periodEnd: '', reason: '', confirmed: false })
+const providerCostReconciliationForm = reactive({ periodStart: '', periodEnd: '' })
 const riskSignals = ref<AdminRiskSignal[]>([])
 const riskQuery = ref('')
 const riskStatus = ref('')
@@ -96,15 +127,7 @@ const indexRunLoadingMore = ref(false)
 const evaluationNextCursor = ref<string | null>(null)
 const evaluationLoadingMore = ref(false)
 const rankingActivationMode = ref<'candidate' | 'immediate'>('candidate')
-const evaluationForm = reactive({ reason: '', confirmed: false })
-const indexForm = reactive({ reason: '', confirmed: false })
-const rolloutForm = reactive({ percent: 25, reason: '', confirmed: false })
-const auditEvents = ref<AdminAuditEvent[]>([])
-const auditQuery = ref('')
-const auditAction = ref('')
-const auditResourceType = ref('')
-const auditNextCursor = ref<string | null>(null)
-const auditLoadingMore = ref(false)
+const rolloutForm = reactive({ percent: 25 })
 const operationalDiagnostics = ref<AdminOperationalDiagnostics | null>(null)
 const developerAdminAccess = ref<DeveloperAccess | null>(null)
 const webhookDeadLetters = ref<DeveloperWebhookDelivery[]>([])
@@ -149,37 +172,37 @@ const supportCategory = ref('')
 const supportNextCursor = ref<string | null>(null)
 const supportLoadingMore = ref(false)
 const selectedSupport = ref<SupportCase | null>(null)
-const supportReply = reactive({ body: '', reason: '', confirmed: false })
-const supportDecision = reactive({ status: 'in_review', resolutionCode: '', reason: '', confirmed: false })
-const command = reactive({ kind: '' as CommandKind | '', id: '', title: '', role: '', status: '', outcome: '', decision: '', action: '', destinationID: '', enabled: false, deltaCents: 0, authorityReference: '', reason: '', confirmed: false })
+const supportReply = reactive({ body: '' })
+const supportDecision = reactive({ status: 'in_review', resolutionCode: '' })
+const command = reactive({ kind: '' as CommandKind | '', id: '', title: '', role: '', status: '', outcome: '', decision: '', action: '', destinationID: '', enabled: false, displayName: '', modelName: '', description: '', estimatedCostCents: 0, deltaCents: 0, authorityReference: '' })
 const commandPanel = ref<InstanceType<typeof globalThis.HTMLFormElement> | null>(null)
 const tabsNav = ref<InstanceType<typeof globalThis.HTMLElement> | null>(null)
 const rankingForm = reactive<AdminRankingUpdate>({
   name: '', titleExactWeight: 100, titlePrefixWeight: 80, titleContainsWeight: 60,
   creatorExactWeight: 50, creatorMatchWeight: 35, bodyMatchWeight: 25, secondaryMatchWeight: 12,
   recencyWeight: 10, creatorActivityWeight: 15, workTypeBoost: 0, creatorTypeBoost: 0,
-  productTypeBoost: 0, demandTypeBoost: 0, reason: '', expectedVersion: 1, confirmed: false,
+  productTypeBoost: 0, demandTypeBoost: 0, expectedVersion: 1,
 })
 const riskRuleForm = reactive<AdminRiskRuleUpdate>({
   name: '', taskDisputeScore: 85, transactionRefundScore: 55,
   communityReportScore: 35, mediaRejectionScore: 75,
   accountLinkScore: 65, accountLinkMinAccounts: 3, accountLinkWindowHours: 24,
   mediumThreshold: 40, highThreshold: 70, criticalThreshold: 90,
-  reason: '', expectedVersion: 1, confirmed: false,
+  expectedVersion: 1,
 })
-const modelRouteForm = reactive<AdminModelRouteUpdate>({ providerProfileId: '', name: '', timeoutSeconds: 120, maxAttempts: 3, reason: '', expectedVersion: 1, confirmed: false })
-const systemSettingForm = reactive<AdminSystemSettingUpdate>({ name: '', registrationsEnabled: true, generationsEnabled: true, publishingEnabled: true, marketplaceCheckoutEnabled: true, taskCreationEnabled: true, publicNotice: '', reason: '', expectedVersion: 1, confirmed: false })
-const developerControlForm = reactive<DeveloperControlUpdate>({ enabled: false, maxServiceAccounts: 5, maxActiveKeys: 3, defaultTtlDays: 90, reason: '', expectedVersion: 1, confirmed: false })
-const developerEmergencyForm = reactive({ reason: '', confirmed: false })
-const webhookReplayForm = reactive({ reason: '', confirmed: false })
-const emailRecoveryForm = reactive({ reason: '', confirmed: false })
+const modelRouteForm = reactive<AdminModelRouteUpdate>({ providerProfileId: '', name: '', timeoutSeconds: 120, maxAttempts: 3, expectedVersion: 1 })
+const systemSettingForm = reactive<AdminSystemSettingUpdate>({ name: '', registrationsEnabled: true, generationsEnabled: true, publishingEnabled: true, marketplaceCheckoutEnabled: true, taskCreationEnabled: true, publicNotice: '', expectedVersion: 1 })
+const developerControlForm = reactive<DeveloperControlUpdate>({ enabled: false, maxServiceAccounts: 5, maxActiveKeys: 3, defaultTtlDays: 90, expectedVersion: 1 })
 
 const tabPermissions: Record<Tab, string> = {
   overview: 'admin:overview', users: 'admin:users', content: 'admin:content', media: 'admin:media', generations: 'admin:generations',
-  governance: 'admin:governance', support: 'admin:support', tasks: 'admin:tasks', providers: 'admin:providers', models: 'admin:models', settings: 'admin:settings', developer: 'admin:developer', finance: 'admin:finance', risk: 'admin:risk', riskRules: 'admin:risk_rules', ranking: 'admin:ranking', dataRights: 'admin:data-rights', diagnostics: 'admin:observability', audit: 'admin:audit',
+  governance: 'admin:governance', support: 'admin:support', tasks: 'admin:tasks', providers: 'admin:providers', models: 'admin:models', settings: 'admin:settings', developer: 'admin:developer', finance: 'admin:finance', risk: 'admin:risk', riskRules: 'admin:risk_rules', ranking: 'admin:ranking', dataRights: 'admin:data-rights', diagnostics: 'admin:observability',
 }
-const tabIcons = { overview: Gauge, users: Users, content: FileCheck2, media: ShieldCheck, governance: ShieldAlert, support: Headphones, generations: WandSparkles, tasks: BriefcaseBusiness, providers: SlidersHorizontal, models: WandSparkles, settings: Settings2, developer: KeyRound, finance: CircleDollarSign, risk: Activity, riskRules: Settings2, ranking: ListFilter, dataRights: FileKey2, diagnostics: Activity, audit: ShieldCheck }
+const tabIcons = { overview: Gauge, users: Users, content: FileCheck2, media: ShieldCheck, governance: ShieldAlert, support: Headphones, generations: WandSparkles, tasks: BriefcaseBusiness, providers: SlidersHorizontal, models: WandSparkles, settings: Settings2, developer: KeyRound, finance: CircleDollarSign, risk: Activity, riskRules: Settings2, ranking: ListFilter, dataRights: FileKey2, diagnostics: Activity }
 const tabs = computed(() => (Object.keys(tabPermissions) as Tab[]).filter((tab) => session.user?.permissions.includes(tabPermissions[tab])))
+const legacyProviderProfiles = computed(() => providers.value.filter((profile) => !providerConfigs.value.some((config) => config.models.some((model) => model.id === profile.id))))
+const availablePlanModels = computed(() => providerConfigs.value.flatMap(provider => provider.models.map(model => ({ ...model, providerName: provider.name }))))
+const editingProviderConfig = computed(() => providerConfigs.value.find(item => item.id === providerConfigForm.id) || null)
 const activeTab = computed<Tab>(() => {
   const requested = String(route.query.tab || 'overview') as Tab
   return tabs.value.includes(requested) ? requested : tabs.value[0] || 'overview'
@@ -209,9 +232,6 @@ const resourceTypeKeys: Record<string, string> = {
 const mediaKindKeys: Record<string, string> = {
   image: 'admin.mediaKinds.image', video: 'admin.mediaKinds.video', audio: 'admin.mediaKinds.audio', document: 'admin.mediaKinds.document', prompt: 'admin.mediaKinds.prompt', workflow: 'admin.mediaKinds.workflow',
 }
-const providerModeKeys: Record<string, string> = {
-  chat: 'create.modes.chat', image: 'create.modes.image', video: 'create.modes.video', music: 'create.modes.music',
-}
 const overviewStatusKeys: Record<OverviewKey, Record<string, string>> = {
   users: { active: 'admin.states.active', suspended: 'admin.states.suspended', deleted: 'admin.states.deleted' },
   works: { draft: 'admin.states.draft', published: 'admin.states.published', hidden: 'admin.states.hidden', removed: 'admin.states.removed' },
@@ -221,9 +241,16 @@ const overviewStatusKeys: Record<OverviewKey, Record<string, string>> = {
   risks: { open: 'admin.riskStatuses.open', reviewing: 'admin.riskStatuses.reviewing', resolved: 'admin.riskStatuses.resolved', dismissed: 'admin.riskStatuses.dismissed' },
   providers: { enabled: 'admin.providerStates.enabled', disabled: 'admin.providerStates.disabled' },
 }
+const providerProtocolKeys: Record<AdminProviderConfig['protocol'], string> = {
+  openai_responses: 'openaiResponses', openai_chat_completions: 'openaiChatCompletions', openai_images: 'openaiImages', hctopup_async_image: 'hctopupAsyncImage', custom: 'custom',
+}
 
 function localizedLabel(keys: Record<string, string>, value: string) {
   return t(keys[value] || 'admin.unknownState')
+}
+
+function providerProtocolLabel(protocol: AdminProviderConfig['protocol']) {
+  return t(`admin.providerProtocols.${providerProtocolKeys[protocol]}`)
 }
 
 function overviewStatusLabel(group: OverviewKey, status: string) {
@@ -655,8 +682,7 @@ async function loadProviderCostReconciliations() {
     providerCostReconciliations.value = page.items
     providerCostReconciliationAvailable.value = true
   } catch (reason) {
-    const message = messageFrom(reason)
-    if (!message.includes('provider_cost_reconciliation_unavailable') && !message.toLowerCase().includes('not enabled')) throw reason
+    if (typeof reason !== 'object' || reason === null || !('code' in reason) || reason.code !== 'provider_cost_reconciliation_unavailable') throw reason
     providerCostReconciliations.value = []
     providerCostReconciliationAvailable.value = false
   } finally {
@@ -671,10 +697,8 @@ async function requestProviderCostReconciliation() {
   try {
     const item = await api.adminRequestProviderCostReconciliation({
       provider: 'openai', periodStart: `${providerCostReconciliationForm.periodStart}T00:00:00Z`, periodEnd: `${providerCostReconciliationForm.periodEnd}T00:00:00Z`,
-      reason: providerCostReconciliationForm.reason, confirmed: providerCostReconciliationForm.confirmed,
     })
     providerCostReconciliations.value = [item, ...providerCostReconciliations.value.filter(existing => existing.id !== item.id)]
-    Object.assign(providerCostReconciliationForm, { reason: '', confirmed: false })
     success.value = t('admin.providerCostReconciliationQueued')
   } catch (reason) {
     error.value = messageFrom(reason)
@@ -708,57 +732,6 @@ async function loadMorePaymentDestinations() {
   paymentLoadingMore.value = true
   error.value = ''
   try { await loadPaymentDestinations(paymentDestinationNextCursor.value) } catch (reason) { error.value = messageFrom(reason) } finally { paymentLoadingMore.value = false }
-}
-
-function syncAuditFilters() {
-  auditQuery.value = typeof route.query.auditQ === 'string' ? route.query.auditQ : ''
-  auditAction.value = typeof route.query.auditAction === 'string' ? route.query.auditAction : ''
-  auditResourceType.value = typeof route.query.auditResourceType === 'string' ? route.query.auditResourceType : ''
-}
-
-function auditListQuery(cursor = '') {
-  return {
-    q: auditQuery.value || undefined,
-    action: auditAction.value || undefined,
-    resourceType: auditResourceType.value || undefined,
-    cursor: cursor || undefined,
-    limit: 20,
-  }
-}
-
-async function loadAuditDirectory(cursor = '') {
-  const page = await api.adminListAudit(auditListQuery(cursor))
-  if (cursor) {
-    const known = new Set(auditEvents.value.map(item => item.id))
-    auditEvents.value = [...auditEvents.value, ...page.items.filter(item => !known.has(item.id))]
-  } else {
-    auditEvents.value = page.items
-  }
-  auditNextCursor.value = page.nextCursor || null
-}
-
-async function applyAuditFilters() {
-  const query: Record<string, string> = { tab: 'audit' }
-  if (auditQuery.value.trim()) query.auditQ = auditQuery.value.trim()
-  if (auditAction.value.trim()) query.auditAction = auditAction.value.trim()
-  if (auditResourceType.value.trim()) query.auditResourceType = auditResourceType.value.trim()
-  await router.push({ query })
-  await load()
-}
-
-async function clearAuditFilters() {
-  auditQuery.value = ''
-  auditAction.value = ''
-  auditResourceType.value = ''
-  await router.push({ query: { tab: 'audit' } })
-  await load()
-}
-
-async function loadMoreAudit() {
-  if (!auditNextCursor.value || auditLoadingMore.value) return
-  auditLoadingMore.value = true
-  error.value = ''
-  try { await loadAuditDirectory(auditNextCursor.value) } catch (reason) { error.value = messageFrom(reason) } finally { auditLoadingMore.value = false }
 }
 
 function syncTaskFilters() {
@@ -1089,7 +1062,7 @@ async function load() {
       syncTaskFilters()
       await loadTaskDirectory()
     }
-    if (tab === 'providers') providers.value = (await api.adminListProviders()).items
+    if (tab === 'providers') providerConfigs.value = (await api.adminListProviderConfigs()).items
     if (tab === 'models') {
       const [policy, providerResult] = await Promise.all([api.adminGetModelRoutes({ limit: 20 }), api.adminListProviders()])
       modelRoutePolicy.value = policy
@@ -1105,7 +1078,16 @@ async function load() {
     }
     if (tab === 'finance') {
       syncFinanceFilters()
-      await Promise.all([loadFinanceDirectory(), loadPaymentOperations(), loadPaymentDestinations(), loadProviderCostReconciliations()])
+      const [, , , , planResult, providerResult] = await Promise.all([
+        loadFinanceDirectory(),
+        loadPaymentOperations(),
+        loadPaymentDestinations(),
+        providerCostReconciliationAvailable.value ? loadProviderCostReconciliations() : Promise.resolve(),
+        api.adminListSubscriptionPlans(),
+        api.adminListProviderConfigs(),
+      ])
+      subscriptionPlans.value = planResult.items
+      providerConfigs.value = providerResult.items
     }
     if (tab === 'risk') {
 	  syncRiskFilters()
@@ -1123,10 +1105,6 @@ async function load() {
 		await loadDataRightsDirectories()
     }
     if (tab === 'diagnostics') operationalDiagnostics.value = await api.adminGetOperationalDiagnostics()
-    if (tab === 'audit') {
-      syncAuditFilters()
-      await loadAuditDirectory()
-    }
   } catch (reason) {
     error.value = messageFrom(reason)
   } finally {
@@ -1154,28 +1132,29 @@ async function useAdminDemo() {
 async function initialize() {
   const runtime = await api.meta().catch(() => null)
   localDemoAvailable.value = Boolean(runtime?.localDemoAvailable)
+  providerCostReconciliationAvailable.value = Boolean(runtime?.providerCostReconciliation?.enabled)
   await load()
 }
 
 function closeCommand() {
-  Object.assign(command, { kind: '', id: '', title: '', role: '', status: '', outcome: '', decision: '', action: '', destinationID: '', enabled: false, deltaCents: 0, authorityReference: '', reason: '', confirmed: false })
+  Object.assign(command, { kind: '', id: '', title: '', role: '', status: '', outcome: '', decision: '', action: '', destinationID: '', enabled: false, displayName: '', modelName: '', description: '', estimatedCostCents: 0, deltaCents: 0, authorityReference: '' })
 }
 
 function openUser(item: AdminUser) {
-  Object.assign(command, { kind: 'user', id: item.id, title: item.displayName, role: item.role, status: item.status, reason: '', confirmed: false })
+  Object.assign(command, { kind: 'user', id: item.id, title: item.displayName, role: item.role, status: item.status })
 }
 
 function openContent(item: AdminContent) {
-  Object.assign(command, { kind: 'content', id: item.id, title: item.title, status: item.status === 'draft' ? 'hidden' : item.status, reason: '', confirmed: false })
+  Object.assign(command, { kind: 'content', id: item.id, title: item.title, status: item.status === 'draft' ? 'hidden' : item.status })
 }
 
 function openGeneration(item: AdminGeneration) {
-  Object.assign(command, { kind: 'generation', id: item.id, title: item.prompt, reason: '', confirmed: false })
+  Object.assign(command, { kind: 'generation', id: item.id, title: item.prompt })
 }
 
 function openTaskOperation(item: AdminTaskOperation) {
   if (!item.disputeVersion) return
-  Object.assign(command, { kind: 'task', id: item.id, title: item.title, decision: 'cancel_without_settlement', status: String(item.disputeVersion), reason: '', confirmed: false })
+  Object.assign(command, { kind: 'task', id: item.id, title: item.title, decision: 'cancel_without_settlement', status: String(item.disputeVersion) })
   void nextTick(() => {
     commandPanel.value?.scrollIntoView({ behavior: globalThis.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' })
     commandPanel.value?.querySelector<InstanceType<typeof globalThis.HTMLElement>>('select, textarea, input, button')?.focus({ preventScroll: true })
@@ -1183,39 +1162,230 @@ function openTaskOperation(item: AdminTaskOperation) {
 }
 
 function openMedia(item: AdminMediaItem) {
-  Object.assign(command, { kind: 'media', id: item.id, title: item.title, status: item.scanStatus === 'pending' ? 'review' : item.scanStatus, reason: '', confirmed: false })
+  Object.assign(command, { kind: 'media', id: item.id, title: item.title, status: item.scanStatus === 'pending' ? 'review' : item.scanStatus })
 }
 
 function openReport(item: AdminGovernanceReport) {
-  Object.assign(command, { kind: 'report', id: item.id, title: item.resourceTitle, outcome: 'no_action', reason: '', confirmed: false })
+  Object.assign(command, { kind: 'report', id: item.id, title: item.resourceTitle, outcome: 'no_action' })
 }
 
 function openAppeal(item: AdminGovernanceAppeal) {
-  Object.assign(command, { kind: 'appeal', id: item.id, title: item.resourceTitle, decision: 'denied', reason: '', confirmed: false })
+  Object.assign(command, { kind: 'appeal', id: item.id, title: item.resourceTitle, decision: 'denied' })
 }
 
-function openProvider(item: AdminProvider) {
-  Object.assign(command, { kind: 'provider', id: item.id, title: item.displayName, enabled: !item.adminEnabled, reason: '', confirmed: false })
+function resetProviderConfigForm() {
+  Object.assign(providerConfigForm, { id: '', name: '', protocol: 'openai_chat_completions', endpoint: '', apiKey: '', adminEnabled: true })
+  providerConfigEditorOpen.value = false
+}
+
+function openNewProviderConfig() {
+  resetProviderConfigForm()
+  providerConfigEditorOpen.value = true
+}
+
+function editProviderConfig(item: AdminProviderConfig) {
+  Object.assign(providerConfigForm, { id: item.id, name: item.name, protocol: item.protocol, endpoint: item.endpoint, apiKey: '', adminEnabled: item.adminEnabled })
+  providerConfigEditorOpen.value = true
+}
+
+function openLegacyProvider(item: AdminProvider) {
+  Object.assign(command, { kind: 'provider', id: item.id, title: item.displayName, enabled: item.adminEnabled, displayName: item.displayName, modelName: item.modelName, description: item.description, estimatedCostCents: item.estimatedCostCents })
+  void nextTick(() => {
+    commandPanel.value?.scrollIntoView({ behavior: globalThis.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' })
+    commandPanel.value?.querySelector<InstanceType<typeof globalThis.HTMLElement>>('select, textarea, input, button')?.focus({ preventScroll: true })
+  })
+}
+
+function openProviderModel(item: AdminProviderConfig) {
+  const mode = item.models[0]?.mode || 'chat'
+  Object.assign(providerModelForm, { id: '', providerId: item.id, mode, modelName: '', displayName: '', description: '', estimatedCostCents: 0, pointPricing: defaultModelPointPricing(mode), capabilities: defaultModelCapabilities(mode), adminEnabled: true })
+  providerModelEditorOpen.value = true
+}
+
+function openNewProviderModel() {
+  const provider = providerConfigs.value[0]
+  if (provider) openProviderModel(provider)
+}
+
+function editProviderModel(provider: AdminProviderConfig, item: AdminProviderModel) {
+  Object.assign(providerModelForm, { id: item.id, providerId: provider.id, mode: item.mode, modelName: item.modelName, displayName: item.displayName, description: item.description, estimatedCostCents: item.estimatedCostCents, pointPricing: cloneModelPointPricing(item.pointPricing || defaultModelPointPricing(item.mode)), capabilities: item.capabilities || defaultModelCapabilities(item.mode), adminEnabled: item.adminEnabled })
+  providerModelEditorOpen.value = true
+}
+
+function resetProviderModelCapabilities() {
+  providerModelForm.capabilities = defaultModelCapabilities(providerModelForm.mode)
+  providerModelForm.pointPricing = defaultModelPointPricing(providerModelForm.mode)
+}
+
+function providerPointPricingSummary(model: AdminProviderModel) {
+  const rule = model.pointPricing || defaultModelPointPricing(model.mode)
+  if (model.mode === 'chat') return t('admin.chatPointRateSummary', { input: rule.inputPointsPer1KTokens, output: rule.outputPointsPer1KTokens })
+  if (model.mode === 'image') return t('admin.imagePointRateSummary', { min: Math.min(...(rule.imageResolutionPrices.length ? rule.imageResolutionPrices : defaultModelPointPricing('image').imageResolutionPrices).map(item => item.points)) })
+  return t('admin.durationPointRateSummary', { points: rule.pointsPerSecond })
+}
+
+function addImageResolutionPrice() {
+  const used = new Set(providerModelForm.pointPricing.imageResolutionPrices.map(item => item.resolution))
+  const resolution = ['512x512', '1024x1024', '1024x1536', '1536x1024', '2048x2048'].find(item => !used.has(item)) || `${1024 + used.size * 256}x${1024 + used.size * 256}`
+  providerModelForm.pointPricing.imageResolutionPrices.push({ resolution, points: Math.max(1, providerModelForm.pointPricing.minimumPoints) })
+}
+
+function removeImageResolutionPrice(index: number) {
+  if (providerModelForm.pointPricing.imageResolutionPrices.length > 1) providerModelForm.pointPricing.imageResolutionPrices.splice(index, 1)
+}
+
+function toggleProviderCapability(key: 'aspectRatios' | 'qualities' | 'outputFormats' | 'resultFormats' | 'referenceKinds', value: string) {
+  const values = providerModelForm.capabilities[key]
+  const next = values.includes(value) ? values.filter(item => item !== value) : [...values, value]
+  providerModelForm.capabilities[key] = next
+  if (key === 'outputFormats') providerModelForm.capabilities.resultFormats = [...next]
+}
+
+function toggleProviderDuration(value: number) {
+  const values = providerModelForm.capabilities.durationSeconds
+  providerModelForm.capabilities.durationSeconds = values.includes(value) ? values.filter(item => item !== value) : [...values, value]
+}
+
+function providerModelCapabilitySummary(model: AdminProviderModel) {
+  const capabilities = model.capabilities || defaultModelCapabilities(model.mode)
+  const parts = [capabilities.outputFormats.join(' / ')]
+  if (capabilities.aspectRatios.length) parts.push(capabilities.aspectRatios.join(' · '))
+  if (capabilities.durationSeconds.length) parts.push(capabilities.durationSeconds.map(value => `${value}s`).join(' · '))
+  if (capabilities.supportsMask) parts.push(t('admin.capabilityMask'))
+  return parts.filter(Boolean).join(' · ')
+}
+
+function providerModelCapabilityBadges(model: AdminProviderModel) {
+  const capabilities = model.capabilities || defaultModelCapabilities(model.mode)
+  const badges = [t(`create.modes.${model.mode}`), ...capabilities.outputFormats.slice(0, 2).map(format => format.toUpperCase())]
+  if (capabilities.referenceKinds.length) badges.push(t('admin.capabilityReferences'))
+  if (capabilities.supportsMask) badges.push(t('admin.capabilityMask'))
+  return badges.slice(0, 4)
+}
+
+function closeProviderEditors() {
+  providerConfigEditorOpen.value = false
+  providerModelEditorOpen.value = false
+}
+
+function resetSubscriptionPlanForm() {
+  Object.assign(subscriptionPlanForm, { id: '', tierCode: '', name: '', description: '', priceCents: 0, currency: 'USD', includedPoints: 10000, billingPeriodDays: 30, sortOrder: subscriptionPlans.value.length * 10, active: true, modelIds: [] })
+  subscriptionPlanEditorOpen.value = false
+}
+
+function openNewSubscriptionPlan() {
+  resetSubscriptionPlanForm()
+  subscriptionPlanEditorOpen.value = true
+}
+
+function editSubscriptionPlan(plan: SubscriptionPlan) {
+  Object.assign(subscriptionPlanForm, { id: plan.id, tierCode: plan.tierCode, name: plan.name, description: plan.description, priceCents: plan.priceCents, currency: plan.currency, includedPoints: plan.includedPoints, billingPeriodDays: plan.billingPeriodDays, sortOrder: plan.sortOrder, active: plan.active, modelIds: [...plan.modelIds] })
+  subscriptionPlanEditorOpen.value = true
+}
+
+function toggleSubscriptionPlanModel(modelId: string) {
+  subscriptionPlanForm.modelIds = subscriptionPlanForm.modelIds.includes(modelId) ? subscriptionPlanForm.modelIds.filter(id => id !== modelId) : [...subscriptionPlanForm.modelIds, modelId]
+}
+
+async function submitSubscriptionPlan() {
+  actionLoading.value = true; error.value = ''; success.value = ''
+  try {
+    const payload: SubscriptionPlanInput = { tierCode: subscriptionPlanForm.tierCode, name: subscriptionPlanForm.name, description: subscriptionPlanForm.description, priceCents: subscriptionPlanForm.priceCents, currency: subscriptionPlanForm.currency, includedPoints: subscriptionPlanForm.includedPoints, billingPeriodDays: subscriptionPlanForm.billingPeriodDays, sortOrder: subscriptionPlanForm.sortOrder, active: subscriptionPlanForm.active, modelIds: subscriptionPlanForm.modelIds }
+    const saved = subscriptionPlanForm.id ? await api.adminUpdateSubscriptionPlan(subscriptionPlanForm.id, payload) : await api.adminCreateSubscriptionPlan(payload)
+    subscriptionPlans.value = subscriptionPlanForm.id ? subscriptionPlans.value.map(plan => plan.id === saved.id ? saved : plan) : [...subscriptionPlans.value, saved]
+    resetSubscriptionPlanForm(); success.value = t('admin.subscriptionPlanSaved')
+  } catch (reason) { error.value = messageFrom(reason) } finally { actionLoading.value = false }
+}
+
+async function submitProviderConfig() {
+  actionLoading.value = true; error.value = ''; success.value = ''
+  try {
+    const payload = { name: providerConfigForm.name, protocol: providerConfigForm.protocol, endpoint: providerConfigForm.endpoint, adminEnabled: providerConfigForm.adminEnabled, ...(providerConfigForm.apiKey.trim() ? { apiKey: providerConfigForm.apiKey } : {}) }
+    const updated = providerConfigForm.id ? await api.adminUpdateProviderConfig(providerConfigForm.id, payload as AdminProviderConfigUpdate) : await api.adminCreateProviderConfig(payload as AdminProviderConfigCreate)
+    providerConfigs.value = providerConfigForm.id ? providerConfigs.value.map((item) => item.id === updated.id ? updated : item) : [...providerConfigs.value, updated]
+    closeProviderEditors(); success.value = t('admin.providerConfigSaved')
+  } catch (reason) { error.value = messageFrom(reason) } finally { actionLoading.value = false }
+}
+
+function providerSyncMode(item: AdminProviderConfig) {
+  return providerSyncModes[item.id] || (item.protocol === 'hctopup_async_image' ? 'image' : 'chat')
+}
+
+function setProviderSyncMode(providerID: string, event: globalThis.Event) {
+  const value = (event.target as InstanceType<typeof globalThis.HTMLSelectElement>).value
+  if (['chat', 'image', 'video', 'music'].includes(value)) providerSyncModes[providerID] = value as 'chat' | 'image' | 'video' | 'music'
+}
+
+async function syncProviderModels(item: AdminProviderConfig) {
+  actionLoading.value = true; error.value = ''; success.value = ''
+  try {
+    const updated = await api.adminSyncProviderModels(item.id, { mode: providerSyncMode(item) })
+    providerConfigs.value = providerConfigs.value.map(candidate => candidate.id === updated.id ? updated : candidate)
+    success.value = t('admin.providerModelsSynced')
+  } catch (reason) { error.value = messageFrom(reason) } finally { actionLoading.value = false }
+}
+
+async function syncEditingProviderModels() {
+  const provider = providerConfigs.value.find(item => item.id === providerConfigForm.id)
+  if (provider) await syncProviderModels(provider)
+}
+
+async function submitProviderModel() {
+  actionLoading.value = true; error.value = ''; success.value = ''
+  try {
+    const saved = providerModelForm.id
+      ? await api.adminUpdateProviderModel(providerModelForm.id, { mode: providerModelForm.mode, modelName: providerModelForm.modelName, displayName: providerModelForm.displayName, description: providerModelForm.description, estimatedCostCents: 0, pointPricing: providerModelForm.pointPricing, capabilities: providerModelForm.capabilities, adminEnabled: providerModelForm.adminEnabled })
+      : await api.adminCreateProviderModel(providerModelForm.providerId, { mode: providerModelForm.mode, modelName: providerModelForm.modelName, displayName: providerModelForm.displayName, description: providerModelForm.description, estimatedCostCents: 0, pointPricing: providerModelForm.pointPricing, capabilities: providerModelForm.capabilities, adminEnabled: providerModelForm.adminEnabled })
+    providerConfigs.value = providerConfigs.value.map((item) => item.id === saved.providerId ? { ...item, models: providerModelForm.id ? item.models.map((model) => model.id === saved.id ? saved : model) : [...item.models, saved] } : item)
+    closeProviderEditors(); success.value = t('admin.providerModelSaved')
+  } catch (reason) { error.value = messageFrom(reason) } finally { actionLoading.value = false }
+}
+
+async function toggleProviderModelStatus(item: AdminProviderModel) {
+  actionLoading.value = true; error.value = ''; success.value = ''
+  try {
+    const saved = await api.adminUpdateProviderModel(item.id, { adminEnabled: !item.adminEnabled })
+    initializedProviderSwitches.value = new Set(initializedProviderSwitches.value).add(item.id)
+    providerConfigs.value = providerConfigs.value.map((provider) => ({ ...provider, models: provider.models.map((model) => model.id === saved.id ? saved : model) }))
+    success.value = t('admin.providerModelSaved')
+  } catch (reason) {
+    error.value = messageFrom(reason)
+  } finally { actionLoading.value = false }
+}
+
+async function archiveProviderConfig(item: AdminProviderConfig) {
+  actionLoading.value = true; error.value = ''; success.value = ''
+  try { await api.adminArchiveProviderConfig(item.id); providerConfigs.value = providerConfigs.value.filter((candidate) => candidate.id !== item.id); closeProviderEditors(); success.value = t('admin.providerConfigArchived') } catch (reason) { error.value = messageFrom(reason) } finally { actionLoading.value = false }
+}
+
+async function archiveEditingProviderConfig() {
+  const provider = providerConfigs.value.find(item => item.id === providerConfigForm.id)
+  if (provider) await archiveProviderConfig(provider)
+}
+
+async function archiveProviderModel(item: AdminProviderModel) {
+  actionLoading.value = true; error.value = ''; success.value = ''
+  try { await api.adminArchiveProviderModel(item.id); providerConfigs.value = providerConfigs.value.map((provider) => ({ ...provider, models: provider.models.filter((model) => model.id !== item.id) })); success.value = t('admin.providerModelArchived') } catch (reason) { error.value = messageFrom(reason) } finally { actionLoading.value = false }
 }
 
 function openFinance(item: AdminFinanceAccount) {
-  Object.assign(command, { kind: 'finance', id: item.userId, title: item.displayName, deltaCents: 0, reason: '', confirmed: false })
+  Object.assign(command, { kind: 'finance', id: item.userId, title: item.displayName, deltaCents: 0 })
 }
 
 function openPaymentRecovery(item: AdminPaymentOperation, action: 'retry_transfer' | 'retry_refund') {
-  Object.assign(command, { kind: 'payment', id: item.id, title: item.resourceTitle, action, status: String(item.version), reason: '', confirmed: false })
+  Object.assign(command, { kind: 'payment', id: item.id, title: item.resourceTitle, action, status: String(item.version) })
   focusCommandPanel()
 }
 
 function openPaymentEventReplay(item: AdminPaymentOperation) {
   if (!item.providerEvent) return
-  Object.assign(command, { kind: 'paymentEvent', id: item.providerEvent.id, title: item.providerEvent.eventType, status: String(item.providerEvent.version), reason: '', confirmed: false })
+  Object.assign(command, { kind: 'paymentEvent', id: item.providerEvent.id, title: item.providerEvent.eventType, status: String(item.providerEvent.version) })
   focusCommandPanel()
 }
 
 function openPaymentDestination(item: AdminPaymentOperation) {
   if (!item.payeeId) return
-  Object.assign(command, { kind: 'paymentDestination', id: item.payeeId, title: item.payeeDisplayName || item.payeeHandle || item.resourceTitle, destinationID: item.destination?.destinationId || '', status: String(item.destination?.version || 0), enabled: item.destination?.status === 'verified', reason: '', confirmed: false })
+  Object.assign(command, { kind: 'paymentDestination', id: item.payeeId, title: item.payeeDisplayName || item.payeeHandle || item.resourceTitle, destinationID: item.destination?.destinationId || '', status: String(item.destination?.version || 0), enabled: item.destination?.status === 'verified' })
   focusCommandPanel()
 }
 
@@ -1227,7 +1397,7 @@ function focusCommandPanel() {
 }
 
 function openRisk(item: AdminRiskSignal) {
-  Object.assign(command, { kind: 'risk', id: item.id, title: item.resourceTitle, decision: 'monitor', status: String(item.version), reason: '', confirmed: false })
+  Object.assign(command, { kind: 'risk', id: item.id, title: item.resourceTitle, decision: 'monitor', status: String(item.version) })
   void nextTick(() => {
     commandPanel.value?.scrollIntoView({ behavior: globalThis.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' })
     commandPanel.value?.querySelector<InstanceType<typeof globalThis.HTMLElement>>('select, textarea, input, button')?.focus({ preventScroll: true })
@@ -1236,7 +1406,7 @@ function openRisk(item: AdminRiskSignal) {
 
 function openDataRightsHold(item: DataRightsRequest) {
   if (!item.ownerId) return
-  Object.assign(command, { kind: 'dataRightsHold', id: item.ownerId, title: `@${item.ownerHandle}`, authorityReference: '', reason: '', confirmed: false })
+  Object.assign(command, { kind: 'dataRightsHold', id: item.ownerId, title: `@${item.ownerHandle}`, authorityReference: '' })
 }
 
 function resetRankingForm() {
@@ -1249,7 +1419,7 @@ function resetRankingForm() {
     secondaryMatchWeight: current.secondaryMatchWeight, recencyWeight: current.recencyWeight,
     creatorActivityWeight: current.creatorActivityWeight, workTypeBoost: current.workTypeBoost,
     creatorTypeBoost: current.creatorTypeBoost, productTypeBoost: current.productTypeBoost,
-    demandTypeBoost: current.demandTypeBoost, reason: '', expectedVersion: current.version, confirmed: false,
+    demandTypeBoost: current.demandTypeBoost, expectedVersion: current.version,
   })
 }
 
@@ -1261,14 +1431,14 @@ function resetRiskRuleForm() {
     communityReportScore: current.communityReportScore, mediaRejectionScore: current.mediaRejectionScore,
     accountLinkScore: current.accountLinkScore, accountLinkMinAccounts: current.accountLinkMinAccounts, accountLinkWindowHours: current.accountLinkWindowHours,
     mediumThreshold: current.mediumThreshold, highThreshold: current.highThreshold, criticalThreshold: current.criticalThreshold,
-    reason: '', expectedVersion: current.version, confirmed: false,
+    expectedVersion: current.version,
   })
 }
 
 function resetModelRouteForm() {
   const current = modelRoutePolicy.value?.routes[modelRouteMode.value]
   if (!current) return
-  Object.assign(modelRouteForm, { providerProfileId: current.providerProfileId, name: current.name, timeoutSeconds: current.timeoutSeconds, maxAttempts: current.maxAttempts, reason: '', expectedVersion: current.version, confirmed: false })
+  Object.assign(modelRouteForm, { providerProfileId: current.providerProfileId, name: current.name, timeoutSeconds: current.timeoutSeconds, maxAttempts: current.maxAttempts, expectedVersion: current.version })
 }
 
 async function submitModelRoute() {
@@ -1306,7 +1476,7 @@ async function loadMoreModelRoutes() {
 
 function resetSystemSettingForm() {
   const current = systemSettingPolicy.value?.current; if (!current) return
-  Object.assign(systemSettingForm, { name: current.name, registrationsEnabled: current.registrationsEnabled, generationsEnabled: current.generationsEnabled, publishingEnabled: current.publishingEnabled, marketplaceCheckoutEnabled: current.marketplaceCheckoutEnabled, taskCreationEnabled: current.taskCreationEnabled, publicNotice: current.publicNotice, reason: '', expectedVersion: current.version, confirmed: false })
+  Object.assign(systemSettingForm, { name: current.name, registrationsEnabled: current.registrationsEnabled, generationsEnabled: current.generationsEnabled, publishingEnabled: current.publishingEnabled, marketplaceCheckoutEnabled: current.marketplaceCheckoutEnabled, taskCreationEnabled: current.taskCreationEnabled, publicNotice: current.publicNotice, expectedVersion: current.version })
 }
 
 async function loadSystemSettingHistory(cursor = '') {
@@ -1340,7 +1510,7 @@ async function submitSystemSettings() {
 
 function resetDeveloperControlForm() {
   const current = developerAdminAccess.value?.control; if (!current) return
-  Object.assign(developerControlForm, { enabled: current.enabled, maxServiceAccounts: current.maxServiceAccounts, maxActiveKeys: current.maxActiveKeys, defaultTtlDays: current.defaultTtlDays, reason: '', expectedVersion: current.version, confirmed: false })
+  Object.assign(developerControlForm, { enabled: current.enabled, maxServiceAccounts: current.maxServiceAccounts, maxActiveKeys: current.maxActiveKeys, defaultTtlDays: current.defaultTtlDays, expectedVersion: current.version })
 }
 
 async function submitDeveloperControl() {
@@ -1353,44 +1523,39 @@ async function submitDeveloperControl() {
 }
 
 async function adminRevokeDeveloperAccount(id: string, expectedVersion: number) {
-  if (!developerEmergencyForm.confirmed) return
   actionLoading.value = true; error.value = ''; success.value = ''
   try {
-    await api.adminRevokeDeveloperServiceAccount(id, { expectedVersion, reason: developerEmergencyForm.reason, confirmed: true })
+    await api.adminRevokeDeveloperServiceAccount(id, { expectedVersion })
     developerAdminAccess.value = await api.adminGetDeveloperAccess()
-    Object.assign(developerEmergencyForm, { reason: '', confirmed: false }); success.value = t('admin.developerAccountRevoked')
+    success.value = t('admin.developerAccountRevoked')
   } catch (reason) { error.value = messageFrom(reason) } finally { actionLoading.value = false }
 }
 
 async function adminRevokeDeveloperKey(id: string, expectedVersion: number) {
-  if (!developerEmergencyForm.confirmed) return
   actionLoading.value = true; error.value = ''; success.value = ''
   try {
-    await api.adminRevokeDeveloperAPIKey(id, { expectedVersion, reason: developerEmergencyForm.reason, confirmed: true })
+    await api.adminRevokeDeveloperAPIKey(id, { expectedVersion })
     developerAdminAccess.value = await api.adminGetDeveloperAccess()
-    Object.assign(developerEmergencyForm, { reason: '', confirmed: false }); success.value = t('admin.developerKeyRevoked')
+    success.value = t('admin.developerKeyRevoked')
   } catch (reason) { error.value = messageFrom(reason) } finally { actionLoading.value = false }
 }
 
 async function adminReplayWebhook(delivery: DeveloperWebhookDelivery) {
-  if (!webhookReplayForm.confirmed) return
   actionLoading.value = true; error.value = ''; success.value = ''
   try {
-    await api.adminReplayWebhookDelivery(delivery.id, { expectedVersion: delivery.version, reason: webhookReplayForm.reason, confirmed: true })
+    await api.adminReplayWebhookDelivery(delivery.id, { expectedVersion: delivery.version })
 		await loadWebhookRecoveryDirectory()
-    Object.assign(webhookReplayForm, { reason: '', confirmed: false }); success.value = t('admin.webhookReplayQueued')
+    success.value = t('admin.webhookReplayQueued')
   } catch (reason) { error.value = messageFrom(reason) } finally { actionLoading.value = false }
 }
 
 async function adminRecoverEmailAction(item: IdentityEmailAction, operation: 'retry' | 'cancel') {
-  if (!emailRecoveryForm.confirmed) return
   actionLoading.value = true; error.value = ''; success.value = ''
   try {
-    const input = { expectedVersion: item.version, reason: emailRecoveryForm.reason, confirmed: true as const }
+    const input = { expectedVersion: item.version }
     if (operation === 'retry') await api.adminRetryEmailAction(item.id, input)
     else await api.adminCancelEmailAction(item.id, input)
 		await loadEmailRecoveryDirectory()
-    Object.assign(emailRecoveryForm, { reason: '', confirmed: false })
     success.value = t(operation === 'retry' ? 'admin.emailRetryQueued' : 'admin.emailActionCancelled')
   } catch (reason) { error.value = messageFrom(reason) } finally { actionLoading.value = false }
 }
@@ -1505,14 +1670,12 @@ async function loadMoreEvaluations() {
 }
 
 async function runRankingEvaluation() {
-  if (!evaluationForm.confirmed) return
   actionLoading.value = true
   error.value = ''
   success.value = ''
   try {
-    await api.adminRunRankingEvaluation(evaluationForm.reason)
+    await api.adminRunRankingEvaluation()
     await loadDiscoveryHistories()
-    Object.assign(evaluationForm, { reason: '', confirmed: false })
     success.value = t('admin.rankingEvaluationComplete')
   } catch (reason) {
     error.value = messageFrom(reason)
@@ -1522,7 +1685,7 @@ async function runRankingEvaluation() {
 }
 
 async function updateRankingRollout() {
-  if (!rankingPolicy.value || !rolloutForm.confirmed) return
+  if (!rankingPolicy.value) return
   actionLoading.value = true
   error.value = ''
   success.value = ''
@@ -1530,11 +1693,9 @@ async function updateRankingRollout() {
     rankingPolicy.value = await api.adminUpdateRankingRollout({
       percent: rolloutForm.percent as 0 | 5 | 10 | 25 | 50 | 100,
       expectedVersion: rankingPolicy.value.rollout.version,
-      reason: rolloutForm.reason,
-      confirmed: true,
     })
     rankingNextCursor.value = rankingPolicy.value.nextCursor || null
-    Object.assign(rolloutForm, { percent: 25, reason: '', confirmed: false })
+    Object.assign(rolloutForm, { percent: 25 })
     success.value = t('admin.rankingRolloutUpdated')
   } catch (reason) {
     error.value = messageFrom(reason)
@@ -1544,14 +1705,12 @@ async function updateRankingRollout() {
 }
 
 async function analyzeDiscoveryIndex() {
-  if (!indexForm.confirmed) return
   actionLoading.value = true
   error.value = ''
   success.value = ''
   try {
-    await api.adminAnalyzeDiscoveryIndex(indexForm.reason)
+    await api.adminAnalyzeDiscoveryIndex()
     await loadDiscoveryHistories()
-    Object.assign(indexForm, { reason: '', confirmed: false })
     success.value = t('admin.discoveryIndexAnalyzed')
   } catch (reason) {
     error.value = messageFrom(reason)
@@ -1569,7 +1728,7 @@ function bytes(value: number) {
 }
 
 function openHoldRelease(item: DataRightsLegalHold) {
-  Object.assign(command, { kind: 'holdRelease', id: item.id, title: `@${item.ownerHandle}`, reason: '', confirmed: false })
+  Object.assign(command, { kind: 'holdRelease', id: item.id, title: `@${item.ownerHandle}` })
 }
 
 async function openSupport(item: SupportCase) {
@@ -1577,8 +1736,8 @@ async function openSupport(item: SupportCase) {
   error.value = ''
   try {
     selectedSupport.value = await api.adminGetSupportCase(item.id)
-    Object.assign(supportReply, { body: '', reason: '', confirmed: false })
-    Object.assign(supportDecision, { status: selectedSupport.value.status === 'open' ? 'in_review' : 'waiting_for_requester', resolutionCode: '', reason: '', confirmed: false })
+    Object.assign(supportReply, { body: '' })
+    Object.assign(supportDecision, { status: selectedSupport.value.status === 'open' ? 'in_review' : 'waiting_for_requester', resolutionCode: '' })
   } catch (reason) {
     error.value = messageFrom(reason)
   } finally {
@@ -1597,10 +1756,10 @@ async function submitSupportReply() {
   error.value = ''
   success.value = ''
   try {
-    const updated = await api.adminReplySupportCase(selectedSupport.value.id, { ...supportReply, expectedVersion: selectedSupport.value.version, confirmed: supportReply.confirmed as true })
+    const updated = await api.adminReplySupportCase(selectedSupport.value.id, { ...supportReply, expectedVersion: selectedSupport.value.version })
 	await loadSupportDirectory()
 	storeSupport(updated)
-    Object.assign(supportReply, { body: '', reason: '', confirmed: false })
+    Object.assign(supportReply, { body: '' })
     success.value = t('admin.commandComplete')
   } catch (reason) {
     error.value = messageFrom(reason)
@@ -1618,11 +1777,11 @@ async function submitSupportDecision() {
     const updated = await api.adminUpdateSupportCase(selectedSupport.value.id, {
       status: supportDecision.status as 'open' | 'in_review' | 'waiting_for_requester' | 'resolved' | 'closed',
       resolutionCode: supportDecision.resolutionCode as '' | 'answered' | 'fixed' | 'refund_guidance' | 'content_restricted' | 'no_action' | 'duplicate' | 'withdrawn',
-      reason: supportDecision.reason, expectedVersion: selectedSupport.value.version, confirmed: supportDecision.confirmed as true,
+      expectedVersion: selectedSupport.value.version,
     })
 	await loadSupportDirectory()
 	storeSupport(updated)
-    Object.assign(supportDecision, { status: updated.status === 'resolved' ? 'closed' : 'waiting_for_requester', resolutionCode: '', reason: '', confirmed: false })
+    Object.assign(supportDecision, { status: updated.status === 'resolved' ? 'closed' : 'waiting_for_requester', resolutionCode: '' })
     success.value = t('admin.commandComplete')
   } catch (reason) {
     error.value = messageFrom(reason)
@@ -1638,53 +1797,54 @@ async function submitCommand() {
   success.value = ''
   try {
     if (command.kind === 'user') {
-      const updated = await api.adminUpdateUser(command.id, { role: command.role as AdminUser['role'], status: command.status as AdminUser['status'], reason: command.reason, confirmed: command.confirmed })
+      const updated = await api.adminUpdateUser(command.id, { role: command.role as AdminUser['role'], status: command.status as AdminUser['status'] })
       if (updated.id) await loadUserDirectory()
     } else if (command.kind === 'content') {
-      await api.adminUpdateContent(command.id, { status: command.status as 'published' | 'hidden' | 'removed', reason: command.reason, confirmed: command.confirmed })
+      await api.adminUpdateContent(command.id, { status: command.status as 'published' | 'hidden' | 'removed' })
       await loadContentDirectory()
     } else if (command.kind === 'media') {
-      await api.adminReviewMedia(command.id, { status: command.status as 'clean' | 'review' | 'rejected', reason: command.reason, confirmed: command.confirmed })
+      await api.adminReviewMedia(command.id, { status: command.status as 'clean' | 'review' | 'rejected' })
       await loadMediaDirectory()
     } else if (command.kind === 'report') {
-      await api.adminResolveGovernanceReport(command.id, { outcome: command.outcome as 'no_action' | 'hidden' | 'removed', reason: command.reason, confirmed: command.confirmed })
+      await api.adminResolveGovernanceReport(command.id, { outcome: command.outcome as 'no_action' | 'hidden' | 'removed' })
       await loadReportDirectory()
     } else if (command.kind === 'appeal') {
-      await api.adminResolveGovernanceAppeal(command.id, { decision: command.decision as 'upheld' | 'denied', reason: command.reason, confirmed: command.confirmed })
+      await api.adminResolveGovernanceAppeal(command.id, { decision: command.decision as 'upheld' | 'denied' })
       await loadAppealDirectory()
     } else if (command.kind === 'generation') {
-      if (!command.confirmed) throw new Error(t('admin.confirmRequired'))
-      await api.adminCancelGeneration(command.id, command.reason)
+      await api.adminCancelGeneration(command.id)
       await loadGenerationDirectory()
     } else if (command.kind === 'task') {
       await api.adminResolveTaskDispute(command.id, {
-        decision: command.decision as 'release_creator' | 'cancel_without_settlement', reason: command.reason,
-        expectedVersion: Number(command.status), confirmed: command.confirmed,
+        decision: command.decision as 'release_creator' | 'cancel_without_settlement', expectedVersion: Number(command.status),
       })
       await loadTaskDirectory()
     } else if (command.kind === 'provider') {
-      const updated = await api.adminUpdateProvider(command.id, { enabled: command.enabled, reason: command.reason, confirmed: command.confirmed })
+      const updated = await api.adminUpdateProvider(command.id, {
+        enabled: command.enabled, displayName: command.displayName, modelName: command.modelName,
+        description: command.description, estimatedCostCents: command.estimatedCostCents,
+      })
       providers.value = providers.value.map((item) => item.id === updated.id ? updated : item)
     } else if (command.kind === 'finance') {
-      await api.adminAdjustFinance(command.id, { deltaCents: command.deltaCents, currency: 'USD', reason: command.reason, confirmed: command.confirmed })
+      await api.adminAdjustFinance(command.id, { deltaCents: command.deltaCents, currency: 'USD' })
       await loadFinanceDirectory()
     } else if (command.kind === 'payment') {
-      await api.adminRecoverPayment(command.id, { action: command.action as 'retry_transfer' | 'retry_refund', expectedVersion: Number(command.status), reason: command.reason, confirmed: command.confirmed })
+      await api.adminRecoverPayment(command.id, { action: command.action as 'retry_transfer' | 'retry_refund', expectedVersion: Number(command.status) })
       await loadPaymentOperations()
     } else if (command.kind === 'paymentEvent') {
-      await api.adminReplayPaymentEvent(command.id, { expectedVersion: Number(command.status), reason: command.reason, confirmed: command.confirmed })
+      await api.adminReplayPaymentEvent(command.id, { expectedVersion: Number(command.status) })
       await loadPaymentOperations()
     } else if (command.kind === 'paymentDestination') {
-      await api.adminUpdatePaymentDestination(command.id, { destinationId: command.destinationID, enabled: command.enabled, expectedVersion: Number(command.status), reason: command.reason, confirmed: command.confirmed })
+      await api.adminUpdatePaymentDestination(command.id, { destinationId: command.destinationID, enabled: command.enabled, expectedVersion: Number(command.status) })
       await Promise.all([loadPaymentOperations(), loadPaymentDestinations()])
     } else if (command.kind === 'risk') {
-	  await api.adminReviewRiskSignal(command.id, { decision: command.decision as 'monitor' | 'no_action' | 'escalated', reason: command.reason, expectedVersion: Number(command.status), confirmed: command.confirmed })
+	  await api.adminReviewRiskSignal(command.id, { decision: command.decision as 'monitor' | 'no_action' | 'escalated', expectedVersion: Number(command.status) })
 	  await loadRiskDirectory()
     } else if (command.kind === 'dataRightsHold') {
-		await api.adminCreateDataRightsHold({ userId: command.id, reason: command.reason, authorityReference: command.authorityReference, confirmed: command.confirmed as true })
+		await api.adminCreateDataRightsHold({ userId: command.id, authorityReference: command.authorityReference })
 		await loadDataRightsDirectories()
     } else if (command.kind === 'holdRelease') {
-		await api.adminReleaseDataRightsHold(command.id, command.reason)
+		await api.adminReleaseDataRightsHold(command.id)
 		await loadDataRightsDirectories()
     }
     success.value = t('admin.commandComplete')
@@ -1746,7 +1906,16 @@ onMounted(() => void initialize())
         <label v-if="command.kind === 'media'">{{ t('admin.scanDecision') }}<select v-model="command.status"><option v-for="status in ['clean','review','rejected']" :key="status" :value="status">{{ t(`workspace.scanStatus.${status}`) }}</option></select></label>
         <label v-if="command.kind === 'report'">{{ t('admin.reportOutcome') }}<select v-model="command.outcome"><option v-for="outcome in ['no_action','hidden','removed']" :key="outcome" :value="outcome">{{ t(`admin.outcomes.${outcome}`) }}</option></select></label>
         <label v-if="command.kind === 'appeal'">{{ t('admin.appealDecision') }}<select v-model="command.decision"><option v-for="decision in ['denied','upheld']" :key="decision" :value="decision">{{ t(`admin.appealDecisions.${decision}`) }}</option></select></label>
-        <label v-if="command.kind === 'provider'" class="admin-checkbox"><input v-model="command.enabled" type="checkbox" />{{ command.enabled ? t('admin.enableProvider') : t('admin.disableProvider') }}</label>
+        <div v-if="command.kind === 'provider'" class="admin-command-fields provider-edit-fields">
+          <label>{{ t('admin.providerDisplayName') }}<input v-model.trim="command.displayName" type="text" minlength="2" maxlength="120" required /></label>
+          <label>{{ t('admin.providerModel') }}<input v-model.trim="command.modelName" type="text" minlength="1" maxlength="160" required /></label>
+          <label>{{ t('admin.providerEstimatedCost') }}<input v-model.number="command.estimatedCostCents" type="number" min="0" max="1000000" step="1" required /></label>
+          <label class="admin-checkbox"><input v-model="command.enabled" type="checkbox" />{{ t('admin.providerEnabled') }}</label>
+          <label class="provider-description-field">{{ t('admin.providerDescription') }}<textarea v-model.trim="command.description" rows="3" minlength="10" maxlength="1000" required></textarea></label>
+          <p class="provider-config-note">
+            <Settings2 :size="15" />{{ t('admin.providerRuntimeNote') }}
+          </p>
+        </div>
         <label v-if="command.kind === 'finance'">{{ t('admin.adjustmentCents') }}<input v-model.number="command.deltaCents" type="number" min="-1000000" max="1000000" step="1" required /></label>
         <label v-if="command.kind === 'payment'">{{ t('admin.paymentRecoveryAction') }}<select v-model="command.action"><option value="retry_transfer">{{ t('admin.retryTransfer') }}</option><option value="retry_refund">{{ t('admin.retryRefund') }}</option></select></label>
         <template v-if="command.kind === 'paymentDestination'">
@@ -1756,8 +1925,6 @@ onMounted(() => void initialize())
         <label v-if="command.kind === 'risk'">{{ t('admin.riskDecision') }}<select v-model="command.decision"><option v-for="decision in ['monitor','no_action','escalated']" :key="decision" :value="decision">{{ t(`admin.riskDecisions.${decision}`) }}</option></select></label>
         <label v-if="command.kind === 'task'">{{ t('admin.taskDecision') }}<select v-model="command.decision"><option v-for="decision in ['cancel_without_settlement','release_creator']" :key="decision" :value="decision">{{ t(`admin.taskDecisions.${decision}`) }}</option></select></label>
         <label v-if="command.kind === 'dataRightsHold'">{{ t('admin.authorityReference') }}<input v-model.trim="command.authorityReference" minlength="6" maxlength="200" required :placeholder="t('admin.authorityReferencePlaceholder')" /></label>
-        <label>{{ t('admin.reason') }}<textarea v-model="command.reason" rows="3" minlength="10" :maxlength="['payment','paymentEvent','paymentDestination'].includes(command.kind) ? 1000 : 500" required :placeholder="t('admin.reasonPlaceholder')"></textarea></label>
-        <label class="admin-checkbox"><input v-model="command.confirmed" type="checkbox" required />{{ t('admin.confirmAction') }}</label>
         <button class="command-button primary" type="submit" :disabled="actionLoading">
           <LoaderCircle v-if="actionLoading" class="spin" :size="17" /><ShieldCheck v-else :size="17" />{{ t('admin.applyAction') }}
         </button>
@@ -1958,8 +2125,6 @@ onMounted(() => void initialize())
               <form @submit.prevent="submitSupportReply">
                 <h3><MessageSquare :size="17" />{{ t('admin.replyToCase') }}</h3>
                 <label>{{ t('admin.replyBody') }}<textarea v-model.trim="supportReply.body" rows="4" minlength="2" maxlength="4000" required></textarea></label>
-                <label>{{ t('admin.reason') }}<textarea v-model.trim="supportReply.reason" rows="2" minlength="10" maxlength="500" required :placeholder="t('admin.reasonPlaceholder')"></textarea></label>
-                <label class="admin-checkbox"><input v-model="supportReply.confirmed" type="checkbox" required />{{ t('admin.confirmAction') }}</label>
                 <button class="command-button secondary" type="submit" :disabled="actionLoading">
                   <LoaderCircle v-if="actionLoading" class="spin" :size="17" /><Send v-else :size="17" />{{ t('admin.sendReply') }}
                 </button>
@@ -1968,8 +2133,6 @@ onMounted(() => void initialize())
                 <h3><ShieldCheck :size="17" />{{ t('admin.updateCase') }}</h3>
                 <label>{{ t('admin.status') }}<select v-model="supportDecision.status"><option v-for="status in supportStatusOptions" :key="status" :value="status">{{ t(`support.statuses.${status}`) }}</option></select></label>
                 <label v-if="['resolved','closed'].includes(supportDecision.status)">{{ t('admin.resolutionCode') }}<select v-model="supportDecision.resolutionCode" required><option value="" disabled>{{ t('admin.chooseResolution') }}</option><option v-for="code in ['answered','fixed','refund_guidance','content_restricted','no_action','duplicate','withdrawn']" :key="code" :value="code">{{ t(`support.resolutions.${code}`) }}</option></select></label>
-                <label>{{ t('admin.reason') }}<textarea v-model.trim="supportDecision.reason" rows="3" minlength="10" maxlength="1000" required :placeholder="t('admin.reasonPlaceholder')"></textarea></label>
-                <label class="admin-checkbox"><input v-model="supportDecision.confirmed" type="checkbox" required />{{ t('admin.confirmAction') }}</label>
                 <button class="command-button primary" type="submit" :disabled="actionLoading">
                   <LoaderCircle v-if="actionLoading" class="spin" :size="17" /><ShieldCheck v-else :size="17" />{{ t('admin.applyAction') }}
                 </button>
@@ -2047,17 +2210,243 @@ onMounted(() => void initialize())
         </section>
       </div>
 
-      <div v-else-if="activeTab === 'providers'" class="admin-list provider-admin-list">
-        <article v-for="item in providers" :key="item.id">
-          <div><strong>{{ item.displayName }}</strong><span>{{ localizedLabel(providerModeKeys, item.mode) }} · {{ item.provider }} · {{ item.modelName }}</span></div><span>{{ formatCurrency(item.estimatedCostCents, item.currency, locale) }}</span><span :data-status="item.effectiveEnabled ? 'active' : 'suspended'">{{ item.effectiveEnabled ? t('admin.available') : t('admin.unavailable') }}</span><small>{{ item.runtimeAvailable ? t('admin.runtimeReady') : t('admin.externalConfig') }}</small><button class="command-button secondary" type="button" @click="openProvider(item)">
-            <Settings2 :size="16" />{{ item.adminEnabled ? t('admin.disable') : t('admin.enable') }}
-          </button>
-        </article>
+      <div v-else-if="activeTab === 'providers'" class="provider-registry-admin">
+        <header class="provider-registry-header">
+          <div><h2>{{ t('admin.providerRegistryTitle') }}</h2><p>{{ t('admin.providerRegistrySummary') }}</p></div>
+          <div class="provider-registry-actions">
+            <button class="command-button secondary" type="button" @click="openNewProviderConfig">
+              <Plus :size="16" />{{ t('admin.addProvider') }}
+            </button>
+            <button class="command-button primary" type="button" :disabled="!providerConfigs.length" @click="openNewProviderModel">
+              <Plus :size="16" />{{ t('admin.addModel') }}
+            </button>
+          </div>
+        </header>
+        <div v-if="providerConfigs.length" class="provider-model-table-wrap">
+          <table class="provider-model-table">
+            <thead>
+              <tr>
+                <th scope="col">
+                  {{ t('admin.providerTableProvider') }}
+                </th>
+                <th scope="col">
+                  {{ t('admin.providerTableModel') }}
+                </th>
+                <th scope="col">
+                  {{ t('admin.providerCapabilities') }}
+                </th>
+                <th scope="col">
+                  {{ t('admin.providerPointPricing') }}
+                </th>
+                <th scope="col">
+                  {{ t('admin.status') }}
+                </th>
+                <th scope="col">
+                  <span class="sr-only">{{ t('admin.providerTableActions') }}</span>
+                </th>
+              </tr>
+            </thead>
+            <tbody v-for="item in providerConfigs" :key="item.id">
+              <tr v-for="model in item.models" :key="model.id">
+                <td class="provider-table-provider-cell">
+                  <button class="provider-table-name" type="button" @click="editProviderConfig(item)">
+                    <span>{{ item.name }}</span><Pencil :size="13" />
+                  </button>
+                  <small>{{ providerProtocolLabel(item.protocol) }}</small>
+                  <span :data-status="item.adminEnabled && item.credentialConfigured ? 'active' : 'suspended'">{{ item.credentialConfigured ? t('admin.providerCredentialConfigured') : t('admin.providerCredentialMissing') }}</span>
+                </td>
+                <td class="provider-table-model-cell">
+                  <strong>{{ model.displayName }}</strong>
+                  <span>{{ model.modelName }}</span>
+                  <small v-if="model.description">{{ model.description }}</small>
+                </td>
+                <td>
+                  <div class="provider-capability-badges" :title="providerModelCapabilitySummary(model)">
+                    <span v-for="badge in providerModelCapabilityBadges(model)" :key="badge">{{ badge }}</span>
+                  </div>
+                </td>
+                <td class="provider-table-price">
+                  {{ providerPointPricingSummary(model) }}
+                </td>
+                <td>
+                  <div class="provider-table-status">
+                    <button class="provider-status-switch t-toggle" :class="{ 'is-init': initializedProviderSwitches.has(model.id) }" type="button" role="switch" :data-on="String(model.adminEnabled)" :aria-checked="model.adminEnabled" :disabled="actionLoading || !item.adminEnabled" :aria-label="t('admin.providerModelStatus', { name: model.displayName })" :title="model.adminEnabled ? t('admin.available') : t('admin.unavailable')" @click="toggleProviderModelStatus(model)">
+                      <span class="t-toggle-thumb" aria-hidden="true"></span>
+                    </button>
+                    <small>{{ model.adminEnabled && item.adminEnabled ? t('admin.available') : t('admin.unavailable') }}</small>
+                  </div>
+                </td>
+                <td>
+                  <div class="provider-table-actions">
+                    <button class="icon-button" type="button" :aria-label="t('admin.editModel')" :title="t('admin.editModel')" @click="editProviderModel(item, model)">
+                      <Pencil :size="15" />
+                    </button>
+                    <button class="icon-button provider-delete-action" type="button" :aria-label="t('admin.archiveModel')" :title="t('admin.archiveModel')" @click="archiveProviderModel(model)">
+                      <Trash2 :size="15" />
+                    </button>
+                  </div>
+                </td>
+              </tr>
+              <tr v-if="!item.models.length" class="provider-empty-model-row">
+                <td class="provider-table-provider-cell">
+                  <button class="provider-table-name" type="button" @click="editProviderConfig(item)">
+                    <span>{{ item.name }}</span><Pencil :size="13" />
+                  </button>
+                  <small>{{ item.protocol }}</small>
+                  <span :data-status="item.adminEnabled && item.credentialConfigured ? 'active' : 'suspended'">{{ item.credentialConfigured ? t('admin.providerCredentialConfigured') : t('admin.providerCredentialMissing') }}</span>
+                </td>
+                <td colspan="4">
+                  <span class="provider-table-empty">{{ t('admin.noProviderModels') }}</span>
+                </td>
+                <td>
+                  <button class="icon-button" type="button" :aria-label="t('admin.addModel')" :title="t('admin.addModel')" @click="openProviderModel(item)">
+                    <Plus :size="15" />
+                  </button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div v-else class="workspace-empty">
+          <SlidersHorizontal :size="22" /><p>{{ t('admin.noProviderConfigs') }}</p>
+        </div>
+        <section v-if="legacyProviderProfiles.length" class="provider-legacy-list">
+          <header><div><h2>{{ t('admin.legacyProviderTitle') }}</h2><p>{{ t('admin.legacyProviderSummary') }}</p></div></header>
+          <article v-for="item in legacyProviderProfiles" :key="item.id" class="provider-legacy-row">
+            <div><strong>{{ item.displayName }}</strong><span>{{ t(`create.modes.${item.mode}`) }} · {{ item.provider }} · {{ item.modelName }}</span></div>
+            <span :data-status="item.adminEnabled ? 'active' : 'suspended'">{{ item.adminEnabled ? t('admin.available') : t('admin.unavailable') }}</span>
+            <button class="command-button secondary" type="button" @click="openLegacyProvider(item)">
+              <Settings2 :size="15" />{{ t('admin.editProvider') }}
+            </button>
+          </article>
+        </section>
+        <Teleport to="body">
+          <div v-if="providerConfigEditorOpen" class="modal-backdrop provider-modal-backdrop" @click.self="closeProviderEditors">
+            <section class="provider-editor-modal" role="dialog" aria-modal="true" aria-labelledby="provider-editor-title">
+              <header>
+                <div>
+                  <span>{{ providerConfigForm.id ? t('admin.editProviderConfig') : t('admin.addProvider') }}</span><h2 id="provider-editor-title">
+                    {{ providerConfigForm.id ? providerConfigForm.name : t('admin.newProvider') }}
+                  </h2>
+                </div>
+                <button class="icon-button" type="button" :aria-label="t('actions.close')" @click="closeProviderEditors">
+                  <X :size="17" />
+                </button>
+              </header>
+              <form @submit.prevent="submitProviderConfig">
+                <div class="provider-editor-fields">
+                  <label>{{ t('admin.providerName') }}<input v-model.trim="providerConfigForm.name" minlength="2" maxlength="120" required /></label>
+                  <label>{{ t('admin.providerProtocol') }}<select v-model="providerConfigForm.protocol"><option value="openai_responses">{{ t('admin.providerProtocols.openaiResponses') }}</option><option value="openai_chat_completions">{{ t('admin.providerProtocols.openaiChatCompletions') }}</option><option value="openai_images">{{ t('admin.providerProtocols.openaiImages') }}</option><option value="hctopup_async_image">{{ t('admin.providerProtocols.hctopupAsyncImage') }}</option><option value="custom">{{ t('admin.providerProtocols.custom') }}</option></select></label>
+                  <label class="provider-editor-wide">{{ t('admin.providerEndpoint') }}<input v-model.trim="providerConfigForm.endpoint" type="url" :placeholder="t('admin.providerEndpointPlaceholder')" required /></label>
+                  <label class="provider-editor-wide">{{ t('admin.providerApiKey') }}<input v-model="providerConfigForm.apiKey" type="password" autocomplete="new-password" :placeholder="providerConfigForm.id ? t('admin.providerApiKeyKeep') : t('admin.providerApiKeyRequired')" :required="!providerConfigForm.id" /></label>
+                  <label class="admin-checkbox provider-editor-wide"><input v-model="providerConfigForm.adminEnabled" type="checkbox" />{{ t('admin.providerEnabled') }}</label>
+                </div>
+                <div v-if="providerConfigForm.id && editingProviderConfig" class="provider-sync-panel">
+                  <div><strong>{{ t('admin.syncProviderModels') }}</strong><span>{{ t('admin.providerSyncSummary') }}</span></div>
+                  <select :value="providerSyncMode(editingProviderConfig)" :aria-label="t('admin.providerSyncMode')" @change="setProviderSyncMode(providerConfigForm.id, $event)">
+                    <option v-for="mode in ['chat', 'image', 'video', 'music']" :key="mode" :value="mode">
+                      {{ t(`create.modes.${mode}`) }}
+                    </option>
+                  </select>
+                  <button class="command-button secondary" type="button" :disabled="actionLoading" @click="syncEditingProviderModels">
+                    <RefreshCw :size="15" />{{ t('admin.syncProviderModels') }}
+                  </button>
+                </div>
+                <footer class="provider-modal-actions">
+                  <button v-if="providerConfigForm.id" class="command-button provider-delete-button" type="button" :disabled="actionLoading" @click="archiveEditingProviderConfig">
+                    <Trash2 :size="15" />{{ t('admin.archiveProvider') }}
+                  </button>
+                  <span></span>
+                  <button class="command-button secondary" type="button" @click="closeProviderEditors">
+                    {{ t('actions.cancel') }}
+                  </button>
+                  <button class="command-button primary" type="submit" :disabled="actionLoading">
+                    <LoaderCircle v-if="actionLoading" class="spin" :size="16" /><ShieldCheck v-else :size="16" />{{ t('admin.saveProvider') }}
+                  </button>
+                </footer>
+              </form>
+            </section>
+          </div>
+          <div v-if="providerModelEditorOpen" class="modal-backdrop provider-modal-backdrop" @click.self="closeProviderEditors">
+            <section class="provider-editor-modal provider-model-editor-modal" role="dialog" aria-modal="true" aria-labelledby="provider-model-editor-title">
+              <header>
+                <div>
+                  <span>{{ providerModelForm.id ? t('admin.editModel') : t('admin.addModel') }}</span><h2 id="provider-model-editor-title">
+                    {{ providerModelForm.id ? providerModelForm.displayName : t('admin.newModel') }}
+                  </h2>
+                </div>
+                <button class="icon-button" type="button" :aria-label="t('actions.close')" @click="closeProviderEditors">
+                  <X :size="17" />
+                </button>
+              </header>
+              <form @submit.prevent="submitProviderModel">
+                <div class="provider-editor-fields">
+                  <label>{{ t('admin.providerTableProvider') }}<select v-model="providerModelForm.providerId" :disabled="Boolean(providerModelForm.id)" required><option v-for="provider in providerConfigs" :key="provider.id" :value="provider.id">{{ provider.name }}</option></select></label>
+                  <label>{{ t('admin.providerModelType') }}<select v-model="providerModelForm.mode" @change="resetProviderModelCapabilities"><option v-for="mode in ['chat','image','music','video']" :key="mode" :value="mode">{{ t(`create.modes.${mode}`) }}</option></select></label>
+                  <label>{{ t('admin.providerModelName') }}<input v-model.trim="providerModelForm.modelName" required /></label>
+                  <label>{{ t('admin.providerModelDisplayName') }}<input v-model.trim="providerModelForm.displayName" required /></label>
+                  <label class="admin-checkbox provider-model-enabled"><input v-model="providerModelForm.adminEnabled" type="checkbox" />{{ t('admin.providerModelEnabled') }}</label>
+                  <label class="provider-editor-wide">{{ t('admin.providerDescription') }}<textarea v-model.trim="providerModelForm.description" rows="3"></textarea></label>
+                </div>
+                <fieldset class="provider-capabilities-fieldset">
+                  <legend>{{ t('admin.providerCapabilities') }}</legend>
+                  <p>{{ t('admin.providerCapabilitiesSummary') }}</p>
+                  <div class="provider-capability-groups">
+                    <div v-if="['image', 'video'].includes(providerModelForm.mode)">
+                      <span>{{ t('admin.capabilityAspectRatios') }}</span><label v-for="item in ['auto', '1:1', '4:5', '16:9']" :key="item" class="admin-checkbox"><input type="checkbox" :checked="providerModelForm.capabilities.aspectRatios.includes(item)" @change="toggleProviderCapability('aspectRatios', item)" />{{ item }}</label>
+                    </div>
+                    <div v-if="providerModelForm.mode !== 'chat'">
+                      <span>{{ t('admin.capabilityQualities') }}</span><label v-for="item in ['auto', 'standard', 'high']" :key="item" class="admin-checkbox"><input type="checkbox" :checked="providerModelForm.capabilities.qualities.includes(item)" @change="toggleProviderCapability('qualities', item)" />{{ t(`create.studio.qualities.${item}`) }}</label>
+                    </div>
+                    <div><span>{{ t('admin.capabilityOutputFormats') }}</span><label v-for="item in providerOutputFormats" :key="item" class="admin-checkbox"><input type="checkbox" :checked="providerModelForm.capabilities.outputFormats.includes(item)" @change="toggleProviderCapability('outputFormats', item)" />{{ item.toUpperCase() }}</label></div>
+                    <div v-if="['video', 'music'].includes(providerModelForm.mode)">
+                      <span>{{ t('admin.capabilityDurations') }}</span><label v-for="item in providerDurationOptions" :key="item" class="admin-checkbox"><input type="checkbox" :checked="providerModelForm.capabilities.durationSeconds.includes(item)" @change="toggleProviderDuration(item)" />{{ t('create.studio.durationValue', { value: item }) }}</label>
+                    </div>
+                    <div v-if="providerModelForm.mode !== 'chat'">
+                      <span>{{ t('admin.capabilityReferences') }}</span><label v-for="item in ['image', 'video', 'audio', 'document']" :key="item" class="admin-checkbox"><input type="checkbox" :checked="providerModelForm.capabilities.referenceKinds.includes(item)" @change="toggleProviderCapability('referenceKinds', item)" />{{ item }}</label>
+                    </div>
+                    <label v-if="providerModelForm.mode === 'image'" class="admin-checkbox"><input v-model="providerModelForm.capabilities.supportsMask" type="checkbox" />{{ t('admin.capabilityMask') }}</label>
+                  </div>
+                </fieldset>
+                <fieldset class="provider-capabilities-fieldset provider-pricing-fieldset">
+                  <legend>{{ t('admin.providerPointPricing') }}</legend>
+                  <p>{{ t('admin.providerPointPricingSummary') }}</p>
+                  <div class="provider-pricing-grid">
+                    <template v-if="providerModelForm.mode === 'chat'">
+                      <label>{{ t('admin.inputPointsPer1KTokens') }}<input v-model.number="providerModelForm.pointPricing.inputPointsPer1KTokens" type="number" min="1" step="1" required /></label>
+                      <label>{{ t('admin.outputPointsPer1KTokens') }}<input v-model.number="providerModelForm.pointPricing.outputPointsPer1KTokens" type="number" min="1" step="1" required /></label>
+                    </template>
+                    <template v-else-if="providerModelForm.mode === 'image'">
+                      <div v-for="(price, index) in providerModelForm.pointPricing.imageResolutionPrices" :key="index" class="provider-resolution-price-row">
+                        <label>{{ t('admin.imageResolution') }}<input v-model.trim="price.resolution" inputmode="numeric" pattern="[0-9]+x[0-9]+" :placeholder="t('admin.imageResolutionPlaceholder')" required /></label>
+                        <label>{{ t('admin.pointsPerImage') }}<input v-model.number="price.points" type="number" min="1" step="1" required /></label>
+                        <button class="icon-button" type="button" :disabled="providerModelForm.pointPricing.imageResolutionPrices.length <= 1" :aria-label="t('admin.removeImageResolution')" :title="t('admin.removeImageResolution')" @click="removeImageResolutionPrice(index)"><Trash2 :size="15" /></button>
+                      </div>
+                      <button class="command-button secondary provider-add-resolution" type="button" @click="addImageResolutionPrice"><Plus :size="15" />{{ t('admin.addImageResolution') }}</button>
+                    </template>
+                    <label v-else>{{ t('admin.pointsPerSecond') }}<input v-model.number="providerModelForm.pointPricing.pointsPerSecond" type="number" min="1" step="1" required /></label>
+                    <label>{{ t('admin.minimumPoints') }}<input v-model.number="providerModelForm.pointPricing.minimumPoints" type="number" min="1" step="1" required /></label>
+                  </div>
+                </fieldset>
+                <footer class="provider-modal-actions">
+                  <span></span><span></span><button class="command-button secondary" type="button" @click="closeProviderEditors">
+                    {{ t('actions.cancel') }}
+                  </button><button class="command-button primary" type="submit" :disabled="actionLoading">
+                    <LoaderCircle v-if="actionLoading" class="spin" :size="16" /><ShieldCheck v-else :size="16" />{{ t('admin.saveModel') }}
+                  </button>
+                </footer>
+              </form>
+            </section>
+          </div>
+        </Teleport>
       </div>
 
       <div v-else-if="activeTab === 'models' && modelRoutePolicy" class="admin-governance model-routes-admin">
         <section>
           <header><div><h2>{{ t('admin.modelRoutesTitle') }}</h2><p>{{ t('admin.modelRoutesSummary') }}</p></div><span>v{{ modelRoutePolicy.routes[modelRouteMode]?.version }}</span></header>
+          <p class="admin-policy-note">
+            <ShieldCheck :size="15" /><span>{{ t('admin.modelRouteSelectorNote') }}</span>
+          </p>
           <form class="admin-command-panel ranking-policy-form" @submit.prevent="submitModelRoute">
             <label>{{ t('admin.creationMode') }}<select v-model="modelRouteMode" @change="resetModelRouteForm"><option v-for="mode in ['chat','image','video','music']" :key="mode" :value="mode">{{ t(`create.modes.${mode}`) }}</option></select></label>
             <label>{{ t('admin.providerProfile') }}<select v-model="modelRouteForm.providerProfileId" required><option v-for="item in providers.filter(item => item.mode === modelRouteMode)" :key="item.id" :value="item.id">{{ item.displayName }} · {{ item.modelName }} · {{ item.runtimeAvailable ? t('admin.runtimeReady') : t('admin.externalConfig') }}</option></select></label>
@@ -2066,8 +2455,6 @@ onMounted(() => void initialize())
               <label>{{ t('admin.timeoutSeconds') }}<input v-model.number="modelRouteForm.timeoutSeconds" type="number" min="5" max="600" required /></label>
               <label>{{ t('admin.maxAttempts') }}<input v-model.number="modelRouteForm.maxAttempts" type="number" min="1" max="5" required /></label>
             </div>
-            <label>{{ t('admin.reason') }}<textarea v-model.trim="modelRouteForm.reason" rows="3" minlength="10" maxlength="500" required :placeholder="t('admin.modelRouteReasonPlaceholder')"></textarea></label>
-            <label class="admin-checkbox"><input v-model="modelRouteForm.confirmed" type="checkbox" required />{{ t('admin.confirmModelRoute') }}</label>
             <button class="command-button primary" type="submit" :disabled="actionLoading">
               <LoaderCircle v-if="actionLoading" class="spin" :size="17" /><ShieldCheck v-else :size="17" />{{ t('admin.activateRevision') }}
             </button>
@@ -2077,7 +2464,7 @@ onMounted(() => void initialize())
           <header><div><h2>{{ t('admin.modelRouteHistory') }}</h2><p>{{ t('admin.modelRouteHistorySummary') }}</p></div><span>{{ modelRoutePolicy.history[modelRouteMode]?.length || 0 }}</span></header>
           <div class="admin-list ranking-history-list">
             <article v-for="revision in modelRoutePolicy.history[modelRouteMode] || []" :key="revision.id" :data-model-route-id="revision.id">
-              <div><strong>{{ revision.name }}</strong><span>{{ revision.reason }}</span></div><span>v{{ revision.version }}</span><span>{{ revision.providerDisplayName }} · {{ revision.modelName }}</span><small>{{ date(revision.createdAt) }}</small><span :data-status="revision.id === modelRoutePolicy.routes[modelRouteMode]?.id ? 'active' : ''">{{ revision.id === modelRoutePolicy.routes[modelRouteMode]?.id ? t('admin.activeRevision') : t('admin.supersededRevision') }}</span>
+              <div><strong>{{ revision.name }}</strong></div><span>v{{ revision.version }}</span><span>{{ revision.providerDisplayName }} · {{ revision.modelName }}</span><small>{{ date(revision.createdAt) }}</small><span :data-status="revision.id === modelRoutePolicy.routes[modelRouteMode]?.id ? 'active' : ''">{{ revision.id === modelRoutePolicy.routes[modelRouteMode]?.id ? t('admin.activeRevision') : t('admin.supersededRevision') }}</span>
             </article>
           </div>
           <button v-if="modelRoutePolicy.nextCursors?.[modelRouteMode]" class="command-button secondary admin-history-load-more" type="button" :disabled="modelRouteLoadingMore[modelRouteMode]" @click="loadMoreModelRoutes">
@@ -2101,8 +2488,6 @@ onMounted(() => void initialize())
               </div>
             </fieldset>
             <label>{{ t('admin.publicNotice') }}<textarea v-model.trim="systemSettingForm.publicNotice" rows="2" maxlength="240" :placeholder="t('admin.publicNoticePlaceholder')"></textarea></label>
-            <label>{{ t('admin.reason') }}<textarea v-model.trim="systemSettingForm.reason" rows="3" minlength="10" maxlength="500" required :placeholder="t('admin.systemSettingsReasonPlaceholder')"></textarea></label>
-            <label class="admin-checkbox"><input v-model="systemSettingForm.confirmed" type="checkbox" required />{{ t('admin.confirmSystemSettings') }}</label>
             <button class="command-button primary" type="submit" :disabled="actionLoading">
               <LoaderCircle v-if="actionLoading" class="spin" :size="17" /><ShieldCheck v-else :size="17" />{{ t('admin.activateRevision') }}
             </button>
@@ -2112,7 +2497,7 @@ onMounted(() => void initialize())
           <header><div><h2>{{ t('admin.systemSettingsHistory') }}</h2><p>{{ t('admin.systemSettingsHistorySummary') }}</p></div><span>{{ systemSettingPolicy.history.length }}</span></header>
           <div class="admin-list ranking-history-list">
             <article v-for="revision in systemSettingPolicy.history" :key="revision.id">
-              <div><strong>{{ revision.name }}</strong><span>{{ revision.reason }}</span></div><span>v{{ revision.version }}</span><span>{{ t('admin.enabledGateCount', { count: [revision.registrationsEnabled,revision.generationsEnabled,revision.publishingEnabled,revision.marketplaceCheckoutEnabled,revision.taskCreationEnabled].filter(Boolean).length }) }}</span><small>{{ date(revision.createdAt) }} · {{ revision.createdByHandle ? `@${revision.createdByHandle}` : t('admin.systemActor') }}</small><span :data-status="revision.id === systemSettingPolicy.current.id ? 'active' : ''">{{ revision.id === systemSettingPolicy.current.id ? t('admin.activeRevision') : t('admin.supersededRevision') }}</span>
+              <div><strong>{{ revision.name }}</strong></div><span>v{{ revision.version }}</span><span>{{ t('admin.enabledGateCount', { count: [revision.registrationsEnabled,revision.generationsEnabled,revision.publishingEnabled,revision.marketplaceCheckoutEnabled,revision.taskCreationEnabled].filter(Boolean).length }) }}</span><small>{{ date(revision.createdAt) }} · {{ revision.createdByHandle ? `@${revision.createdByHandle}` : t('admin.systemActor') }}</small><span :data-status="revision.id === systemSettingPolicy.current.id ? 'active' : ''">{{ revision.id === systemSettingPolicy.current.id ? t('admin.activeRevision') : t('admin.supersededRevision') }}</span>
             </article>
           </div>
           <button v-if="systemSettingNextCursor" class="command-button secondary admin-load-more" type="button" :disabled="systemSettingLoadingMore" @click="loadMoreSystemSettingHistory">
@@ -2131,8 +2516,6 @@ onMounted(() => void initialize())
               <label>{{ t('admin.maxActiveKeys') }}<input v-model.number="developerControlForm.maxActiveKeys" type="number" min="1" max="10" required /></label>
               <label>{{ t('admin.defaultTtlDays') }}<input v-model.number="developerControlForm.defaultTtlDays" type="number" min="1" max="365" required /></label>
             </div>
-            <label>{{ t('admin.reason') }}<textarea v-model.trim="developerControlForm.reason" rows="3" minlength="10" maxlength="500" required :placeholder="t('admin.developerReasonPlaceholder')"></textarea></label>
-            <label class="admin-checkbox"><input v-model="developerControlForm.confirmed" type="checkbox" required />{{ t('admin.confirmDeveloperControl') }}</label>
             <button class="command-button primary" type="submit" :disabled="actionLoading">
               <LoaderCircle v-if="actionLoading" class="spin" :size="17" /><ShieldCheck v-else :size="17" />{{ t('admin.applyDeveloperControl') }}
             </button>
@@ -2144,8 +2527,6 @@ onMounted(() => void initialize())
             <fieldset>
               <legend>{{ t('admin.developerEmergencyTitle') }}</legend>
               <p>{{ t('admin.developerEmergencySummary') }}</p>
-              <label>{{ t('admin.reason') }}<textarea v-model.trim="developerEmergencyForm.reason" rows="3" minlength="10" maxlength="500" required :placeholder="t('admin.developerEmergencyReasonPlaceholder')"></textarea></label>
-              <label class="admin-checkbox"><input v-model="developerEmergencyForm.confirmed" type="checkbox" required />{{ t('admin.confirmDeveloperEmergency') }}</label>
             </fieldset>
           </form>
           <div v-if="developerAdminAccess.accounts.length" class="developer-admin-accounts">
@@ -2154,7 +2535,7 @@ onMounted(() => void initialize())
                 <div><strong>{{ account.name }}</strong><span>@{{ account.ownerHandle }} · v{{ account.version }}</span></div>
                 <div class="developer-admin-actions">
                   <span :data-status="account.status === 'active' ? 'active' : 'suspended'">{{ t(`account.developerStatuses.${account.status}`) }}</span>
-                  <button v-if="account.status === 'active'" class="command-button danger" type="button" :disabled="actionLoading || !developerEmergencyForm.confirmed || developerEmergencyForm.reason.trim().length < 10" :aria-label="t('admin.revokeDeveloperAccountNamed', { name: account.name })" @click="adminRevokeDeveloperAccount(account.id, account.version)">
+                  <button v-if="account.status === 'active'" class="command-button danger" type="button" :disabled="actionLoading" :aria-label="t('admin.revokeDeveloperAccountNamed', { name: account.name })" @click="adminRevokeDeveloperAccount(account.id, account.version)">
                     <Ban :size="16" />{{ t('admin.revokeDeveloperAccount') }}
                   </button>
                 </div>
@@ -2172,7 +2553,7 @@ onMounted(() => void initialize())
                   </div>
                   <div class="developer-admin-actions">
                     <span :data-status="key.status === 'active' ? 'active' : 'suspended'">{{ t(`account.developerStatuses.${key.status}`) }}</span>
-                    <button v-if="key.status === 'active'" class="command-button danger" type="button" :disabled="actionLoading || !developerEmergencyForm.confirmed || developerEmergencyForm.reason.trim().length < 10" :aria-label="t('admin.revokeDeveloperKeyNamed', { prefix: key.publicPrefix })" @click="adminRevokeDeveloperKey(key.id, key.version)">
+                    <button v-if="key.status === 'active'" class="command-button danger" type="button" :disabled="actionLoading" :aria-label="t('admin.revokeDeveloperKeyNamed', { prefix: key.publicPrefix })" @click="adminRevokeDeveloperKey(key.id, key.version)">
                       <KeyRound :size="16" />{{ t('admin.revokeDeveloperKey') }}
                     </button>
                   </div>
@@ -2200,8 +2581,6 @@ onMounted(() => void initialize())
             </button>
           </form>
           <form v-if="webhookDeadLetters.length" class="admin-command-panel ranking-policy-form" @submit.prevent>
-            <label>{{ t('admin.reason') }}<textarea v-model.trim="webhookReplayForm.reason" rows="3" minlength="10" maxlength="500" required :placeholder="t('admin.webhookReplayReasonPlaceholder')"></textarea></label>
-            <label class="admin-checkbox"><input v-model="webhookReplayForm.confirmed" type="checkbox" required />{{ t('admin.confirmWebhookReplay') }}</label>
           </form>
           <div v-if="webhookDeadLetters.length" class="admin-list webhook-dead-letter-list">
             <article v-for="delivery in webhookDeadLetters" :key="delivery.id">
@@ -2209,7 +2588,7 @@ onMounted(() => void initialize())
               <span>{{ webhookEventLabel(delivery.eventType) }}</span>
               <span>{{ t('admin.webhookAttempts', { count: delivery.attemptCount }) }}</span>
               <small>{{ delivery.lastStatusCode ? t('account.webhookHttpStatus', { code: delivery.lastStatusCode }) : delivery.lastErrorCode }} · {{ date(delivery.updatedAt) }}</small>
-              <button class="command-button secondary" type="button" :disabled="actionLoading || !webhookReplayForm.confirmed || webhookReplayForm.reason.trim().length < 10" :aria-label="t('admin.replayWebhookNamed', { name: delivery.endpointName })" @click="adminReplayWebhook(delivery)">
+              <button class="command-button secondary" type="button" :disabled="actionLoading" :aria-label="t('admin.replayWebhookNamed', { name: delivery.endpointName })" @click="adminReplayWebhook(delivery)">
                 <RefreshCw :size="16" />{{ t('admin.replayWebhook') }}
               </button>
             </article>
@@ -2234,8 +2613,6 @@ onMounted(() => void initialize())
             </button>
           </form>
           <form v-if="emailActionDeadLetters.length" class="admin-command-panel ranking-policy-form" @submit.prevent>
-            <label>{{ t('admin.reason') }}<textarea v-model.trim="emailRecoveryForm.reason" rows="3" minlength="10" maxlength="500" required :placeholder="t('admin.emailRecoveryReasonPlaceholder')"></textarea></label>
-            <label class="admin-checkbox"><input v-model="emailRecoveryForm.confirmed" type="checkbox" required />{{ t('admin.confirmEmailRecovery') }}</label>
           </form>
           <div v-if="emailActionDeadLetters.length" class="admin-list webhook-dead-letter-list">
             <article v-for="item in emailActionDeadLetters" :key="item.id">
@@ -2244,10 +2621,10 @@ onMounted(() => void initialize())
               <span>{{ t('admin.emailAttempts', { count: item.attemptCount }) }}</span>
               <small>{{ item.attempts.at(-1)?.errorCode || t('admin.unknownState') }} · {{ date(item.updatedAt) }}</small>
               <div class="developer-admin-actions">
-                <button class="command-button secondary" type="button" :disabled="actionLoading || !emailRecoveryForm.confirmed || emailRecoveryForm.reason.trim().length < 10" @click="adminRecoverEmailAction(item, 'retry')">
+                <button class="command-button secondary" type="button" :disabled="actionLoading" @click="adminRecoverEmailAction(item, 'retry')">
                   <RefreshCw :size="16" />{{ t('admin.retryEmail') }}
                 </button>
-                <button class="command-button danger" type="button" :disabled="actionLoading || !emailRecoveryForm.confirmed || emailRecoveryForm.reason.trim().length < 10" @click="adminRecoverEmailAction(item, 'cancel')">
+                <button class="command-button danger" type="button" :disabled="actionLoading" @click="adminRecoverEmailAction(item, 'cancel')">
                   <Ban :size="16" />{{ t('admin.cancelEmailAction') }}
                 </button>
               </div>
@@ -2263,6 +2640,36 @@ onMounted(() => void initialize())
       </div>
 
       <div v-else-if="activeTab === 'finance'" class="admin-user-directory">
+        <section class="admin-finance-section subscription-plan-admin">
+          <header><div><h2>{{ t('admin.subscriptionPlansTitle') }}</h2><p>{{ t('admin.subscriptionPlansSummary') }}</p></div><button class="command-button primary" type="button" @click="openNewSubscriptionPlan"><Plus :size="16" />{{ t('admin.addSubscriptionPlan') }}</button></header>
+          <div class="subscription-plan-admin-list">
+            <article v-for="plan in subscriptionPlans" :key="plan.id" :data-status="plan.active ? 'active' : 'suspended'">
+              <div><strong>{{ plan.name }}</strong><small>{{ plan.tierCode }} · {{ plan.description }}</small></div>
+              <span><strong>{{ formatCurrency(plan.priceCents, plan.currency, locale) }}</strong><small>/ {{ plan.billingPeriodDays }} {{ t('workspace.days') }}</small></span>
+              <span><strong>{{ plan.includedPoints.toLocaleString(locale) }}</strong><small>{{ t('workspace.pointsUnit') }}</small></span>
+              <span>{{ t('workspace.modelsIncluded', { count: plan.modelIds.length }) }}</span>
+              <button class="icon-button" type="button" :aria-label="t('admin.editSubscriptionPlan')" :title="t('admin.editSubscriptionPlan')" @click="editSubscriptionPlan(plan)"><Pencil :size="15" /></button>
+            </article>
+          </div>
+          <form v-if="subscriptionPlanEditorOpen" class="subscription-plan-editor" @submit.prevent="submitSubscriptionPlan">
+            <div class="subscription-plan-fields">
+              <label>{{ t('admin.subscriptionTierCode') }}<input v-model.trim="subscriptionPlanForm.tierCode" maxlength="32" required /></label>
+              <label>{{ t('admin.subscriptionPlanName') }}<input v-model.trim="subscriptionPlanForm.name" maxlength="80" required /></label>
+              <label>{{ t('admin.subscriptionPrice') }}<input v-model.number="subscriptionPlanForm.priceCents" type="number" min="0" step="1" required /></label>
+              <label>{{ t('admin.subscriptionPoints') }}<input v-model.number="subscriptionPlanForm.includedPoints" type="number" min="1" step="1" required /></label>
+              <label>{{ t('admin.subscriptionPeriodDays') }}<input v-model.number="subscriptionPlanForm.billingPeriodDays" type="number" min="1" max="366" step="1" required /></label>
+              <label>{{ t('admin.subscriptionSortOrder') }}<input v-model.number="subscriptionPlanForm.sortOrder" type="number" step="1" required /></label>
+              <label class="provider-editor-wide">{{ t('admin.subscriptionDescription') }}<textarea v-model.trim="subscriptionPlanForm.description" maxlength="500" rows="3" required></textarea></label>
+              <label class="admin-checkbox"><input v-model="subscriptionPlanForm.active" type="checkbox" />{{ t('admin.subscriptionActive') }}</label>
+            </div>
+            <fieldset class="subscription-model-selector">
+              <legend>{{ t('admin.subscriptionModels') }}</legend><p>{{ t('admin.subscriptionModelsSummary') }}</p>
+              <label v-for="model in availablePlanModels" :key="model.id" class="admin-checkbox"><input type="checkbox" :checked="subscriptionPlanForm.modelIds.includes(model.id)" @change="toggleSubscriptionPlanModel(model.id)" /><span>{{ model.displayName }}<small>{{ model.providerName }} · {{ t(`create.modes.${model.mode}`) }}</small></span></label>
+            </fieldset>
+            <footer><button class="command-button secondary" type="button" @click="resetSubscriptionPlanForm">{{ t('actions.cancel') }}</button><button class="command-button primary" type="submit" :disabled="actionLoading"><LoaderCircle v-if="actionLoading" class="spin" :size="16" /><ShieldCheck v-else :size="16" />{{ t('admin.saveSubscriptionPlan') }}</button></footer>
+          </form>
+        </section>
+
         <form class="admin-user-filters admin-finance-filters" @submit.prevent="applyFinanceFilters">
           <label>{{ t('admin.financeSearch') }}<input v-model="financeQuery" type="search" maxlength="120" :placeholder="t('admin.financeSearchPlaceholder')" /></label>
           <label>{{ t('admin.financeState') }}<select v-model="financeState"><option value="">{{ t('admin.allFinanceStates') }}</option><option v-for="state in ['available','reserved','depleted']" :key="state" :value="state">{{ t(`admin.financeStates.${state}`) }}</option></select></label>
@@ -2292,8 +2699,6 @@ onMounted(() => void initialize())
           <form v-if="providerCostReconciliationAvailable" class="admin-user-filters admin-finance-filters" @submit.prevent="requestProviderCostReconciliation">
             <label>{{ t('admin.providerCostPeriodStart') }}<input v-model="providerCostReconciliationForm.periodStart" type="date" required /></label>
             <label>{{ t('admin.providerCostPeriodEnd') }}<input v-model="providerCostReconciliationForm.periodEnd" type="date" required /></label>
-            <label>{{ t('admin.reason') }}<input v-model.trim="providerCostReconciliationForm.reason" type="text" minlength="12" maxlength="1000" required /></label>
-            <label class="admin-checkbox"><input v-model="providerCostReconciliationForm.confirmed" type="checkbox" required />{{ t('admin.providerCostReconciliationConfirm') }}</label>
             <button class="command-button primary" type="submit" :disabled="actionLoading">
               <LoaderCircle v-if="actionLoading" class="spin" :size="16" /><CircleDollarSign v-else :size="16" />{{ t('admin.requestProviderCostReconciliation') }}
             </button>
@@ -2418,8 +2823,6 @@ onMounted(() => void initialize())
                 <label>{{ t('admin.demandTypeBoost') }}<input v-model.number="rankingForm.demandTypeBoost" type="number" min="-50" max="50" required /></label>
               </div>
             </fieldset>
-            <label>{{ t('admin.reason') }}<textarea v-model.trim="rankingForm.reason" rows="3" minlength="10" maxlength="500" required :placeholder="t('admin.rankingReasonPlaceholder')"></textarea></label>
-            <label class="admin-checkbox"><input v-model="rankingForm.confirmed" type="checkbox" required />{{ t('admin.confirmRanking') }}</label>
             <button class="command-button primary" type="submit" :disabled="actionLoading">
               <LoaderCircle v-if="actionLoading" class="spin" :size="17" /><ShieldCheck v-else :size="17" />{{ rankingActivationMode === 'candidate' ? t('admin.createCandidateRevision') : t('admin.activateRevision') }}
             </button>
@@ -2435,8 +2838,6 @@ onMounted(() => void initialize())
             <form class="admin-command-panel compact-operation-form" @submit.prevent="runRankingEvaluation">
               <h3><FlaskConical :size="17" />{{ t('admin.runOfflineEvaluation') }}</h3>
               <p>{{ t('admin.runOfflineEvaluationSummary') }}</p>
-              <label>{{ t('admin.reason') }}<textarea v-model.trim="evaluationForm.reason" rows="3" minlength="10" maxlength="500" required :placeholder="t('admin.rankingEvaluationReasonPlaceholder')"></textarea></label>
-              <label class="admin-checkbox"><input v-model="evaluationForm.confirmed" type="checkbox" required />{{ t('admin.confirmEvaluation') }}</label>
               <button class="command-button secondary" type="submit" :disabled="actionLoading">
                 <LoaderCircle v-if="actionLoading" class="spin" :size="17" /><FlaskConical v-else :size="17" />{{ t('admin.runEvaluation') }}
               </button>
@@ -2445,8 +2846,6 @@ onMounted(() => void initialize())
               <h3><Activity :size="17" />{{ t('admin.configureRollout') }}</h3>
               <p>{{ t('admin.configureRolloutSummary') }}</p>
               <label>{{ t('admin.rolloutPercent') }}<select v-model.number="rolloutForm.percent"><option v-for="percent in [0,5,10,25,50,100]" :key="percent" :value="percent">{{ percent === 100 ? t('admin.promoteCandidate') : `${percent}%` }}</option></select></label>
-              <label>{{ t('admin.reason') }}<textarea v-model.trim="rolloutForm.reason" rows="3" minlength="10" maxlength="500" required :placeholder="t('admin.rolloutReasonPlaceholder')"></textarea></label>
-              <label class="admin-checkbox"><input v-model="rolloutForm.confirmed" type="checkbox" required />{{ t('admin.confirmRollout') }}</label>
               <button class="command-button primary" type="submit" :disabled="actionLoading">
                 <LoaderCircle v-if="actionLoading" class="spin" :size="17" /><Activity v-else :size="17" />{{ t('admin.applyRollout') }}
               </button>
@@ -2457,7 +2856,7 @@ onMounted(() => void initialize())
           </p>
           <div v-if="discoveryOperations.evaluations.length" class="admin-list ranking-evaluation-list">
             <article v-for="evaluation in discoveryOperations.evaluations" :key="evaluation.id">
-              <div><strong>{{ t('admin.evaluationVersions', { candidate: evaluation.candidateVersion, baseline: evaluation.baselineVersion }) }}</strong><span>{{ evaluation.reason }}</span></div><span :data-status="evaluation.status === 'passed' ? 'active' : 'suspended'">{{ t(`admin.evaluationStates.${evaluation.status}`) }}</span><span>{{ t('admin.evaluationMrr', { candidate: decimal(evaluation.candidateMrr), baseline: decimal(evaluation.baselineMrr) }) }}</span><small>{{ date(evaluation.createdAt) }}</small><span>{{ t('admin.evaluationCases', { count: evaluation.caseCount }) }}</span>
+              <div><strong>{{ t('admin.evaluationVersions', { candidate: evaluation.candidateVersion, baseline: evaluation.baselineVersion }) }}</strong></div><span :data-status="evaluation.status === 'passed' ? 'active' : 'suspended'">{{ t(`admin.evaluationStates.${evaluation.status}`) }}</span><span>{{ t('admin.evaluationMrr', { candidate: decimal(evaluation.candidateMrr), baseline: decimal(evaluation.baselineMrr) }) }}</span><small>{{ date(evaluation.createdAt) }}</small><span>{{ t('admin.evaluationCases', { count: evaluation.caseCount }) }}</span>
             </article>
           </div>
           <button v-if="evaluationNextCursor" class="command-button secondary admin-load-more" type="button" :disabled="evaluationLoadingMore" @click="loadMoreEvaluations">
@@ -2467,15 +2866,13 @@ onMounted(() => void initialize())
         <section class="ranking-index-section">
           <header><div><h2>{{ t('admin.discoveryIndexTitle') }}</h2><p>{{ t('admin.discoveryIndexSummary') }}</p></div><Database :size="20" /></header>
           <form class="admin-command-panel compact-operation-form" @submit.prevent="analyzeDiscoveryIndex">
-            <label>{{ t('admin.reason') }}<textarea v-model.trim="indexForm.reason" rows="2" minlength="10" maxlength="500" required :placeholder="t('admin.indexReasonPlaceholder')"></textarea></label>
-            <label class="admin-checkbox"><input v-model="indexForm.confirmed" type="checkbox" required />{{ t('admin.confirmIndexAnalyze') }}</label>
             <button class="command-button secondary" type="submit" :disabled="actionLoading">
               <LoaderCircle v-if="actionLoading" class="spin" :size="17" /><Database v-else :size="17" />{{ t('admin.analyzeIndex') }}
             </button>
           </form>
           <div v-if="discoveryOperations.indexRuns.length" class="admin-list ranking-index-list">
             <article v-for="run in discoveryOperations.indexRuns" :key="run.id">
-              <div><strong>{{ t('admin.indexRunTitle', { count: Object.values(run.documentCounts).reduce((total, count) => total + count, 0) }) }}</strong><span>{{ run.reason }}</span></div><span :data-status="run.status === 'succeeded' ? 'active' : 'suspended'">{{ t(`admin.indexRunStates.${run.status}`) }}</span><span>{{ t('admin.indexSize', { size: bytes(Object.values(run.indexSizes).reduce((total, size) => total + size, 0)) }) }}</span><small>{{ date(run.completedAt) }}</small><span>{{ t('admin.indexTypes', { count: Object.keys(run.documentCounts).length }) }}</span>
+              <div><strong>{{ t('admin.indexRunTitle', { count: Object.values(run.documentCounts).reduce((total, count) => total + count, 0) }) }}</strong></div><span :data-status="run.status === 'succeeded' ? 'active' : 'suspended'">{{ t(`admin.indexRunStates.${run.status}`) }}</span><span>{{ t('admin.indexSize', { size: bytes(Object.values(run.indexSizes).reduce((total, size) => total + size, 0)) }) }}</span><small>{{ date(run.completedAt) }}</small><span>{{ t('admin.indexTypes', { count: Object.keys(run.documentCounts).length }) }}</span>
             </article>
           </div>
           <button v-if="indexRunNextCursor" class="command-button secondary admin-load-more" type="button" :disabled="indexRunLoadingMore" @click="loadMoreIndexRuns">
@@ -2489,7 +2886,7 @@ onMounted(() => void initialize())
           <header><div><h2>{{ t('admin.rankingHistory') }}</h2><p>{{ t('admin.rankingHistorySummary') }}</p></div><span>{{ rankingPolicy.history.length }}</span></header>
           <div class="admin-list ranking-history-list">
             <article v-for="revision in rankingPolicy.history" :key="revision.id">
-              <div><strong>{{ revision.name }}</strong><span>{{ revision.reason }}</span></div>
+              <div><strong>{{ revision.name }}</strong></div>
               <span>v{{ revision.version }}</span>
               <span>{{ revision.createdByHandle ? `@${revision.createdByHandle}` : t('admin.systemActor') }}</span>
               <small>{{ date(revision.createdAt) }}</small>
@@ -2576,8 +2973,6 @@ onMounted(() => void initialize())
               </div>
               <small>{{ t('admin.thresholdOrder') }}</small>
             </fieldset>
-            <label>{{ t('admin.reason') }}<textarea v-model.trim="riskRuleForm.reason" rows="3" minlength="10" maxlength="500" required :placeholder="t('admin.riskRulesReasonPlaceholder')"></textarea></label>
-            <label class="admin-checkbox"><input v-model="riskRuleForm.confirmed" type="checkbox" required />{{ t('admin.confirmRiskRules') }}</label>
             <button class="command-button primary" type="submit" :disabled="actionLoading">
               <LoaderCircle v-if="actionLoading" class="spin" :size="17" /><ShieldCheck v-else :size="17" />{{ t('admin.activateRiskRules') }}
             </button>
@@ -2587,7 +2982,7 @@ onMounted(() => void initialize())
           <header><div><h2>{{ t('admin.riskRulesHistory') }}</h2><p>{{ t('admin.riskRulesHistorySummary') }}</p></div><span>{{ riskRulePolicy.history.length }}</span></header>
           <div class="admin-list ranking-history-list">
             <article v-for="revision in riskRulePolicy.history" :key="revision.id">
-              <div><strong>{{ revision.name }}</strong><span>{{ revision.reason }}</span></div>
+              <div><strong>{{ revision.name }}</strong></div>
               <span>v{{ revision.version }}</span>
               <span>{{ t('admin.riskRuleScoreSummary', { dispute: revision.taskDisputeScore, refund: revision.transactionRefundScore, report: revision.communityReportScore, media: revision.mediaRejectionScore, link: revision.accountLinkScore }) }}</span>
               <small>{{ date(revision.createdAt) }} · {{ revision.createdByHandle ? `@${revision.createdByHandle}` : t('admin.systemActor') }}</small>
@@ -2622,7 +3017,7 @@ onMounted(() => void initialize())
           <header><div><h2>{{ t('admin.legalHolds') }}</h2><p>{{ t('admin.legalHoldsSummary') }}</p></div><span>{{ legalHolds.filter(item => item.status === 'active').length }}</span></header>
           <div v-if="legalHolds.length" class="admin-list">
             <article v-for="item in legalHolds" :key="item.id">
-              <div><strong>@{{ item.ownerHandle }}</strong><span>{{ item.reason }}</span><small>SHA-256 {{ item.authorityReferenceHash.slice(0, 16) }}…</small></div><span>{{ t('admin.reviewDue', { date: date(item.reviewAt) }) }}</span><span :data-status="item.status">{{ t(`admin.holdStates.${item.status}`) }}</span><small>{{ t('admin.expiresAt', { date: date(item.expiresAt) }) }}</small><button v-if="item.status === 'active'" class="command-button secondary" type="button" @click="openHoldRelease(item)">
+              <div><strong>@{{ item.ownerHandle }}</strong><small>SHA-256 {{ item.authorityReferenceHash.slice(0, 16) }}…</small></div><span>{{ t('admin.reviewDue', { date: date(item.reviewAt) }) }}</span><span :data-status="item.status">{{ t(`admin.holdStates.${item.status}`) }}</span><small>{{ t('admin.expiresAt', { date: date(item.expiresAt) }) }}</small><button v-if="item.status === 'active'" class="command-button secondary" type="button" @click="openHoldRelease(item)">
                 <Undo2 :size="16" />{{ t('admin.releaseHold') }}
               </button><span v-else></span>
             </article>
@@ -2661,42 +3056,9 @@ onMounted(() => void initialize())
           </div>
         </section>
         <section>
-          <header><div><h2>{{ t('admin.auditIntegrity') }}</h2><p>{{ t('admin.auditIntegritySummary') }}</p></div><span :data-status="operationalDiagnostics.audit.valid ? 'active' : 'failed'">{{ operationalDiagnostics.audit.valid ? t('admin.verified') : t('admin.integrityFailure') }}</span></header>
-          <div class="admin-overview-grid diagnostics-grid">
-            <article><span>{{ t('admin.auditEvents') }}</span><strong>{{ operationalDiagnostics.audit.eventCount }}</strong><small>{{ t('admin.chainSequence', { sequence: operationalDiagnostics.audit.headSequence }) }}</small></article>
-            <article><span>{{ t('admin.chainHead') }}</span><strong class="hash-evidence">{{ operationalDiagnostics.audit.headHash ? `${operationalDiagnostics.audit.headHash.slice(0, 16)}…` : t('admin.emptyChain') }}</strong><small v-if="operationalDiagnostics.audit.firstInvalidSequence">{{ t('admin.firstInvalidSequence', { sequence: operationalDiagnostics.audit.firstInvalidSequence }) }}</small></article>
-            <article><span>{{ t('admin.databaseReadiness') }}</span><strong>{{ operationalDiagnostics.databaseReady ? t('admin.ready') : t('admin.unavailable') }}</strong><small>{{ t('admin.observedAt', { date: date(operationalDiagnostics.asOf) }) }}</small></article>
-          </div>
+          <header><div><h2>{{ t('admin.databaseReadiness') }}</h2></div><span :data-status="operationalDiagnostics.databaseReady ? 'active' : 'failed'">{{ operationalDiagnostics.databaseReady ? t('admin.ready') : t('admin.unavailable') }}</span></header>
+          <p>{{ t('admin.observedAt', { date: date(operationalDiagnostics.asOf) }) }}</p>
         </section>
-      </div>
-
-      <div v-else-if="activeTab === 'audit'" class="admin-user-directory">
-        <form class="admin-user-filters admin-audit-filters" @submit.prevent="applyAuditFilters">
-          <label>{{ t('admin.auditSearch') }}<input v-model="auditQuery" type="search" maxlength="120" :placeholder="t('admin.auditSearchPlaceholder')" /></label>
-          <label>{{ t('admin.auditAction') }}<input v-model="auditAction" type="text" maxlength="120" :placeholder="t('admin.auditActionPlaceholder')" /></label>
-          <label>{{ t('admin.auditResourceType') }}<input v-model="auditResourceType" type="text" maxlength="80" :placeholder="t('admin.auditResourceTypePlaceholder')" /></label>
-          <button class="command-button primary" type="submit">
-            <ListFilter :size="16" />{{ t('actions.applyFilters') }}
-          </button>
-          <button class="icon-button" type="button" :aria-label="t('actions.clearFilters')" :title="t('actions.clearFilters')" @click="clearAuditFilters">
-            <Undo2 :size="16" />
-          </button>
-        </form>
-        <div v-if="auditEvents.length" class="audit-list">
-          <article v-for="item in auditEvents" :key="item.id">
-            <Activity :size="17" /><div>
-              <strong><span class="audit-sequence">#{{ item.sequence }} · </span><span>{{ item.action }}</span></strong><span>{{ item.actorHandle ? `@${item.actorHandle}` : t('admin.systemActor') }} · {{ item.resourceType }}<template v-if="item.resourceId"> · {{ item.resourceId }}</template></span><small class="hash-evidence">SHA-256 {{ item.eventHash.slice(0, 16) }}…</small><p v-if="item.reason">
-                {{ item.reason }}
-              </p>
-            </div><small>{{ date(item.createdAt) }}<br />{{ item.requestId }}</small>
-          </article>
-        </div>
-        <div v-else class="workspace-empty">
-          <ShieldCheck :size="22" /><p>{{ t('admin.noAuditEvents') }}</p>
-        </div>
-        <button v-if="auditNextCursor" class="command-button secondary admin-load-more" type="button" :disabled="auditLoadingMore" @click="loadMoreAudit">
-          <LoaderCircle v-if="auditLoadingMore" class="spin" :size="16" /><ListFilter v-else :size="16" />{{ t('actions.loadMore') }}
-        </button>
       </div>
     </template>
   </section>

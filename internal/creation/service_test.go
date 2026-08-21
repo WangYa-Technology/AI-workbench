@@ -49,36 +49,37 @@ func TestAllLocalCreationModesProduceTypedAssetsAndCaptureOnce(t *testing.T) {
 	jobRepository := jobs.NewRepository(pool)
 
 	cases := []struct {
-		mode        string
-		cost        int
-		kind        string
-		mimeType    string
-		extension   string
-		validate    func(*testing.T, []byte)
-		needsOutput bool
+		mode          string
+		kind          string
+		mimeType      string
+		extension     string
+		validate      func(*testing.T, []byte)
+		needsOutput   bool
+		producesAsset bool
 	}{
-		{mode: "chat", cost: 2, kind: "document", mimeType: "text/plain; charset=utf-8", extension: ".txt", needsOutput: true, validate: func(t *testing.T, content []byte) {
+		{mode: "chat", needsOutput: true, producesAsset: false, validate: func(t *testing.T, content []byte) {
 			if !bytes.Contains(content, []byte("durable chat submission")) {
 				t.Fatalf("chat result does not contain Local Test workflow evidence: %q", content)
 			}
 		}},
-		{mode: "image", cost: 5, kind: "image", mimeType: "image/jpeg", extension: ".jpg", validate: func(t *testing.T, content []byte) {
+		{mode: "image", kind: "image", mimeType: "image/jpeg", extension: ".jpg", producesAsset: true, validate: func(t *testing.T, content []byte) {
 			if !bytes.Equal(content, imageFixture) {
 				t.Fatal("image output differs from deterministic fixture")
 			}
 		}},
-		{mode: "video", cost: 20, kind: "video", mimeType: "video/mp4", extension: ".mp4", validate: func(t *testing.T, content []byte) {
+		{mode: "video", kind: "video", mimeType: "video/mp4", extension: ".mp4", producesAsset: true, validate: func(t *testing.T, content []byte) {
 			if !bytes.Equal(content, videoFixture) {
 				t.Fatal("video output differs from deterministic fixture")
 			}
 		}},
-		{mode: "music", cost: 8, kind: "audio", mimeType: "audio/wav", extension: ".wav", validate: func(t *testing.T, content []byte) {
+		{mode: "music", kind: "audio", mimeType: "audio/wav", extension: ".wav", producesAsset: true, validate: func(t *testing.T, content []byte) {
 			if len(content) < 44 || string(content[:4]) != "RIFF" || string(content[8:12]) != "WAVE" {
 				t.Fatal("music output is not a valid RIFF/WAVE envelope")
 			}
 		}},
 	}
 
+	var totalChargedPoints int64
 	for _, testCase := range cases {
 		t.Run(testCase.mode, func(t *testing.T) {
 			prompt := "Verify the complete " + testCase.mode + " creation workflow"
@@ -98,42 +99,47 @@ func TestAllLocalCreationModesProduceTypedAssetsAndCaptureOnce(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if completed.Status != "succeeded" || completed.OutputAssetID == nil || completed.ChargedCostCents != testCase.cost {
+			if completed.Status != "succeeded" || completed.EstimatedCostCents != 0 || completed.ChargedCostCents != 0 || completed.EstimatedPoints < 1 || completed.ChargedPoints < 1 || (testCase.producesAsset && completed.OutputAssetID == nil) || (!testCase.producesAsset && completed.OutputAssetID != nil) {
 				t.Fatalf("unexpected completed %s generation: %#v", testCase.mode, completed)
 			}
+			totalChargedPoints += completed.ChargedPoints
 			if completed.ProviderUsage == nil || completed.ProviderUsage.Status != "not_reported" || completed.ProviderUsage.TotalTokens != nil {
 				t.Fatalf("Local Test %s generation must retain explicit not-reported usage evidence: %#v", testCase.mode, completed.ProviderUsage)
 			}
 			if testCase.needsOutput && (completed.OutputText == nil || !strings.Contains(*completed.OutputText, prompt)) {
 				t.Fatalf("chat output text is missing its request evidence: %#v", completed.OutputText)
 			}
-			var kind, mimeType, storageBackend, storageKey string
-			if err := pool.QueryRow(ctx, `SELECT kind,mime_type,storage_backend,storage_key FROM assets WHERE id=$1`, completed.OutputAssetID).Scan(&kind, &mimeType, &storageBackend, &storageKey); err != nil {
-				t.Fatal(err)
+			if testCase.producesAsset {
+				var kind, mimeType, storageBackend, storageKey string
+				if err := pool.QueryRow(ctx, `SELECT kind,mime_type,storage_backend,storage_key FROM assets WHERE id=$1`, completed.OutputAssetID).Scan(&kind, &mimeType, &storageBackend, &storageKey); err != nil {
+					t.Fatal(err)
+				}
+				if kind != testCase.kind || mimeType != testCase.mimeType || storageBackend != "local_file" || filepath.Ext(storageKey) != testCase.extension {
+					t.Fatalf("unexpected %s asset contract kind=%q mime=%q backend=%q key=%q", testCase.mode, kind, mimeType, storageBackend, storageKey)
+				}
+				contentHandle, err := assetService.Content(ctx, ownerID, *completed.OutputAssetID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if contentHandle.MimeType != testCase.mimeType {
+					t.Fatalf("unexpected %s served mime=%q", testCase.mode, contentHandle.MimeType)
+				}
+				object, err := contentHandle.Open(ctx, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				content, readErr := io.ReadAll(object.Body)
+				closeErr := object.Body.Close()
+				if readErr != nil || closeErr != nil {
+					t.Fatalf("read %s stored output: read=%v close=%v", testCase.mode, readErr, closeErr)
+				}
+				testCase.validate(t, content)
+			} else if completed.OutputText == nil || !strings.Contains(*completed.OutputText, prompt) {
+				t.Fatalf("chat response was not retained as generation text: %#v", completed.OutputText)
 			}
-			if kind != testCase.kind || mimeType != testCase.mimeType || storageBackend != "local_file" || filepath.Ext(storageKey) != testCase.extension {
-				t.Fatalf("unexpected %s asset contract kind=%q mime=%q backend=%q key=%q", testCase.mode, kind, mimeType, storageBackend, storageKey)
-			}
-			contentHandle, err := assetService.Content(ctx, ownerID, *completed.OutputAssetID)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if contentHandle.MimeType != testCase.mimeType {
-				t.Fatalf("unexpected %s served mime=%q", testCase.mode, contentHandle.MimeType)
-			}
-			object, err := contentHandle.Open(ctx, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			content, readErr := io.ReadAll(object.Body)
-			closeErr := object.Body.Close()
-			if readErr != nil || closeErr != nil {
-				t.Fatalf("read %s stored output: read=%v close=%v", testCase.mode, readErr, closeErr)
-			}
-			testCase.validate(t, content)
 
 			var chargeCount int
-			if err := pool.QueryRow(ctx, `SELECT count(*) FROM billing_entries WHERE operation_id=$1 AND entry_type='generation_charge'`, generation.ID).Scan(&chargeCount); err != nil {
+			if err := pool.QueryRow(ctx, `SELECT count(*) FROM point_entries WHERE operation_id=$1 AND entry_type='generation_charge'`, generation.ID).Scan(&chargeCount); err != nil {
 				t.Fatal(err)
 			}
 			if chargeCount != 1 {
@@ -142,12 +148,19 @@ func TestAllLocalCreationModesProduceTypedAssetsAndCaptureOnce(t *testing.T) {
 		})
 	}
 
-	var balance, reserved int64
-	if err := pool.QueryRow(ctx, `SELECT balance_cents,reserved_cents FROM billing_accounts WHERE user_id=$1`, ownerID).Scan(&balance, &reserved); err != nil {
+	var pointBalance, pointReserved int64
+	if err := pool.QueryRow(ctx, `SELECT balance_points,reserved_points FROM point_accounts WHERE user_id=$1`, ownerID).Scan(&pointBalance, &pointReserved); err != nil {
 		t.Fatal(err)
 	}
-	if balance != 249965 || reserved != 0 {
-		t.Fatalf("unexpected multimode billing result balance=%d reserved=%d", balance, reserved)
+	if pointBalance != 10000-totalChargedPoints || pointReserved != 0 {
+		t.Fatalf("unexpected multimode point result balance=%d reserved=%d charged=%d", pointBalance, pointReserved, totalChargedPoints)
+	}
+	var walletBalance, walletReserved int64
+	if err := pool.QueryRow(ctx, `SELECT balance_cents,reserved_cents FROM billing_accounts WHERE user_id=$1`, ownerID).Scan(&walletBalance, &walletReserved); err != nil {
+		t.Fatal(err)
+	}
+	if walletBalance != 250000 || walletReserved != 0 {
+		t.Fatalf("model calls changed the subscription wallet: balance=%d reserved=%d", walletBalance, walletReserved)
 	}
 }
 
@@ -338,8 +351,8 @@ func TestExternalRuntimeRouteProducesAssetAndInheritsRetryPolicy(t *testing.T) {
 		t.Fatalf("expected submission without a configured runtime to fail closed, got %v", err)
 	}
 	var reservationCount int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM billing_reservations WHERE user_id=$1`, ownerID).Scan(&reservationCount); err != nil || reservationCount != 0 {
-		t.Fatalf("unavailable runtime reserved credits: count=%d err=%v", reservationCount, err)
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM point_reservations WHERE user_id=$1`, ownerID).Scan(&reservationCount); err != nil || reservationCount != 0 {
+		t.Fatalf("unavailable runtime reserved points: count=%d err=%v", reservationCount, err)
 	}
 
 	response := "External Provider contract output"
@@ -357,7 +370,7 @@ func TestExternalRuntimeRouteProducesAssetAndInheritsRetryPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if generation.Provider != "contract" || generation.ModelName != "contract-chat-v1" || generation.EstimatedCostCents != 7 {
+	if generation.Provider != "contract" || generation.ModelName != "contract-chat-v1" || generation.EstimatedCostCents != 0 || generation.EstimatedPoints < 1 {
 		t.Fatalf("generation did not snapshot its active Provider route: %#v", generation)
 	}
 	var maxAttempts int
@@ -367,11 +380,6 @@ func TestExternalRuntimeRouteProducesAssetAndInheritsRetryPolicy(t *testing.T) {
 	if maxAttempts != 2 {
 		t.Fatalf("generation job did not inherit route max attempts: %d", maxAttempts)
 	}
-	expectedAssetID := uuid.NewSHA1(generation.ID, []byte("hcai-generation-output"))
-	if err := os.WriteFile(filepath.Join(mediaRoot, expectedAssetID.String()+".txt"), []byte(response), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
 	jobRepository := jobs.NewRepository(pool)
 	job := claimCreationJobKind(t, ctx, pool, "contract-worker", creation.JobKind)
 	if err := service.HandleJob(ctx, job); err != nil {
@@ -384,7 +392,7 @@ func TestExternalRuntimeRouteProducesAssetAndInheritsRetryPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if completed.Status != "succeeded" || completed.OutputAssetID == nil || *completed.OutputAssetID != expectedAssetID || completed.OutputText == nil || *completed.OutputText != response || completed.ChargedCostCents != 7 {
+	if completed.Status != "succeeded" || completed.OutputAssetID != nil || completed.OutputText == nil || *completed.OutputText != response || completed.ChargedCostCents != 0 || completed.ChargedPoints < 1 {
 		t.Fatalf("unexpected external Provider completion: %#v", completed)
 	}
 	if completed.ProviderUsage == nil || completed.ProviderUsage.Status != "reported" || completed.ProviderUsage.InputTokens == nil || *completed.ProviderUsage.InputTokens != 23 ||
@@ -401,9 +409,8 @@ func TestExternalRuntimeRouteProducesAssetAndInheritsRetryPolicy(t *testing.T) {
 	if len(runtime.requests) != 1 || runtime.requests[0].GenerationID != generation.ID || runtime.requests[0].Provider != "contract" {
 		t.Fatalf("external runtime did not receive immutable generation evidence: %#v", runtime.requests)
 	}
-	content, err := os.ReadFile(filepath.Join(mediaRoot, completed.OutputAssetID.String()+".txt"))
-	if err != nil || string(content) != response {
-		t.Fatalf("external Provider output was not persisted: content=%q err=%v", content, err)
+	if _, err := os.Stat(filepath.Join(mediaRoot, generation.ID.String()+".txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("external chat Provider output should not be persisted as an asset: err=%v", err)
 	}
 }
 
@@ -453,8 +460,8 @@ func TestSubmitProcessAndReadGeneratedAsset(t *testing.T) {
 	if completed.Status != "succeeded" || completed.Progress != 100 || completed.OutputAssetID == nil {
 		t.Fatalf("unexpected completed generation: %#v", completed)
 	}
-	if completed.EstimatedCostCents != 5 || completed.ChargedCostCents != 5 {
-		t.Fatalf("expected a five-cent Local Test capture, got estimate=%d charge=%d", completed.EstimatedCostCents, completed.ChargedCostCents)
+	if completed.EstimatedCostCents != 0 || completed.ChargedCostCents != 0 || completed.EstimatedPoints < 1 || completed.ChargedPoints < 1 {
+		t.Fatalf("expected point-only Local Test capture, got cents estimate=%d charge=%d points estimate=%d charge=%d", completed.EstimatedCostCents, completed.ChargedCostCents, completed.EstimatedPoints, completed.ChargedPoints)
 	}
 	var assetTitle string
 	if err := pool.QueryRow(ctx, `SELECT title FROM assets WHERE id=$1`, completed.OutputAssetID).Scan(&assetTitle); err != nil {
@@ -464,14 +471,14 @@ func TestSubmitProcessAndReadGeneratedAsset(t *testing.T) {
 		t.Fatalf("expected the primary prompt as the Asset title, got %q", assetTitle)
 	}
 	var balance, reserved int64
-	if err := pool.QueryRow(ctx, `SELECT balance_cents,reserved_cents FROM billing_accounts WHERE user_id=$1 AND currency='USD'`, ownerID).Scan(&balance, &reserved); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT balance_points,reserved_points FROM point_accounts WHERE user_id=$1`, ownerID).Scan(&balance, &reserved); err != nil {
 		t.Fatal(err)
 	}
-	if balance != 249995 || reserved != 0 {
-		t.Fatalf("unexpected post-generation billing state balance=%d reserved=%d", balance, reserved)
+	if balance != 10000-completed.ChargedPoints || reserved != 0 {
+		t.Fatalf("unexpected post-generation point state balance=%d reserved=%d", balance, reserved)
 	}
 	var chargeCount int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM billing_entries WHERE user_id=$1 AND operation_id=$2 AND entry_type='generation_charge'`, ownerID, generation.ID).Scan(&chargeCount); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM point_entries WHERE user_id=$1 AND operation_id=$2 AND entry_type='generation_charge'`, ownerID, generation.ID).Scan(&chargeCount); err != nil {
 		t.Fatal(err)
 	}
 	if chargeCount != 1 {
@@ -574,11 +581,11 @@ func TestGenerationCancelRetryAndIdempotency(t *testing.T) {
 		t.Fatalf("unexpected cancelled generation: %#v", cancelled)
 	}
 	var balance, reserved int64
-	if err := pool.QueryRow(ctx, `SELECT balance_cents,reserved_cents FROM billing_accounts WHERE user_id=$1`, ownerID).Scan(&balance, &reserved); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT balance_points,reserved_points FROM point_accounts WHERE user_id=$1`, ownerID).Scan(&balance, &reserved); err != nil {
 		t.Fatal(err)
 	}
-	if balance != 250000 || reserved != 0 {
-		t.Fatalf("cancel did not release held credits: balance=%d reserved=%d", balance, reserved)
+	if balance != 10000 || reserved != 0 {
+		t.Fatalf("cancel did not release held points: balance=%d reserved=%d", balance, reserved)
 	}
 
 	retried, err := service.Retry(ctx, ownerID, first.ID, "retry-command-001", "request-retry")
@@ -592,11 +599,11 @@ func TestGenerationCancelRetryAndIdempotency(t *testing.T) {
 	if err != nil || retryReplay.ID != retried.ID {
 		t.Fatalf("retry replay did not return the created generation: %#v %v", retryReplay, err)
 	}
-	if err := pool.QueryRow(ctx, `SELECT balance_cents,reserved_cents FROM billing_accounts WHERE user_id=$1`, ownerID).Scan(&balance, &reserved); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT balance_points,reserved_points FROM point_accounts WHERE user_id=$1`, ownerID).Scan(&balance, &reserved); err != nil {
 		t.Fatal(err)
 	}
-	if balance != 250000 || reserved != 5 {
-		t.Fatalf("retry did not create one new hold: balance=%d reserved=%d", balance, reserved)
+	if balance != 10000 || reserved != retried.EstimatedPoints {
+		t.Fatalf("retry did not create one new point hold: balance=%d reserved=%d estimate=%d", balance, reserved, retried.EstimatedPoints)
 	}
 }
 
@@ -644,11 +651,11 @@ func TestRetryRevalidatesTheCurrentProviderCapabilityBeforeBilling(t *testing.T)
 		t.Fatalf("retry accepted a duration unsupported by the active route: %v", err)
 	}
 	var reserved int64
-	if err := pool.QueryRow(ctx, `SELECT reserved_cents FROM billing_accounts WHERE user_id=$1 AND currency='USD'`, ownerID).Scan(&reserved); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT reserved_points FROM point_accounts WHERE user_id=$1`, ownerID).Scan(&reserved); err != nil {
 		t.Fatal(err)
 	}
 	if reserved != 0 {
-		t.Fatalf("invalid retry reserved credits before failing: %d", reserved)
+		t.Fatalf("invalid retry reserved points before failing: %d", reserved)
 	}
 }
 

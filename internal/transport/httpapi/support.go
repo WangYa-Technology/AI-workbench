@@ -166,7 +166,7 @@ func (s *Server) writeSupportResult(w http.ResponseWriter, r *http.Request, item
 	case errors.Is(err, support.ErrSensitiveData):
 		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "sensitive_data_not_accepted", "Do not submit payment card numbers, government identifiers, signatures, or raw legal documents.", false)
 	case errors.Is(err, support.ErrInvalid):
-		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_support_case", "Review the required fields, current version, resource reference, reason, and confirmation.", false)
+		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_support_case", "Review the required fields, current version, and resource reference.", false)
 	case err != nil:
 		s.internalError(w, r, "support operation", err)
 	default:

@@ -12,6 +12,7 @@ const capability = (overrides: Partial<CreationCapability> = {}): CreationCapabi
   resultFormats: ['jpeg', 'png'],
   referenceKinds: ['image'],
   supportsMask: true,
+  models: [],
   ...overrides,
 })
 

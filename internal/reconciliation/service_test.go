@@ -35,13 +35,13 @@ func TestProviderCostReconciliationIsDurableThresholdedAndImmutable(t *testing.T
 	reader := testCostReader{summary: reconciliation.CostSummary{Provider: "openai", Currency: "USD", PeriodStart: start, PeriodEnd: start.Add(24 * time.Hour), CostMicros: 25_000}}
 	service := reconciliation.NewService(pool, reader, 10_000)
 	item, err := service.Request(ctx, actorID, reconciliation.RequestInput{
-		Provider: "openai", PeriodStart: start, PeriodEnd: start.Add(24 * time.Hour), Reason: "Reconcile the approved daily OpenAI staging cost period.", Confirmed: true,
+		Provider: "openai", PeriodStart: start, PeriodEnd: start.Add(24 * time.Hour),
 	}, "reconciliation-test")
 	if err != nil || item.Status != "queued" || item.JobID == nil {
 		t.Fatalf("queued reconciliation mismatch: %#v %v", item, err)
 	}
 	if _, err := service.Request(ctx, actorID, reconciliation.RequestInput{
-		Provider: "openai", PeriodStart: start, PeriodEnd: start.Add(24 * time.Hour), Reason: "Attempt duplicate active reconciliation for the exact cost period.", Confirmed: true,
+		Provider: "openai", PeriodStart: start, PeriodEnd: start.Add(24 * time.Hour),
 	}, "reconciliation-duplicate"); !errors.Is(err, reconciliation.ErrConflict) {
 		t.Fatalf("duplicate active reconciliation accepted: %v", err)
 	}
@@ -62,10 +62,6 @@ func TestProviderCostReconciliationIsDurableThresholdedAndImmutable(t *testing.T
 	if _, err := pool.Exec(ctx, `DELETE FROM provider_cost_reconciliations WHERE id=$1`, item.ID); err == nil {
 		t.Fatal("reconciliation evidence was deletable")
 	}
-	var auditCount int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM audit_events WHERE resource_type='provider_cost_reconciliation' AND resource_id=$1`, item.ID).Scan(&auditCount); err != nil || auditCount != 1 {
-		t.Fatalf("request audit evidence mismatch: count=%d err=%v", auditCount, err)
-	}
 }
 
 func TestProviderCostReconciliationMarksOverage(t *testing.T) {
@@ -80,7 +76,7 @@ func TestProviderCostReconciliationMarksOverage(t *testing.T) {
 	reader := testCostReader{summary: reconciliation.CostSummary{Provider: "openai", Currency: "USD", PeriodStart: start, PeriodEnd: start.Add(24 * time.Hour), CostMicros: 10_001}}
 	service := reconciliation.NewService(pool, reader, 10_000)
 	item, err := service.Request(ctx, actorID, reconciliation.RequestInput{
-		Provider: "openai", PeriodStart: start, PeriodEnd: start.Add(24 * time.Hour), Reason: "Reconcile an approved empty OpenAI daily staging period.", Confirmed: true,
+		Provider: "openai", PeriodStart: start, PeriodEnd: start.Add(24 * time.Hour),
 	}, "reconciliation-overage")
 	if err != nil {
 		t.Fatal(err)
