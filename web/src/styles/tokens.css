@@ -17,6 +17,7 @@
   --accent-secondary: #007f7a;
   --focus: #008f89;
   --success: #138a63;
+  --success-readable: #08734f;
   --warning: #9a5b00;
   --danger: #c93648;
   --danger-contrast: #ffffff;
@@ -83,6 +84,7 @@
   --accent-secondary: #40c9c0;
   --focus: #40c9c0;
   --success: #4cc38a;
+  --success-readable: #69d69f;
   --warning: #d7a044;
   --danger: #ef7180;
   --danger-contrast: #172238;

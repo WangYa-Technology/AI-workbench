@@ -36,7 +36,8 @@ const drafts = useCreationDraftStore()
 
 const restored = drafts.restore(props.mode)
 const activeMode = ref<CreationMode>(props.mode)
-const prompt = ref(restored?.prompt || '')
+const routeStarter = () => String(route.query.starter || '').trim()
+const prompt = ref(routeStarter() || restored?.prompt || '')
 const view = ref<CreationDraftView>('guide')
 const settings = ref<CreationOutputSettings>(restored?.settings || defaultSettings(props.mode))
 const generations = ref<Generation[]>([])
@@ -356,6 +357,10 @@ watch(() => route.query.conversationId, async value => {
   if (!conversations.value.some(item => item.id === conversationID)) return
   currentConversationId.value = conversationID
   await loadGenerations()
+})
+watch(() => route.query.starter, value => {
+  const starter = String(value || '').trim()
+  if (starter) prompt.value = starter
 })
 watch(activeCapability, capability => {
   selectedModelId.value = capability?.models?.find(item => item.available)?.id || ''
@@ -739,7 +744,7 @@ onMounted(async () => {
 .creation-composer-tools { min-width: 0; display: flex; align-items: center; gap: 7px; }
 .creation-tool-button { width: 32px; height: 32px; display: grid; place-items: center; flex: 0 0 auto; padding: 0; border: 1px solid var(--border); border-radius: 50%; background: var(--surface-muted); color: var(--text-secondary); line-height: 0; }
 .creation-tool-button:hover, .creation-tool-button.active { border-color: var(--studio-accent); background: var(--studio-accent-soft); color: var(--studio-accent); }
-.creation-mode-chip { height: 32px; display: inline-flex; align-items: center; gap: 5px; box-sizing: border-box; padding: 0 7px 0 9px; border: 1px solid color-mix(in srgb, var(--studio-accent) 35%, var(--border)); border-radius: 999px; background: var(--studio-accent-soft); color: var(--studio-accent); font-size: 11px; font-weight: 650; line-height: 1; }
+.creation-mode-chip { height: 32px; display: inline-flex; align-items: center; gap: 5px; box-sizing: border-box; padding: 0 7px 0 9px; border: 1px solid color-mix(in srgb, var(--studio-accent) 35%, var(--border)); border-radius: 999px; background: var(--studio-accent-soft); color: var(--accent-readable); font-size: 11px; font-weight: 650; line-height: 1; }
 .creation-mode-chip > svg, .creation-mode-chip-label { display: block; flex: 0 0 auto; }
 .creation-mode-chip-label { line-height: 1; }
 .creation-mode-chip button { width: 22px; height: 22px; display: grid; place-items: center; flex: 0 0 22px; margin: 0; padding: 0; border: 0; border-radius: 50%; background: transparent; color: inherit; }

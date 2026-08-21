@@ -994,8 +994,8 @@
 .task-result-list.is-grid .task-row-commercial { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; padding: 12px 3px 0; border-top: 1px solid var(--border); border-left: 0; }
 .task-result-list.is-grid .task-row-action { grid-column: 1 / -1; }
 .task-status { width: fit-content; min-height: 24px; display: inline-flex; align-items: center; padding: 2px 7px; border-radius: var(--radius-control); background: var(--surface-muted); color: var(--text-secondary); font-size: 11px; font-weight: 650; white-space: nowrap; }
-.task-row-heading .task-status { min-height: 22px; padding: 2px 7px; background: color-mix(in srgb, var(--success) 10%, var(--surface)); color: var(--success); font-size: 10px; }
-.task-status[data-status='open'], .task-status[data-status='accepted'] { background: color-mix(in srgb, var(--success) 10%, var(--surface)); color: var(--success); }
+.task-row-heading .task-status { min-height: 22px; padding: 2px 7px; background: color-mix(in srgb, var(--success) 10%, var(--surface)); color: var(--success-readable); font-size: 10px; }
+.task-status[data-status='open'], .task-status[data-status='accepted'] { background: color-mix(in srgb, var(--success) 10%, var(--surface)); color: var(--success-readable); }
 .task-status[data-status='submitted'], .task-status[data-status='assigned'] { background: color-mix(in srgb, var(--focus) 10%, var(--surface)); color: var(--accent-readable); }
 .task-status[data-status='revision'] { background: color-mix(in srgb, var(--warning) 10%, var(--surface)); color: var(--warning); }
 .task-status[data-status='disputed'] { background: color-mix(in srgb, var(--danger) 10%, var(--surface)); color: var(--danger); }
@@ -1455,7 +1455,7 @@
   .site-footer p { text-align: left; }
   .creation-site-footer { flex-direction: row; gap: 0; margin: 0 0 64px; padding: 6px 16px 8px; }
   .creation-site-footer p { text-align: center; }
-  .brand strong, .header-actions .command-button, .desktop-utility { display: none; }
+  .brand strong, .header-actions .command-button, .header-actions .desktop-utility { display: none; }
   .header-actions { gap: 0; }
   .hero-media { min-height: max(240px, 34dvh); }
   .hero-copy { padding: 28px 16px 32px; }
