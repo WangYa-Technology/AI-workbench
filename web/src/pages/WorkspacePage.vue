@@ -12,6 +12,10 @@ import { useSessionStore } from '../stores/session'
 import AssetMedia from '../components/domain/AssetMedia.vue'
 import AuthRequiredState from '../components/domain/AuthRequiredState.vue'
 import MotionFavoriteIcon from '../components/ui/MotionFavoriteIcon.vue'
+import UiButton from '../components/ui/UiButton.vue'
+import UiIconButton from '../components/ui/UiIconButton.vue'
+import UiInput from '../components/ui/UiInput.vue'
+import UiSelect from '../components/ui/UiSelect.vue'
 
 const { t, locale } = useI18n()
 const route = useRoute()
@@ -828,20 +832,16 @@ onMounted(() => void load())
 
       <div v-else-if="section === 'generations'" class="generation-list">
         <form class="generation-filters" @submit.prevent="applyGenerationFilters">
-          <label><span>{{ t('workspace.generationModeFilter') }}</span><select v-model="generationMode">
+          <label><span>{{ t('workspace.generationModeFilter') }}</span><UiSelect v-model="generationMode">
             <option value="">{{ t('workspace.allModes') }}</option><option value="chat">{{ t('create.modes.chat') }}</option><option value="image">{{ t('create.modes.image') }}</option><option value="video">{{ t('create.modes.video') }}</option><option value="music">{{ t('create.modes.music') }}</option>
-          </select></label>
-          <label><span>{{ t('workspace.generationStatusFilter') }}</span><select v-model="generationStatus">
+          </UiSelect></label>
+          <label><span>{{ t('workspace.generationStatusFilter') }}</span><UiSelect v-model="generationStatus">
             <option value="">{{ t('workspace.allStatuses') }}</option><option value="queued">{{ t('generation.status.queued') }}</option><option value="running">{{ t('generation.status.running') }}</option><option value="succeeded">{{ t('generation.status.succeeded') }}</option><option value="failed">{{ t('generation.status.failed') }}</option><option value="cancelled">{{ t('generation.status.cancelled') }}</option>
-          </select></label>
-          <label><span>{{ t('workspace.dateFrom') }}</span><input v-model="generationDateFrom" type="date" /></label>
-          <label><span>{{ t('workspace.dateTo') }}</span><input v-model="generationDateTo" type="date" /></label>
-          <button class="command-button secondary" type="submit">
-            <ListFilter :size="16" />{{ t('actions.applyFilters') }}
-          </button>
-          <button class="icon-button" type="button" :aria-label="t('actions.clearFilters')" :title="t('actions.clearFilters')" @click="clearGenerationFilters">
-            <X :size="16" />
-          </button>
+          </UiSelect></label>
+          <label><span>{{ t('workspace.dateFrom') }}</span><UiInput v-model="generationDateFrom" type="date" /></label>
+          <label><span>{{ t('workspace.dateTo') }}</span><UiInput v-model="generationDateTo" type="date" /></label>
+          <UiButton class="command-button secondary" variant="secondary" type="submit"><template #start><ListFilter :size="16" /></template>{{ t('actions.applyFilters') }}</UiButton>
+          <UiIconButton class="icon-button" :label="t('actions.clearFilters')" @click="clearGenerationFilters"><X :size="16" /></UiIconButton>
         </form>
         <div v-if="success" class="task-feedback success" role="status">
           <FileCheck2 :size="18" />{{ success }}
@@ -1070,12 +1070,12 @@ onMounted(() => void load())
         <section class="billing-dashboard-panel billing-wallet-ledger" aria-labelledby="billing-wallet-ledger-title">
           <header class="billing-ledger-heading"><div><span class="wallet-kicker">{{ t('workspace.walletSectionLabel') }}</span><h2 id="billing-wallet-ledger-title">{{ t('workspace.walletStatement') }}</h2></div><span>{{ billing.entries.length }} {{ t('workspace.entriesLoaded') }}</span></header>
           <form class="billing-filters" @submit.prevent="applyBillingFilters">
-            <label><span>{{ t('workspace.billingDirection') }}</span><select v-model="billingDirection"><option value="">{{ t('workspace.allDirections') }}</option><option value="debit">{{ t('workspace.billingDirections.debit') }}</option><option value="credit">{{ t('workspace.billingDirections.credit') }}</option></select></label>
-            <label><span>{{ t('workspace.billingEntryType') }}</span><select v-model="billingEntryType"><option value="">{{ t('workspace.allEntryTypes') }}</option><option v-for="entryType in billingEntryTypes" :key="entryType" :value="entryType">{{ t(`workspace.billingEntryTypes.${entryType}`) }}</option></select></label>
-            <label><span>{{ t('workspace.dateFrom') }}</span><input v-model="billingDateFrom" type="date" /></label>
-            <label><span>{{ t('workspace.dateTo') }}</span><input v-model="billingDateTo" type="date" /></label>
-            <button class="command-button secondary" type="submit"><ListFilter :size="16" />{{ t('actions.applyFilters') }}</button>
-            <button class="icon-button" type="button" :aria-label="t('actions.clearFilters')" :title="t('actions.clearFilters')" @click="clearBillingFilters"><X :size="16" /></button>
+            <label><span>{{ t('workspace.billingDirection') }}</span><UiSelect v-model="billingDirection"><option value="">{{ t('workspace.allDirections') }}</option><option value="debit">{{ t('workspace.billingDirections.debit') }}</option><option value="credit">{{ t('workspace.billingDirections.credit') }}</option></UiSelect></label>
+            <label><span>{{ t('workspace.billingEntryType') }}</span><UiSelect v-model="billingEntryType"><option value="">{{ t('workspace.allEntryTypes') }}</option><option v-for="entryType in billingEntryTypes" :key="entryType" :value="entryType">{{ t(`workspace.billingEntryTypes.${entryType}`) }}</option></UiSelect></label>
+            <label><span>{{ t('workspace.dateFrom') }}</span><UiInput v-model="billingDateFrom" type="date" /></label>
+            <label><span>{{ t('workspace.dateTo') }}</span><UiInput v-model="billingDateTo" type="date" /></label>
+            <UiButton class="command-button secondary" variant="secondary" type="submit"><template #start><ListFilter :size="16" /></template>{{ t('actions.applyFilters') }}</UiButton>
+            <UiIconButton class="icon-button" :label="t('actions.clearFilters')" @click="clearBillingFilters"><X :size="16" /></UiIconButton>
           </form>
           <article v-for="entry in billing.entries" :key="entry.id" class="billing-entry">
             <span :data-direction="entry.direction">{{ entry.direction === 'credit' ? '+' : '-' }}</span>

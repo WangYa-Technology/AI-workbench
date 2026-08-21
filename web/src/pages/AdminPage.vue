@@ -13,6 +13,10 @@ import {
 } from '../api/client'
 import { formatCurrency, formatDateTime } from '../lib/format'
 import { useSessionStore } from '../stores/session'
+import UiButton from '../components/ui/UiButton.vue'
+import UiIconButton from '../components/ui/UiIconButton.vue'
+import UiInput from '../components/ui/UiInput.vue'
+import UiSelect from '../components/ui/UiSelect.vue'
 
 type Tab = 'overview' | 'users' | 'content' | 'media' | 'governance' | 'support' | 'generations' | 'tasks' | 'providers' | 'models' | 'settings' | 'developer' | 'finance' | 'risk' | 'riskRules' | 'ranking' | 'dataRights' | 'diagnostics'
 type CommandKind = 'user' | 'content' | 'media' | 'report' | 'appeal' | 'generation' | 'task' | 'provider' | 'finance' | 'payment' | 'paymentEvent' | 'paymentDestination' | 'risk' | 'dataRightsHold' | 'holdRelease'
@@ -1863,19 +1867,15 @@ onMounted(() => void initialize())
   <section class="admin-page content-width">
     <header class="admin-header">
       <div><span class="status-label"><ShieldAlert :size="14" />{{ t('admin.operationsLabel') }}</span><h1>{{ t('admin.title') }}</h1><p>{{ t('admin.summary') }}</p></div>
-      <button v-if="hasAdminAccess" class="icon-button" type="button" :aria-label="t('actions.retry')" :title="t('actions.retry')" @click="load">
+      <UiIconButton v-if="hasAdminAccess" class="icon-button" :label="t('actions.retry')" @click="load">
         <RefreshCw :size="18" />
-      </button>
+      </UiIconButton>
     </header>
 
     <div v-if="!loading && !hasAdminAccess" class="admin-access-state">
       <ShieldAlert :size="28" /><h2>{{ t('admin.accessRequired') }}</h2><p>{{ t('admin.accessRequiredDetail') }}</p>
-      <button v-if="localDemoAvailable" class="command-button primary" type="button" @click="useAdminDemo">
-        <ShieldCheck :size="17" />{{ t('admin.useAdminDemo') }}
-      </button>
-      <RouterLink v-else class="command-button primary" :to="{ path: '/settings', query: { auth: 'login', returnTo: route.fullPath } }">
-        <ShieldCheck :size="17" />{{ t('account.signIn') }}
-      </RouterLink>
+      <UiButton v-if="localDemoAvailable" class="command-button primary" variant="primary" @click="useAdminDemo"><template #start><ShieldCheck :size="17" /></template>{{ t('admin.useAdminDemo') }}</UiButton>
+      <UiButton v-else as="RouterLink" class="command-button primary" variant="primary" :to="{ path: '/settings', query: { auth: 'login', returnTo: route.fullPath } }"><template #start><ShieldCheck :size="17" /></template>{{ t('account.signIn') }}</UiButton>
     </div>
 
     <template v-else-if="hasAdminAccess">
@@ -1925,9 +1925,7 @@ onMounted(() => void initialize())
         <label v-if="command.kind === 'risk'">{{ t('admin.riskDecision') }}<select v-model="command.decision"><option v-for="decision in ['monitor','no_action','escalated']" :key="decision" :value="decision">{{ t(`admin.riskDecisions.${decision}`) }}</option></select></label>
         <label v-if="command.kind === 'task'">{{ t('admin.taskDecision') }}<select v-model="command.decision"><option v-for="decision in ['cancel_without_settlement','release_creator']" :key="decision" :value="decision">{{ t(`admin.taskDecisions.${decision}`) }}</option></select></label>
         <label v-if="command.kind === 'dataRightsHold'">{{ t('admin.authorityReference') }}<input v-model.trim="command.authorityReference" minlength="6" maxlength="200" required :placeholder="t('admin.authorityReferencePlaceholder')" /></label>
-        <button class="command-button primary" type="submit" :disabled="actionLoading">
-          <LoaderCircle v-if="actionLoading" class="spin" :size="17" /><ShieldCheck v-else :size="17" />{{ t('admin.applyAction') }}
-        </button>
+        <UiButton class="command-button primary" variant="primary" type="submit" :loading="actionLoading"><template #start><ShieldCheck v-if="!actionLoading" :size="17" /></template>{{ t('admin.applyAction') }}</UiButton>
       </form>
 
       <div v-if="loading" class="page-state" aria-live="polite">
@@ -1942,15 +1940,11 @@ onMounted(() => void initialize())
 
       <div v-else-if="activeTab === 'users'" class="admin-user-directory">
         <form class="admin-user-filters" @submit.prevent="applyUserFilters">
-          <label>{{ t('admin.userSearch') }}<input v-model="userQuery" type="search" maxlength="120" :placeholder="t('admin.userSearchPlaceholder')" /></label>
-          <label>{{ t('admin.role') }}<select v-model="userRole"><option value="">{{ t('admin.allRoles') }}</option><option v-for="role in ['member','creator','publisher','moderator','admin']" :key="role" :value="role">{{ localizedLabel(roleKeys, role) }}</option></select></label>
-          <label>{{ t('admin.status') }}<select v-model="userStatus"><option value="">{{ t('admin.allStatuses') }}</option><option v-for="status in ['active','suspended','deleted']" :key="status" :value="status">{{ t(`admin.states.${status}`) }}</option></select></label>
-          <button class="command-button secondary" type="submit">
-            <ListFilter :size="16" />{{ t('actions.applyFilters') }}
-          </button>
-          <button class="icon-button" type="button" :aria-label="t('actions.clearFilters')" :title="t('actions.clearFilters')" @click="clearUserFilters">
-            <X :size="16" />
-          </button>
+          <label>{{ t('admin.userSearch') }}<UiInput v-model="userQuery" type="search" maxlength="120" :placeholder="t('admin.userSearchPlaceholder')" /></label>
+          <label>{{ t('admin.role') }}<UiSelect v-model="userRole"><option value="">{{ t('admin.allRoles') }}</option><option v-for="role in ['member','creator','publisher','moderator','admin']" :key="role" :value="role">{{ localizedLabel(roleKeys, role) }}</option></UiSelect></label>
+          <label>{{ t('admin.status') }}<UiSelect v-model="userStatus"><option value="">{{ t('admin.allStatuses') }}</option><option v-for="status in ['active','suspended','deleted']" :key="status" :value="status">{{ t(`admin.states.${status}`) }}</option></UiSelect></label>
+          <UiButton class="command-button secondary" variant="secondary" type="submit"><template #start><ListFilter :size="16" /></template>{{ t('actions.applyFilters') }}</UiButton>
+          <UiIconButton class="icon-button" :label="t('actions.clearFilters')" @click="clearUserFilters"><X :size="16" /></UiIconButton>
         </form>
         <div class="admin-list">
           <article v-for="item in users" :key="item.id">

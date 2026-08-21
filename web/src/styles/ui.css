@@ -176,7 +176,14 @@
 .ui-avatar-group .ui-avatar:first-child { margin-left: 0; }
 
 /* Existing class names remain compatible while pages migrate to the components above. */
+body.ui-dialog-open { overflow: hidden; }
 .command-button { transition: background-color var(--duration-quick) var(--ease-smooth-out), border-color var(--duration-quick) var(--ease-smooth-out), color var(--duration-quick) var(--ease-smooth-out), box-shadow var(--duration-quick) var(--ease-smooth-out), transform var(--duration-micro) var(--ease-smooth-out), opacity var(--duration-quick) var(--ease-smooth-out); }
+.command-button { border-radius: var(--radius-control); font-weight: 560; }
+.command-button.primary { background: var(--accent); color: var(--accent-contrast); }
+.command-button.primary:hover:not(:disabled) { background: var(--accent-hover); }
+.command-button.secondary { border: 1px solid var(--border); background: var(--surface); color: var(--text); }
+.command-button.secondary:hover:not(:disabled) { border-color: var(--border-strong); background: var(--surface-muted); }
+.command-button.danger { background: var(--danger); color: var(--danger-contrast); }
 .command-button:hover:not(:disabled) { transform: translateY(-1px); }
 .command-button:active:not(:disabled) { transform: translateY(0); }
 .icon-button { transition: background-color var(--duration-quick) var(--ease-smooth-out), border-color var(--duration-quick) var(--ease-smooth-out), color var(--duration-quick) var(--ease-smooth-out), transform var(--duration-micro) var(--ease-smooth-out); }

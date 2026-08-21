@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, watch } from 'vue'
+import { X } from 'lucide-vue-next'
 const props = withDefaults(defineProps<{ open?: boolean; title?: string; labelledBy?: string }>(), { open: false, title: '', labelledBy: '' })
 const emit = defineEmits<{ 'update:open': [value: boolean] }>()
 const close = () => emit('update:open', false)
@@ -18,7 +19,7 @@ onUnmounted(() => { globalThis.document.removeEventListener('keydown', onKeydown
             <slot name="header">
               <h2>{{ title }}</h2>
             </slot><button class="ui-icon-button" type="button" aria-label="Close" title="Close" @click="close">
-              ×
+              <X :size="16" aria-hidden="true" />
             </button>
           </header><div class="ui-dialog__body">
             <slot></slot>
