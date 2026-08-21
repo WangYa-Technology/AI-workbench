@@ -538,12 +538,12 @@ onBeforeUnmount(() => {
         <aside class="task-category-panel" :aria-label="t('tasks.categories')">
           <h2>{{ t('tasks.categories') }}</h2>
           <nav>
-            <button type="button" :class="{ active: !deliverableType }" @click="selectTaskType('')">
+            <UiButton variant="ghost" type="button" :class="{ active: !deliverableType }" @click="selectTaskType('')">
               <BriefcaseBusiness :size="17" /><span>{{ t('tasks.allTasks') }}</span><small>{{ catalogTasks.length }}</small>
-            </button>
-            <button v-for="type in types" :key="type" type="button" :class="{ active: deliverableType === type }" @click="selectTaskType(type)">
+            </UiButton>
+            <UiButton v-for="type in types" :key="type" variant="ghost" type="button" :class="{ active: deliverableType === type }" @click="selectTaskType(type)">
               <component :is="taskTypeIcon(type)" :size="17" /><span>{{ t(`tasks.types.${type}`) }}</span><small>{{ taskTypeCounts[type] || 0 }}</small>
-            </button>
+            </UiButton>
           </nav>
           <section class="task-creator-program">
             <span><Sparkles :size="20" /></span><div><strong>{{ t('tasks.creatorProgram') }}</strong><p>{{ t('tasks.creatorProgramSummary') }}</p></div><RouterLink class="text-link" to="/settings">

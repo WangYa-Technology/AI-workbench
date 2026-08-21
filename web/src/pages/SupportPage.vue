@@ -174,10 +174,10 @@ onMounted(() => void load())
           <div class="support-index-heading">
             <div><h2>{{ t('support.myCases') }}</h2><span>{{ t('support.caseCount', { count: cases.length }) }}</span></div>
           </div>
-          <button v-for="item in cases" :key="item.id" type="button" :class="{ active: item.id === activeCase?.id }" @click="selectCase(item)">
+          <UiButton v-for="item in cases" :key="item.id" variant="ghost" type="button" :class="{ active: item.id === activeCase?.id }" @click="selectCase(item)">
             <span><strong>{{ item.subject }}</strong><small>{{ t(`support.categories.${item.category}`) }}</small></span>
             <span><small>{{ date(item.updatedAt) }}</small><em :data-status="item.status">{{ t(`support.statuses.${item.status}`) }}</em></span>
-          </button>
+          </UiButton>
           <div v-if="nextCursor" class="support-index-pagination">
             <UiButton class="command-button secondary" variant="secondary" :loading="loadingMore" @click="loadMore">
               {{ t('actions.loadMore') }}
@@ -189,9 +189,9 @@ onMounted(() => void load())
         </aside>
 
         <section v-if="showCreate" class="support-detail support-create-panel">
-          <button class="support-mobile-back" type="button" @click="showCreate = false">
+          <UiButton class="support-mobile-back" variant="ghost" type="button" @click="showCreate = false">
             <ArrowLeft :size="16" />{{ t('support.myCases') }}
-          </button>
+          </UiButton>
           <header><span class="status-label">{{ t('support.intakeLabel') }}</span><h2>{{ t('support.createTitle') }}</h2><p>{{ t('support.createSummary') }}</p></header>
           <form class="support-form" @submit.prevent="createCase">
             <label>{{ t('support.category') }}<UiSelect v-model="form.category" @change="resetCopyrightFields"><option v-for="category in ['general_support','billing','account','task_or_order','copyright']" :key="category" :value="category">{{ t(`support.categories.${category}`) }}</option></UiSelect></label>
@@ -220,9 +220,9 @@ onMounted(() => void load())
         </section>
 
         <section v-else-if="activeCase" class="support-detail">
-          <button class="support-mobile-back" type="button" @click="router.push('/support')">
+          <UiButton class="support-mobile-back" variant="ghost" type="button" @click="router.push('/support')">
             <ArrowLeft :size="16" />{{ t('support.myCases') }}
-          </button>
+          </UiButton>
           <header class="support-case-header">
             <div><span>{{ t(`support.categories.${activeCase.category}`) }}</span><h2>{{ activeCase.subject }}</h2><p>{{ t('support.caseReference', { id: activeCase.id.slice(0, 8), version: activeCase.version }) }}</p></div>
             <em :data-status="activeCase.status">{{ t(`support.statuses.${activeCase.status}`) }}</em>

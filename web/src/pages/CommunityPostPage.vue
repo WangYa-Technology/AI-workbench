@@ -197,18 +197,18 @@ watch(() => route.params.id, () => void load(), { immediate: true })
           </p>
 
           <div class="community-post-actions" :aria-label="t('community.postActions')">
-            <button type="button" :class="{ active: post.viewerLiked }" :disabled="actionLoading === 'like'" @click="react('like')">
+            <UiButton variant="ghost" type="button" :class="{ active: post.viewerLiked }" :disabled="actionLoading === 'like'" :loading="actionLoading === 'like'" @click="react('like')">
               <MotionFavoriteIcon :active="post.viewerLiked" kind="heart" :size="16" />{{ t('community.like') }} <span>{{ post.likeCount }}</span>
-            </button>
-            <button type="button" :class="{ active: post.viewerBookmarked }" :disabled="actionLoading === 'bookmark'" @click="react('bookmark')">
+            </UiButton>
+            <UiButton variant="ghost" type="button" :class="{ active: post.viewerBookmarked }" :disabled="actionLoading === 'bookmark'" :loading="actionLoading === 'bookmark'" @click="react('bookmark')">
               <MotionFavoriteIcon :active="post.viewerBookmarked" kind="bookmark" :size="16" />{{ t('community.bookmark') }} <span>{{ post.bookmarkCount }}</span>
-            </button>
-            <button v-if="session.user?.id !== post.authorId" type="button" :disabled="actionLoading === 'follow'" @click="follow">
+            </UiButton>
+            <UiButton v-if="session.user?.id !== post.authorId" variant="ghost" type="button" :disabled="actionLoading === 'follow'" :loading="actionLoading === 'follow'" @click="follow">
               <UserPlus :size="16" />{{ post.viewerFollowing ? t('community.following') : t('community.follow') }}
-            </button>
-            <button v-if="session.user?.id !== post.authorId" type="button" @click="openReport">
+            </UiButton>
+            <UiButton v-if="session.user?.id !== post.authorId" variant="ghost" type="button" @click="openReport">
               <Flag :size="16" />{{ t('community.report') }}
-            </button>
+            </UiButton>
           </div>
 
           <p v-if="feedback" class="task-feedback" :class="feedback === t('community.reportSubmitted') ? 'success' : 'error'" role="status">

@@ -15,6 +15,7 @@ import MotionFavoriteIcon from '../components/ui/MotionFavoriteIcon.vue'
 import UiButton from '../components/ui/UiButton.vue'
 import UiCheckbox from '../components/ui/UiCheckbox.vue'
 import UiIconButton from '../components/ui/UiIconButton.vue'
+import UiFileInput from '../components/ui/UiFileInput.vue'
 import UiInput from '../components/ui/UiInput.vue'
 import UiSelect from '../components/ui/UiSelect.vue'
 import UiTextarea from '../components/ui/UiTextarea.vue'
@@ -635,7 +636,7 @@ onMounted(() => void load())
             <form v-if="versionOpen" class="asset-version-form" @submit.prevent="uploadVersion">
               <label>{{ t('workspace.versionTitle') }}<UiInput v-model="versionTitle" type="text" minlength="3" maxlength="120" :placeholder="selectedAsset.title" /></label>
               <label>{{ t('workspace.versionNote') }}<UiTextarea v-model="versionNote" rows="2" minlength="3" maxlength="500" required /></label>
-              <label>{{ t('workspace.versionFile') }}<input type="file" :accept="versionAccept" required @change="chooseVersion" /></label>
+              <label>{{ t('workspace.versionFile') }}<UiFileInput :accept="versionAccept" required @change="chooseVersion" /></label>
               <small>{{ t('workspace.versionScanBoundary') }}</small>
               <UiButton class="command-button primary wide" variant="primary" type="submit" :loading="versionUploading" :disabled="!versionFile">
                 <template #start>
@@ -754,7 +755,7 @@ onMounted(() => void load())
             <X :size="17" />
           </UiIconButton>
         </header>
-        <div><label>{{ t('workspace.uploadTitle') }}<UiInput v-model="uploadTitle" type="text" minlength="3" maxlength="120" required /></label><label>{{ t('workspace.uploadFile') }}<input type="file" class="ui-input" accept="image/jpeg,image/png,video/mp4,audio/wav,audio/mpeg,text/plain" required @change="chooseUpload" /></label></div>
+        <div><label>{{ t('workspace.uploadTitle') }}<UiInput v-model="uploadTitle" type="text" minlength="3" maxlength="120" required /></label><label>{{ t('workspace.uploadFile') }}<UiFileInput accept="image/jpeg,image/png,video/mp4,audio/wav,audio/mpeg,text/plain" required @change="chooseUpload" /></label></div>
         <small>{{ t('workspace.uploadLimits') }}</small><UiButton class="command-button primary" variant="primary" type="submit" :loading="uploading" :disabled="!uploadFile">
           <template #start>
             <Upload v-if="!uploading" :size="17" />

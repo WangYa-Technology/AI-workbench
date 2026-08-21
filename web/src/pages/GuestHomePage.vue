@@ -12,6 +12,8 @@ import BrandLogo from '../components/brand/BrandLogo.vue'
 import { formatCurrency } from '../lib/format'
 import { usePreferencesStore } from '../stores/preferences'
 import { useSessionStore } from '../stores/session'
+import UiIconButton from '../components/ui/UiIconButton.vue'
+import UiInput from '../components/ui/UiInput.vue'
 
 type CreationMode = 'chat' | 'image' | 'video' | 'music'
 
@@ -129,12 +131,12 @@ onBeforeUnmount(() => {
           </RouterLink>
         </nav>
         <div class="home-actions">
-          <button type="button" :aria-label="t('actions.language')" :title="t('actions.language')" @click="preferences.toggleLocale">
+          <UiIconButton class="home-icon-button" :label="t('actions.language')" @click="preferences.toggleLocale">
             <Languages :size="16" :stroke-width="1.7" />
-          </button>
-          <button type="button" :aria-label="t('actions.theme')" :title="t('actions.theme')" @click="preferences.toggleTheme">
+          </UiIconButton>
+          <UiIconButton class="home-icon-button" :label="t('actions.theme')" @click="preferences.toggleTheme">
             <Sun v-if="preferences.resolvedTheme === 'dark'" :size="16" :stroke-width="1.7" /><Moon v-else :size="16" :stroke-width="1.7" />
-          </button>
+          </UiIconButton>
           <RouterLink class="home-sign-in" :to="{ path: '/settings', query: { auth: 'login', returnTo: '/' } }">
             {{ t('home.signIn') }}
           </RouterLink>
@@ -227,10 +229,10 @@ onBeforeUnmount(() => {
             </Transition>
             <form class="hero-composer" @submit.prevent="startCreation">
               <span class="composer-mode"><component :is="activeModeConfig.icon" :size="15" />{{ activeModeConfig.label }}</span>
-              <input v-model="starter" type="text" maxlength="500" :placeholder="activeModeConfig.placeholder" :aria-label="t('home.composer.ideaLabel')" @input="modeWasChosen = true" />
-              <button type="submit" :aria-label="t('home.composer.start')" :title="t('home.composer.start')">
+              <UiInput v-model="starter" type="text" maxlength="500" :placeholder="activeModeConfig.placeholder" :aria-label="t('home.composer.ideaLabel')" @update:model-value="modeWasChosen = true" />
+              <UiIconButton class="hero-composer-submit" type="submit" :label="t('home.composer.start')">
                 <Send :size="16" />
-              </button>
+              </UiIconButton>
             </form>
           </div>
         </div>

@@ -7,8 +7,10 @@ import { api, messageFrom, type CommunityPost, type CommunityReport } from '../a
 import AssetMedia from '../components/domain/AssetMedia.vue'
 import { useSessionStore } from '../stores/session'
 import UiButton from '../components/ui/UiButton.vue'
+import UiIconButton from '../components/ui/UiIconButton.vue'
 import UiInput from '../components/ui/UiInput.vue'
 import UiSelect from '../components/ui/UiSelect.vue'
+import UiTextarea from '../components/ui/UiTextarea.vue'
 
 const { locale, t } = useI18n()
 const router = useRouter()
@@ -188,7 +190,9 @@ onMounted(async () => {
       </div>
       <div class="page-hero-actions">
         <UiButton as="RouterLink" class="command-button primary" variant="primary" to="/publish">
-          <template #start><Upload :size="17" :stroke-width="1.75" aria-hidden="true" /></template>
+          <template #start>
+            <Upload :size="17" :stroke-width="1.75" aria-hidden="true" />
+          </template>
           {{ t('actions.publishWork') }}
         </UiButton>
       </div>
@@ -207,7 +211,11 @@ onMounted(async () => {
       </article>
     </div>
     <div v-else-if="error" class="page-state" role="alert">
-      <p>{{ error }}</p><UiButton class="command-button secondary" variant="secondary" @click="load"><template #start><RefreshCw :size="17" :stroke-width="1.75" /></template>{{ t('actions.retry') }}</UiButton>
+      <p>{{ error }}</p><UiButton class="command-button secondary" variant="secondary" @click="load">
+        <template #start>
+          <RefreshCw :size="17" :stroke-width="1.75" />
+        </template>{{ t('actions.retry') }}
+      </UiButton>
     </div>
     <div v-else>
       <div class="view-switcher-bar">
@@ -239,10 +247,10 @@ onMounted(async () => {
           </UiSelect>
         </label>
         <nav class="community-toolbar-actions" :aria-label="t('community.communityActions')">
-          <button type="button" :class="{ active: showCases }" :aria-pressed="showCases" @click="toggleCases">
+          <UiButton variant="ghost" :class="{ active: showCases }" :aria-pressed="showCases" @click="toggleCases">
             <ShieldCheck :size="17" :stroke-width="1.75" aria-hidden="true" />
             {{ t('community.myCases') }}
-          </button>
+          </UiButton>
           <RouterLink to="/discover">
             <Eye :size="17" :stroke-width="1.75" aria-hidden="true" />
             {{ t('actions.browseWorks') }}
@@ -254,9 +262,9 @@ onMounted(async () => {
       </p>
       <section v-if="showCases" class="community-cases" :aria-label="t('community.myCases')">
         <header>
-          <div><span class="status-label">{{ t('community.governanceLabel') }}</span><h2>{{ t('community.myCases') }}</h2></div><button class="icon-button" type="button" :aria-label="t('actions.close')" @click="showCases = false">
+          <div><span class="status-label">{{ t('community.governanceLabel') }}</span><h2>{{ t('community.myCases') }}</h2></div><UiIconButton class="icon-button" type="button" :label="t('actions.close')" @click="showCases = false">
             <X :size="17" />
-          </button>
+          </UiIconButton>
         </header>
         <div v-if="actionLoading === 'cases'" class="page-state">
           <LoaderCircle class="spin" :size="18" />{{ t('community.loadingCases') }}
@@ -264,35 +272,35 @@ onMounted(async () => {
         <div v-else-if="reports.length" class="community-case-list">
           <article v-for="item in reports" :key="item.id">
             <div><strong>{{ item.resourceTitle }}</strong><span>{{ t(`community.reportCategories.${item.category}`) }} · {{ t(`community.reportStates.${item.status}`) }}</span><p>{{ item.details }}</p><small v-if="item.resolutionReason">{{ item.resolutionReason }}</small></div>
-            <button v-if="item.viewerCanAppeal" class="command-button secondary" type="button" @click="Object.assign(appealForm, { reportId: item.id, reason: '' })">
+            <UiButton v-if="item.viewerCanAppeal" class="command-button secondary" type="button" variant="secondary" @click="Object.assign(appealForm, { reportId: item.id, reason: '' })">
               {{ t('community.appeal') }}
-            </button>
+            </UiButton>
             <span v-else-if="item.appeal" :data-status="item.appeal.status">{{ t(`community.appealStates.${item.appeal.status}`) }}</span>
           </article>
         </div>
         <p v-else class="inline-empty">
           {{ t('community.noCases') }}
         </p>
-        <button v-if="reportNextCursor" class="command-button secondary community-cases-load-more" type="button" :disabled="reportLoadingMore" @click="loadMoreCases">
+        <UiButton v-if="reportNextCursor" class="command-button secondary community-cases-load-more" type="button" :disabled="reportLoadingMore" variant="secondary" @click="loadMoreCases">
           <LoaderCircle v-if="reportLoadingMore" class="spin" :size="16" />{{ t('actions.loadMore') }}
-        </button>
+        </UiButton>
         <form v-if="appealForm.reportId" class="community-governance-form" @submit.prevent="submitAppeal">
-          <label>{{ t('community.appealReason') }}<textarea v-model="appealForm.reason" rows="3" minlength="10" maxlength="1000" required></textarea></label>
+          <label>{{ t('community.appealReason') }}<UiTextarea v-model="appealForm.reason" rows="3" minlength="10" maxlength="1000" required /></label>
           <div>
-            <button class="command-button primary" type="submit" :disabled="actionLoading.endsWith(':appeal')">
+            <UiButton class="command-button primary" type="submit" :disabled="actionLoading.endsWith(':appeal')" variant="primary">
               {{ t('community.submitAppeal') }}
-            </button><button class="command-button secondary" type="button" @click="appealForm.reportId = ''">
+            </UiButton><UiButton class="command-button secondary" type="button" variant="secondary" @click="appealForm.reportId = ''">
               {{ t('actions.cancel') }}
-            </button>
+            </UiButton>
           </div>
         </form>
       </section>
       <div v-if="posts.length" class="community-topics">
         <div class="community-results-meta">
           <span>{{ t('community.resultCount', { count: displayedPosts.length }) }}</span>
-          <button v-if="hasActiveFilters" type="button" @click="clearFilters">
+          <UiButton v-if="hasActiveFilters" variant="ghost" type="button" @click="clearFilters">
             {{ t('community.clearFilters') }}
-          </button>
+          </UiButton>
         </div>
         <div class="community-list-head" aria-hidden="true">
           <span>{{ t('community.topicColumn') }}</span>
@@ -345,14 +353,14 @@ onMounted(async () => {
           <Search :size="24" :stroke-width="1.5" aria-hidden="true" />
           <h2>{{ t('community.noFilteredResults') }}</h2>
           <p>{{ t('community.noFilteredResultsSummary') }}</p>
-          <button class="command-button secondary" type="button" @click="clearFilters">
+          <UiButton class="command-button secondary" type="button" variant="secondary" @click="clearFilters">
             {{ t('community.clearFilters') }}
-          </button>
+          </UiButton>
         </section>
       </div>
-      <button v-if="postNextCursor" class="command-button secondary community-feed-load-more" type="button" :disabled="postLoadingMore" @click="loadMorePosts">
+      <UiButton v-if="postNextCursor" class="command-button secondary community-feed-load-more" type="button" :disabled="postLoadingMore" variant="secondary" @click="loadMorePosts">
         <LoaderCircle v-if="postLoadingMore" class="spin" :size="16" />{{ t('actions.loadMore') }}
-      </button>
+      </UiButton>
       <section v-if="!posts.length" class="community-empty" :aria-label="t('community.emptyTitle')">
         <div>
           <span class="status-label">{{ t('community.emptyTitle') }}</span>
