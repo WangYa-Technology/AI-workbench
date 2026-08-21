@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, watch } from 'vue'
 import { X } from 'lucide-vue-next'
-const props = withDefaults(defineProps<{ open?: boolean; title?: string; labelledBy?: string }>(), { open: false, title: '', labelledBy: '' })
+const props = withDefaults(defineProps<{ open?: boolean; title?: string; labelledBy?: string; closeLabel?: string }>(), { open: false, title: '', labelledBy: '', closeLabel: 'Close' })
 const emit = defineEmits<{ 'update:open': [value: boolean] }>()
 const close = () => emit('update:open', false)
 const onKeydown = (event: globalThis.KeyboardEvent) => { if (event.key === 'Escape' && props.open) close() }
@@ -18,7 +18,7 @@ onUnmounted(() => { globalThis.document.removeEventListener('keydown', onKeydown
           <header v-if="title || $slots.header" class="ui-dialog__header">
             <slot name="header">
               <h2>{{ title }}</h2>
-            </slot><button class="ui-icon-button" type="button" aria-label="Close" title="Close" @click="close">
+            </slot><button class="ui-icon-button" type="button" :aria-label="closeLabel" :title="closeLabel" @click="close">
               <X :size="16" aria-hidden="true" />
             </button>
           </header><div class="ui-dialog__body">

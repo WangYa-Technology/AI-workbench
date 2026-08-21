@@ -1,9 +1,9 @@
 <script setup lang="ts">
-defineProps<{ items: Array<{ label: string; to?: string }> }>()
+withDefaults(defineProps<{ items: Array<{ label: string; to?: string }>; label?: string }>(), { label: 'Breadcrumb' })
 </script>
 
 <template>
-  <nav class="ui-breadcrumb" aria-label="Breadcrumb">
+  <nav class="ui-breadcrumb" :aria-label="label">
     <template v-for="(item, index) in items" :key="`${item.label}-${index}`">
       <RouterLink v-if="item.to" :to="item.to">
         {{ item.label }}

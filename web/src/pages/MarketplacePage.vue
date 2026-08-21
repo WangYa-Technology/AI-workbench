@@ -9,6 +9,10 @@ import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { api, messageFrom, type Product, type Purchase } from '../api/client'
 import { formatCurrency } from '../lib/format'
 import { useSessionStore } from '../stores/session'
+import UiButton from '../components/ui/UiButton.vue'
+import UiIconButton from '../components/ui/UiIconButton.vue'
+import UiInput from '../components/ui/UiInput.vue'
+import UiSelect from '../components/ui/UiSelect.vue'
 
 const { t, locale } = useI18n()
 const route = useRoute()
@@ -105,34 +109,26 @@ onMounted(() => void load())
           <p>{{ t('marketplace.summary') }}</p>
         </div>
         <div class="market-header-actions">
-          <RouterLink v-if="session.user" class="command-button secondary" to="/workspace/orders">
-            <ShoppingBag :size="17" />{{ t('marketplace.myOrders') }}
-          </RouterLink>
-          <RouterLink v-if="!session.user" class="command-button secondary" :to="{ path: '/settings', query: { auth: 'login', returnTo: route.fullPath } }">
-            <LogIn :size="17" />{{ t('account.signIn') }}
-          </RouterLink>
-          <RouterLink v-if="!session.user" class="command-button primary" :to="{ path: '/settings', query: { auth: 'register', returnTo: route.fullPath } }">
-            <UserPlus :size="17" />{{ t('account.createAccount') }}
-          </RouterLink>
+          <UiButton v-if="session.user" as="RouterLink" class="command-button secondary" variant="secondary" to="/workspace/orders"><template #start><ShoppingBag :size="17" /></template>{{ t('marketplace.myOrders') }}</UiButton>
+          <UiButton v-if="!session.user" as="RouterLink" class="command-button secondary" variant="secondary" :to="{ path: '/settings', query: { auth: 'login', returnTo: route.fullPath } }"><template #start><LogIn :size="17" /></template>{{ t('account.signIn') }}</UiButton>
+          <UiButton v-if="!session.user" as="RouterLink" class="command-button primary" variant="primary" :to="{ path: '/settings', query: { auth: 'register', returnTo: route.fullPath } }"><template #start><UserPlus :size="17" /></template>{{ t('account.createAccount') }}</UiButton>
         </div>
       </header>
 
       <form class="market-filters" role="search" @submit.prevent="applyFilters">
-        <label class="market-search"><span class="sr-only">{{ t('actions.search') }}</span><Search :size="17" /><input v-model="search" type="search" :placeholder="t('marketplace.searchPlaceholder')" /></label>
-        <label><Filter :size="16" /><span class="sr-only">{{ t('marketplace.allTypes') }}</span><select v-model="productType" @change="applyFilters"><option value="">{{ t('marketplace.allTypes') }}</option><option v-for="item in types" :key="item" :value="item">{{ t(`marketplace.types.${item}`) }}</option></select></label>
-        <label><span class="sr-only">{{ t('marketplace.sortNewest') }}</span><select v-model="sort" @change="applyFilters"><option value="newest">{{ t('marketplace.sortNewest') }}</option><option value="price_asc">{{ t('marketplace.sortLow') }}</option><option value="price_desc">{{ t('marketplace.sortHigh') }}</option></select></label>
-        <button class="icon-button" type="submit" :aria-label="t('actions.search')">
+        <label class="market-search"><span class="sr-only">{{ t('actions.search') }}</span><Search :size="17" /><UiInput v-model="search" type="search" :placeholder="t('marketplace.searchPlaceholder')" /></label>
+        <label><Filter :size="16" /><span class="sr-only">{{ t('marketplace.allTypes') }}</span><UiSelect v-model="productType" @change="applyFilters"><option value="">{{ t('marketplace.allTypes') }}</option><option v-for="item in types" :key="item" :value="item">{{ t(`marketplace.types.${item}`) }}</option></UiSelect></label>
+        <label><span class="sr-only">{{ t('marketplace.sortNewest') }}</span><UiSelect v-model="sort" @change="applyFilters"><option value="newest">{{ t('marketplace.sortNewest') }}</option><option value="price_asc">{{ t('marketplace.sortLow') }}</option><option value="price_desc">{{ t('marketplace.sortHigh') }}</option></UiSelect></label>
+        <UiIconButton class="icon-button" :label="t('actions.search')" type="submit">
           <ArrowRight :size="17" />
-        </button>
+        </UiIconButton>
       </form>
 
       <div v-if="loading" class="page-state" aria-live="polite">
         <LoaderCircle class="spin" :size="20" />{{ t('marketplace.loading') }}
       </div>
       <div v-else-if="error" class="page-state" role="alert">
-        <p>{{ error }}</p><button class="command-button secondary" type="button" @click="load">
-          <RefreshCw :size="17" />{{ t('actions.retry') }}
-        </button>
+        <p>{{ error }}</p><UiButton class="command-button secondary" variant="secondary" @click="load"><template #start><RefreshCw :size="17" /></template>{{ t('actions.retry') }}</UiButton>
       </div>
       <div v-else-if="!products.length" class="page-state">
         <p>{{ t('marketplace.noResults') }}</p>
@@ -165,9 +161,7 @@ onMounted(() => void load())
         <LoaderCircle class="spin" :size="20" />{{ t('marketplace.loadingProduct') }}
       </div>
       <div v-else-if="error && !detail" class="page-state" role="alert">
-        <p>{{ error }}</p><button class="command-button secondary" type="button" @click="load">
-          <RefreshCw :size="17" />{{ t('actions.retry') }}
-        </button>
+        <p>{{ error }}</p><UiButton class="command-button secondary" variant="secondary" @click="load"><template #start><RefreshCw :size="17" /></template>{{ t('actions.retry') }}</UiButton>
       </div>
       <div v-else-if="detail" class="product-detail-layout">
         <main class="product-detail-main">
