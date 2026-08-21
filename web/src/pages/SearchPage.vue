@@ -79,24 +79,34 @@ watch(() => route.fullPath, () => void load(), { immediate: true })
       <form role="search" @submit.prevent="submit">
         <Search :size="20" :stroke-width="1.75" aria-hidden="true" />
         <UiInput v-model="draft" type="search" minlength="2" maxlength="120" required :placeholder="t('search.placeholder')" :aria-label="t('actions.search')" />
-        <UiButton class="command-button primary" variant="primary" type="submit">{{ t('actions.search') }}<template #end><ArrowRight :size="17" /></template></UiButton>
+        <UiButton class="command-button primary" variant="primary" type="submit">
+          {{ t('actions.search') }}<template #end>
+            <ArrowRight :size="17" />
+          </template>
+        </UiButton>
       </form>
     </header>
 
     <nav v-if="query.length >= 2" class="search-type-filter" :aria-label="t('search.filterLabel')">
-      <button type="button" :class="{ active: selectedTypes.length === 0 }" @click="selectedTypes = []; submit()">
+      <UiButton variant="ghost" :class="{ active: selectedTypes.length === 0 }" @click="selectedTypes = []; submit()">
         {{ t('search.all') }}
-      </button>
-      <button v-for="type in supportedTypes" :key="type" type="button" :class="{ active: selectedTypes.includes(type) }" :aria-pressed="selectedTypes.includes(type)" @click="toggleType(type)">
-        <component :is="typeIcons[type]" :size="15" />{{ t(`search.types.${type}`) }}
-      </button>
+      </UiButton>
+      <UiButton v-for="type in supportedTypes" :key="type" variant="ghost" :class="{ active: selectedTypes.includes(type) }" :aria-pressed="selectedTypes.includes(type)" @click="toggleType(type)">
+        <template #start>
+          <component :is="typeIcons[type]" :size="15" />
+        </template>{{ t(`search.types.${type}`) }}
+      </UiButton>
     </nav>
 
     <div v-if="loading" class="page-state" aria-live="polite">
       {{ t('search.loading') }}
     </div>
     <div v-else-if="error" class="page-state" role="alert">
-      <p>{{ error }}</p><UiButton class="command-button secondary" variant="secondary" @click="load"><template #start><RefreshCw :size="17" /></template>{{ t('actions.retry') }}</UiButton>
+      <p>{{ error }}</p><UiButton class="command-button secondary" variant="secondary" @click="load">
+        <template #start>
+          <RefreshCw :size="17" />
+        </template>{{ t('actions.retry') }}
+      </UiButton>
     </div>
     <div v-else-if="query.length < 2" class="search-start-state">
       <FileSearch :size="26" :stroke-width="1.5" /><h2>{{ t('search.startTitle') }}</h2><p>{{ t('search.startSummary') }}</p>

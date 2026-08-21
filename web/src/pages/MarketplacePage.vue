@@ -10,6 +10,7 @@ import { api, messageFrom, type Product, type Purchase } from '../api/client'
 import { formatCurrency } from '../lib/format'
 import { useSessionStore } from '../stores/session'
 import UiButton from '../components/ui/UiButton.vue'
+import UiCheckbox from '../components/ui/UiCheckbox.vue'
 import UiIconButton from '../components/ui/UiIconButton.vue'
 import UiInput from '../components/ui/UiInput.vue'
 import UiSelect from '../components/ui/UiSelect.vue'
@@ -109,9 +110,21 @@ onMounted(() => void load())
           <p>{{ t('marketplace.summary') }}</p>
         </div>
         <div class="market-header-actions">
-          <UiButton v-if="session.user" as="RouterLink" class="command-button secondary" variant="secondary" to="/workspace/orders"><template #start><ShoppingBag :size="17" /></template>{{ t('marketplace.myOrders') }}</UiButton>
-          <UiButton v-if="!session.user" as="RouterLink" class="command-button secondary" variant="secondary" :to="{ path: '/settings', query: { auth: 'login', returnTo: route.fullPath } }"><template #start><LogIn :size="17" /></template>{{ t('account.signIn') }}</UiButton>
-          <UiButton v-if="!session.user" as="RouterLink" class="command-button primary" variant="primary" :to="{ path: '/settings', query: { auth: 'register', returnTo: route.fullPath } }"><template #start><UserPlus :size="17" /></template>{{ t('account.createAccount') }}</UiButton>
+          <UiButton v-if="session.user" as="RouterLink" class="command-button secondary" variant="secondary" to="/workspace/orders">
+            <template #start>
+              <ShoppingBag :size="17" />
+            </template>{{ t('marketplace.myOrders') }}
+          </UiButton>
+          <UiButton v-if="!session.user" as="RouterLink" class="command-button secondary" variant="secondary" :to="{ path: '/settings', query: { auth: 'login', returnTo: route.fullPath } }">
+            <template #start>
+              <LogIn :size="17" />
+            </template>{{ t('account.signIn') }}
+          </UiButton>
+          <UiButton v-if="!session.user" as="RouterLink" class="command-button primary" variant="primary" :to="{ path: '/settings', query: { auth: 'register', returnTo: route.fullPath } }">
+            <template #start>
+              <UserPlus :size="17" />
+            </template>{{ t('account.createAccount') }}
+          </UiButton>
         </div>
       </header>
 
@@ -128,7 +141,11 @@ onMounted(() => void load())
         <LoaderCircle class="spin" :size="20" />{{ t('marketplace.loading') }}
       </div>
       <div v-else-if="error" class="page-state" role="alert">
-        <p>{{ error }}</p><UiButton class="command-button secondary" variant="secondary" @click="load"><template #start><RefreshCw :size="17" /></template>{{ t('actions.retry') }}</UiButton>
+        <p>{{ error }}</p><UiButton class="command-button secondary" variant="secondary" @click="load">
+          <template #start>
+            <RefreshCw :size="17" />
+          </template>{{ t('actions.retry') }}
+        </UiButton>
       </div>
       <div v-else-if="!products.length" class="page-state">
         <p>{{ t('marketplace.noResults') }}</p>
@@ -161,7 +178,11 @@ onMounted(() => void load())
         <LoaderCircle class="spin" :size="20" />{{ t('marketplace.loadingProduct') }}
       </div>
       <div v-else-if="error && !detail" class="page-state" role="alert">
-        <p>{{ error }}</p><UiButton class="command-button secondary" variant="secondary" @click="load"><template #start><RefreshCw :size="17" /></template>{{ t('actions.retry') }}</UiButton>
+        <p>{{ error }}</p><UiButton class="command-button secondary" variant="secondary" @click="load">
+          <template #start>
+            <RefreshCw :size="17" />
+          </template>{{ t('actions.retry') }}
+        </UiButton>
       </div>
       <div v-else-if="detail" class="product-detail-layout">
         <main class="product-detail-main">
@@ -204,29 +225,35 @@ onMounted(() => void load())
           </div>
           <div v-if="!session.user" class="market-auth-prompt">
             <div><h2>{{ t('marketplace.guestTitle') }}</h2><p>{{ t('marketplace.guestSummary') }}</p></div>
-            <RouterLink class="command-button primary wide" :to="{ path: '/settings', query: { auth: 'login', returnTo: route.fullPath } }">
-              <LogIn :size="17" />{{ t('account.signIn') }}
-            </RouterLink>
-            <RouterLink class="text-link" :to="{ path: '/settings', query: { auth: 'register', returnTo: route.fullPath } }">
+            <UiButton as="RouterLink" class="command-button primary wide" variant="primary" :to="{ path: '/settings', query: { auth: 'login', returnTo: route.fullPath } }">
+              <template #start>
+                <LogIn :size="17" />
+              </template>{{ t('account.signIn') }}
+            </UiButton>
+            <UiButton as="RouterLink" class="text-link" variant="ghost" size="sm" :to="{ path: '/settings', query: { auth: 'register', returnTo: route.fullPath } }">
               {{ t('account.createAccount') }}
-            </RouterLink>
+            </UiButton>
           </div>
           <template v-else-if="detail.ownedAssetId">
-            <RouterLink class="command-button primary wide" :to="`/workspace/assets/${detail.ownedAssetId}`">
-              <PackageCheck :size="17" />{{ t('marketplace.openAsset') }}
-            </RouterLink>
-            <RouterLink class="command-button secondary wide" to="/workspace/orders">
+            <UiButton as="RouterLink" class="command-button primary wide" variant="primary" :to="`/workspace/assets/${detail.ownedAssetId}`">
+              <template #start>
+                <PackageCheck :size="17" />
+              </template>{{ t('marketplace.openAsset') }}
+            </UiButton>
+            <UiButton as="RouterLink" class="command-button secondary wide" variant="secondary" to="/workspace/orders">
               {{ t('marketplace.viewOrder') }}
-            </RouterLink>
+            </UiButton>
           </template>
           <form v-else @submit.prevent="buy">
-            <label class="license-accept"><input v-model="accepted" type="checkbox" /><span>{{ t('marketplace.acceptLicense', { name: detail.license.name, version: detail.license.version }) }}</span></label>
+            <label class="license-accept"><UiCheckbox v-model="accepted" /><span>{{ t('marketplace.acceptLicense', { name: detail.license.name, version: detail.license.version }) }}</span></label>
             <p v-if="error" class="form-error" role="alert">
               {{ error }}
             </p>
-            <button class="command-button primary wide" type="submit" :disabled="!accepted || purchasing">
-              <LoaderCircle v-if="purchasing" class="spin" :size="17" /><CircleDollarSign v-else :size="17" />{{ purchasing ? t(paymentEnabled ? 'marketplace.openingCheckout' : 'marketplace.purchasing') : t(paymentEnabled ? 'marketplace.openCheckout' : 'marketplace.purchase') }}
-            </button>
+            <UiButton class="command-button primary wide" variant="primary" type="submit" :loading="purchasing" :disabled="!accepted">
+              <template #start>
+                <CircleDollarSign v-if="!purchasing" :size="17" />
+              </template>{{ purchasing ? t(paymentEnabled ? 'marketplace.openingCheckout' : 'marketplace.purchasing') : t(paymentEnabled ? 'marketplace.openCheckout' : 'marketplace.purchase') }}
+            </UiButton>
           </form>
           <small>{{ t(paymentEnabled ? 'marketplace.providerCheckoutEvidence' : 'marketplace.checkoutEvidence') }}</small>
         </aside>

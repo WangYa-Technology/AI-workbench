@@ -2,9 +2,11 @@
 import { CheckCircle2, KeyRound, MailCheck, RefreshCw } from 'lucide-vue-next'
 import { computed, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { RouterLink, useRoute } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { api, messageFrom } from '../api/client'
 import { useSessionStore } from '../stores/session'
+import UiButton from '../components/ui/UiButton.vue'
+import UiInput from '../components/ui/UiInput.vue'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -54,9 +56,9 @@ async function submit() {
         <CheckCircle2 class="success-icon" :size="28" />
         <h1>{{ t(isVerification ? 'emailAction.verificationComplete' : 'emailAction.resetComplete') }}</h1>
         <p>{{ t(isVerification ? 'emailAction.verificationCompleteSummary' : 'emailAction.resetCompleteSummary') }}</p>
-        <RouterLink class="command-button primary" :to="isVerification ? '/settings?section=security' : '/settings'">
+        <UiButton as="RouterLink" class="command-button primary" variant="primary" :to="isVerification ? '/settings?section=security' : '/settings'">
           {{ t(isVerification ? 'emailAction.openSecurity' : 'emailAction.signIn') }}
-        </RouterLink>
+        </UiButton>
       </template>
       <form v-else class="account-form" @submit.prevent="submit">
         <div>
@@ -64,15 +66,17 @@ async function submit() {
           <p>{{ t(isVerification ? 'emailAction.verifySummary' : 'emailAction.resetSummary') }}</p>
         </div>
         <template v-if="!isVerification">
-          <label>{{ t('emailAction.newPassword') }}<input v-model="form.password" type="password" minlength="10" maxlength="128" autocomplete="new-password" required /></label>
-          <label>{{ t('emailAction.confirmPassword') }}<input v-model="form.confirmation" type="password" minlength="10" maxlength="128" autocomplete="new-password" required /></label>
+          <label>{{ t('emailAction.newPassword') }}<UiInput v-model="form.password" type="password" minlength="10" maxlength="128" autocomplete="new-password" required /></label>
+          <label>{{ t('emailAction.confirmPassword') }}<UiInput v-model="form.confirmation" type="password" minlength="10" maxlength="128" autocomplete="new-password" required /></label>
         </template>
         <p v-if="error" class="form-error" role="alert">
           <RefreshCw :size="16" />{{ error }}
         </p>
-        <button class="command-button primary" type="submit" :disabled="loading || !token">
-          <MailCheck v-if="isVerification" :size="17" /><KeyRound v-else :size="17" />{{ loading ? t('emailAction.processing') : t(isVerification ? 'emailAction.verify' : 'emailAction.reset') }}
-        </button>
+        <UiButton class="command-button primary" variant="primary" type="submit" :loading="loading" :disabled="!token">
+          <template #start>
+            <MailCheck v-if="isVerification && !loading" :size="17" /><KeyRound v-else-if="!loading" :size="17" />
+          </template>{{ loading ? t('emailAction.processing') : t(isVerification ? 'emailAction.verify' : 'emailAction.reset') }}
+        </UiButton>
       </form>
     </div>
   </section>

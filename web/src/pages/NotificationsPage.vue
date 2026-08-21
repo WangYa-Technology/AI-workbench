@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowRight, Ban, Bell, Check, CheckCheck, Clock3, LoaderCircle, RefreshCw, Settings2 } from 'lucide-vue-next'
+import { ArrowRight, Ban, Bell, Check, CheckCheck, Clock3, RefreshCw, Settings2 } from 'lucide-vue-next'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
@@ -8,6 +8,7 @@ import { formatDateTime } from '../lib/format'
 import { useNotificationsStore } from '../stores/notifications'
 import { useSessionStore } from '../stores/session'
 import UiButton from '../components/ui/UiButton.vue'
+import UiCheckbox from '../components/ui/UiCheckbox.vue'
 import UiIconButton from '../components/ui/UiIconButton.vue'
 import UiSelect from '../components/ui/UiSelect.vue'
 
@@ -106,11 +107,17 @@ onMounted(async () => {
   <section class="notifications-page content-width">
     <header class="notifications-header">
       <div><span class="status-label">{{ t('notifications.activityLabel') }}</span><h1>{{ t('notifications.title') }}</h1><p>{{ t('notifications.summary') }}</p></div>
-      <UiButton v-if="session.user && view === 'inbox' && notifications.unreadCount" class="command-button secondary" variant="secondary" @click="notifications.markAllRead"><template #start><CheckCheck :size="17" /></template>{{ t('notifications.markAllRead') }}</UiButton>
+      <UiButton v-if="session.user && view === 'inbox' && notifications.unreadCount" class="command-button secondary" variant="secondary" @click="notifications.markAllRead">
+        <template #start>
+          <CheckCheck :size="17" />
+        </template>{{ t('notifications.markAllRead') }}
+      </UiButton>
     </header>
 
     <div v-if="session.initialized && !session.user" class="notification-auth-state">
-      <Bell :size="24" /><h2>{{ t('notifications.signInTitle') }}</h2><p>{{ t('notifications.signInSummary') }}</p><UiButton as="RouterLink" class="command-button primary" variant="primary" to="/settings">{{ t('account.signIn') }}</UiButton>
+      <Bell :size="24" /><h2>{{ t('notifications.signInTitle') }}</h2><p>{{ t('notifications.signInSummary') }}</p><UiButton as="RouterLink" class="command-button primary" variant="primary" to="/settings">
+        {{ t('account.signIn') }}
+      </UiButton>
     </div>
 
     <template v-else>
@@ -134,7 +141,11 @@ onMounted(async () => {
           {{ t('notifications.loading') }}
         </div>
         <div v-else-if="notifications.error" class="page-state" role="alert">
-          <p>{{ notifications.error }}</p><UiButton class="command-button secondary" variant="secondary" @click="load"><template #start><RefreshCw :size="17" /></template>{{ t('actions.retry') }}</UiButton>
+          <p>{{ notifications.error }}</p><UiButton class="command-button secondary" variant="secondary" @click="load">
+            <template #start>
+              <RefreshCw :size="17" />
+            </template>{{ t('actions.retry') }}
+          </UiButton>
         </div>
         <div v-else-if="!notifications.items.length" class="notification-empty">
           <Bell :size="22" /><h2>{{ t('notifications.emptyTitle') }}</h2><p>{{ t('notifications.emptySummary') }}</p>
@@ -162,7 +173,7 @@ onMounted(async () => {
           <p v-if="preferenceError" class="form-error" role="alert">
             {{ preferenceError }}
           </p>
-          <label v-for="item in preferences" :key="item.kind"><span><strong>{{ t(`notifications.kinds.${item.kind}`) }}</strong><small>{{ t(`notifications.kindDescriptions.${item.kind}`) }}</small></span><input type="checkbox" :checked="item.inAppEnabled" :disabled="savingKind === item.kind" @change="toggle(item)" /></label>
+          <label v-for="item in preferences" :key="item.kind"><span><strong>{{ t(`notifications.kinds.${item.kind}`) }}</strong><small>{{ t(`notifications.kindDescriptions.${item.kind}`) }}</small></span><UiCheckbox :model-value="item.inAppEnabled" :disabled="savingKind === item.kind" @update:model-value="toggle(item)" /></label>
           <div class="delivery-evidence">
             <header><h3>{{ t('notifications.deliveryEvidence') }}</h3><p>{{ t('notifications.deliveryEvidenceSummary') }}</p></header>
             <p v-if="!deliveries.length" class="delivery-evidence-empty">
@@ -173,9 +184,9 @@ onMounted(async () => {
               <span><strong>{{ t(`notifications.kinds.${item.kind}`) }}</strong><small>{{ t(`notifications.deliveryStatuses.${item.status}`) }} · {{ t('notifications.deliveryAttempts', { count: item.attempts }) }}<template v-if="item.errorCode"> · {{ t(`notifications.deliveryErrors.${item.errorCode}`) }}</template></small></span>
               <time :datetime="item.completedAt || item.createdAt">{{ date(item.completedAt || item.createdAt) }}</time>
             </article>
-            <button v-if="deliveryNextCursor" class="command-button secondary delivery-evidence-load-more" type="button" :disabled="deliveryLoadingMore" @click="loadMoreDeliveries">
-              <LoaderCircle v-if="deliveryLoadingMore" class="spin" :size="16" />{{ t('actions.loadMore') }}
-            </button>
+            <UiButton v-if="deliveryNextCursor" class="command-button secondary delivery-evidence-load-more" variant="secondary" :loading="deliveryLoadingMore" @click="loadMoreDeliveries">
+              {{ t('actions.loadMore') }}
+            </UiButton>
           </div>
         </section>
       </div>

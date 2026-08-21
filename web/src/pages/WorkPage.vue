@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { RouterLink, useRoute } from 'vue-router'
 import { api, messageFrom, type Work } from '../api/client'
 import AssetMedia from '../components/domain/AssetMedia.vue'
+import UiButton from '../components/ui/UiButton.vue'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -37,9 +38,11 @@ onMounted(() => void load())
     </div>
     <div v-else-if="error" class="page-state" role="alert">
       <p>{{ error }}</p>
-      <button class="command-button secondary" type="button" @click="load">
-        <RefreshCw :size="17" />{{ t('actions.retry') }}
-      </button>
+      <UiButton class="command-button secondary" variant="secondary" @click="load">
+        <template #start>
+          <RefreshCw :size="17" />
+        </template>{{ t('actions.retry') }}
+      </UiButton>
     </div>
     <div v-else-if="work" class="work-detail-grid">
       <div class="work-detail-media">
