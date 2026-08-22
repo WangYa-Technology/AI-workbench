@@ -796,9 +796,9 @@ onMounted(() => void load())
               <h2>{{ item.title }}</h2><p>{{ item.licenseCode }}</p>
               <footer>
                 <small>{{ date(item.savedAt) }}</small><div class="asset-actions">
-                  <RouterLink class="icon-button" :to="`/works/${item.workId}`" :aria-label="t('actions.viewDetails')" :title="t('actions.viewDetails')">
+                  <UiIconButton as="RouterLink" class="icon-button" :to="`/works/${item.workId}`" :label="t('actions.viewDetails')">
                     <ArrowRight :size="16" />
-                  </RouterLink>
+                  </UiIconButton>
                   <UiIconButton class="icon-button" :label="t('workspace.removeSaved')" @click="removeSavedWork(item)">
                     <BookmarkX :size="16" />
                   </UiIconButton>
@@ -832,12 +832,12 @@ onMounted(() => void load())
               <h2>{{ asset.title }}</h2><p>{{ asset.licenseCode }}</p>
               <footer>
                 <small>{{ date(asset.createdAt) }}</small><div class="asset-actions">
-                  <RouterLink class="icon-button" :to="`/workspace/assets/${asset.id}`" :aria-label="t('actions.viewDetails')" :title="t('actions.viewDetails')">
+                  <UiIconButton as="RouterLink" class="icon-button" :to="`/workspace/assets/${asset.id}`" :label="t('actions.viewDetails')">
                     <ArrowRight :size="16" />
-                  </RouterLink>
-                  <RouterLink v-if="asset.sourceType === 'purchase'" class="icon-button" :to="`/create/image?sourceAssetId=${asset.id}`" :aria-label="t('actions.useInCreate')" :title="t('actions.useInCreate')">
+                  </UiIconButton>
+                  <UiIconButton v-if="asset.sourceType === 'purchase'" as="RouterLink" class="icon-button" :to="`/create/image?sourceAssetId=${asset.id}`" :label="t('actions.useInCreate')">
                     <WandSparkles :size="16" />
-                  </RouterLink>
+                  </UiIconButton>
                 </div>
               </footer>
             </div>
@@ -920,13 +920,13 @@ onMounted(() => void load())
             <UiIconButton v-if="item.actions.canRetry" class="icon-button" :label="t('actions.retry')" :disabled="generationAction === item.id" @click="changeGeneration(item, 'retry')">
               <RotateCcw :size="16" />
             </UiIconButton>
-            <a v-if="item.actions.canDownload && item.actions.downloadPath" class="icon-button" :href="item.actions.downloadPath" :download="item.prompt" :aria-label="t('actions.download')" :title="t('actions.download')"><Download :size="16" /></a>
-            <RouterLink v-if="item.actions.canReuse && item.actions.reusePath" class="icon-button" :to="item.actions.reusePath" :aria-label="t('actions.useInCreate')" :title="t('actions.useInCreate')">
+            <UiIconButton v-if="item.actions.canDownload && item.actions.downloadPath" as="a" class="icon-button" :href="item.actions.downloadPath" :download="item.prompt" :label="t('actions.download')"><Download :size="16" /></UiIconButton>
+            <UiIconButton v-if="item.actions.canReuse && item.actions.reusePath" as="RouterLink" class="icon-button" :to="item.actions.reusePath" :label="t('actions.useInCreate')">
               <WandSparkles :size="16" />
-            </RouterLink>
-            <RouterLink v-if="item.actions.canView" class="icon-button" :to="item.actions.viewPath" :aria-label="t('actions.viewDetails')" :title="t('actions.viewDetails')">
+            </UiIconButton>
+            <UiIconButton v-if="item.actions.canView" as="RouterLink" class="icon-button" :to="item.actions.viewPath" :label="t('actions.viewDetails')">
               <ArrowRight :size="16" />
-            </RouterLink>
+            </UiIconButton>
           </div>
           <div v-if="generationFocus === item.id" class="generation-focus-detail">
             <span>{{ t('workspace.generationId') }} <strong>{{ item.id }}</strong></span><span v-if="item.retryOfGenerationId">{{ t('workspace.retryOf') }} <strong>{{ item.retryOfGenerationId }}</strong></span><p v-if="item.errorMessage">
@@ -1085,9 +1085,9 @@ onMounted(() => void load())
                   <div><dt>{{ t('workspace.reservedCredits') }}</dt><dd>{{ formatCurrency(billing.account.reservedCents, billing.account.currency, locale) }}</dd></div>
                   <div><dt>{{ t('workspace.paymentMode') }}</dt><dd>{{ t('workspace.localTestMode') }}</dd></div>
                 </dl>
-                <RouterLink class="command-button secondary billing-support-link" to="/support">
+                <UiButton as="RouterLink" class="command-button secondary billing-support-link" variant="secondary" to="/support">
                   {{ t('workspace.contactSupportForCredits') }}<ArrowRight :size="16" />
-                </RouterLink>
+                </UiButton>
               </div>
             </section>
           </div>

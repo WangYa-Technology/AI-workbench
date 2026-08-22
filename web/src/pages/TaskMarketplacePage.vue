@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {
-  AlertTriangle, ArrowLeft, BriefcaseBusiness, CalendarDays, Check, ChevronDown, ChevronRight,
+  AlertTriangle, ArrowLeft, BriefcaseBusiness, CalendarDays, Check, ChevronRight,
   CircleDollarSign, Clock3, FileCheck2, Filter, Grid2X2, Image as ImageIcon, List, LoaderCircle, LogIn,
   MessageSquareText, Music2, Play, Plus, RefreshCw, Search, Shapes, ShieldCheck, Sparkles, UserPlus,
   UserRound, Video, WandSparkles, Workflow, X,
@@ -18,6 +18,7 @@ import UiCheckbox from '../components/ui/UiCheckbox.vue'
 import UiIconButton from '../components/ui/UiIconButton.vue'
 import UiInput from '../components/ui/UiInput.vue'
 import UiSelect from '../components/ui/UiSelect.vue'
+import UiTabs from '../components/ui/UiTabs.vue'
 import UiTextarea from '../components/ui/UiTextarea.vue'
 
 const { t, locale } = useI18n()
@@ -49,6 +50,10 @@ const view = ref(route.query.view === 'mine' ? 'mine' : 'available')
 const status = ref(String(route.query.status ?? (view.value === 'mine' ? '' : 'open')))
 const sort = ref(String(route.query.sort || 'newest'))
 const layoutMode = ref<'list' | 'grid'>('list')
+const viewTabs = computed(() => [
+  { value: 'available', label: t('tasks.availableWork'), icon: Search },
+  { value: 'mine', label: t('tasks.myActivity'), icon: BriefcaseBusiness },
+])
 const taskID = computed(() => String(route.params.id || ''))
 const isDetail = computed(() => Boolean(taskID.value))
 const canPublishBrief = computed(() => Boolean(session.user && ['publisher', 'admin'].includes(session.user.role)))
@@ -492,31 +497,21 @@ onBeforeUnmount(() => {
       </header>
 
       <div v-if="session.user" class="view-switcher-bar">
-        <div v-motion-tabs class="view-switcher t-tabs" role="tablist" :aria-label="t('tasks.views')">
-          <span class="t-tabs-pill" aria-hidden="true"></span>
-          <button class="t-tab" type="button" role="tab" :aria-selected="view === 'available'" :class="{ active: view === 'available' }" @click="selectView('available')">
-            <Search :size="16" />{{ t('tasks.availableWork') }}
-          </button>
-          <button class="t-tab" type="button" role="tab" :aria-selected="view === 'mine'" :class="{ active: view === 'mine' }" @click="selectView('mine')">
-            <BriefcaseBusiness :size="16" />{{ t('tasks.myActivity') }}
-          </button>
-        </div>
+        <UiTabs class="view-switcher" :model-value="view" :items="viewTabs" :label="t('tasks.views')" @update:model-value="selectView($event as 'available' | 'mine')" />
       </div>
 
       <form class="task-filters" role="search" @submit.prevent="applyFilters">
         <label class="task-search"><span class="sr-only">{{ t('actions.search') }}</span><Search :size="17" /><UiInput v-model="search" type="search" :placeholder="t('tasks.searchPlaceholder')" /></label>
-        <label class="task-filter-control">
-          <span class="task-filter-display" aria-hidden="true"><Filter :size="15" /><span>{{ deliverableType ? t(`tasks.types.${deliverableType}`) : t('tasks.allTypes') }}</span><ChevronDown :size="14" /></span>
-          <UiSelect v-model="deliverableType" :aria-label="t('tasks.allTypes')" @change="applyFilters"><option value="">{{ t('tasks.allTypes') }}</option><option v-for="item in types" :key="item" :value="item">{{ t(`tasks.types.${item}`) }}</option></UiSelect>
-        </label>
-        <label class="task-filter-control">
-          <span class="task-filter-display" aria-hidden="true"><span>{{ status ? t(`tasks.status.${status}`) : t('tasks.allStatuses') }}</span><ChevronDown :size="14" /></span>
-          <UiSelect v-model="status" :aria-label="t('tasks.allStatuses')" @change="applyFilters"><option value="">{{ t('tasks.allStatuses') }}</option><option v-for="item in statuses" :key="item" :value="item">{{ t(`tasks.status.${item}`) }}</option></UiSelect>
-        </label>
-        <label class="task-filter-control">
-          <span class="task-filter-display" aria-hidden="true"><span>{{ sort === 'deadline' ? t('tasks.sortDeadline') : sort === 'budget_desc' ? t('tasks.sortBudget') : t('tasks.sortNewest') }}</span><ChevronDown :size="14" /></span>
-          <UiSelect v-model="sort" :aria-label="t('tasks.sortNewest')" @change="applyFilters"><option value="newest">{{ t('tasks.sortNewest') }}</option><option value="deadline">{{ t('tasks.sortDeadline') }}</option><option value="budget_desc">{{ t('tasks.sortBudget') }}</option></UiSelect>
-        </label>
+        <UiSelect v-model="deliverableType" class="task-filter-control" :aria-label="t('tasks.allTypes')" :align-item-with-trigger="false" @change="applyFilters">
+          <template #start><Filter :size="15" aria-hidden="true" /></template>
+          <option value="">{{ t('tasks.allTypes') }}</option><option v-for="item in types" :key="item" :value="item">{{ t(`tasks.types.${item}`) }}</option>
+        </UiSelect>
+        <UiSelect v-model="status" class="task-filter-control" :aria-label="t('tasks.allStatuses')" @change="applyFilters">
+          <option value="">{{ t('tasks.allStatuses') }}</option><option v-for="item in statuses" :key="item" :value="item">{{ t(`tasks.status.${item}`) }}</option>
+        </UiSelect>
+        <UiSelect v-model="sort" class="task-filter-control" :aria-label="t('tasks.sortNewest')" @change="applyFilters">
+          <option value="newest">{{ t('tasks.sortNewest') }}</option><option value="deadline">{{ t('tasks.sortDeadline') }}</option><option value="budget_desc">{{ t('tasks.sortBudget') }}</option>
+        </UiSelect>
         <UiButton class="command-button primary task-filter-submit" variant="primary" type="submit">
           <template #start>
             <Search :size="17" />

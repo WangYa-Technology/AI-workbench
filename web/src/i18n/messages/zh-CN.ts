@@ -217,7 +217,7 @@ export default {
     events: { created: '任务已发布', proposal_submitted: '提案已提交', funding_requested: '已请求安全资助', funding_confirmed: '资助已确认', funding_failed: '资助失败', funding_refund_requested: '已请求资助退款', funding_refunded: '资助已退款', funding_refund_failed: '资助退款需要审核', directly_accepted: '创作者已直接接单', proposal_accepted: '提案已接受', delivery_submitted: '交付已提交', revision_requested: '已要求返修', delivery_accepted: '交付已验收', payout_transferred: '创作者收款已转账', dispute_opened: '争议已发起', task_cancelled: '任务已取消' },
   },
   marketplace: {
-    title: '数字产品市场', summary: '购买提示词、工作流、素材和作品授权；结账前即可查看权利范围与来源证据。',
+    title: '数字产品市场', summary: '购买提示词、工作流、素材和作品授权；结账前即可查看权利范围与来源证据。', statsLabel: '市场活跃数据', listedProducts: '在售产品', activeCreators: '活跃创作者', licenseTypes: '授权类型',
     localTest: '本地测试结账 · 不会真实扣款或打款', myOrders: '我的订单', searchPlaceholder: '搜索产品、创作者或用途', allTypes: '全部类型',
     sortNewest: '最新发布', sortLow: '价格从低到高', sortHigh: '价格从高到低', loading: '正在加载数字产品…', loadingProduct: '正在加载产品证据…',
     noResults: '没有符合筛选条件的产品。', results: '个产品', noRealCharge: '仅使用本地测试美元，不会使用银行卡、银行账户，也不会发生真实扣款、转账或提现。', guestTitle: '登录后获取产品授权', guestSummary: '可先完整查看授权权利；只有在接受授权并完成结账时才需要账户。',

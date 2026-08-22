@@ -153,9 +153,9 @@ onMounted(async () => {
         <div v-else class="notification-list">
           <article v-for="item in notifications.items" :key="item.id" :class="{ unread: !item.readAt }">
             <span class="notification-signal" aria-hidden="true"></span>
-            <button class="notification-copy" type="button" @click="open(item)">
+            <UiButton class="notification-copy" variant="ghost" :content-wrapper="false" @click="open(item)">
               <span>{{ category(item.kind) }} · <time :datetime="item.createdAt">{{ date(item.createdAt) }}</time></span><strong>{{ item.title }}</strong><p>{{ item.body }}</p>
-            </button>
+            </UiButton>
             <div class="notification-actions">
               <UiIconButton v-if="!item.readAt" class="icon-button" :label="t('notifications.markRead')" @click="notifications.markRead(item)">
                 <Check :size="17" />

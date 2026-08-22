@@ -5,18 +5,24 @@ const measureLayout = async (page: Page, path: string, tabName: string) => {
   await expect(page.getByRole('tab', { name: tabName, exact: true })).toBeVisible()
   const header = await page.locator('.page-hero-header').boundingBox()
   const switcherBar = await page.locator('.view-switcher-bar').boundingBox()
-  const activeTab = page.locator('.view-switcher button.active')
-  const activePill = page.locator('.view-switcher .t-tabs-pill')
+  const activeTab = page.locator('.view-switcher [aria-selected="true"]')
+  const activePill = page.locator('.view-switcher .ui-tabs__indicator')
   expect(header).not.toBeNull()
   expect(switcherBar).not.toBeNull()
   await expect(activeTab).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
   await expect.poll(() => activePill.evaluate(element => element.getBoundingClientRect().width)).toBeGreaterThan(0)
+  await expect.poll(async () => {
+    const [tab, pill] = await Promise.all([activeTab.boundingBox(), activePill.boundingBox()])
+    return tab && pill ? Math.abs(tab.x - pill.x) : Number.POSITIVE_INFINITY
+  }).toBeLessThanOrEqual(1)
+  await expect.poll(async () => {
+    const [tab, pill] = await Promise.all([activeTab.boundingBox(), activePill.boundingBox()])
+    return tab && pill ? Math.abs(tab.width - pill.width) : Number.POSITIVE_INFINITY
+  }).toBeLessThanOrEqual(1)
   const activeTabBox = await activeTab.boundingBox()
   const activePillBox = await activePill.boundingBox()
   expect(activeTabBox).not.toBeNull()
   expect(activePillBox).not.toBeNull()
-  expect(Math.abs(activeTabBox!.x - activePillBox!.x)).toBeLessThanOrEqual(1)
-  expect(Math.abs(activeTabBox!.width - activePillBox!.width)).toBeLessThanOrEqual(1)
   const parts = await page.locator('.page-hero-header').evaluate(element => {
     const box = (selector: string) => {
       const rect = element.querySelector(selector)?.getBoundingClientRect()
@@ -37,7 +43,7 @@ const expectSlidingPill = async (page: Page, path: string, fromName: string, toN
   await page.goto(path)
   const from = page.getByRole('tab', { name: fromName, exact: true })
   const to = page.getByRole('tab', { name: toName, exact: true })
-  const pill = page.locator('.view-switcher .t-tabs-pill')
+  const pill = page.locator('.view-switcher .ui-tabs__indicator')
   await expect(from).toHaveAttribute('aria-selected', 'true')
   await expect.poll(() => pill.evaluate(element => element.getBoundingClientRect().width)).toBeGreaterThan(0)
 
@@ -61,12 +67,31 @@ test('keeps Community and Task marketplace headers and view switchers aligned', 
   await page.setViewportSize({ width: 1280, height: 800 })
 
   const community = await measureLayout(page, '/community', 'Latest discussions')
+  const communityToolbarBox = await page.locator('.community-toolbar').boundingBox()
+  const communityToolbarControls = await page.locator('.community-search-control, .community-type-control, .community-toolbar-actions > *').evaluateAll(elements => elements.map(element => {
+    const rect = element.getBoundingClientRect()
+    return { y: rect.y, height: rect.height }
+  }))
+  expect(communityToolbarBox).not.toBeNull()
+  expect(communityToolbarControls).toHaveLength(4)
+  expect(new Set(communityToolbarControls.map(control => control.height))).toEqual(new Set([44]))
+  expect(new Set(communityToolbarControls.map(control => control.y)).size).toBe(1)
   const toolbarTop = await page.locator('.community-toolbar').evaluate(element => element.getBoundingClientRect().top)
   await page.getByRole('tab', { name: 'Most discussed', exact: true }).click()
   await expect(page.getByRole('tab', { name: 'Most discussed', exact: true })).toHaveAttribute('aria-selected', 'true')
   await expect.poll(() => page.locator('.community-toolbar').evaluate(element => element.getBoundingClientRect().top)).toBe(toolbarTop)
 
   const tasks = await measureLayout(page, '/market/demands', 'Available work')
+  const taskFiltersBox = await page.locator('.task-filters').boundingBox()
+  const taskFilterControls = await page.locator('.task-filters > *').evaluateAll(elements => elements.map(element => {
+    const rect = element.getBoundingClientRect()
+    return { y: rect.y, height: rect.height }
+  }))
+  expect(taskFilterControls).toHaveLength(5)
+  expect(new Set(taskFilterControls.map(control => control.height))).toEqual(new Set([44]))
+  expect(new Set(taskFilterControls.map(control => control.y)).size).toBe(1)
+  expect(taskFiltersBox).not.toBeNull()
+  expect(taskFiltersBox!.height).toBe(communityToolbarBox!.height)
   expect(community.header.height).toBe(320)
   expect(tasks.header.height).toBe(community.header.height)
   expect(tasks.header.y).toBe(community.header.y)

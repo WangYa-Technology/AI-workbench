@@ -181,7 +181,7 @@ const submitSearch = () => {
 
         <div class="search-stack">
           <form class="global-search" role="search" @submit.prevent="submitSearch">
-            <UiInput v-model="searchQuery" class="global-search-input" type="search" :placeholder="t('actions.searchPlaceholder')" :aria-label="t('actions.search')" />
+            <UiInput v-model="searchQuery" class="global-search-input" size="sm" type="search" :placeholder="t('actions.searchPlaceholder')" :aria-label="t('actions.search')" />
             <UiIconButton class="global-search-submit" type="submit" :label="t('actions.search')">
               <Search :size="18" :stroke-width="1.75" />
             </UiIconButton>
@@ -192,24 +192,26 @@ const submitSearch = () => {
         </div>
 
         <div class="header-actions">
-          <UiButton as="RouterLink" class="command-button secondary" variant="secondary" to="/publish">
-            <template #start><Upload :size="17" :stroke-width="1.75" /></template>
+          <UiButton as="RouterLink" class="header-publish-action" size="sm" variant="secondary" to="/publish">
+            <template #start>
+              <Upload :size="17" :stroke-width="1.75" />
+            </template>
             {{ t('actions.publish') }}
           </UiButton>
-          <UiIconButton as="RouterLink" class="icon-button notification-action" to="/notifications" :label="t('actions.notifications')">
+          <UiIconButton as="RouterLink" class="notification-action" size="sm" to="/notifications" :label="t('actions.notifications')">
             <Bell :size="19" :stroke-width="1.75" />
             <span class="t-badge" :data-open="String(Boolean(notifications.unreadCount))">
               <span class="t-badge-dot notification-badge" :aria-label="notifications.unreadCount ? t('notifications.unreadCount', { count: notifications.unreadCount }) : undefined">{{ notifications.unreadCount ? (notifications.unreadCount > 99 ? '99+' : notifications.unreadCount) : '' }}</span>
             </span>
           </UiIconButton>
-          <UiIconButton class="icon-button desktop-utility" :label="t('actions.language')" @click="preferences.toggleLocale">
+          <UiIconButton class="desktop-utility" size="sm" :label="t('actions.language')" @click="preferences.toggleLocale">
             <Languages :size="18" :stroke-width="1.75" />
           </UiIconButton>
-          <UiIconButton class="icon-button desktop-utility" :label="t('actions.theme')" @click="preferences.toggleTheme">
+          <UiIconButton class="desktop-utility" size="sm" :label="t('actions.theme')" @click="preferences.toggleTheme">
             <Sun v-if="preferences.resolvedTheme === 'dark'" :size="18" :stroke-width="1.75" />
             <Moon v-else :size="18" :stroke-width="1.75" />
           </UiIconButton>
-          <UiIconButton as="RouterLink" class="icon-button account-action" to="/settings" :label="session.user?.displayName || t('actions.account')">
+          <UiIconButton as="RouterLink" class="account-action" size="sm" to="/settings" :label="session.user?.displayName || t('actions.account')">
             <CircleUserRound :size="19" :stroke-width="1.75" />
           </UiIconButton>
         </div>

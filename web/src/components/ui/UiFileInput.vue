@@ -1,10 +1,14 @@
 <script setup lang="ts">
+import { ref } from 'vue'
+
 defineOptions({ inheritAttrs: false })
 withDefaults(defineProps<{ size?: 'sm' | 'md' | 'lg' }>(), { size: 'md' })
+const input = ref<globalThis.HTMLInputElement | null>(null)
+defineExpose({ click: () => input.value?.click(), focus: () => input.value?.focus() })
 </script>
 
 <template>
-  <input v-bind="$attrs" class="ui-file-input" :data-size="size" type="file" />
+  <input ref="input" v-bind="$attrs" class="ui-file-input" :data-size="size" type="file" />
 </template>
 
 <style scoped>

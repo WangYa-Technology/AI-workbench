@@ -12,6 +12,7 @@ import BrandLogo from '../components/brand/BrandLogo.vue'
 import { formatCurrency } from '../lib/format'
 import { usePreferencesStore } from '../stores/preferences'
 import { useSessionStore } from '../stores/session'
+import UiButton from '../components/ui/UiButton.vue'
 import UiIconButton from '../components/ui/UiIconButton.vue'
 import UiInput from '../components/ui/UiInput.vue'
 
@@ -140,9 +141,9 @@ onBeforeUnmount(() => {
           <RouterLink class="home-sign-in" :to="{ path: '/settings', query: { auth: 'login', returnTo: '/' } }">
             {{ t('home.signIn') }}
           </RouterLink>
-          <RouterLink class="home-register" :to="{ path: '/settings', query: { auth: 'register', returnTo: '/create/image' } }">
+          <UiButton as="RouterLink" class="home-register" variant="primary" :to="{ path: '/settings', query: { auth: 'register', returnTo: '/create/image' } }">
             {{ t('home.createAccount') }}
-          </RouterLink>
+          </UiButton>
         </div>
       </div>
     </header>
@@ -154,17 +155,17 @@ onBeforeUnmount(() => {
             <h1>{{ t('home.title') }}</h1>
             <p>{{ t('home.summary') }}</p>
             <div class="hero-actions">
-              <RouterLink class="primary-action" to="/create/image">
+              <UiButton as="RouterLink" class="primary-action" variant="primary" to="/create/image">
                 {{ t('home.startCreating') }}<ArrowRight :size="16" />
-              </RouterLink>
-              <RouterLink class="secondary-action" to="/discover">
+              </UiButton>
+              <UiButton as="RouterLink" class="secondary-action" variant="secondary" to="/discover">
                 {{ t('home.exploreWork') }}
-              </RouterLink>
+              </UiButton>
             </div>
             <nav class="mode-switcher" :aria-label="t('home.demo.switcherLabel')">
-              <button v-for="mode in modes" :key="mode.id" type="button" :class="{ active: activeMode === mode.id }" :aria-pressed="activeMode === mode.id" @click="chooseMode(mode.id)">
+              <UiButton v-for="mode in modes" :key="mode.id" variant="ghost" :content-wrapper="false" :class="{ active: activeMode === mode.id }" :aria-pressed="activeMode === mode.id" @click="chooseMode(mode.id)">
                 <component :is="mode.icon" :size="16" :stroke-width="1.7" /><span><strong>{{ mode.label }}</strong><small>{{ mode.detail }}</small></span>
-              </button>
+              </UiButton>
             </nav>
           </div>
 
@@ -320,9 +321,9 @@ onBeforeUnmount(() => {
       <section class="closing-section" data-home-reveal>
         <div class="home-width">
           <div><h2>{{ t('home.closing.title') }}</h2><p>{{ t('home.closing.summary') }}</p></div><nav>
-            <RouterLink class="closing-primary" :to="{ path: '/settings', query: { auth: 'register', returnTo: '/create/image' } }">
+            <UiButton as="RouterLink" class="closing-primary" variant="primary" :to="{ path: '/settings', query: { auth: 'register', returnTo: '/create/image' } }">
               {{ t('home.createAccount') }}<ArrowRight :size="15" />
-            </RouterLink><RouterLink to="/create/image">
+            </UiButton><RouterLink to="/create/image">
               {{ t('home.startCreating') }}
             </RouterLink>
           </nav>

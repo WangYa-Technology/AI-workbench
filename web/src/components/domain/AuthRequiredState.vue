@@ -2,7 +2,7 @@
 import { LogIn, UserPlus } from 'lucide-vue-next'
 import { computed, useId } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { RouterLink } from 'vue-router'
+import UiButton from '../ui/UiButton.vue'
 
 const props = withDefaults(defineProps<{
   title: string
@@ -31,12 +31,12 @@ const authTarget = (mode: 'login' | 'register') => ({ path: '/settings', query: 
       <p>{{ summary }}</p>
     </div>
     <div class="auth-required-actions">
-      <RouterLink class="command-button primary" :to="authTarget('login')" @click="emit('navigate', 'login')">
+      <UiButton as="RouterLink" class="command-button primary" variant="primary" :to="authTarget('login')" @click="emit('navigate', 'login')">
         <LogIn :size="17" />{{ t('account.signIn') }}
-      </RouterLink>
-      <RouterLink class="command-button secondary" :to="authTarget('register')" @click="emit('navigate', 'register')">
+      </UiButton>
+      <UiButton as="RouterLink" class="command-button secondary" variant="secondary" :to="authTarget('register')" @click="emit('navigate', 'register')">
         <UserPlus :size="17" />{{ t('account.createAccount') }}
-      </RouterLink>
+      </UiButton>
     </div>
   </section>
 </template>

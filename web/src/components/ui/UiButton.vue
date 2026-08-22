@@ -16,7 +16,8 @@ const props = withDefaults(defineProps<{
   loading?: boolean
   disabled?: boolean
   wide?: boolean
-}>(), { as: 'button', type: 'button', variant: 'primary', size: 'md', loading: false, disabled: false, wide: false })
+  contentWrapper?: boolean
+}>(), { as: 'button', type: 'button', variant: 'primary', size: 'md', loading: false, disabled: false, wide: false, contentWrapper: false })
 
 const attrs = useAttrs()
 const component = computed(() => props.as === 'RouterLink' ? RouterLink : props.as)
@@ -33,7 +34,8 @@ const onClick = (event: globalThis.MouseEvent) => {
   <component :is="component" v-bind="componentAttrs" class="ui-button" :class="{ 'ui-button--wide': wide }" :data-variant="variant" :data-size="size" :data-loading="loading ? 'true' : 'false'" @click="onClick">
     <LoaderCircle v-if="loading" class="ui-button__spinner" :size="15" aria-hidden="true" />
     <slot name="start"></slot>
-    <span v-if="$slots.default"><slot></slot></span>
+    <span v-if="$slots.default && contentWrapper" class="ui-button__content"><slot></slot></span>
+    <slot v-else-if="$slots.default"></slot>
     <slot name="end"></slot>
   </component>
 </template>

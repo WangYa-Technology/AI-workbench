@@ -10,6 +10,7 @@ import UiButton from '../components/ui/UiButton.vue'
 import UiIconButton from '../components/ui/UiIconButton.vue'
 import UiInput from '../components/ui/UiInput.vue'
 import UiSelect from '../components/ui/UiSelect.vue'
+import UiTabs from '../components/ui/UiTabs.vue'
 import UiTextarea from '../components/ui/UiTextarea.vue'
 
 const { locale, t } = useI18n()
@@ -26,6 +27,10 @@ const actionLoading = ref('')
 const error = ref('')
 const feedback = ref('')
 const sortMode = ref<'latest' | 'discussed'>('latest')
+const sortTabs = computed(() => [
+  { value: 'latest', label: t('community.latestDiscussions'), icon: Clock3 },
+  { value: 'discussed', label: t('community.mostDiscussed'), icon: MessageCircle },
+])
 const search = ref('')
 const mediaFilter = ref<'all' | 'image' | 'video' | 'music' | 'other'>('all')
 const showCases = ref(false)
@@ -219,15 +224,7 @@ onMounted(async () => {
     </div>
     <div v-else>
       <div class="view-switcher-bar">
-        <nav v-motion-tabs class="view-switcher t-tabs" role="tablist" :aria-label="t('community.sortLabel')">
-          <span class="t-tabs-pill" aria-hidden="true"></span>
-          <button class="t-tab" type="button" role="tab" :class="{ active: sortMode === 'latest' }" :aria-selected="sortMode === 'latest'" @click="sortMode = 'latest'">
-            <Clock3 :size="16" :stroke-width="1.75" aria-hidden="true" />{{ t('community.latestDiscussions') }}
-          </button>
-          <button class="t-tab" type="button" role="tab" :class="{ active: sortMode === 'discussed' }" :aria-selected="sortMode === 'discussed'" @click="sortMode = 'discussed'">
-            <MessageCircle :size="16" :stroke-width="1.75" aria-hidden="true" />{{ t('community.mostDiscussed') }}
-          </button>
-        </nav>
+        <UiTabs class="view-switcher" :model-value="sortMode" :items="sortTabs" :label="t('community.sortLabel')" @update:model-value="sortMode = $event as 'latest' | 'discussed'" />
       </div>
       <section class="community-toolbar" :aria-label="t('community.filtersLabel')">
         <label class="community-search-control">
@@ -235,26 +232,39 @@ onMounted(async () => {
           <Search :size="18" :stroke-width="1.75" aria-hidden="true" />
           <UiInput v-model="search" type="search" maxlength="120" :placeholder="t('community.searchPlaceholder')" />
         </label>
-        <label class="community-type-control">
-          <LayoutGrid :size="17" :stroke-width="1.75" aria-hidden="true" />
-          <span class="sr-only">{{ t('community.typeLabel') }}</span>
-          <UiSelect v-model="mediaFilter" :aria-label="t('community.typeLabel')">
-            <option value="all">{{ t('community.allTypes') }}</option>
-            <option value="image">{{ t('create.modes.image') }}</option>
-            <option value="video">{{ t('create.modes.video') }}</option>
-            <option value="music">{{ t('create.modes.music') }}</option>
-            <option value="other">{{ t('community.workTopic') }}</option>
-          </UiSelect>
-        </label>
+        <UiSelect v-model="mediaFilter" class="community-type-control" :aria-label="t('community.typeLabel')">
+          <template #start>
+            <LayoutGrid :size="17" :stroke-width="1.75" aria-hidden="true" />
+          </template>
+          <option value="all">
+            {{ t('community.allTypes') }}
+          </option>
+          <option value="image">
+            {{ t('create.modes.image') }}
+          </option>
+          <option value="video">
+            {{ t('create.modes.video') }}
+          </option>
+          <option value="music">
+            {{ t('create.modes.music') }}
+          </option>
+          <option value="other">
+            {{ t('community.workTopic') }}
+          </option>
+        </UiSelect>
         <nav class="community-toolbar-actions" :aria-label="t('community.communityActions')">
           <UiButton variant="ghost" :class="{ active: showCases }" :aria-pressed="showCases" @click="toggleCases">
-            <ShieldCheck :size="17" :stroke-width="1.75" aria-hidden="true" />
+            <template #start>
+              <ShieldCheck :size="17" :stroke-width="1.75" aria-hidden="true" />
+            </template>
             {{ t('community.myCases') }}
           </UiButton>
-          <RouterLink to="/discover">
-            <Eye :size="17" :stroke-width="1.75" aria-hidden="true" />
+          <UiButton as="RouterLink" variant="ghost" to="/discover">
+            <template #start>
+              <Eye :size="17" :stroke-width="1.75" aria-hidden="true" />
+            </template>
             {{ t('actions.browseWorks') }}
-          </RouterLink>
+          </UiButton>
         </nav>
       </section>
       <p v-if="feedback" class="task-feedback" :class="feedback === t('community.reportSubmitted') || feedback === t('community.appealSubmitted') ? 'success' : 'error'" role="status">
@@ -368,12 +378,12 @@ onMounted(async () => {
           <p>{{ t('community.emptySummary') }}</p>
         </div>
         <nav class="community-empty-actions" :aria-label="t('community.emptyActionsLabel')">
-          <RouterLink class="command-button primary" to="/publish">
+          <UiButton as="RouterLink" class="command-button primary" variant="primary" to="/publish">
             <Upload :size="17" :stroke-width="1.75" />{{ t('actions.publishWork') }}
-          </RouterLink>
-          <RouterLink class="command-button secondary" to="/discover">
+          </UiButton>
+          <UiButton as="RouterLink" class="command-button secondary" variant="secondary" to="/discover">
             <Sparkles :size="17" :stroke-width="1.75" />{{ t('actions.browseWorks') }}
-          </RouterLink>
+          </UiButton>
         </nav>
       </section>
     </div>

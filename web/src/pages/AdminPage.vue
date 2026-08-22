@@ -17,6 +17,9 @@ import UiButton from '../components/ui/UiButton.vue'
 import UiIconButton from '../components/ui/UiIconButton.vue'
 import UiInput from '../components/ui/UiInput.vue'
 import UiSelect from '../components/ui/UiSelect.vue'
+import UiSwitch from '../components/ui/UiSwitch.vue'
+import UiTable from '../components/ui/UiTable.vue'
+import UiTabs from '../components/ui/UiTabs.vue'
 
 type Tab = 'overview' | 'users' | 'content' | 'media' | 'governance' | 'support' | 'generations' | 'tasks' | 'providers' | 'models' | 'settings' | 'developer' | 'finance' | 'risk' | 'riskRules' | 'ranking' | 'dataRights' | 'diagnostics'
 type CommandKind = 'user' | 'content' | 'media' | 'report' | 'appeal' | 'generation' | 'task' | 'provider' | 'finance' | 'payment' | 'paymentEvent' | 'paymentDestination' | 'risk' | 'dataRightsHold' | 'holdRelease'
@@ -180,7 +183,7 @@ const supportReply = reactive({ body: '' })
 const supportDecision = reactive({ status: 'in_review', resolutionCode: '' })
 const command = reactive({ kind: '' as CommandKind | '', id: '', title: '', role: '', status: '', outcome: '', decision: '', action: '', destinationID: '', enabled: false, displayName: '', modelName: '', description: '', estimatedCostCents: 0, deltaCents: 0, authorityReference: '' })
 const commandPanel = ref<InstanceType<typeof globalThis.HTMLFormElement> | null>(null)
-const tabsNav = ref<InstanceType<typeof globalThis.HTMLElement> | null>(null)
+const tabsNav = ref<{ scrollToValue: (value: string) => void } | null>(null)
 const rankingForm = reactive<AdminRankingUpdate>({
   name: '', titleExactWeight: 100, titlePrefixWeight: 80, titleContainsWeight: 60,
   creatorExactWeight: 50, creatorMatchWeight: 35, bodyMatchWeight: 25, secondaryMatchWeight: 12,
@@ -204,6 +207,7 @@ const tabPermissions: Record<Tab, string> = {
 }
 const tabIcons = { overview: Gauge, users: Users, content: FileCheck2, media: ShieldCheck, governance: ShieldAlert, support: Headphones, generations: WandSparkles, tasks: BriefcaseBusiness, providers: SlidersHorizontal, models: WandSparkles, settings: Settings2, developer: KeyRound, finance: CircleDollarSign, risk: Activity, riskRules: Settings2, ranking: ListFilter, dataRights: FileKey2, diagnostics: Activity }
 const tabs = computed(() => (Object.keys(tabPermissions) as Tab[]).filter((tab) => session.user?.permissions.includes(tabPermissions[tab])))
+const adminTabItems = computed(() => tabs.value.map(tab => ({ value: tab, label: t(`admin.tabs.${tab}`), icon: tabIcons[tab] })))
 const legacyProviderProfiles = computed(() => providers.value.filter((profile) => !providerConfigs.value.some((config) => config.models.some((model) => model.id === profile.id))))
 const availablePlanModels = computed(() => providerConfigs.value.flatMap(provider => provider.models.map(model => ({ ...model, providerName: provider.name }))))
 const editingProviderConfig = computed(() => providerConfigs.value.find(item => item.id === providerConfigForm.id) || null)
@@ -1114,7 +1118,7 @@ async function load() {
   } finally {
     loading.value = false
     void nextTick(() => {
-      tabsNav.value?.querySelector<InstanceType<typeof globalThis.HTMLElement>>(`[data-tab="${activeTab.value}"]`)?.scrollIntoView({ block: 'nearest', inline: 'center' })
+      tabsNav.value?.scrollToValue(activeTab.value)
     })
   }
 }
@@ -1887,11 +1891,7 @@ onMounted(() => void initialize())
     </div>
 
     <template v-else-if="hasAdminAccess">
-      <nav ref="tabsNav" class="section-tabs admin-tabs" :aria-label="t('admin.sections')">
-        <button v-for="tab in tabs" :key="tab" type="button" :data-tab="tab" :class="{ active: activeTab === tab }" @click="selectTab(tab)">
-          <component :is="tabIcons[tab]" :size="16" />{{ t(`admin.tabs.${tab}`) }}
-        </button>
-      </nav>
+      <UiTabs ref="tabsNav" class="section-tabs admin-tabs" variant="underline" :model-value="activeTab" :items="adminTabItems" :label="t('admin.sections')" @update:model-value="selectTab($event as Tab)" />
 
       <div v-if="success" class="task-feedback success" role="status">
         <FileCheck2 :size="18" />{{ success }}
@@ -2106,9 +2106,9 @@ onMounted(() => void initialize())
         <div class="admin-support-layout">
           <section class="admin-support-queue">
             <header><div><h2>{{ t('admin.supportQueue') }}</h2><p>{{ t('admin.supportQueueSummary') }}</p></div><span>{{ supportCases.filter(item => !['resolved','closed'].includes(item.status)).length }}</span></header>
-            <button v-for="item in supportCases" :key="item.id" type="button" :class="{ active: item.id === selectedSupport?.id }" @click="openSupport(item)">
+            <UiButton v-for="item in supportCases" :key="item.id" variant="ghost" :content-wrapper="false" :class="{ active: item.id === selectedSupport?.id }" @click="openSupport(item)">
               <span><strong>{{ item.subject }}</strong><small>@{{ item.requesterHandle }} · {{ t(`support.categories.${item.category}`) }}</small></span><span><em :data-status="item.status">{{ t(`support.statuses.${item.status}`) }}</em><small>{{ date(item.updatedAt) }}</small></span>
-            </button>
+            </UiButton>
             <p v-if="!supportCases.length" class="inline-empty">
               {{ t('admin.noSupportCases') }}
             </p>
@@ -2234,8 +2234,7 @@ onMounted(() => void initialize())
             </UiButton>
           </div>
         </header>
-        <div v-if="providerConfigs.length" class="provider-model-table-wrap">
-          <table class="provider-model-table">
+        <UiTable v-if="providerConfigs.length" class="provider-model-table-wrap" table-class="provider-model-table">
             <thead>
               <tr>
                 <th scope="col">
@@ -2261,9 +2260,9 @@ onMounted(() => void initialize())
             <tbody v-for="item in providerConfigs" :key="item.id">
               <tr v-for="model in item.models" :key="model.id">
                 <td class="provider-table-provider-cell">
-                  <button class="provider-table-name" type="button" @click="editProviderConfig(item)">
+                  <UiButton class="provider-table-name" variant="ghost" :content-wrapper="false" @click="editProviderConfig(item)">
                     <span>{{ item.name }}</span><Pencil :size="13" />
-                  </button>
+                  </UiButton>
                   <small>{{ providerProtocolLabel(item.protocol) }}</small>
                   <span :data-status="item.adminEnabled && item.credentialConfigured ? 'active' : 'suspended'">{{ item.credentialConfigured ? t('admin.providerCredentialConfigured') : t('admin.providerCredentialMissing') }}</span>
                 </td>
@@ -2282,9 +2281,7 @@ onMounted(() => void initialize())
                 </td>
                 <td>
                   <div class="provider-table-status">
-                    <button class="provider-status-switch t-toggle" :class="{ 'is-init': initializedProviderSwitches.has(model.id) }" type="button" role="switch" :data-on="String(model.adminEnabled)" :aria-checked="model.adminEnabled" :disabled="actionLoading || !item.adminEnabled" :aria-label="t('admin.providerModelStatus', { name: model.displayName })" :title="model.adminEnabled ? t('admin.available') : t('admin.unavailable')" @click="toggleProviderModelStatus(model)">
-                      <span class="t-toggle-thumb" aria-hidden="true"></span>
-                    </button>
+                    <UiSwitch class="provider-status-switch" :class="{ 'is-init': initializedProviderSwitches.has(model.id) }" :model-value="model.adminEnabled" :disabled="actionLoading || !item.adminEnabled" :label="t('admin.providerModelStatus', { name: model.displayName })" :title="model.adminEnabled ? t('admin.available') : t('admin.unavailable')" @update:model-value="toggleProviderModelStatus(model)" />
                     <small>{{ model.adminEnabled && item.adminEnabled ? t('admin.available') : t('admin.unavailable') }}</small>
                   </div>
                 </td>
@@ -2301,9 +2298,9 @@ onMounted(() => void initialize())
               </tr>
               <tr v-if="!item.models.length" class="provider-empty-model-row">
                 <td class="provider-table-provider-cell">
-                  <button class="provider-table-name" type="button" @click="editProviderConfig(item)">
+                  <UiButton class="provider-table-name" variant="ghost" :content-wrapper="false" @click="editProviderConfig(item)">
                     <span>{{ item.name }}</span><Pencil :size="13" />
-                  </button>
+                  </UiButton>
                   <small>{{ item.protocol }}</small>
                   <span :data-status="item.adminEnabled && item.credentialConfigured ? 'active' : 'suspended'">{{ item.credentialConfigured ? t('admin.providerCredentialConfigured') : t('admin.providerCredentialMissing') }}</span>
                 </td>
@@ -2317,8 +2314,7 @@ onMounted(() => void initialize())
                 </td>
               </tr>
             </tbody>
-          </table>
-        </div>
+        </UiTable>
         <div v-else class="workspace-empty">
           <SlidersHorizontal :size="22" /><p>{{ t('admin.noProviderConfigs') }}</p>
         </div>
@@ -2953,9 +2949,9 @@ onMounted(() => void initialize())
               <small>{{ date(item.detectedAt) }} · v{{ item.version }}</small>
               <UiButton v-if="item.status === 'open' || item.status === 'reviewing'" class="command-button secondary" type="button" variant="secondary" @click="openRisk(item)">
                 <Activity :size="16" />{{ t('admin.reviewRisk') }}
-              </UiButton><RouterLink v-else class="command-button secondary" :to="item.targetPath">
+              </UiButton><UiButton v-else as="RouterLink" class="command-button secondary" variant="secondary" :to="item.targetPath">
                 {{ t('admin.openResource') }}
-              </RouterLink>
+              </UiButton>
             </article>
           </div>
           <div v-if="!riskSignals.length" class="workspace-empty">

@@ -78,9 +78,9 @@ onMounted(() => void load())
           <h2>{{ t('work.aiDisclosure') }}</h2>
           <p>{{ work.aiDisclosure }}</p>
         </section>
-        <RouterLink class="command-button primary wide" :to="`/create/image?sourceWorkId=${work.id}`">
+        <UiButton as="RouterLink" class="command-button primary wide" variant="primary" wide :to="`/create/image?sourceWorkId=${work.id}`">
           <Sparkles :size="17" :stroke-width="1.75" />{{ t('actions.remix') }}
-        </RouterLink>
+        </UiButton>
       </aside>
     </div>
   </section>

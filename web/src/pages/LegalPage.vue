@@ -3,6 +3,7 @@ import { ArrowUpRight, BookOpen, FileWarning, ShieldCheck } from 'lucide-vue-nex
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink, useRoute } from 'vue-router'
+import UiButton from '../components/ui/UiButton.vue'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -25,9 +26,9 @@ const active = computed(() => topics.includes(String(route.params.policy) as typ
         <span>{{ t('legal.policiesLabel') }}</span><h2>{{ t(`legal.topics.${active}.title`) }}</h2><p>{{ t(`legal.topics.${active}.summary`) }}</p>
         <div v-if="active === 'copyright'" class="legal-intake">
           <ShieldCheck :size="22" /><div>
-            <h3>{{ t('legal.copyrightTitle') }}</h3><p>{{ t('legal.copyrightSummary') }}</p><RouterLink class="command-button primary" to="/support">
+            <h3>{{ t('legal.copyrightTitle') }}</h3><p>{{ t('legal.copyrightSummary') }}</p><UiButton as="RouterLink" class="command-button primary" variant="primary" to="/support">
               <span>{{ t('legal.openSupport') }}</span><ArrowUpRight :size="16" />
-            </RouterLink>
+            </UiButton>
           </div>
         </div>
         <div class="legal-boundary">

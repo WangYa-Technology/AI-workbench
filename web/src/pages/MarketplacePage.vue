@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import {
   ArrowLeft, ArrowRight, BadgeCheck, Check, ChevronRight, CircleDollarSign, FileCheck2,
-  Filter, LoaderCircle, LogIn, PackageCheck, RefreshCw, Search, ShieldCheck, ShoppingBag, UserPlus,
+  Filter, Layers3, LoaderCircle, LogIn, PackageCheck, RefreshCw, Search, ShieldCheck, ShoppingBag,
+  UserPlus, UserRound, Users,
 } from 'lucide-vue-next'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -35,6 +36,11 @@ const sort = ref(String(route.query.sort || 'newest'))
 const productID = computed(() => String(route.params.id || ''))
 const isDetail = computed(() => Boolean(productID.value))
 const types = ['prompt', 'workflow', 'asset', 'work']
+const marketStats = computed(() => ({
+  products: products.value.length,
+  creators: new Set(products.value.map(item => item.seller.handle)).size,
+  types: new Set(products.value.map(item => item.productType)).size,
+}))
 
 function money(cents: number, currency = 'USD') {
   return formatCurrency(cents, currency, locale.value)
@@ -101,15 +107,20 @@ onMounted(() => void load())
 </script>
 
 <template>
-  <section class="market-page content-width">
+  <section class="market-page content-width" :class="{ 'is-detail': isDetail }">
     <template v-if="!isDetail">
-      <header class="market-header">
-        <div>
-          <span class="status-label">{{ t('marketplace.localTest') }}</span>
+      <header class="page-hero-header page-hero-banner marketplace-header">
+        <div class="page-hero-copy">
+          <span class="page-hero-eyebrow"><ShieldCheck :size="14" aria-hidden="true" />{{ t('marketplace.localTest') }}</span>
           <h1>{{ t('marketplace.title') }}</h1>
           <p>{{ t('marketplace.summary') }}</p>
+          <div class="page-hero-stats" :aria-label="t('marketplace.statsLabel')">
+            <article><span class="page-hero-stat-icon" data-tone="blue"><ShoppingBag :size="23" /></span><div><strong>{{ marketStats.products }}</strong><span>{{ t('marketplace.listedProducts') }}</span></div></article>
+            <article><span class="page-hero-stat-icon" data-tone="violet"><Users :size="23" /></span><div><strong>{{ marketStats.creators }}</strong><span>{{ t('marketplace.activeCreators') }}</span></div></article>
+            <article><span class="page-hero-stat-icon" data-tone="green"><Layers3 :size="23" /></span><div><strong>{{ marketStats.types }}</strong><span>{{ t('marketplace.licenseTypes') }}</span></div></article>
+          </div>
         </div>
-        <div class="market-header-actions">
+        <div class="page-hero-actions market-header-actions">
           <UiButton v-if="session.user" as="RouterLink" class="command-button secondary" variant="secondary" to="/workspace/orders">
             <template #start>
               <ShoppingBag :size="17" />
@@ -126,12 +137,36 @@ onMounted(() => void load())
             </template>{{ t('account.createAccount') }}
           </UiButton>
         </div>
+        <img class="page-hero-art marketplace-hero-art" src="/tasks/task-hero-transparent.webp" alt="" width="768" height="714" aria-hidden="true" />
+        <div v-if="session.user" class="page-hero-account">
+          <span class="page-hero-avatar"><UserRound :size="22" /></span><span><strong>{{ session.user.displayName }}</strong><small>@{{ session.user.handle }}</small></span><ShieldCheck :size="15" />
+        </div>
       </header>
 
       <form class="market-filters" role="search" @submit.prevent="applyFilters">
         <label class="market-search"><span class="sr-only">{{ t('actions.search') }}</span><Search :size="17" /><UiInput v-model="search" type="search" :placeholder="t('marketplace.searchPlaceholder')" /></label>
-        <label><Filter :size="16" /><span class="sr-only">{{ t('marketplace.allTypes') }}</span><UiSelect v-model="productType" @change="applyFilters"><option value="">{{ t('marketplace.allTypes') }}</option><option v-for="item in types" :key="item" :value="item">{{ t(`marketplace.types.${item}`) }}</option></UiSelect></label>
-        <label><span class="sr-only">{{ t('marketplace.sortNewest') }}</span><UiSelect v-model="sort" @change="applyFilters"><option value="newest">{{ t('marketplace.sortNewest') }}</option><option value="price_asc">{{ t('marketplace.sortLow') }}</option><option value="price_desc">{{ t('marketplace.sortHigh') }}</option></UiSelect></label>
+        <UiSelect v-model="productType" class="market-filter-control" :aria-label="t('marketplace.allTypes')" :align-item-with-trigger="false" @change="applyFilters">
+          <template #start>
+            <Filter :size="16" aria-hidden="true" />
+          </template>
+          <option value="">
+            {{ t('marketplace.allTypes') }}
+          </option>
+          <option v-for="item in types" :key="item" :value="item">
+            {{ t(`marketplace.types.${item}`) }}
+          </option>
+        </UiSelect>
+        <UiSelect v-model="sort" class="market-filter-control" :aria-label="t('marketplace.sortNewest')" @change="applyFilters">
+          <option value="newest">
+            {{ t('marketplace.sortNewest') }}
+          </option>
+          <option value="price_asc">
+            {{ t('marketplace.sortLow') }}
+          </option>
+          <option value="price_desc">
+            {{ t('marketplace.sortHigh') }}
+          </option>
+        </UiSelect>
         <UiIconButton class="icon-button" :label="t('actions.search')" type="submit">
           <ArrowRight :size="17" />
         </UiIconButton>

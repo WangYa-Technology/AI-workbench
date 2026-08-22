@@ -18,6 +18,7 @@ import BrandLogo from '../brand/BrandLogo.vue'
 import AssetMedia from '../domain/AssetMedia.vue'
 import MotionFavoriteIcon from '../ui/MotionFavoriteIcon.vue'
 import UiButton from '../ui/UiButton.vue'
+import UiFileInput from '../ui/UiFileInput.vue'
 import UiIconButton from '../ui/UiIconButton.vue'
 import UiInput from '../ui/UiInput.vue'
 import UiSelect from '../ui/UiSelect.vue'
@@ -68,7 +69,7 @@ const modeMenu = ref<InstanceType<typeof globalThis.HTMLElement> | null>(null)
 const modeMenuTrigger = ref<InstanceType<typeof globalThis.HTMLButtonElement> | null>(null)
 const controlsPanel = ref<InstanceType<typeof globalThis.HTMLElement> | null>(null)
 const controlsTrigger = ref<InstanceType<typeof globalThis.HTMLButtonElement> | null>(null)
-const fileInput = ref<InstanceType<typeof globalThis.HTMLInputElement> | null>(null)
+const fileInput = ref<{ click: () => void } | null>(null)
 
 const modes = computed(() => [
   { id: 'chat' as const, icon: MessageSquare, label: t('create.modes.chat'), menuLabel: t('create.studio.menuItems.chat') },
@@ -384,7 +385,7 @@ onMounted(async () => {
     <header class="creation-header">
       <div class="creation-heading">
         <span class="creation-mark"><Sparkles :size="16" /></span>
-        <span class="creation-title">{{ t('create.studio.unifiedTitle') }}</span>
+        <h1 class="creation-title">{{ t('create.studio.unifiedTitle') }}</h1>
         <span class="creation-heading-divider" aria-hidden="true">/</span>
         <span class="creation-current-mode"><component :is="modeIcon" :size="14" />{{ modeLabel }}</span>
       </div>
@@ -417,13 +418,13 @@ onMounted(async () => {
           <LoaderCircle class="spin" :size="17" />{{ t('status.loadingWorkspace') }}
         </div>
         <div v-else-if="conversations.length" class="creation-history-list">
-          <button v-for="conversation in conversations" :key="conversation.id" type="button" class="creation-history-item" :class="{ active: conversation.id === currentConversationId }" @click="selectConversation(conversation)">
+          <UiButton v-for="conversation in conversations" :key="conversation.id" class="creation-history-item" variant="ghost" :content-wrapper="false" :class="{ active: conversation.id === currentConversationId }" @click="selectConversation(conversation)">
             <span class="creation-history-item-main">
               <strong>{{ conversationTitle(conversation) }}</strong>
               <small>{{ conversation.modes.map(mode => t(`create.modes.${mode}`)).join(' · ') || t('create.studio.emptyConversation') }} · {{ conversation.generationCount }} {{ t('create.studio.historyItems') }}</small>
             </span>
             <ChevronRight :size="15" />
-          </button>
+          </UiButton>
         </div>
         <div v-else class="creation-history-empty">
           <Clock3 :size="20" />
@@ -432,7 +433,7 @@ onMounted(async () => {
       </aside>
     </Transition>
 
-    <main class="creation-main">
+    <div class="creation-main">
       <div class="creation-main-content">
         <div v-if="capabilityUnavailable || error || feedback" class="creation-notices">
           <div v-if="capabilityUnavailable" class="creation-notice error" role="status">
@@ -494,7 +495,7 @@ onMounted(async () => {
           </div>
         </section>
       </div>
-    </main>
+    </div>
 
     <form class="creation-composer" @submit.prevent="submit">
       <div v-if="sourceAssets.length || maskAsset" class="creation-context">
@@ -539,28 +540,28 @@ onMounted(async () => {
       <Transition name="creation-popover">
         <section v-if="modeMenuOpen" ref="modeMenu" class="creation-popover creation-tools-menu t-dropdown is-open" data-origin="bottom-left" role="menu" :aria-label="t('create.studio.chooseCreationType')">
           <div class="creation-menu-group">
-            <button type="button" class="creation-menu-item" @click="openAssetPicker('references')">
-              <FileText :size="18" /><span><strong>{{ t('create.studio.menuItems.file') }}</strong><small>{{ t('create.studio.referenceSummary') }}</small></span>
-            </button>
-            <button type="button" class="creation-menu-item" @click="openAssetPicker('references')">
-              <Cloud :size="18" /><span><strong>{{ t('create.studio.menuItems.library') }}</strong><small>{{ t('create.studio.menuItems.referenceWindow') }}</small></span>
-            </button>
-            <button type="button" class="creation-menu-item" @click="openAssetPicker('references')">
-              <Images :size="18" /><span><strong>{{ t('create.studio.menuItems.album') }}</strong><small>{{ t('create.studio.menuItems.reference') }}</small></span>
-            </button>
+            <UiButton class="creation-menu-item" variant="ghost" content-wrapper role="menuitem" @click="openAssetPicker('references')">
+              <template #start><FileText :size="18" /></template><strong>{{ t('create.studio.menuItems.file') }}</strong><small>{{ t('create.studio.referenceSummary') }}</small>
+            </UiButton>
+            <UiButton class="creation-menu-item" variant="ghost" content-wrapper role="menuitem" @click="openAssetPicker('references')">
+              <template #start><Cloud :size="18" /></template><strong>{{ t('create.studio.menuItems.library') }}</strong><small>{{ t('create.studio.menuItems.referenceWindow') }}</small>
+            </UiButton>
+            <UiButton class="creation-menu-item" variant="ghost" content-wrapper role="menuitem" @click="openAssetPicker('references')">
+              <template #start><Images :size="18" /></template><strong>{{ t('create.studio.menuItems.album') }}</strong><small>{{ t('create.studio.menuItems.reference') }}</small>
+            </UiButton>
           </div>
           <div class="creation-menu-divider"></div>
           <div class="creation-menu-heading">
             {{ t('create.studio.menuItems.generationHeading') }}
           </div>
           <div class="creation-menu-group">
-            <button v-for="item in modes" :key="item.id" type="button" class="creation-menu-item generation" :class="{ selected: activeMode === item.id, unavailable: !modeAvailable(item.id) }" :disabled="!modeAvailable(item.id)" :aria-disabled="!modeAvailable(item.id)" :title="!modeAvailable(item.id) ? t('create.studio.noModelAvailable') : undefined" @click="selectMode(item.id)">
-              <span class="creation-menu-icon"><component :is="item.icon" :size="18" /></span><span><strong>{{ item.menuLabel }}</strong><small>{{ t(`create.modeMeta.${item.id}.summary`) }}</small></span><Check v-if="activeMode === item.id" class="creation-menu-check" :size="16" />
-            </button>
+            <UiButton v-for="item in modes" :key="item.id" class="creation-menu-item generation" variant="ghost" content-wrapper role="menuitem" :class="{ selected: activeMode === item.id, unavailable: !modeAvailable(item.id) }" :disabled="!modeAvailable(item.id)" :aria-disabled="!modeAvailable(item.id)" :title="!modeAvailable(item.id) ? t('create.studio.noModelAvailable') : undefined" @click="selectMode(item.id)">
+              <template #start><span class="creation-menu-icon"><component :is="item.icon" :size="18" /></span></template><strong>{{ item.menuLabel }}</strong><small>{{ t(`create.modeMeta.${item.id}.summary`) }}</small><template #end><Check v-if="activeMode === item.id" class="creation-menu-check" :size="16" /></template>
+            </UiButton>
           </div>
-          <button type="button" class="creation-menu-item" @click="router.push('/market/demands')">
-            <FolderOpen :size="18" /><span><strong>{{ t('create.studio.menuItems.taskContext') }}</strong><small>{{ t('create.studio.menuItems.referenceWindow') }}</small></span>
-          </button>
+          <UiButton class="creation-menu-item" variant="ghost" content-wrapper role="menuitem" @click="router.push('/market/demands')">
+            <template #start><FolderOpen :size="18" /></template><strong>{{ t('create.studio.menuItems.taskContext') }}</strong><small>{{ t('create.studio.menuItems.referenceWindow') }}</small>
+          </UiButton>
         </section>
       </Transition>
 
@@ -586,15 +587,15 @@ onMounted(async () => {
             <template #start>
               <Upload v-if="!uploadLoading" :size="15" />
             </template>{{ t('create.studio.uploadReference') }}
-          </UiButton><input ref="fileInput" class="sr-only" type="file" :accept="referenceAccept" @change="uploadReference" />
+          </UiButton><UiFileInput ref="fileInput" class="sr-only" :accept="referenceAccept" @change="uploadReference" />
         </div>
         <div v-if="assetsLoading" class="creation-asset-empty">
           <LoaderCircle class="spin" :size="17" />{{ t('status.loadingAssets') }}
         </div>
         <div v-else-if="assets.length" class="creation-asset-list">
-          <button v-for="asset in assets" :key="asset.id" type="button" :class="{ selected: referencePickerMode === 'mask' ? maskAsset?.id === asset.id : sourceAssets.some(item => item.id === asset.id) }" @click="chooseAsset(asset)">
+          <UiButton v-for="asset in assets" :key="asset.id" variant="ghost" :content-wrapper="false" :class="{ selected: referencePickerMode === 'mask' ? maskAsset?.id === asset.id : sourceAssets.some(item => item.id === asset.id) }" @click="chooseAsset(asset)">
             <AssetMedia :src="asset.mediaUrl" :kind="asset.kind" :alt="asset.title" :width="48" :height="48" :controls="false" /><span><strong>{{ asset.title }}</strong><small>{{ asset.mimeType }}</small></span><Check v-if="referencePickerMode === 'mask' ? maskAsset?.id === asset.id : sourceAssets.some(item => item.id === asset.id)" :size="14" />
-          </button>
+          </UiButton>
         </div>
         <p v-else class="creation-asset-empty">
           {{ t('create.studio.noReferences') }}
@@ -668,7 +669,7 @@ onMounted(async () => {
 .creation-header { min-height: 48px; height: 48px; box-sizing: border-box; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 0 clamp(18px, 4vw, 48px); border-bottom: 1px solid var(--border); background: var(--surface); }
 .creation-heading { min-width: 0; display: flex; align-items: center; gap: 8px; }
 .creation-mark { width: 28px; height: 28px; display: grid; place-items: center; flex: 0 0 28px; border-radius: 8px; background: var(--studio-accent-soft); color: var(--studio-accent); }
-.creation-title { color: var(--text); font-size: 13px; font-weight: 650; line-height: 1; }
+.creation-title { margin: 0; color: var(--text); font-size: 13px; font-weight: 650; line-height: 1; }
 .creation-heading-divider { color: var(--text-tertiary); font-size: 12px; line-height: 1; }
 .creation-current-mode { min-width: 0; display: inline-flex; align-items: center; gap: 5px; overflow: hidden; color: var(--text-secondary); font-size: 11px; line-height: 1; text-overflow: ellipsis; white-space: nowrap; }
 .creation-header-actions { min-width: 0; display: flex; align-items: center; gap: 3px; padding: 3px; border: 1px solid var(--border); border-radius: 11px; background: var(--surface-muted); }
@@ -742,14 +743,14 @@ onMounted(async () => {
 .creation-composer textarea::placeholder { color: var(--text-tertiary); }
 .creation-composer-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .creation-composer-tools { min-width: 0; display: flex; align-items: center; gap: 7px; }
-.creation-tool-button { width: 32px; height: 32px; display: grid; place-items: center; flex: 0 0 auto; padding: 0; border: 1px solid var(--border); border-radius: 50%; background: var(--surface-muted); color: var(--text-secondary); line-height: 0; }
+.creation-tool-button { --ui-size: var(--control-height-md); display: grid; place-items: center; padding: 0; border: 1px solid var(--border); border-radius: 50%; background: var(--surface-muted); color: var(--text-secondary); line-height: 0; }
 .creation-tool-button:hover, .creation-tool-button.active { border-color: var(--studio-accent); background: var(--studio-accent-soft); color: var(--studio-accent); }
 .creation-mode-chip { height: 32px; display: inline-flex; align-items: center; gap: 5px; box-sizing: border-box; padding: 0 7px 0 9px; border: 1px solid color-mix(in srgb, var(--studio-accent) 35%, var(--border)); border-radius: 999px; background: var(--studio-accent-soft); color: var(--accent-readable); font-size: 11px; font-weight: 650; line-height: 1; }
 .creation-mode-chip > svg, .creation-mode-chip-label { display: block; flex: 0 0 auto; }
 .creation-mode-chip-label { line-height: 1; }
 .creation-mode-chip button { width: 22px; height: 22px; display: grid; place-items: center; flex: 0 0 22px; margin: 0; padding: 0; border: 0; border-radius: 50%; background: transparent; color: inherit; }
 .creation-mode-chip button:hover { background: rgb(0 0 0 / 10%); }
-.creation-submit { min-height: 34px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 0 13px; border: 0; border-radius: 10px; background: var(--studio-accent); color: var(--accent-contrast); font-size: 12px; font-weight: 650; }
+.creation-submit { --ui-height: var(--control-height-md); height: var(--control-height-md); display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 0 13px; border: 0; border-radius: var(--radius-control); background: var(--studio-accent); color: var(--accent-contrast); font-size: 12px; font-weight: 650; }
 .creation-submit:hover:not(:disabled) { background: var(--accent-hover); }
 .creation-submit:disabled { background: var(--surface-muted); color: var(--text-tertiary); cursor: not-allowed; }
 .creation-notice { width: 100%; min-width: 0; min-height: 42px; box-sizing: border-box; display: flex; align-items: flex-start; gap: 8px; margin: 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: 9px; font-size: 11px; line-height: 1.45; overflow-wrap: anywhere; }
@@ -766,7 +767,7 @@ onMounted(async () => {
 .creation-menu-item:hover, .creation-menu-item.selected { background: var(--surface-muted); color: var(--text); }
 .creation-menu-item:disabled, .creation-menu-item.unavailable { cursor: not-allowed; opacity: .42; }
 .creation-menu-item:disabled:hover { background: transparent; color: var(--text-tertiary); }
-.creation-menu-item > span:not(.creation-menu-icon) { min-width: 0; display: grid; gap: 2px; }
+.creation-menu-item :deep(.ui-button__content) { min-width: 0; display: grid; gap: 2px; }
 .creation-menu-item strong { color: inherit; font-size: 12px; font-weight: 650; }
 .creation-menu-item small { overflow: hidden; color: var(--text-tertiary); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .creation-menu-icon { width: 20px; display: grid; place-items: center; color: var(--studio-accent); }
@@ -832,7 +833,7 @@ onMounted(async () => {
   .creation-text { font-size: 14px; }
   .creation-composer { width: calc(100% - 20px); margin-bottom: 10px; padding: 9px 10px 8px; border-radius: 18px; }
   .creation-composer textarea { min-height: 48px; font-size: 14px; }
-  .creation-submit { width: 34px; height: 34px; min-height: 34px; padding: 0; border-radius: 50%; }
+  .creation-submit { width: var(--control-height-md); min-width: var(--control-height-md); padding: 0; border-radius: 50%; }
   .creation-submit span { display: none; }
   .creation-popover { left: 10px; width: min(300px, calc(100vw - 28px)); }
   .creation-settings { width: min(260px, calc(100vw - 28px)); }
