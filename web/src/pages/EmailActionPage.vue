@@ -56,7 +56,7 @@ async function submit() {
         <CheckCircle2 class="success-icon" :size="28" />
         <h1>{{ t(isVerification ? 'emailAction.verificationComplete' : 'emailAction.resetComplete') }}</h1>
         <p>{{ t(isVerification ? 'emailAction.verificationCompleteSummary' : 'emailAction.resetCompleteSummary') }}</p>
-        <UiButton as="RouterLink" class="command-button primary" variant="primary" :to="isVerification ? '/settings?section=security' : '/settings'">
+        <UiButton as="RouterLink" class="command-button primary" variant="primary" :to="isVerification ? '/settings?section=security' : { path: '/auth', query: { returnTo: '/settings' } }">
           {{ t(isVerification ? 'emailAction.openSecurity' : 'emailAction.signIn') }}
         </UiButton>
       </template>

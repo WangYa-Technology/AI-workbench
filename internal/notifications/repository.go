@@ -50,12 +50,14 @@ var KnownKinds = []string{
 	"marketplace.order_refunded",
 	"marketplace.refund_failed",
 	"generation.completed",
+	"billing.wallet_topup_completed",
+	"billing.subscription_completed",
 	"security.webhook_replayed",
 	"security.email_delivery_retried",
 	"support.case_updated",
 }
 
-var detailTargetPattern = regexp.MustCompile(`^/(market/demands|workspace/assets|support)/[0-9a-fA-F-]{36}$`)
+var detailTargetPattern = regexp.MustCompile(`^/(market/demands|workspace/assets|support|community/posts)/[0-9a-fA-F-]{36}$`)
 
 type Notification struct {
 	ID           uuid.UUID  `json:"id"`
@@ -432,7 +434,7 @@ func ValidTargetPath(value string) bool {
 		}
 	}
 	switch parsed.Path {
-	case "/notifications", "/settings", "/support", "/create/image", "/workspace/assets", "/workspace/generations", "/workspace/orders", "/workspace/tasks", "/market", "/market/demands", "/community":
+	case "/notifications", "/settings", "/support", "/create/image", "/workspace/assets", "/workspace/generations", "/workspace/orders", "/workspace/tasks", "/workspace/billing", "/market", "/market/demands", "/community":
 		return true
 	default:
 		return detailTargetPattern.MatchString(parsed.Path)

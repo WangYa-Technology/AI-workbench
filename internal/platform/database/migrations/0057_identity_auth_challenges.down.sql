@@ -1,0 +1,4 @@
+DROP TRIGGER IF EXISTS identity_auth_challenge_delivery_attempts_immutable ON identity_auth_challenge_delivery_attempts;
+DROP FUNCTION IF EXISTS reject_identity_auth_challenge_attempt_mutation();
+DROP TABLE IF EXISTS identity_auth_challenge_delivery_attempts;
+DROP TABLE IF EXISTS identity_auth_challenges;

@@ -18,7 +18,7 @@ const emit = defineEmits<{
 const { t } = useI18n()
 const headingID = useId()
 const safeReturnTo = computed(() => props.returnTo.startsWith('/') && !props.returnTo.startsWith('//') ? props.returnTo : '/')
-const authTarget = (mode: 'login' | 'register') => ({ path: '/settings', query: { auth: mode, returnTo: safeReturnTo.value } })
+const authTarget = (mode: 'login' | 'register') => ({ path: '/auth', query: { auth: mode, returnTo: safeReturnTo.value } })
 </script>
 
 <template>

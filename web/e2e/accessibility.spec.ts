@@ -46,7 +46,6 @@ test('critical user and operations routes pass automated WCAG 2.2 AA checks', as
     ['Discover', '/discover'],
     ['Create', '/create/image'],
     ['Assets', '/workspace/assets'],
-    ['Publish', '/publish'],
     ['Marketplace', '/market'],
     ['Tasks', '/market/demands'],
     ['Community', '/community'],

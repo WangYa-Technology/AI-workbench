@@ -1,0 +1,12 @@
+{
+  "name": "hcai-waffo-connector",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "dependencies": {
+    "@waffo/pancake-ts": "0.19.1"
+  }
+}

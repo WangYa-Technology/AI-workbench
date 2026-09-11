@@ -25,7 +25,7 @@ func RequireTx(ctx context.Context, tx pgx.Tx, capability string) error {
 		return fmt.Errorf("unknown system capability %q", capability)
 	}
 	var enabled bool
-	query := `SELECT r.` + column + ` FROM system_setting_state s JOIN system_setting_revisions r ON r.id=s.active_revision_id WHERE s.singleton=true`
+	query := `SELECT ` + column + ` FROM system_settings WHERE singleton=true`
 	if err := tx.QueryRow(ctx, query).Scan(&enabled); err != nil {
 		return fmt.Errorf("load system setting: %w", err)
 	}

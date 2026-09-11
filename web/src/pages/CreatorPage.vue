@@ -93,7 +93,7 @@ watch(() => route.params.handle, () => void load(), { immediate: true })
             <UserPlus v-if="!actionLoading" :size="17" />
           </template>{{ profile.viewerFollowing ? t('community.following') : t('community.follow') }}
         </UiButton>
-        <UiButton v-else-if="!session.user" as="RouterLink" class="command-button secondary" variant="secondary" to="/settings">
+        <UiButton v-else-if="!session.user" as="RouterLink" class="command-button secondary" variant="secondary" :to="{ path: '/auth', query: { returnTo: route.fullPath } }">
           <template #start>
             <UserPlus :size="17" />
           </template>{{ t('creator.signInToFollow') }}

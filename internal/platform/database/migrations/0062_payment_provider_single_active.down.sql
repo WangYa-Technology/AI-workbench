@@ -1,0 +1,1 @@
+DROP INDEX IF EXISTS payment_provider_configs_single_enabled_idx;

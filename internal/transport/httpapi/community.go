@@ -10,7 +10,24 @@ import (
 	"github.com/google/uuid"
 	"github.com/hcai-chat/hcai-chat/internal/community"
 	"github.com/hcai-chat/hcai-chat/internal/platform/httputil"
+	"github.com/hcai-chat/hcai-chat/internal/systemsettings"
 )
+
+func (s *Server) createCommunityPost(w http.ResponseWriter, r *http.Request) {
+	actor, ok := s.requirePermission(w, r, "community:interact")
+	if !ok {
+		return
+	}
+	var input community.PostCreateInput
+	if !httputil.DecodeJSON(w, r, &input) {
+		return
+	}
+	item, err := s.community.CreatePost(r.Context(), actor.ID, input)
+	if err == nil {
+		w.Header().Set("Location", "/community/posts/"+item.ID.String())
+	}
+	s.writeCommunityResult(w, r, item, err, http.StatusCreated)
+}
 
 func (s *Server) getCommunityPost(w http.ResponseWriter, r *http.Request) {
 	postID, ok := pathUUID(w, r, "postID")
@@ -176,6 +193,8 @@ func (s *Server) writeCommunityResult(w http.ResponseWriter, r *http.Request, it
 		httputil.WriteError(w, r, http.StatusForbidden, "community_action_forbidden", "You cannot perform this action on the resource.", false)
 	case errors.Is(err, community.ErrConflict):
 		httputil.WriteError(w, r, http.StatusConflict, "community_state_conflict", "This action is already recorded or is not available in the current state.", false)
+	case errors.Is(err, systemsettings.ErrDisabled):
+		httputil.WriteError(w, r, http.StatusServiceUnavailable, "feature_disabled", "Community publishing is temporarily unavailable by a platform setting.", false)
 	case err != nil:
 		s.internalError(w, r, "community command", err)
 	default:

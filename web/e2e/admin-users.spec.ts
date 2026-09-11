@@ -1,4 +1,9 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Locator, type Page } from '@playwright/test'
+
+async function chooseOption(page: Page, trigger: Locator, optionName: string) {
+  await trigger.click()
+  await page.getByRole('option', { name: optionName, exact: true }).click()
+}
 
 test('restores Admin user filters and updates the precise account', async ({ page }) => {
   const runID = Date.now().toString(36)
@@ -22,7 +27,7 @@ test('restores Admin user filters and updates the precise account', async ({ pag
   await expect(page.getByRole('searchbox', { name: 'Search users', exact: true })).toHaveValue(runID)
   await expect(page).toHaveURL(new RegExp(`tab=users.*q=${runID}.*role=member.*status=active`))
 
-  const rows = page.locator('.admin-user-directory .admin-list article')
+  const rows = page.locator('.admin-user-table tbody tr')
   await expect(rows).toHaveCount(1)
   const target = rows.filter({ hasText: `@${handle}` })
   await expect(target).toBeVisible()
@@ -31,12 +36,17 @@ test('restores Admin user filters and updates the precise account', async ({ pag
 
   await target.getByRole('button', { name: 'Manage access', exact: true }).click()
   const commandPanel = page.locator('.admin-command-panel')
+  const drawer = page.locator('.ui-drawer')
+  await expect(drawer).toBeVisible()
+  await expect(drawer.locator('.admin-command-panel')).toBeVisible()
+  await expect.poll(async () => {
+    const bounds = await drawer.boundingBox()
+    return Math.round((bounds?.x || 0) + (bounds?.width || 0))
+  }).toBe(390)
   await expect(commandPanel).toBeVisible()
-  await commandPanel.getByRole('combobox', { name: 'Role', exact: true }).selectOption('creator')
-  await commandPanel.getByRole('combobox', { name: 'Status', exact: true }).selectOption('suspended')
-  await commandPanel.getByRole('textbox', { name: 'Required reason', exact: true }).fill(`E2E ${runID}: verified account access policy change.`)
-  await commandPanel.getByRole('checkbox', { name: 'I reviewed the target and confirm this operation.', exact: true }).check()
-  await commandPanel.getByRole('button', { name: 'Apply and record', exact: true }).click()
-  await expect(page.getByText('Operation completed and audit evidence recorded.', { exact: true })).toBeVisible()
+  await chooseOption(page, commandPanel.getByRole('combobox', { name: 'Role', exact: true }), 'Creator')
+  await chooseOption(page, commandPanel.getByRole('combobox', { name: 'Status', exact: true }), 'Suspended')
+  await commandPanel.getByRole('button', { name: 'Apply', exact: true }).click()
+  await expect(page.getByText('Operation completed.', { exact: true })).toBeVisible()
   await expect(target).toHaveCount(0)
 })

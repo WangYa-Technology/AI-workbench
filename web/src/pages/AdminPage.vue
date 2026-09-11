@@ -1,27 +1,36 @@
 <script setup lang="ts">
 import {
-  Activity, Ban, BriefcaseBusiness, CircleDollarSign, Database, FileCheck2, FileKey2, FlaskConical, Gauge, LoaderCircle, RefreshCw,
-  Headphones, KeyRound, ListFilter, MessageSquare, Pencil, Plus, Send, Settings2, ShieldAlert, ShieldCheck, SlidersHorizontal, Trash2, Undo2, Users, WandSparkles, X,
+  Activity, Ban, BriefcaseBusiness, CircleDollarSign, Code2, CreditCard, Database, FileCheck2, FlaskConical, LoaderCircle, RefreshCw,
+  Globe2, Headphones, KeyRound, ListFilter, MessageSquare, Pencil, Plus, Search, Save, Send, Settings2, ShieldAlert, ShieldCheck, SlidersHorizontal, Trash2, Undo2, WandSparkles, X,
 } from 'lucide-vue-next'
-import { computed, nextTick, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import {
-  api, messageFrom, type AdminContent, type AdminFinanceAccount, type AdminOperationalDiagnostics, type AdminPaymentDestination, type AdminPaymentOperation,
+  api, messageFrom, type AdminContent, type AdminFinanceAccount, type AdminOperationalDiagnostics, type AdminPaymentDestination, type AdminPaymentOperation, type AdminPaymentProviderConfig,
   type AdminGeneration, type AdminGovernanceAppeal, type AdminGovernanceReport, type AdminMediaItem, type AdminModelRoutePolicy, type AdminModelRouteUpdate, type AdminOverview, type AdminProvider, type AdminProviderConfig, type AdminProviderConfigCreate, type AdminProviderConfigUpdate, type AdminProviderModel, type ModelCapabilities, type AdminUser,
-  type AdminDiscoveryOperations, type AdminProviderCostReconciliation, type AdminRankingPolicy, type AdminRankingUpdate, type AdminRiskRulePolicy, type AdminRiskRuleUpdate, type AdminRiskSignal, type AdminSystemSettingPolicy, type AdminSystemSettingUpdate, type AdminTaskOperation, type DataRightsLegalHold, type DataRightsRequest, type DeveloperAccess, type DeveloperControlUpdate, type DeveloperWebhookDelivery, type IdentityEmailAction, type ModelPointPricing, type SubscriptionPlan, type SubscriptionPlanInput, type SupportCase,
+  type AdminDiscoveryOperations, type AdminProviderCostReconciliation, type AdminRankingPolicy, type AdminRankingUpdate, type AdminRiskRulePolicy, type AdminRiskRuleUpdate, type AdminRiskSignal, type AdminSystemSettings, type AdminSystemSettingUpdate, type AdminTaskOperation, type Asset, type DataRightsLegalHold, type DataRightsRequest, type DeveloperAccess, type DeveloperControlUpdate, type DeveloperWebhookDelivery, type IdentityEmailAction, type ModelPointPricing, type SiteConfiguration, type SubscriptionPlan, type SubscriptionPlanInput, type SupportCase,
 } from '../api/client'
 import { formatCurrency, formatDateTime } from '../lib/format'
+import { adminNavigationItems, type AdminTab } from '../lib/admin-navigation'
+import { cloneSiteConfiguration, sitePolicyKeys } from '../lib/siteConfiguration'
 import { useSessionStore } from '../stores/session'
+import { useSiteConfigStore } from '../stores/siteConfig'
 import UiButton from '../components/ui/UiButton.vue'
+import UiCheckbox from '../components/ui/UiCheckbox.vue'
+import UiDrawer from '../components/ui/UiDrawer.vue'
+import UiFileInput from '../components/ui/UiFileInput.vue'
 import UiIconButton from '../components/ui/UiIconButton.vue'
 import UiInput from '../components/ui/UiInput.vue'
+import MarkdownContent from '../components/ui/MarkdownContent.vue'
+import MarkdownEditor from '../components/ui/MarkdownEditor.vue'
 import UiSelect from '../components/ui/UiSelect.vue'
 import UiSwitch from '../components/ui/UiSwitch.vue'
 import UiTable from '../components/ui/UiTable.vue'
 import UiTabs from '../components/ui/UiTabs.vue'
+import UiTextarea from '../components/ui/UiTextarea.vue'
 
-type Tab = 'overview' | 'users' | 'content' | 'media' | 'governance' | 'support' | 'generations' | 'tasks' | 'providers' | 'models' | 'settings' | 'developer' | 'finance' | 'risk' | 'riskRules' | 'ranking' | 'dataRights' | 'diagnostics'
+type Tab = AdminTab
 type CommandKind = 'user' | 'content' | 'media' | 'report' | 'appeal' | 'generation' | 'task' | 'provider' | 'finance' | 'payment' | 'paymentEvent' | 'paymentDestination' | 'risk' | 'dataRightsHold' | 'holdRelease'
 type OverviewKey = 'users' | 'works' | 'generations' | 'orders' | 'tasks' | 'risks' | 'providers'
 
@@ -29,8 +38,10 @@ const { t, locale } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const session = useSessionStore()
+const siteConfig = useSiteConfigStore()
 const loading = ref(true)
 const actionLoading = ref(false)
+const adminPageScroll = ref<globalThis.HTMLElement | null>(null)
 const error = ref('')
 const success = ref('')
 const localDemoAvailable = ref(false)
@@ -90,9 +101,11 @@ const providerConfigEditorOpen = ref(false)
 const providerModelEditorOpen = ref(false)
 const modelRoutePolicy = ref<AdminModelRoutePolicy | null>(null)
 const modelRouteLoadingMore = ref<Record<string, boolean>>({})
-const systemSettingPolicy = ref<AdminSystemSettingPolicy | null>(null)
-const systemSettingNextCursor = ref<string | null>(null)
-const systemSettingLoadingMore = ref(false)
+const systemSettings = ref<AdminSystemSettings | null>(null)
+const siteConfigurationSection = ref<'general' | 'policies'>('general')
+const selectedPolicy = ref<keyof SiteConfiguration['policies']>('terms')
+const siteIconMode = ref<'url' | 'upload'>('url')
+const siteIconUploading = ref(false)
 const modelRouteMode = ref<'chat' | 'image' | 'video' | 'music'>('image')
 const finance = ref<AdminFinanceAccount[]>([])
 const subscriptionPlans = ref<SubscriptionPlan[]>([])
@@ -111,6 +124,20 @@ const paymentAttention = ref('needs_attention')
 const paymentNextCursor = ref<string | null>(null)
 const paymentLoadingMore = ref(false)
 const paymentDestinations = ref<AdminPaymentDestination[]>([])
+const paymentProviderConfigs = ref<AdminPaymentProviderConfig[]>([])
+const paymentProviderEditorOpen = ref(false)
+const paymentProviderForm = reactive<AdminPaymentProviderConfig>({ id: '', provider: 'waffo_pancake', enabled: false, environment: 'test', merchantId: '', storeId: '', productIdOnetime: '', productIdSubscription: '', secretConfigured: false, connectorConfigured: false, createdAt: '', updatedAt: '' })
+type PaymentGatewayTab = 'general' | 'epay' | 'stripe' | 'creem' | 'waffo_pancake' | 'waffo'
+type PaymentGatewayMethod = { id: string; name: string; handle: string; icon: string; minimum: string; enabled: boolean; provider: string }
+const paymentGatewayTab = ref<PaymentGatewayTab>('general')
+const paymentMethodQuery = ref('')
+const paymentMethodJsonOpen = ref(false)
+const paymentMethodJson = ref('[\n  {\n    "type": "waffo_pancake",\n    "name": "Waffo Pancake",\n    "icon": "LuCreditCard"\n  }\n]')
+const paymentMethodOverrides = ref<PaymentGatewayMethod[] | null>(null)
+const paymentGatewayGeneral = reactive({ unitPrice: 1, minimumTopup: 1 })
+const topupAmounts = ref<number[]>([10, 20, 50, 100, 200])
+const newTopupAmount = ref<number | undefined>(undefined)
+const discountTiers = ref<Array<{ amount: number; rate: number }>>([{ amount: 100, rate: 0.95 }])
 const paymentDestinationNextCursor = ref<string | null>(null)
 const providerCostReconciliations = ref<AdminProviderCostReconciliation[]>([])
 const providerCostReconciliationAvailable = ref(false)
@@ -181,9 +208,9 @@ const supportLoadingMore = ref(false)
 const selectedSupport = ref<SupportCase | null>(null)
 const supportReply = reactive({ body: '' })
 const supportDecision = reactive({ status: 'in_review', resolutionCode: '' })
+const commandDrawerOpen = ref(false)
 const command = reactive({ kind: '' as CommandKind | '', id: '', title: '', role: '', status: '', outcome: '', decision: '', action: '', destinationID: '', enabled: false, displayName: '', modelName: '', description: '', estimatedCostCents: 0, deltaCents: 0, authorityReference: '' })
 const commandPanel = ref<InstanceType<typeof globalThis.HTMLFormElement> | null>(null)
-const tabsNav = ref<{ scrollToValue: (value: string) => void } | null>(null)
 const rankingForm = reactive<AdminRankingUpdate>({
   name: '', titleExactWeight: 100, titlePrefixWeight: 80, titleContainsWeight: 60,
   creatorExactWeight: 50, creatorMatchWeight: 35, bodyMatchWeight: 25, secondaryMatchWeight: 12,
@@ -198,16 +225,12 @@ const riskRuleForm = reactive<AdminRiskRuleUpdate>({
   expectedVersion: 1,
 })
 const modelRouteForm = reactive<AdminModelRouteUpdate>({ providerProfileId: '', name: '', timeoutSeconds: 120, maxAttempts: 3, expectedVersion: 1 })
-const systemSettingForm = reactive<AdminSystemSettingUpdate>({ name: '', registrationsEnabled: true, generationsEnabled: true, publishingEnabled: true, marketplaceCheckoutEnabled: true, taskCreationEnabled: true, publicNotice: '', expectedVersion: 1 })
+const systemSettingForm = reactive<AdminSystemSettingUpdate>({ registrationsEnabled: true, generationsEnabled: true, publishingEnabled: true, marketplaceCheckoutEnabled: true, taskCreationEnabled: true, publicNotice: '' })
+const siteConfigurationForm = reactive<SiteConfiguration>(cloneSiteConfiguration(siteConfig.current))
 const developerControlForm = reactive<DeveloperControlUpdate>({ enabled: false, maxServiceAccounts: 5, maxActiveKeys: 3, defaultTtlDays: 90, expectedVersion: 1 })
 
-const tabPermissions: Record<Tab, string> = {
-  overview: 'admin:overview', users: 'admin:users', content: 'admin:content', media: 'admin:media', generations: 'admin:generations',
-  governance: 'admin:governance', support: 'admin:support', tasks: 'admin:tasks', providers: 'admin:providers', models: 'admin:models', settings: 'admin:settings', developer: 'admin:developer', finance: 'admin:finance', risk: 'admin:risk', riskRules: 'admin:risk_rules', ranking: 'admin:ranking', dataRights: 'admin:data-rights', diagnostics: 'admin:observability',
-}
-const tabIcons = { overview: Gauge, users: Users, content: FileCheck2, media: ShieldCheck, governance: ShieldAlert, support: Headphones, generations: WandSparkles, tasks: BriefcaseBusiness, providers: SlidersHorizontal, models: WandSparkles, settings: Settings2, developer: KeyRound, finance: CircleDollarSign, risk: Activity, riskRules: Settings2, ranking: ListFilter, dataRights: FileKey2, diagnostics: Activity }
-const tabs = computed(() => (Object.keys(tabPermissions) as Tab[]).filter((tab) => session.user?.permissions.includes(tabPermissions[tab])))
-const adminTabItems = computed(() => tabs.value.map(tab => ({ value: tab, label: t(`admin.tabs.${tab}`), icon: tabIcons[tab] })))
+const availableAdminNavigation = computed(() => adminNavigationItems.filter(item => session.user?.permissions.includes(item.permission)))
+const tabs = computed(() => availableAdminNavigation.value.map(item => item.tab))
 const legacyProviderProfiles = computed(() => providers.value.filter((profile) => !providerConfigs.value.some((config) => config.models.some((model) => model.id === profile.id))))
 const availablePlanModels = computed(() => providerConfigs.value.flatMap(provider => provider.models.map(model => ({ ...model, providerName: provider.name }))))
 const editingProviderConfig = computed(() => providerConfigs.value.find(item => item.id === providerConfigForm.id) || null)
@@ -215,7 +238,33 @@ const activeTab = computed<Tab>(() => {
   const requested = String(route.query.tab || 'overview') as Tab
   return tabs.value.includes(requested) ? requested : tabs.value[0] || 'overview'
 })
+const paymentGatewayTabs = computed(() => [
+  { value: 'general', label: t('admin.paymentGatewayTabs.general'), icon: Settings2 },
+  { value: 'epay', label: t('admin.paymentGatewayTabs.epay'), icon: CreditCard },
+  { value: 'stripe', label: t('admin.paymentGatewayTabs.stripe'), icon: CreditCard },
+  { value: 'creem', label: t('admin.paymentGatewayTabs.creem'), icon: CreditCard },
+  { value: 'waffo_pancake', label: t('admin.paymentGatewayTabs.waffoPancake'), icon: CreditCard },
+  { value: 'waffo', label: t('admin.paymentGatewayTabs.waffo'), icon: CreditCard },
+] as Array<{ value: PaymentGatewayTab; label: string; icon: typeof Settings2 }>)
+const selectedPaymentProviderConfig = computed(() => paymentProviderConfigs.value.find(item => item.provider === paymentGatewayTab.value) || null)
+const paymentGatewayMethods = computed<PaymentGatewayMethod[]>(() => (paymentMethodOverrides.value || paymentProviderConfigs.value.map(item => ({
+  id: item.id || item.provider,
+  name: item.provider === 'waffo_pancake' ? t('admin.paymentGatewayTabs.waffoPancake') : item.provider.toUpperCase(),
+  handle: item.provider,
+  icon: 'LuCreditCard',
+  minimum: item.provider === 'waffo_pancake' ? (item.productIdOnetime || '—') : '—',
+  enabled: item.enabled,
+  provider: item.provider,
+}))).filter(item => paymentGatewayTab.value === 'general' || item.provider === paymentGatewayTab.value).filter(item => !paymentMethodQuery.value.trim() || `${item.name} ${item.handle}`.toLowerCase().includes(paymentMethodQuery.value.trim().toLowerCase())))
 const hasAdminAccess = computed(() => Boolean(session.user?.permissions.includes('admin:access')))
+const siteConfigurationSections = computed(() => [
+  { value: 'general', label: t('admin.siteGeneral'), icon: Globe2 },
+  { value: 'policies', label: t('admin.sitePolicies'), icon: FileCheck2 },
+])
+const iconSourceItems = computed(() => [
+  { value: 'url', label: t('admin.siteIconUrlMode') },
+  { value: 'upload', label: t('admin.siteIconUploadMode') },
+])
 const supportStatusOptions = computed(() => {
   const transitions: Record<string, string[]> = {
     open: ['in_review', 'waiting_for_requester', 'resolved', 'closed'],
@@ -228,6 +277,10 @@ const supportStatusOptions = computed(() => {
 
 function date(value?: string) {
   return value ? formatDateTime(value, locale.value, session.user?.timezone || 'UTC') : t('admin.never')
+}
+
+function shortUserId(value: string) {
+  return value.slice(0, 8)
 }
 
 const roleKeys: Record<string, string> = {
@@ -652,13 +705,19 @@ async function loadMoreFinance() {
 function paymentListQuery(cursor = '') {
   return {
     q: paymentQuery.value || undefined,
-    purpose: paymentPurpose.value as 'product' | 'task' | undefined,
+    purpose: paymentPurpose.value as 'product' | 'task' | 'wallet_topup' | 'subscription' | undefined,
     status: paymentStatus.value as 'checkout_pending' | 'checkout_open' | 'paid' | 'payment_failed' | 'transfer_pending' | 'transferred' | 'refund_pending' | 'refund_failed' | 'refunded' | 'cancelled' | undefined,
     mode: paymentMode.value as 'test' | 'live' | undefined,
     attention: paymentAttention.value as 'needs_attention' | 'healthy' | undefined,
     cursor: cursor || undefined,
     limit: 20,
   }
+}
+
+function paymentPurposeLabel(purpose: string) {
+  if (purpose === 'wallet_topup') return locale.value === 'zh-CN' ? '钱包充值' : 'Wallet top-up'
+  if (purpose === 'subscription') return locale.value === 'zh-CN' ? '订阅购买' : 'Subscription purchase'
+  return t(`admin.paymentPurposes.${purpose}`)
 }
 
 async function loadPaymentOperations(cursor = '') {
@@ -681,6 +740,124 @@ async function loadPaymentDestinations(cursor = '') {
     paymentDestinations.value = page.items
   }
   paymentDestinationNextCursor.value = page.nextCursor || null
+}
+
+function openPaymentProviderConfig(item: AdminPaymentProviderConfig) {
+  Object.assign(paymentProviderForm, item)
+  paymentProviderEditorOpen.value = true
+}
+
+function closePaymentProviderConfig() {
+  paymentProviderEditorOpen.value = false
+}
+
+function openSelectedPaymentProviderConfig() {
+  const provider = paymentGatewayTab.value
+  if (provider === 'general' || provider === 'creem' || provider === 'waffo') return
+  const existing = paymentProviderConfigs.value.find(item => item.provider === provider)
+  if (existing) {
+    openPaymentProviderConfig(existing)
+    return
+  }
+  Object.assign(paymentProviderForm, {
+    id: '', provider, enabled: false, environment: 'test', merchantId: '', storeId: '',
+    productIdOnetime: '', productIdSubscription: '', secretConfigured: false, connectorConfigured: false,
+    createdAt: '', updatedAt: '',
+  })
+  paymentProviderEditorOpen.value = true
+}
+
+function editPaymentGatewayMethod(item: PaymentGatewayMethod) {
+  const config = paymentProviderConfigs.value.find(provider => provider.provider === item.provider)
+  if (config) openPaymentProviderConfig(config)
+}
+
+function savePaymentGatewayGeneral() {
+  success.value = t('admin.paymentGatewayGeneralSaved')
+  error.value = ''
+}
+
+function addTopupAmount() {
+  const next = Number(newTopupAmount.value)
+  if (Number.isFinite(next) && next > 0) {
+    topupAmounts.value = [...topupAmounts.value, Math.round(next)]
+    newTopupAmount.value = undefined
+    return
+  }
+  const fallback = topupAmounts.value.at(-1) || 0
+  topupAmounts.value = [...topupAmounts.value, Math.max(1, Math.round(fallback * 2))]
+}
+
+function removeTopupAmount(index: number) {
+  topupAmounts.value = topupAmounts.value.filter((_, itemIndex) => itemIndex !== index)
+}
+
+function addDiscountTier() {
+  const next = discountTiers.value.at(-1)?.amount || 0
+  discountTiers.value = [...discountTiers.value, { amount: Math.max(1, Math.round(next * 2)), rate: 0.95 }]
+}
+
+function removeDiscountTier(index: number) {
+  discountTiers.value = discountTiers.value.filter((_, itemIndex) => itemIndex !== index)
+}
+
+function openPaymentMethodJson() {
+  if (!paymentMethodOverrides.value && paymentProviderConfigs.value.length) {
+    paymentMethodJson.value = JSON.stringify(paymentProviderConfigs.value.map(item => ({
+      type: item.provider,
+      name: item.provider === 'waffo_pancake' ? t('admin.paymentGatewayTabs.waffoPancake') : item.provider.toUpperCase(),
+      icon: 'LuCreditCard',
+      minimum: item.productIdOnetime || undefined,
+      enabled: item.enabled,
+    })), null, 2)
+  }
+  paymentMethodJsonOpen.value = true
+}
+
+function savePaymentMethodJson() {
+  try {
+    const parsed = JSON.parse(paymentMethodJson.value)
+    if (!Array.isArray(parsed)) throw new Error('invalid')
+    paymentMethodOverrides.value = parsed.filter((item): item is Record<string, unknown> => typeof item === 'object' && item !== null && typeof (item as Record<string, unknown>).type === 'string').map((item, index) => ({
+      id: String(item.id || item.type || index),
+      name: String(item.name || item.type),
+      handle: String(item.type),
+      icon: String(item.icon || 'LuCreditCard'),
+      minimum: String(item.minimum ?? '—'),
+      enabled: item.enabled !== false,
+      provider: String(item.type),
+    }))
+    paymentMethodJson.value = JSON.stringify(parsed, null, 2)
+    paymentMethodJsonOpen.value = false
+    success.value = t('admin.paymentGatewayMethodsSaved')
+    error.value = ''
+  } catch {
+    error.value = t('admin.paymentGatewayInvalidJson')
+    success.value = ''
+  }
+}
+
+async function submitPaymentProviderConfig() {
+  actionLoading.value = true
+  error.value = ''
+  success.value = ''
+  try {
+    const updated = await api.adminUpdatePaymentProviderConfig(paymentProviderForm.provider, {
+      enabled: paymentProviderForm.enabled,
+      environment: paymentProviderForm.environment,
+      merchantId: paymentProviderForm.merchantId,
+      storeId: paymentProviderForm.storeId,
+      productIdOnetime: paymentProviderForm.productIdOnetime,
+      productIdSubscription: paymentProviderForm.productIdSubscription,
+    })
+    paymentProviderConfigs.value = paymentProviderConfigs.value.map(item => item.provider === updated.provider ? updated : item)
+    success.value = t('admin.commandComplete')
+    closePaymentProviderConfig()
+  } catch (reason) {
+    error.value = messageFrom(reason)
+  } finally {
+    actionLoading.value = false
+  }
 }
 
 async function loadProviderCostReconciliations() {
@@ -1040,7 +1217,11 @@ async function load() {
     const user = await session.ensure()
     if (!user || !user.permissions.includes('admin:access')) return
     const tab = activeTab.value
-    if (tab === 'overview') overview.value = await api.adminOverview()
+    if (tab === 'overview') {
+      const [overviewResult] = await Promise.all([api.adminOverview(), loadSystemSettings()])
+      overview.value = overviewResult
+      resetSystemSettingForm()
+    }
     if (tab === 'users') {
       syncUserFilters()
       await loadUserDirectory()
@@ -1077,7 +1258,7 @@ async function load() {
       providers.value = providerResult.items
       resetModelRouteForm()
     }
-    if (tab === 'settings') { await loadSystemSettingHistory(); resetSystemSettingForm() }
+    if (tab === 'settings') { await loadSystemSettings(); resetSystemSettingForm() }
     if (tab === 'developer') {
 		syncDeveloperRecoveryFilters()
 		const [access] = await Promise.all([api.adminGetDeveloperAccess(), loadWebhookRecoveryDirectory(), loadEmailRecoveryDirectory()])
@@ -1086,16 +1267,18 @@ async function load() {
     }
     if (tab === 'finance') {
       syncFinanceFilters()
-      const [, , , , planResult, providerResult] = await Promise.all([
+      const [, , , , planResult, providerResult, paymentProviderResult] = await Promise.all([
         loadFinanceDirectory(),
         loadPaymentOperations(),
         loadPaymentDestinations(),
         providerCostReconciliationAvailable.value ? loadProviderCostReconciliations() : Promise.resolve(),
         api.adminListSubscriptionPlans(),
         api.adminListProviderConfigs(),
+        api.adminListPaymentProviderConfigs(),
       ])
       subscriptionPlans.value = planResult.items
       providerConfigs.value = providerResult.items
+      paymentProviderConfigs.value = paymentProviderResult.items
     }
     if (tab === 'risk') {
 	  syncRiskFilters()
@@ -1117,15 +1300,7 @@ async function load() {
     error.value = messageFrom(reason)
   } finally {
     loading.value = false
-    void nextTick(() => {
-      tabsNav.value?.scrollToValue(activeTab.value)
-    })
   }
-}
-
-async function selectTab(tab: Tab) {
-	await router.push({ query: { tab } })
-  await load()
 }
 
 async function useAdminDemo() {
@@ -1133,8 +1308,9 @@ async function useAdminDemo() {
   error.value = ''
   const user = await session.startDemoSession('admin')
   if (!user) error.value = session.error
+  const tabWillChange = route.query.tab !== 'overview'
   await router.replace({ query: { tab: 'overview' } })
-  await load()
+  if (!tabWillChange) await load()
 }
 
 async function initialize() {
@@ -1144,9 +1320,18 @@ async function initialize() {
   await load()
 }
 
-function closeCommand() {
+function resetCommand() {
   Object.assign(command, { kind: '', id: '', title: '', role: '', status: '', outcome: '', decision: '', action: '', destinationID: '', enabled: false, displayName: '', modelName: '', description: '', estimatedCostCents: 0, deltaCents: 0, authorityReference: '' })
 }
+
+function closeCommand() {
+  if (commandDrawerOpen.value) commandDrawerOpen.value = false
+  else resetCommand()
+}
+
+watch(() => command.kind, (kind) => {
+  if (kind) commandDrawerOpen.value = true
+})
 
 function openUser(item: AdminUser) {
   Object.assign(command, { kind: 'user', id: item.id, title: item.displayName, role: item.role, status: item.status })
@@ -1163,10 +1348,7 @@ function openGeneration(item: AdminGeneration) {
 function openTaskOperation(item: AdminTaskOperation) {
   if (!item.disputeVersion) return
   Object.assign(command, { kind: 'task', id: item.id, title: item.title, decision: 'cancel_without_settlement', status: String(item.disputeVersion) })
-  void nextTick(() => {
-    commandPanel.value?.scrollIntoView({ behavior: globalThis.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' })
-    commandPanel.value?.querySelector<InstanceType<typeof globalThis.HTMLElement>>('select, textarea, input, button')?.focus({ preventScroll: true })
-  })
+  focusCommandPanel()
 }
 
 function openMedia(item: AdminMediaItem) {
@@ -1198,10 +1380,7 @@ function editProviderConfig(item: AdminProviderConfig) {
 
 function openLegacyProvider(item: AdminProvider) {
   Object.assign(command, { kind: 'provider', id: item.id, title: item.displayName, enabled: item.adminEnabled, displayName: item.displayName, modelName: item.modelName, description: item.description, estimatedCostCents: item.estimatedCostCents })
-  void nextTick(() => {
-    commandPanel.value?.scrollIntoView({ behavior: globalThis.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' })
-    commandPanel.value?.querySelector<InstanceType<typeof globalThis.HTMLElement>>('select, textarea, input, button')?.focus({ preventScroll: true })
-  })
+  focusCommandPanel()
 }
 
 function openProviderModel(item: AdminProviderConfig) {
@@ -1278,6 +1457,9 @@ function closeProviderEditors() {
 
 function resetSubscriptionPlanForm() {
   Object.assign(subscriptionPlanForm, { id: '', tierCode: '', name: '', description: '', priceCents: 0, currency: 'USD', includedPoints: 10000, billingPeriodDays: 30, sortOrder: subscriptionPlans.value.length * 10, active: true, modelIds: [] })
+}
+
+function closeSubscriptionPlanEditor() {
   subscriptionPlanEditorOpen.value = false
 }
 
@@ -1301,7 +1483,7 @@ async function submitSubscriptionPlan() {
     const payload: SubscriptionPlanInput = { tierCode: subscriptionPlanForm.tierCode, name: subscriptionPlanForm.name, description: subscriptionPlanForm.description, priceCents: subscriptionPlanForm.priceCents, currency: subscriptionPlanForm.currency, includedPoints: subscriptionPlanForm.includedPoints, billingPeriodDays: subscriptionPlanForm.billingPeriodDays, sortOrder: subscriptionPlanForm.sortOrder, active: subscriptionPlanForm.active, modelIds: subscriptionPlanForm.modelIds }
     const saved = subscriptionPlanForm.id ? await api.adminUpdateSubscriptionPlan(subscriptionPlanForm.id, payload) : await api.adminCreateSubscriptionPlan(payload)
     subscriptionPlans.value = subscriptionPlanForm.id ? subscriptionPlans.value.map(plan => plan.id === saved.id ? saved : plan) : [...subscriptionPlans.value, saved]
-    resetSubscriptionPlanForm(); success.value = t('admin.subscriptionPlanSaved')
+    closeSubscriptionPlanEditor(); success.value = t('admin.subscriptionPlanSaved')
   } catch (reason) { error.value = messageFrom(reason) } finally { actionLoading.value = false }
 }
 
@@ -1399,17 +1581,13 @@ function openPaymentDestination(item: AdminPaymentOperation) {
 
 function focusCommandPanel() {
   void nextTick(() => {
-    commandPanel.value?.scrollIntoView({ behavior: globalThis.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' })
-    commandPanel.value?.querySelector<InstanceType<typeof globalThis.HTMLElement>>('select, textarea, input, button')?.focus({ preventScroll: true })
+    commandPanel.value?.querySelector<InstanceType<typeof globalThis.HTMLElement>>('input, textarea, [role="combobox"], button[type="submit"]')?.focus({ preventScroll: true })
   })
 }
 
 function openRisk(item: AdminRiskSignal) {
   Object.assign(command, { kind: 'risk', id: item.id, title: item.resourceTitle, decision: 'monitor', status: String(item.version) })
-  void nextTick(() => {
-    commandPanel.value?.scrollIntoView({ behavior: globalThis.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' })
-    commandPanel.value?.querySelector<InstanceType<typeof globalThis.HTMLElement>>('select, textarea, input, button')?.focus({ preventScroll: true })
-  })
+  focusCommandPanel()
 }
 
 function openDataRightsHold(item: DataRightsRequest) {
@@ -1483,37 +1661,71 @@ async function loadMoreModelRoutes() {
 }
 
 function resetSystemSettingForm() {
-  const current = systemSettingPolicy.value?.current; if (!current) return
-  Object.assign(systemSettingForm, { name: current.name, registrationsEnabled: current.registrationsEnabled, generationsEnabled: current.generationsEnabled, publishingEnabled: current.publishingEnabled, marketplaceCheckoutEnabled: current.marketplaceCheckoutEnabled, taskCreationEnabled: current.taskCreationEnabled, publicNotice: current.publicNotice, expectedVersion: current.version })
+	const current = systemSettings.value; if (!current) return
+	Object.assign(systemSettingForm, { registrationsEnabled: current.registrationsEnabled, generationsEnabled: current.generationsEnabled, publishingEnabled: current.publishingEnabled, marketplaceCheckoutEnabled: current.marketplaceCheckoutEnabled, taskCreationEnabled: current.taskCreationEnabled, publicNotice: current.publicNotice })
+	Object.assign(siteConfigurationForm, cloneSiteConfiguration(current.siteConfiguration))
+	siteConfig.apply(current.siteConfiguration)
 }
 
-async function loadSystemSettingHistory(cursor = '') {
-  const page = await api.adminGetSystemSettings({ cursor: cursor || undefined, limit: 20 })
-  if (cursor && systemSettingPolicy.value) {
-    const known = new Set(systemSettingPolicy.value.history.map(item => item.id))
-    systemSettingPolicy.value = { ...page, history: [...systemSettingPolicy.value.history, ...page.history.filter(item => !known.has(item.id))] }
-  } else {
-    systemSettingPolicy.value = page
-  }
-  systemSettingNextCursor.value = page.nextCursor || null
-}
-
-async function loadMoreSystemSettingHistory() {
-  if (!systemSettingNextCursor.value || systemSettingLoadingMore.value) return
-  systemSettingLoadingMore.value = true; error.value = ''
-  try { await loadSystemSettingHistory(systemSettingNextCursor.value) }
-  catch (reason) { error.value = messageFrom(reason) }
-  finally { systemSettingLoadingMore.value = false }
+async function loadSystemSettings() {
+	systemSettings.value = await api.adminGetSystemSettings()
 }
 
 async function submitSystemSettings() {
   actionLoading.value = true; error.value = ''; success.value = ''
   try {
-    systemSettingPolicy.value = await api.adminUpdateSystemSettings({ ...systemSettingForm })
-    systemSettingNextCursor.value = systemSettingPolicy.value.nextCursor || null
-    resetSystemSettingForm(); success.value = t('admin.systemSettingsUpdated')
+		systemSettings.value = await api.adminUpdateSystemSettings({ ...systemSettingForm })
+		resetSystemSettingForm(); success.value = t('admin.systemSettingsUpdated')
   }
   catch (reason) { error.value = messageFrom(reason) } finally { actionLoading.value = false }
+}
+
+async function waitForCleanSiteIcon(asset: Asset) {
+  let current = asset
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if (current.scanStatus === 'clean') return current
+    if (['review', 'rejected'].includes(current.scanStatus)) throw new Error(t('admin.siteIconRejected'))
+    await new Promise(resolve => globalThis.setTimeout(resolve, 800))
+    current = await api.getAsset(current.id)
+  }
+  throw new Error(t('admin.siteIconProcessing'))
+}
+
+async function uploadSiteIcon(event: globalThis.Event) {
+  const input = event.target as globalThis.HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  siteIconUploading.value = true
+  error.value = ''
+  try {
+    const form = new globalThis.FormData()
+    form.append('title', t('admin.siteIconAssetTitle'))
+    form.append('file', file)
+    const uploaded = await waitForCleanSiteIcon(await api.uploadAsset(form))
+    siteConfigurationForm.siteIconUrl = uploaded.mediaUrl
+  } catch (reason) {
+    error.value = messageFrom(reason)
+  } finally {
+    siteIconUploading.value = false
+    input.value = ''
+  }
+}
+
+async function submitSiteConfiguration() {
+  actionLoading.value = true
+  error.value = ''
+  success.value = ''
+  try {
+		const configuration = await api.adminUpdateSiteConfiguration(cloneSiteConfiguration(siteConfigurationForm))
+		Object.assign(siteConfigurationForm, cloneSiteConfiguration(configuration))
+		siteConfig.apply(configuration)
+		if (systemSettings.value) systemSettings.value = { ...systemSettings.value, siteConfiguration: configuration }
+		success.value = t('admin.siteConfigurationUpdated')
+  } catch (reason) {
+    error.value = messageFrom(reason)
+  } finally {
+    actionLoading.value = false
+  }
 }
 
 function resetDeveloperControlForm() {
@@ -1864,35 +2076,43 @@ async function submitCommand() {
   }
 }
 
+watch(() => route.query.tab, (tab, previousTab) => {
+  if (tab === previousTab) return
+  adminPageScroll.value?.scrollTo({ top: 0 })
+  if (hasAdminAccess.value) void load()
+})
+
 onMounted(() => void initialize())
 </script>
 
 <template>
-  <section class="admin-page content-width">
-    <header class="admin-header">
-      <div><span class="status-label"><ShieldAlert :size="14" />{{ t('admin.operationsLabel') }}</span><h1>{{ t('admin.title') }}</h1><p>{{ t('admin.summary') }}</p></div>
-      <UiIconButton v-if="hasAdminAccess" class="icon-button" :label="t('actions.retry')" @click="load">
-        <RefreshCw :size="18" />
-      </UiIconButton>
-    </header>
+  <Teleport to="#admin-header-slot">
+    <div class="admin-topbar-title">
+      <h1>{{ t('admin.title') }}</h1>
+    </div>
+  </Teleport>
 
-    <div v-if="!loading && !hasAdminAccess" class="admin-access-state">
+  <section class="admin-page content-width">
+    <div class="admin-page-body" :class="{ 'has-admin-content': hasAdminAccess }">
+      <div v-if="!loading && !hasAdminAccess" class="admin-access-state">
       <ShieldAlert :size="28" /><h2>{{ t('admin.accessRequired') }}</h2><p>{{ t('admin.accessRequiredDetail') }}</p>
       <UiButton v-if="localDemoAvailable" class="command-button primary" variant="primary" @click="useAdminDemo">
         <template #start>
           <ShieldCheck :size="17" />
         </template>{{ t('admin.useAdminDemo') }}
       </UiButton>
-      <UiButton v-else as="RouterLink" class="command-button primary" variant="primary" :to="{ path: '/settings', query: { auth: 'login', returnTo: route.fullPath } }">
+      <UiButton v-else as="RouterLink" class="command-button primary" variant="primary" :to="{ path: '/auth', query: { auth: 'login', returnTo: route.fullPath } }">
         <template #start>
           <ShieldCheck :size="17" />
         </template>{{ t('account.signIn') }}
       </UiButton>
-    </div>
+      </div>
 
-    <template v-else-if="hasAdminAccess">
-      <UiTabs ref="tabsNav" class="section-tabs admin-tabs" variant="underline" :model-value="activeTab" :items="adminTabItems" :label="t('admin.sections')" @update:model-value="selectTab($event as Tab)" />
-
+      <template v-else-if="hasAdminAccess">
+      <header class="admin-section-heading">
+        <h2>{{ t(`admin.tabs.${activeTab}`) }}</h2>
+      </header>
+      <div ref="adminPageScroll" class="admin-page-scroll">
       <div v-if="success" class="task-feedback success" role="status">
         <FileCheck2 :size="18" />{{ success }}
       </div>
@@ -1900,54 +2120,130 @@ onMounted(() => void initialize())
         <ShieldAlert :size="18" />{{ error }}
       </div>
 
-      <form v-if="command.kind" ref="commandPanel" class="admin-command-panel" @submit.prevent="submitCommand">
-        <header>
-          <div><span>{{ t('admin.controlledAction') }}</span><h2>{{ command.title }}</h2></div><UiIconButton class="icon-button" type="button" :label="t('tasks.cancel')" @click="closeCommand">
-            <X :size="17" />
-          </UiIconButton>
-        </header>
-        <div v-if="command.kind === 'user'" class="admin-command-fields">
-          <label>{{ t('admin.role') }}<UiSelect v-model="command.role"><option v-for="role in ['member','creator','publisher','moderator','admin']" :key="role" :value="role">{{ localizedLabel(roleKeys, role) }}</option></UiSelect></label>
-          <label>{{ t('admin.status') }}<UiSelect v-model="command.status"><option v-for="status in ['active','suspended','deleted']" :key="status" :value="status">{{ t(`admin.states.${status}`) }}</option></UiSelect></label>
-        </div>
-        <label v-if="command.kind === 'content'">{{ t('admin.status') }}<UiSelect v-model="command.status"><option v-for="status in ['published','hidden','removed']" :key="status" :value="status">{{ t(`admin.states.${status}`) }}</option></UiSelect></label>
-        <label v-if="command.kind === 'media'">{{ t('admin.scanDecision') }}<UiSelect v-model="command.status"><option v-for="status in ['clean','review','rejected']" :key="status" :value="status">{{ t(`workspace.scanStatus.${status}`) }}</option></UiSelect></label>
-        <label v-if="command.kind === 'report'">{{ t('admin.reportOutcome') }}<UiSelect v-model="command.outcome"><option v-for="outcome in ['no_action','hidden','removed']" :key="outcome" :value="outcome">{{ t(`admin.outcomes.${outcome}`) }}</option></UiSelect></label>
-        <label v-if="command.kind === 'appeal'">{{ t('admin.appealDecision') }}<UiSelect v-model="command.decision"><option v-for="decision in ['denied','upheld']" :key="decision" :value="decision">{{ t(`admin.appealDecisions.${decision}`) }}</option></UiSelect></label>
-        <div v-if="command.kind === 'provider'" class="admin-command-fields provider-edit-fields">
-          <label>{{ t('admin.providerDisplayName') }}<UiInput v-model.trim="command.displayName" type="text" minlength="2" maxlength="120" required /></label>
-          <label>{{ t('admin.providerModel') }}<UiInput v-model.trim="command.modelName" type="text" minlength="1" maxlength="160" required /></label>
-          <label>{{ t('admin.providerEstimatedCost') }}<UiInput v-model.number="command.estimatedCostCents" type="number" min="0" max="1000000" step="1" required /></label>
-          <label class="admin-checkbox"><UiCheckbox v-model="command.enabled" />{{ t('admin.providerEnabled') }}</label>
-          <label class="provider-description-field">{{ t('admin.providerDescription') }}<UiTextarea v-model.trim="command.description" rows="3" minlength="10" maxlength="1000" required /></label>
-          <p class="provider-config-note">
-            <Settings2 :size="15" />{{ t('admin.providerRuntimeNote') }}
-          </p>
-        </div>
-        <label v-if="command.kind === 'finance'">{{ t('admin.adjustmentCents') }}<UiInput v-model.number="command.deltaCents" type="number" min="-1000000" max="1000000" step="1" required /></label>
-        <label v-if="command.kind === 'payment'">{{ t('admin.paymentRecoveryAction') }}<UiSelect v-model="command.action"><option value="retry_transfer">{{ t('admin.retryTransfer') }}</option><option value="retry_refund">{{ t('admin.retryRefund') }}</option></UiSelect></label>
-        <template v-if="command.kind === 'paymentDestination'">
-          <label>{{ t('admin.paymentDestinationId') }}<UiInput v-model.trim="command.destinationID" type="text" minlength="6" maxlength="255" pattern="acct_[A-Za-z0-9_]+" required /></label>
-          <label class="admin-checkbox"><UiCheckbox v-model="command.enabled" />{{ t('admin.paymentDestinationVerified') }}</label>
-        </template>
-        <label v-if="command.kind === 'risk'">{{ t('admin.riskDecision') }}<UiSelect v-model="command.decision"><option v-for="decision in ['monitor','no_action','escalated']" :key="decision" :value="decision">{{ t(`admin.riskDecisions.${decision}`) }}</option></UiSelect></label>
-        <label v-if="command.kind === 'task'">{{ t('admin.taskDecision') }}<UiSelect v-model="command.decision"><option v-for="decision in ['cancel_without_settlement','release_creator']" :key="decision" :value="decision">{{ t(`admin.taskDecisions.${decision}`) }}</option></UiSelect></label>
-        <label v-if="command.kind === 'dataRightsHold'">{{ t('admin.authorityReference') }}<UiInput v-model.trim="command.authorityReference" minlength="6" maxlength="200" required :placeholder="t('admin.authorityReferencePlaceholder')" /></label>
-        <UiButton class="command-button primary" variant="primary" type="submit" :loading="actionLoading">
-          <template #start>
-            <ShieldCheck v-if="!actionLoading" :size="17" />
-          </template>{{ t('admin.applyAction') }}
-        </UiButton>
-      </form>
+      <UiDrawer :open="commandDrawerOpen" size="md" :label="`${t('admin.controlledAction')} · ${command.title}`" @update:open="!$event && closeCommand()" @after-close="resetCommand">
+        <form v-if="command.kind" ref="commandPanel" class="admin-command-panel admin-edit-drawer" @submit.prevent="submitCommand">
+          <header>
+            <div><span>{{ t('admin.controlledAction') }}</span><h2>{{ command.title }}</h2></div><UiIconButton class="icon-button" type="button" :label="t('actions.close')" @click="closeCommand">
+              <X :size="17" />
+            </UiIconButton>
+          </header>
+          <div class="admin-edit-drawer-body">
+            <div v-if="command.kind === 'user'" class="admin-command-fields">
+              <label>{{ t('admin.role') }}<UiSelect v-model="command.role"><option v-for="role in ['member','creator','publisher','moderator','admin']" :key="role" :value="role">{{ localizedLabel(roleKeys, role) }}</option></UiSelect></label>
+              <label>{{ t('admin.status') }}<UiSelect v-model="command.status"><option v-for="status in ['active','suspended','deleted']" :key="status" :value="status">{{ t(`admin.states.${status}`) }}</option></UiSelect></label>
+            </div>
+            <label v-if="command.kind === 'content'">{{ t('admin.status') }}<UiSelect v-model="command.status"><option v-for="status in ['published','hidden','removed']" :key="status" :value="status">{{ t(`admin.states.${status}`) }}</option></UiSelect></label>
+            <label v-if="command.kind === 'media'">{{ t('admin.scanDecision') }}<UiSelect v-model="command.status"><option v-for="status in ['clean','review','rejected']" :key="status" :value="status">{{ t(`workspace.scanStatus.${status}`) }}</option></UiSelect></label>
+            <label v-if="command.kind === 'report'">{{ t('admin.reportOutcome') }}<UiSelect v-model="command.outcome"><option v-for="outcome in ['no_action','hidden','removed']" :key="outcome" :value="outcome">{{ t(`admin.outcomes.${outcome}`) }}</option></UiSelect></label>
+            <label v-if="command.kind === 'appeal'">{{ t('admin.appealDecision') }}<UiSelect v-model="command.decision"><option v-for="decision in ['denied','upheld']" :key="decision" :value="decision">{{ t(`admin.appealDecisions.${decision}`) }}</option></UiSelect></label>
+            <div v-if="command.kind === 'provider'" class="admin-command-fields provider-edit-fields">
+              <label>{{ t('admin.providerDisplayName') }}<UiInput v-model.trim="command.displayName" type="text" minlength="2" maxlength="120" required /></label>
+              <label>{{ t('admin.providerModel') }}<UiInput v-model.trim="command.modelName" type="text" minlength="1" maxlength="160" required /></label>
+              <label>{{ t('admin.providerEstimatedCost') }}<UiInput v-model.number="command.estimatedCostCents" type="number" min="0" max="1000000" step="1" required /></label>
+              <label class="admin-checkbox"><UiCheckbox v-model="command.enabled" />{{ t('admin.providerEnabled') }}</label>
+              <label class="provider-description-field">{{ t('admin.providerDescription') }}<UiTextarea v-model.trim="command.description" rows="3" minlength="10" maxlength="1000" required /></label>
+              <p class="provider-config-note">
+                <Settings2 :size="15" />{{ t('admin.providerRuntimeNote') }}
+              </p>
+            </div>
+            <label v-if="command.kind === 'finance'">{{ t('admin.adjustmentCents') }}<UiInput v-model.number="command.deltaCents" type="number" min="-1000000" max="1000000" step="1" required /></label>
+            <label v-if="command.kind === 'payment'">{{ t('admin.paymentRecoveryAction') }}<UiSelect v-model="command.action"><option value="retry_transfer">{{ t('admin.retryTransfer') }}</option><option value="retry_refund">{{ t('admin.retryRefund') }}</option></UiSelect></label>
+            <template v-if="command.kind === 'paymentDestination'">
+              <label>{{ t('admin.paymentDestinationId') }}<UiInput v-model.trim="command.destinationID" type="text" minlength="6" maxlength="255" pattern="acct_[A-Za-z0-9_]+" required /></label>
+              <label class="admin-checkbox"><UiCheckbox v-model="command.enabled" />{{ t('admin.paymentDestinationVerified') }}</label>
+            </template>
+            <label v-if="command.kind === 'risk'">{{ t('admin.riskDecision') }}<UiSelect v-model="command.decision"><option v-for="decision in ['monitor','no_action','escalated']" :key="decision" :value="decision">{{ t(`admin.riskDecisions.${decision}`) }}</option></UiSelect></label>
+            <label v-if="command.kind === 'task'">{{ t('admin.taskDecision') }}<UiSelect v-model="command.decision"><option v-for="decision in ['cancel_without_settlement','release_creator']" :key="decision" :value="decision">{{ t(`admin.taskDecisions.${decision}`) }}</option></UiSelect></label>
+            <label v-if="command.kind === 'dataRightsHold'">{{ t('admin.authorityReference') }}<UiInput v-model.trim="command.authorityReference" minlength="6" maxlength="200" required :placeholder="t('admin.authorityReferencePlaceholder')" /></label>
+          </div>
+          <footer>
+            <UiButton class="command-button secondary" variant="secondary" type="button" @click="closeCommand">{{ t('actions.cancel') }}</UiButton>
+            <UiButton class="command-button primary" variant="primary" type="submit" :loading="actionLoading">
+              <template #start>
+                <ShieldCheck v-if="!actionLoading" :size="17" />
+              </template>{{ t('admin.applyAction') }}
+            </UiButton>
+          </footer>
+        </form>
+      </UiDrawer>
 
       <div v-if="loading" class="page-state" aria-live="polite">
         {{ t('admin.loading') }}
       </div>
 
-      <div v-else-if="activeTab === 'overview' && overview" class="admin-overview-grid">
-        <article v-for="key in ['users','works','generations','orders','tasks','risks','providers'] as const" :key="key">
-          <span>{{ t(`admin.metrics.${key}`) }}</span><strong>{{ overview[key].total }}</strong><div><small v-for="(count, status) in overview[key].byStatus" :key="status">{{ overviewStatusLabel(key, status) }} {{ count }}</small></div>
-        </article>
+      <div v-else-if="activeTab === 'overview' && overview" class="admin-overview">
+        <div class="admin-overview-grid overview-metrics-grid" role="list" :aria-label="t('admin.tabs.overview')">
+          <article v-for="key in ['users','works','generations','orders','tasks','risks','providers'] as const" :key="key" role="listitem">
+            <span>{{ t(`admin.metrics.${key}`) }}</span>
+            <strong>{{ overview[key].total }}</strong>
+            <div class="admin-metric-breakdown">
+              <small v-for="(count, status) in overview[key].byStatus" :key="status"><span>{{ overviewStatusLabel(key, status) }}</span><b>{{ count }}</b></small>
+            </div>
+          </article>
+        </div>
+
+        <section v-if="systemSettings" class="site-configuration-workspace">
+          <header class="site-configuration-heading">
+            <div><span>{{ t('admin.siteConfigurationLabel') }}</span><h2>{{ t('admin.siteConfigurationTitle') }}</h2><p>{{ t('admin.siteConfigurationSummary') }}</p></div>
+          </header>
+          <UiTabs v-model="siteConfigurationSection" class="site-configuration-tabs" :items="siteConfigurationSections" :label="t('admin.siteConfigurationTitle')" />
+
+          <form class="site-configuration-form" @submit.prevent="submitSiteConfiguration">
+            <div v-if="siteConfigurationSection === 'general'" class="site-general-layout">
+              <div class="site-general-fields">
+                <label>{{ t('admin.siteName') }}<UiInput v-model.trim="siteConfigurationForm.siteName" minlength="2" maxlength="80" required /></label>
+                <label>{{ t('admin.serverUrl') }}<UiInput v-model.trim="siteConfigurationForm.serverUrl" type="url" maxlength="2048" :placeholder="t('admin.serverUrlPlaceholder')" required /></label>
+                <fieldset class="site-icon-fieldset">
+                  <legend>{{ t('admin.siteIcon') }}</legend>
+                  <UiTabs v-model="siteIconMode" :items="iconSourceItems" :label="t('admin.siteIconSource')" />
+                  <label v-if="siteIconMode === 'url'">{{ t('admin.siteIconUrl') }}<UiInput v-model.trim="siteConfigurationForm.siteIconUrl" maxlength="2048" :placeholder="t('admin.siteIconUrlPlaceholder')" required /></label>
+                  <label v-else>{{ t('admin.siteIconFile') }}<UiFileInput accept="image/jpeg,image/png" :disabled="siteIconUploading" @change="uploadSiteIcon" /><small>{{ siteIconUploading ? t('admin.siteIconUploading') : t('admin.siteIconUploadHint') }}</small></label>
+                </fieldset>
+                <div class="site-footer-fields">
+                  <div class="site-markdown-field">
+                    <span class="site-markdown-label">{{ t('admin.footerTextEnglish') }}</span>
+                    <MarkdownEditor v-model="siteConfigurationForm.footerText.enUS" rows="3" :maxlength="1000" :aria-label="t('admin.footerTextEnglish')" />
+                  </div>
+                  <div class="site-markdown-field">
+                    <span class="site-markdown-label">{{ t('admin.footerTextChinese') }}</span>
+                    <MarkdownEditor v-model="siteConfigurationForm.footerText.zhCN" rows="3" :maxlength="1000" :aria-label="t('admin.footerTextChinese')" />
+                  </div>
+                </div>
+              </div>
+              <aside class="site-brand-preview" :aria-label="t('admin.sitePreview')">
+                <span>{{ t('admin.sitePreview') }}</span>
+                <div><img :src="siteConfigurationForm.siteIconUrl" alt="" /><strong>{{ siteConfigurationForm.siteName || t('brand') }}</strong></div>
+                <dl><div><dt>{{ t('admin.serverUrl') }}</dt><dd>{{ siteConfigurationForm.serverUrl || '—' }}</dd></div><div><dt>{{ t('admin.footerContent') }}</dt><dd><MarkdownContent :source="locale === 'zh-CN' ? siteConfigurationForm.footerText.zhCN : siteConfigurationForm.footerText.enUS" inline /></dd></div></dl>
+              </aside>
+            </div>
+
+            <div v-else class="site-policy-layout">
+              <nav :aria-label="t('admin.sitePolicies')">
+                <UiButton v-for="key in sitePolicyKeys" :key="key" type="button" variant="ghost" :class="{ active: selectedPolicy === key }" @click="selectedPolicy = key">
+                  <span>{{ t(`legal.topics.${key}.title`) }}</span><small>{{ t(`legal.topics.${key}.summary`) }}</small>
+                </UiButton>
+              </nav>
+              <section class="site-policy-editor">
+                <header><div><span>{{ t('admin.sitePolicyEditor') }}</span><h3>{{ t(`legal.topics.${selectedPolicy}.title`) }}</h3></div><FileCheck2 :size="18" /></header>
+                <div class="site-markdown-field">
+                  <span class="site-markdown-label">{{ t('admin.policyContentEnglish') }}</span>
+                  <MarkdownEditor v-model="siteConfigurationForm.policies[selectedPolicy].enUS" rows="10" :maxlength="50000" :aria-label="t('admin.policyContentEnglish')" />
+                </div>
+                <div class="site-markdown-field">
+                  <span class="site-markdown-label">{{ t('admin.policyContentChinese') }}</span>
+                  <MarkdownEditor v-model="siteConfigurationForm.policies[selectedPolicy].zhCN" rows="10" :maxlength="50000" :aria-label="t('admin.policyContentChinese')" />
+                </div>
+              </section>
+            </div>
+
+            <footer class="site-configuration-actions">
+              <p><ShieldCheck :size="15" />{{ t('admin.siteConfigurationSaveNote') }}</p>
+              <UiButton type="submit" variant="primary" :loading="actionLoading" :disabled="siteIconUploading">
+                <template #start><Save v-if="!actionLoading" :size="16" /></template>{{ t('admin.saveSiteConfiguration') }}
+              </UiButton>
+            </footer>
+          </form>
+        </section>
       </div>
 
       <div v-else-if="activeTab === 'users'" class="admin-user-directory">
@@ -1964,13 +2260,43 @@ onMounted(() => void initialize())
             <X :size="16" />
           </UiIconButton>
         </form>
-        <div class="admin-list">
-          <article v-for="item in users" :key="item.id">
-            <div><strong>{{ item.displayName }}</strong><span>@{{ item.handle }} · {{ item.email }}</span></div><span>{{ localizedLabel(roleKeys, item.role) }}</span><span :data-status="item.status">{{ t(`admin.states.${item.status}`) }}</span><small>{{ date(item.lastSeenAt) }}</small><UiButton class="command-button secondary" type="button" variant="secondary" @click="openUser(item)">
-              <Settings2 :size="16" />{{ t('admin.manage') }}
-            </UiButton>
-          </article>
-        </div>
+        <UiTable v-if="users.length" class="admin-user-table-shell" table-class="admin-user-table" :caption="t('admin.userTableCaption')">
+          <thead>
+            <tr>
+              <th scope="col" class="admin-user-col-identity">{{ t('admin.userIdentity') }}</th>
+              <th scope="col" class="admin-user-col-id">{{ t('admin.userId') }}</th>
+              <th scope="col" class="admin-user-col-status">{{ t('admin.status') }}</th>
+              <th scope="col" class="admin-user-col-role">{{ t('admin.role') }}</th>
+              <th scope="col" class="admin-user-col-locale">{{ t('admin.localeAndTimezone') }}</th>
+              <th scope="col" class="admin-user-col-created">{{ t('admin.createdAt') }}</th>
+              <th scope="col" class="admin-user-col-last-active">{{ t('admin.lastActive') }}</th>
+              <th scope="col" class="admin-user-col-actions"><span class="sr-only">{{ t('admin.userActions') }}</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="item in users" :key="item.id" :data-status="item.status">
+              <td class="admin-user-col-identity">
+                <div class="admin-user-identity">
+                  <strong>{{ item.displayName }}</strong>
+                  <span>@{{ item.handle }} · {{ item.email }}</span>
+                </div>
+              </td>
+              <td class="admin-user-col-id"><code :title="item.id">{{ shortUserId(item.id) }}</code></td>
+              <td class="admin-user-col-status">
+                <span class="admin-user-status" :data-status="item.status"><i aria-hidden="true"></i>{{ t(`admin.states.${item.status}`) }}</span>
+              </td>
+              <td class="admin-user-col-role" :title="localizedLabel(roleKeys, item.role)">{{ localizedLabel(roleKeys, item.role) }}</td>
+              <td class="admin-user-col-locale"><span>{{ item.locale }}</span><small>{{ item.timezone }}</small></td>
+              <td class="admin-user-col-created"><time :datetime="item.createdAt">{{ date(item.createdAt) }}</time></td>
+              <td class="admin-user-col-last-active"><time v-if="item.lastSeenAt" :datetime="item.lastSeenAt">{{ date(item.lastSeenAt) }}</time><span v-else>{{ t('admin.neverActive') }}</span></td>
+              <td class="admin-user-col-actions">
+                <UiIconButton size="sm" variant="ghost" :label="t('admin.manage')" @click="openUser(item)">
+                  <Pencil :size="15" />
+                </UiIconButton>
+              </td>
+            </tr>
+          </tbody>
+        </UiTable>
         <p v-if="!users.length" class="inline-empty">
           {{ t('admin.noUsers') }}
         </p>
@@ -2328,9 +2654,8 @@ onMounted(() => void initialize())
             </UiButton>
           </article>
         </section>
-        <Teleport to="body">
-          <div v-if="providerConfigEditorOpen" class="modal-backdrop provider-modal-backdrop" @click.self="closeProviderEditors">
-            <section class="provider-editor-modal" role="dialog" aria-modal="true" aria-labelledby="provider-editor-title">
+        <UiDrawer :open="providerConfigEditorOpen" size="lg" :label="providerConfigForm.id ? t('admin.editProviderConfig') : t('admin.addProvider')" @update:open="!$event && closeProviderEditors()">
+            <section class="provider-editor-modal" aria-labelledby="provider-editor-title">
               <header>
                 <div>
                   <span>{{ providerConfigForm.id ? t('admin.editProviderConfig') : t('admin.addProvider') }}</span><h2 id="provider-editor-title">
@@ -2374,9 +2699,9 @@ onMounted(() => void initialize())
                 </footer>
               </form>
             </section>
-          </div>
-          <div v-if="providerModelEditorOpen" class="modal-backdrop provider-modal-backdrop" @click.self="closeProviderEditors">
-            <section class="provider-editor-modal provider-model-editor-modal" role="dialog" aria-modal="true" aria-labelledby="provider-model-editor-title">
+        </UiDrawer>
+        <UiDrawer :open="providerModelEditorOpen" size="xl" :label="providerModelForm.id ? t('admin.editModel') : t('admin.addModel')" @update:open="!$event && closeProviderEditors()">
+            <section class="provider-editor-modal provider-model-editor-modal" aria-labelledby="provider-model-editor-title">
               <header>
                 <div>
                   <span>{{ providerModelForm.id ? t('admin.editModel') : t('admin.addModel') }}</span><h2 id="provider-model-editor-title">
@@ -2449,8 +2774,7 @@ onMounted(() => void initialize())
                 </footer>
               </form>
             </section>
-          </div>
-        </Teleport>
+        </UiDrawer>
       </div>
 
       <div v-else-if="activeTab === 'models' && modelRoutePolicy" class="admin-governance model-routes-admin">
@@ -2485,11 +2809,10 @@ onMounted(() => void initialize())
         </section>
       </div>
 
-      <div v-else-if="activeTab === 'settings' && systemSettingPolicy" class="admin-governance system-settings-admin">
+      <div v-else-if="activeTab === 'settings' && systemSettings" class="admin-governance system-settings-admin">
         <section>
-          <header><div><h2>{{ t('admin.systemSettingsTitle') }}</h2><p>{{ t('admin.systemSettingsSummary') }}</p></div><span>v{{ systemSettingPolicy.current.version }}</span></header>
+          <header><div><h2>{{ t('admin.systemSettingsTitle') }}</h2><p>{{ t('admin.systemSettingsSummary') }}</p></div></header>
           <form class="admin-command-panel ranking-policy-form" @submit.prevent="submitSystemSettings">
-            <label>{{ t('admin.settingsRevisionName') }}<UiInput v-model.trim="systemSettingForm.name" minlength="3" maxlength="80" required /></label>
             <fieldset>
               <legend>{{ t('admin.writeAvailability') }}</legend><div class="system-setting-toggles">
                 <label class="admin-checkbox"><UiCheckbox v-model="systemSettingForm.registrationsEnabled" />{{ t('admin.registrationsEnabled') }}</label>
@@ -2501,20 +2824,9 @@ onMounted(() => void initialize())
             </fieldset>
             <label>{{ t('admin.publicNotice') }}<UiTextarea v-model.trim="systemSettingForm.publicNotice" rows="2" maxlength="240" :placeholder="t('admin.publicNoticePlaceholder')" /></label>
             <UiButton class="command-button primary" type="submit" :disabled="actionLoading" variant="primary">
-              <LoaderCircle v-if="actionLoading" class="spin" :size="17" /><ShieldCheck v-else :size="17" />{{ t('admin.activateRevision') }}
+              <LoaderCircle v-if="actionLoading" class="spin" :size="17" /><Save v-else :size="17" />{{ t('admin.saveSystemSettings') }}
             </UiButton>
           </form>
-        </section>
-        <section>
-          <header><div><h2>{{ t('admin.systemSettingsHistory') }}</h2><p>{{ t('admin.systemSettingsHistorySummary') }}</p></div><span>{{ systemSettingPolicy.history.length }}</span></header>
-          <div class="admin-list ranking-history-list">
-            <article v-for="revision in systemSettingPolicy.history" :key="revision.id">
-              <div><strong>{{ revision.name }}</strong></div><span>v{{ revision.version }}</span><span>{{ t('admin.enabledGateCount', { count: [revision.registrationsEnabled,revision.generationsEnabled,revision.publishingEnabled,revision.marketplaceCheckoutEnabled,revision.taskCreationEnabled].filter(Boolean).length }) }}</span><small>{{ date(revision.createdAt) }} · {{ revision.createdByHandle ? `@${revision.createdByHandle}` : t('admin.systemActor') }}</small><span :data-status="revision.id === systemSettingPolicy.current.id ? 'active' : ''">{{ revision.id === systemSettingPolicy.current.id ? t('admin.activeRevision') : t('admin.supersededRevision') }}</span>
-            </article>
-          </div>
-          <UiButton v-if="systemSettingNextCursor" class="command-button secondary admin-load-more" type="button" :disabled="systemSettingLoadingMore" variant="secondary" @click="loadMoreSystemSettingHistory">
-            <LoaderCircle v-if="systemSettingLoadingMore" class="spin" :size="16" /><ListFilter v-else :size="16" />{{ t('actions.loadMore') }}
-          </UiButton>
         </section>
       </div>
 
@@ -2669,29 +2981,100 @@ onMounted(() => void initialize())
               </UiIconButton>
             </article>
           </div>
-          <form v-if="subscriptionPlanEditorOpen" class="subscription-plan-editor" @submit.prevent="submitSubscriptionPlan">
-            <div class="subscription-plan-fields">
-              <label>{{ t('admin.subscriptionTierCode') }}<UiInput v-model.trim="subscriptionPlanForm.tierCode" maxlength="32" required /></label>
-              <label>{{ t('admin.subscriptionPlanName') }}<UiInput v-model.trim="subscriptionPlanForm.name" maxlength="80" required /></label>
-              <label>{{ t('admin.subscriptionPrice') }}<UiInput v-model.number="subscriptionPlanForm.priceCents" type="number" min="0" step="1" required /></label>
-              <label>{{ t('admin.subscriptionPoints') }}<UiInput v-model.number="subscriptionPlanForm.includedPoints" type="number" min="1" step="1" required /></label>
-              <label>{{ t('admin.subscriptionPeriodDays') }}<UiInput v-model.number="subscriptionPlanForm.billingPeriodDays" type="number" min="1" max="366" step="1" required /></label>
-              <label>{{ t('admin.subscriptionSortOrder') }}<UiInput v-model.number="subscriptionPlanForm.sortOrder" type="number" step="1" required /></label>
-              <label class="provider-editor-wide">{{ t('admin.subscriptionDescription') }}<UiTextarea v-model.trim="subscriptionPlanForm.description" maxlength="500" rows="3" required /></label>
-              <label class="admin-checkbox"><UiCheckbox v-model="subscriptionPlanForm.active" />{{ t('admin.subscriptionActive') }}</label>
+          <UiDrawer :open="subscriptionPlanEditorOpen" size="lg" :label="subscriptionPlanForm.id ? t('admin.editSubscriptionPlan') : t('admin.addSubscriptionPlan')" @update:open="!$event && closeSubscriptionPlanEditor()" @after-close="resetSubscriptionPlanForm">
+            <form class="subscription-plan-editor" @submit.prevent="submitSubscriptionPlan">
+              <header>
+                <div><span>{{ subscriptionPlanForm.id ? t('admin.editSubscriptionPlan') : t('admin.addSubscriptionPlan') }}</span><h2>{{ subscriptionPlanForm.name || t('admin.subscriptionPlansTitle') }}</h2></div>
+                <UiIconButton class="icon-button" type="button" :label="t('actions.close')" @click="closeSubscriptionPlanEditor"><X :size="17" /></UiIconButton>
+              </header>
+              <div class="subscription-plan-editor-body">
+                <div class="subscription-plan-fields">
+                  <label>{{ t('admin.subscriptionTierCode') }}<UiInput v-model.trim="subscriptionPlanForm.tierCode" maxlength="32" required /></label>
+                  <label>{{ t('admin.subscriptionPlanName') }}<UiInput v-model.trim="subscriptionPlanForm.name" maxlength="80" required /></label>
+                  <label>{{ t('admin.subscriptionPrice') }}<UiInput v-model.number="subscriptionPlanForm.priceCents" type="number" min="0" step="1" required /></label>
+                  <label>{{ t('admin.subscriptionPoints') }}<UiInput v-model.number="subscriptionPlanForm.includedPoints" type="number" min="1" step="1" required /></label>
+                  <label>{{ t('admin.subscriptionPeriodDays') }}<UiInput v-model.number="subscriptionPlanForm.billingPeriodDays" type="number" min="1" max="366" step="1" required /></label>
+                  <label>{{ t('admin.subscriptionSortOrder') }}<UiInput v-model.number="subscriptionPlanForm.sortOrder" type="number" step="1" required /></label>
+                  <label class="provider-editor-wide">{{ t('admin.subscriptionDescription') }}<UiTextarea v-model.trim="subscriptionPlanForm.description" maxlength="500" rows="3" required /></label>
+                  <label class="admin-checkbox"><UiCheckbox v-model="subscriptionPlanForm.active" />{{ t('admin.subscriptionActive') }}</label>
+                </div>
+                <fieldset class="subscription-model-selector">
+                  <legend>{{ t('admin.subscriptionModels') }}</legend><p>{{ t('admin.subscriptionModelsSummary') }}</p>
+                  <label v-for="model in availablePlanModels" :key="model.id" class="admin-checkbox"><UiCheckbox :checked="subscriptionPlanForm.modelIds.includes(model.id)" @change="toggleSubscriptionPlanModel(model.id)" /><span>{{ model.displayName }}<small>{{ model.providerName }} · {{ t(`create.modes.${model.mode}`) }}</small></span></label>
+                </fieldset>
+              </div>
+              <footer>
+                <UiButton class="command-button secondary" type="button" variant="secondary" @click="closeSubscriptionPlanEditor">
+                  {{ t('actions.cancel') }}
+                </UiButton><UiButton class="command-button primary" type="submit" :disabled="actionLoading" variant="primary">
+                  <LoaderCircle v-if="actionLoading" class="spin" :size="16" /><ShieldCheck v-else :size="16" />{{ t('admin.saveSubscriptionPlan') }}
+                </UiButton>
+              </footer>
+            </form>
+          </UiDrawer>
+        </section>
+
+        <section class="admin-finance-section payment-gateway-admin">
+          <UiTabs v-model="paymentGatewayTab" class="payment-gateway-tabs" :items="paymentGatewayTabs" :label="t('admin.paymentGatewayTitle')" />
+
+          <div v-if="paymentGatewayTab === 'general'" class="payment-gateway-panel">
+            <section class="payment-gateway-block payment-gateway-common">
+              <header><div><h3>{{ t('admin.paymentGatewayGeneralTitle') }}</h3><p>{{ t('admin.paymentGatewayGeneralSummary') }}</p></div><UiButton class="command-button primary" type="button" variant="primary" @click="savePaymentGatewayGeneral"><Save :size="16" />{{ t('actions.save') }}</UiButton></header>
+              <div class="payment-gateway-fields">
+                <label>{{ t('admin.paymentGatewayUnitPrice') }}<UiInput v-model.number="paymentGatewayGeneral.unitPrice" type="number" min="0" step="0.01" /></label>
+                <label>{{ t('admin.paymentGatewayMinimumTopup') }}<UiInput v-model.number="paymentGatewayGeneral.minimumTopup" type="number" min="0" step="0.01" /></label>
+              </div>
+            </section>
+
+            <section class="payment-gateway-block payment-gateway-methods">
+              <header><div><h3>{{ t('admin.paymentGatewayMethodsTitle') }}</h3><p>{{ t('admin.paymentGatewayMethodsSummary') }}</p></div><UiButton class="command-button secondary" type="button" variant="secondary" @click="openPaymentMethodJson"><Code2 :size="16" />{{ t('admin.paymentGatewayJsonEdit') }}</UiButton></header>
+              <div class="payment-method-toolbar">
+                <label class="payment-method-search"><Search :size="16" /><span class="sr-only">{{ t('admin.paymentGatewayMethodSearch') }}</span><UiInput v-model="paymentMethodQuery" type="search" :placeholder="t('admin.paymentGatewayMethodSearchPlaceholder')" /></label>
+                <UiButton class="command-button secondary" type="button" variant="secondary" @click="openPaymentMethodJson"><SlidersHorizontal :size="16" />{{ t('admin.paymentGatewayTemplate') }}</UiButton>
+                <UiButton class="command-button primary" type="button" variant="primary" @click="openPaymentMethodJson"><Plus :size="16" />{{ t('admin.paymentGatewayAddMethod') }}</UiButton>
+              </div>
+              <div class="payment-method-table-wrap">
+                <UiTable table-class="payment-method-table"><thead><tr><th>{{ t('admin.paymentGatewayMethodName') }}</th><th>{{ t('admin.paymentGatewayMethodType') }}</th><th>{{ t('admin.paymentGatewayMethodIcon') }}</th><th>{{ t('admin.paymentGatewayMethodMinimum') }}</th><th>{{ t('admin.paymentGatewayMethodActions') }}</th></tr></thead><tbody>
+                  <tr v-for="item in paymentGatewayMethods" :key="item.id"><td><strong>{{ item.name }}</strong></td><td><code>{{ item.handle }}</code></td><td><span class="payment-method-icon"><CreditCard :size="16" />{{ item.icon.replace('Lu', '') }}</span></td><td>{{ item.minimum }}</td><td><UiIconButton class="icon-button" type="button" :title="t('admin.editPaymentProvider')" :label="t('admin.editPaymentProvider')" @click="editPaymentGatewayMethod(item)"><Pencil :size="15" /></UiIconButton></td></tr>
+                  <tr v-if="!paymentGatewayMethods.length"><td colspan="5" class="payment-method-empty">{{ t('admin.paymentGatewayNoMethods') }}</td></tr>
+                </tbody></UiTable>
+              </div>
+              <p class="payment-method-note">{{ t('admin.paymentGatewayMethodsNote') }}</p>
+            </section>
+
+            <div class="payment-gateway-grid">
+              <section class="payment-gateway-block payment-gateway-amounts">
+                <header><div><h3>{{ t('admin.paymentGatewayAmountsTitle') }}</h3><p>{{ t('admin.paymentGatewayAmountsSummary') }}</p></div><UiButton class="command-button secondary" type="button" variant="secondary" @click="openPaymentMethodJson"><Code2 :size="16" />{{ t('admin.paymentGatewayJsonEdit') }}</UiButton></header>
+                <div class="payment-amount-chips"><span v-for="(amount, index) in topupAmounts" :key="`${amount}-${index}`" class="payment-amount-chip"><UiInput v-model.number="topupAmounts[index]" type="number" min="1" step="1" /><UiIconButton class="icon-button" type="button" :label="t('admin.paymentGatewayRemoveAmount')" @click="removeTopupAmount(index)"><X :size="14" /></UiIconButton></span></div>
+                <div class="payment-gateway-add-row"><UiInput v-model.number="newTopupAmount" type="number" min="1" step="1" :placeholder="t('admin.paymentGatewayAmountPlaceholder')" /><UiButton class="command-button primary" type="button" variant="primary" @click="addTopupAmount"><Plus :size="16" />{{ t('admin.paymentGatewayAdd') }}</UiButton></div>
+              </section>
+              <section class="payment-gateway-block payment-gateway-discounts">
+                <header><div><h3>{{ t('admin.paymentGatewayDiscountsTitle') }}</h3><p>{{ t('admin.paymentGatewayDiscountsSummary') }}</p></div><UiButton class="command-button secondary" type="button" variant="secondary" @click="openPaymentMethodJson"><Code2 :size="16" />{{ t('admin.paymentGatewayJsonEdit') }}</UiButton></header>
+                <div class="payment-discount-table-wrap"><UiTable table-class="payment-discount-table"><thead><tr><th>{{ t('admin.paymentGatewayDiscountAmount') }}</th><th>{{ t('admin.paymentGatewayDiscountRate') }}</th><th>{{ t('admin.paymentGatewayDiscountSaving') }}</th><th>{{ t('admin.paymentGatewayMethodActions') }}</th></tr></thead><tbody><tr v-for="(tier, index) in discountTiers" :key="`${tier.amount}-${index}`"><td><UiInput v-model.number="tier.amount" type="number" min="1" step="1" /></td><td><UiInput v-model.number="tier.rate" type="number" min="0" max="1" step="0.01" /></td><td class="payment-discount-saving">{{ Math.round((1 - tier.rate) * 100) }}%</td><td><UiIconButton class="icon-button" type="button" :label="t('admin.paymentGatewayRemoveDiscount')" @click="removeDiscountTier(index)"><X :size="14" /></UiIconButton></td></tr></tbody></UiTable></div>
+                <UiButton class="command-button primary" type="button" variant="primary" @click="addDiscountTier"><Plus :size="16" />{{ t('admin.paymentGatewayAddDiscount') }}</UiButton>
+              </section>
             </div>
-            <fieldset class="subscription-model-selector">
-              <legend>{{ t('admin.subscriptionModels') }}</legend><p>{{ t('admin.subscriptionModelsSummary') }}</p>
-              <label v-for="model in availablePlanModels" :key="model.id" class="admin-checkbox"><UiCheckbox :checked="subscriptionPlanForm.modelIds.includes(model.id)" @change="toggleSubscriptionPlanModel(model.id)" /><span>{{ model.displayName }}<small>{{ model.providerName }} · {{ t(`create.modes.${model.mode}`) }}</small></span></label>
-            </fieldset>
-            <footer>
-              <UiButton class="command-button secondary" type="button" variant="secondary" @click="resetSubscriptionPlanForm">
-                {{ t('actions.cancel') }}
-              </UiButton><UiButton class="command-button primary" type="submit" :disabled="actionLoading" variant="primary">
-                <LoaderCircle v-if="actionLoading" class="spin" :size="16" /><ShieldCheck v-else :size="16" />{{ t('admin.saveSubscriptionPlan') }}
-              </UiButton>
-            </footer>
-          </form>
+          </div>
+
+          <div v-else class="payment-gateway-panel payment-gateway-channel-panel">
+            <section class="payment-gateway-block payment-gateway-channel-summary">
+              <header><div><span class="payment-gateway-eyebrow">{{ t('admin.paymentGatewayChannel') }}</span><h3>{{ paymentGatewayTabs.find(item => item.value === paymentGatewayTab)?.label }}</h3><p>{{ selectedPaymentProviderConfig ? t('admin.paymentGatewayChannelSummary') : t('admin.paymentGatewayChannelUnavailable') }}</p></div><div class="payment-gateway-channel-actions"><span class="payment-gateway-status" :data-status="selectedPaymentProviderConfig?.enabled ? 'active' : 'inactive'">{{ selectedPaymentProviderConfig?.enabled ? t('admin.paymentProviderEnabled') : t('admin.paymentProviderDisabled') }}</span><UiButton v-if="paymentGatewayTab === 'stripe' || paymentGatewayTab === 'epay' || paymentGatewayTab === 'waffo_pancake'" class="command-button primary" type="button" variant="primary" @click="openSelectedPaymentProviderConfig"><Pencil :size="16" />{{ t('admin.editPaymentProvider') }}</UiButton></div></header>
+              <div v-if="selectedPaymentProviderConfig" class="payment-gateway-config-grid"><div><span>{{ t('admin.paymentProviderEnvironment') }}</span><strong>{{ selectedPaymentProviderConfig.environment }}</strong></div><div><span>{{ t('admin.paymentProviderMerchantId') }}</span><strong>{{ selectedPaymentProviderConfig.merchantId || '—' }}</strong></div><div><span>{{ t('admin.paymentProviderStoreId') }}</span><strong>{{ selectedPaymentProviderConfig.storeId || '—' }}</strong></div><div><span>{{ t('admin.paymentProviderSecret') }}</span><strong :data-status="selectedPaymentProviderConfig.secretConfigured ? 'active' : 'inactive'">{{ selectedPaymentProviderConfig.secretConfigured ? t('admin.paymentProviderSecretReady') : t('admin.paymentProviderSecretMissing') }}</strong></div></div>
+              <div v-else class="payment-gateway-unavailable"><CreditCard :size="22" /><div><strong>{{ t('admin.paymentGatewayNotConnected') }}</strong><p>{{ t('admin.paymentGatewayNotConnectedSummary') }}</p></div></div>
+            </section>
+            <section class="payment-gateway-block payment-gateway-methods"><header><div><h3>{{ t('admin.paymentGatewayMethodsTitle') }}</h3><p>{{ t('admin.paymentGatewayChannelMethodsSummary') }}</p></div><UiButton class="command-button secondary" type="button" variant="secondary" @click="openPaymentMethodJson"><Code2 :size="16" />{{ t('admin.paymentGatewayJsonEdit') }}</UiButton></header><div class="payment-method-table-wrap"><UiTable table-class="payment-method-table"><thead><tr><th>{{ t('admin.paymentGatewayMethodName') }}</th><th>{{ t('admin.paymentGatewayMethodType') }}</th><th>{{ t('admin.paymentGatewayMethodIcon') }}</th><th>{{ t('admin.paymentGatewayMethodMinimum') }}</th><th>{{ t('admin.paymentGatewayMethodActions') }}</th></tr></thead><tbody><tr v-for="item in paymentGatewayMethods" :key="item.id"><td><strong>{{ item.name }}</strong></td><td><code>{{ item.handle }}</code></td><td><span class="payment-method-icon"><CreditCard :size="16" />{{ item.icon.replace('Lu', '') }}</span></td><td>{{ item.minimum }}</td><td><UiIconButton class="icon-button" type="button" :title="t('admin.editPaymentProvider')" :label="t('admin.editPaymentProvider')" @click="editPaymentGatewayMethod(item)"><Pencil :size="15" /></UiIconButton></td></tr><tr v-if="!paymentGatewayMethods.length"><td colspan="5" class="payment-method-empty">{{ t('admin.paymentGatewayNoMethods') }}</td></tr></tbody></UiTable></div></section>
+          </div>
+
+          <UiDrawer :open="paymentMethodJsonOpen" size="md" :label="t('admin.paymentGatewayJsonEdit')" @update:open="paymentMethodJsonOpen = $event">
+            <form class="payment-gateway-json-editor" @submit.prevent="savePaymentMethodJson"><header><div><span>{{ t('admin.paymentGatewayJsonEdit') }}</span><h2>{{ t('admin.paymentGatewayMethodsTitle') }}</h2></div><UiIconButton class="icon-button" type="button" :label="t('actions.close')" @click="paymentMethodJsonOpen = false"><X :size="17" /></UiIconButton></header><div class="payment-gateway-json-body"><label>{{ t('admin.paymentGatewayJsonLabel') }}<UiTextarea v-model="paymentMethodJson" rows="16" spellcheck="false" /></label><p class="provider-config-note"><Code2 :size="15" />{{ t('admin.paymentGatewayJsonSummary') }}</p></div><footer><UiButton class="command-button secondary" type="button" variant="secondary" @click="paymentMethodJsonOpen = false">{{ t('actions.cancel') }}</UiButton><UiButton class="command-button primary" type="submit" variant="primary"><Save :size="16" />{{ t('actions.save') }}</UiButton></footer></form>
+          </UiDrawer>
+          <UiDrawer :open="paymentProviderEditorOpen" size="lg" :label="t('admin.editPaymentProvider')" @update:open="!$event && closePaymentProviderConfig()">
+            <form class="subscription-plan-editor" @submit.prevent="submitPaymentProviderConfig">
+              <header><div><span>{{ t('admin.editPaymentProvider') }}</span><h2>{{ paymentGatewayTabs.find(item => item.value === paymentProviderForm.provider)?.label || paymentProviderForm.provider }}</h2></div><UiIconButton class="icon-button" type="button" :label="t('actions.close')" @click="closePaymentProviderConfig"><X :size="17" /></UiIconButton></header>
+              <div class="subscription-plan-editor-body"><div class="subscription-plan-fields"><label>{{ t('admin.paymentProviderEnvironment') }}<UiSelect v-model="paymentProviderForm.environment" :aria-label="t('admin.paymentProviderEnvironment')"><option value="test">{{ t('admin.paymentProviderEnvironmentTest') }}</option><option value="prod">{{ t('admin.paymentProviderEnvironmentProd') }}</option></UiSelect></label><label class="admin-checkbox"><UiCheckbox v-model="paymentProviderForm.enabled" />{{ t('admin.paymentProviderEnabled') }}</label><label>{{ t('admin.paymentProviderMerchantId') }}<UiInput v-model.trim="paymentProviderForm.merchantId" maxlength="255" /></label><label>{{ t('admin.paymentProviderStoreId') }}<UiInput v-model.trim="paymentProviderForm.storeId" maxlength="255" /></label><label v-if="paymentProviderForm.provider === 'waffo_pancake'">{{ t('admin.paymentProviderOnetimeProduct') }}<UiInput v-model.trim="paymentProviderForm.productIdOnetime" maxlength="255" /></label><label v-if="paymentProviderForm.provider === 'waffo_pancake'">{{ t('admin.paymentProviderSubscriptionProduct') }}<UiInput v-model.trim="paymentProviderForm.productIdSubscription" maxlength="255" /></label></div><p class="provider-config-note"><Settings2 :size="15" />{{ t('admin.paymentProviderSecretNote') }}</p></div>
+              <footer><UiButton class="command-button secondary" type="button" variant="secondary" @click="closePaymentProviderConfig">{{ t('actions.cancel') }}</UiButton><UiButton class="command-button primary" type="submit" :disabled="actionLoading" variant="primary"><ShieldCheck :size="16" />{{ t('actions.save') }}</UiButton></footer>
+            </form>
+          </UiDrawer>
         </section>
 
         <form class="admin-user-filters admin-finance-filters" @submit.prevent="applyFinanceFilters">
@@ -2748,7 +3131,7 @@ onMounted(() => void initialize())
           <header><div><h2>{{ t('admin.paymentOperationsTitle') }}</h2><p>{{ t('admin.paymentOperationsSummary') }}</p></div></header>
           <form class="admin-user-filters admin-finance-filters" @submit.prevent="applyPaymentFilters">
             <label>{{ t('admin.paymentSearch') }}<UiInput v-model="paymentQuery" type="search" maxlength="120" :placeholder="t('admin.paymentSearchPlaceholder')" /></label>
-            <label>{{ t('admin.paymentPurpose') }}<UiSelect v-model="paymentPurpose"><option value="">{{ t('admin.allPaymentPurposes') }}</option><option value="product">{{ t('admin.paymentPurposes.product') }}</option><option value="task">{{ t('admin.paymentPurposes.task') }}</option></UiSelect></label>
+            <label>{{ t('admin.paymentPurpose') }}<UiSelect v-model="paymentPurpose"><option value="">{{ t('admin.allPaymentPurposes') }}</option><option value="product">{{ t('admin.paymentPurposes.product') }}</option><option value="task">{{ t('admin.paymentPurposes.task') }}</option><option value="wallet_topup">{{ paymentPurposeLabel('wallet_topup') }}</option><option value="subscription">{{ paymentPurposeLabel('subscription') }}</option></UiSelect></label>
             <label>{{ t('admin.paymentStatus') }}<UiSelect v-model="paymentStatus"><option value="">{{ t('admin.allPaymentStatuses') }}</option><option v-for="state in ['checkout_pending','checkout_open','paid','payment_failed','transfer_pending','transferred','refund_pending','refund_failed','refunded','cancelled']" :key="state" :value="state">{{ t(`admin.paymentStatuses.${state}`) }}</option></UiSelect></label>
             <label>{{ t('admin.paymentMode') }}<UiSelect v-model="paymentMode"><option value="">{{ t('admin.allPaymentModes') }}</option><option value="test">{{ t('admin.paymentModes.test') }}</option><option value="live">{{ t('admin.paymentModes.live') }}</option></UiSelect></label>
             <label>{{ t('admin.paymentAttention') }}<UiSelect v-model="paymentAttention"><option value="needs_attention">{{ t('admin.paymentAttentionStates.needs_attention') }}</option><option value="healthy">{{ t('admin.paymentAttentionStates.healthy') }}</option><option value="">{{ t('admin.paymentAttentionStates.all') }}</option></UiSelect></label>
@@ -2761,7 +3144,7 @@ onMounted(() => void initialize())
               <div>
                 <RouterLink :to="item.targetPath">
                   <strong>{{ item.resourceTitle }}</strong>
-                </RouterLink><span>{{ t(`admin.paymentPurposes.${item.purpose}`) }} · @{{ item.payerHandle }}<template v-if="item.payeeHandle"> → @{{ item.payeeHandle }}</template></span>
+                </RouterLink><span>{{ paymentPurposeLabel(item.purpose) }} · @{{ item.payerHandle }}<template v-if="item.payeeHandle"> → @{{ item.payeeHandle }}</template></span>
               </div>
               <span>{{ formatCurrency(item.amountCents, item.currency, locale) }}</span>
               <span>{{ t(`admin.paymentStatuses.${item.status}`) }}</span>
@@ -3084,6 +3467,8 @@ onMounted(() => void initialize())
           <p>{{ t('admin.observedAt', { date: date(operationalDiagnostics.asOf) }) }}</p>
         </section>
       </div>
-    </template>
+      </div>
+      </template>
+    </div>
   </section>
 </template>

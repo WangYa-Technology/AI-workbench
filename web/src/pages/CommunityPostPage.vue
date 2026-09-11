@@ -35,7 +35,8 @@ function formatCommentTime(value: string) {
   return new Intl.DateTimeFormat(locale.value, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(value))
 }
 
-function formatMediaKind(value: string) {
+function formatMediaKind(value?: string) {
+  if (!value) return t('community.discussionType')
   const normalized = value.toLowerCase()
   if (normalized.includes('video')) return t('create.modes.video')
   if (normalized.includes('audio') || normalized.includes('music')) return t('create.modes.music')
@@ -46,7 +47,7 @@ function formatMediaKind(value: string) {
 async function requireAccount() {
   await session.ensure()
   if (session.user) return true
-  await router.push({ path: '/settings', query: { auth: 'login', redirect: route.fullPath } })
+  await router.push({ path: '/auth', query: { auth: 'login', returnTo: route.fullPath } })
   return false
 }
 
@@ -174,7 +175,7 @@ watch(() => route.params.id, () => void load(), { immediate: true })
         </template>{{ t('actions.retry') }}
       </UiButton>
     </div>
-    <div v-else-if="post" class="community-post-layout">
+    <div v-else-if="post" class="community-post-layout" :class="{ 'is-standalone': !post.workId }">
       <div class="community-post-main">
         <article class="community-post-article">
           <header class="community-post-author">
@@ -191,7 +192,7 @@ watch(() => route.params.id, () => void load(), { immediate: true })
             <time :datetime="post.publishedAt">{{ formatPublishedAt(post.publishedAt) }}</time>
           </header>
 
-          <h1>{{ post.workTitle }}</h1>
+          <h1>{{ post.title }}</h1>
           <p class="community-post-body">
             {{ post.body }}
           </p>
@@ -231,7 +232,7 @@ watch(() => route.params.id, () => void load(), { immediate: true })
         </article>
       </div>
 
-      <aside class="community-post-context" :aria-label="t('community.relatedWork')">
+      <aside v-if="post.workId && post.workTitle && post.mediaUrl && post.mediaKind" class="community-post-context" :aria-label="t('community.relatedWork')">
         <RouterLink class="community-post-media" :to="`/works/${post.workId}`" :aria-label="post.workTitle">
           <AssetMedia :src="post.mediaUrl" :kind="post.mediaKind" :alt="post.workTitle" :width="1200" :height="900" :controls="false" />
         </RouterLink>

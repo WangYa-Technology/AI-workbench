@@ -10,7 +10,7 @@ import (
 	"github.com/hcai-chat/hcai-chat/internal/systemsettings"
 )
 
-func TestSystemSettingRevisionsGateBusinessTransactions(t *testing.T) {
+func TestSystemSettingsUpdateCurrentGatesAndAudit(t *testing.T) {
 	pool, cleanup := testPool(t)
 	defer cleanup()
 	ctx := context.Background()
@@ -19,22 +19,18 @@ func TestSystemSettingRevisionsGateBusinessTransactions(t *testing.T) {
 		t.Fatal(err)
 	}
 	service := admin.NewService(pool, true)
-	initial, err := service.GetSystemSettingPolicy(ctx)
-	if err != nil || initial.Current.Version != 1 || !initial.Current.RegistrationsEnabled || !initial.Current.GenerationsEnabled || !initial.Current.PublishingEnabled || !initial.Current.MarketplaceCheckoutEnabled || !initial.Current.TaskCreationEnabled {
+	initial, err := service.GetSystemSettings(ctx)
+	if err != nil || !initial.RegistrationsEnabled || !initial.GenerationsEnabled || !initial.PublishingEnabled || !initial.MarketplaceCheckoutEnabled || !initial.TaskCreationEnabled {
 		t.Fatalf("initial settings mismatch: %#v %v", initial, err)
 	}
-	input := admin.SystemSettingUpdate{Name: "Bounded maintenance controls", RegistrationsEnabled: false, GenerationsEnabled: false, PublishingEnabled: false, MarketplaceCheckoutEnabled: false, TaskCreationEnabled: false, PublicNotice: "Selected write operations are paused in this Local Test environment.", ExpectedVersion: 1}
-	stale := input
-	stale.ExpectedVersion = 2
-	if _, err := service.UpdateSystemSettingPolicy(ctx, actorID, stale, "settings-stale"); !errors.Is(err, admin.ErrConflict) {
-		t.Fatalf("stale settings did not conflict: %v", err)
-	}
-	updated, err := service.UpdateSystemSettingPolicy(ctx, actorID, input, "settings-update")
-	if err != nil || updated.Current.Version != 2 || len(updated.History) != 2 {
+	input := admin.SystemSettingUpdate{RegistrationsEnabled: false, GenerationsEnabled: false, PublishingEnabled: false, MarketplaceCheckoutEnabled: false, TaskCreationEnabled: false, PublicNotice: "Selected write operations are paused in this Local Test environment."}
+	updated, err := service.UpdateSystemSettings(ctx, actorID, input, "settings-update")
+	if err != nil || updated.RegistrationsEnabled || updated.GenerationsEnabled || updated.PublishingEnabled || updated.MarketplaceCheckoutEnabled || updated.TaskCreationEnabled || updated.UpdatedBy == nil || *updated.UpdatedBy != actorID {
 		t.Fatalf("settings update mismatch: %#v %v", updated, err)
 	}
-	if _, err := pool.Exec(ctx, `UPDATE system_setting_revisions SET registrations_enabled=true WHERE id=$1`, updated.Current.ID); err == nil {
-		t.Fatal("system setting revision was mutable")
+	var auditCount int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM audit_events WHERE action='admin.system_settings_updated' AND actor_id=$1`, actorID).Scan(&auditCount); err != nil || auditCount != 1 {
+		t.Fatalf("settings audit mismatch: count=%d err=%v", auditCount, err)
 	}
 	tx, err := pool.Begin(ctx)
 	if err != nil {

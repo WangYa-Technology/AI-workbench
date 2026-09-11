@@ -7,10 +7,10 @@ test('enforces operations permissions and records an audited credit adjustment',
   await expect(page.getByRole('heading', { name: 'Operations access required', exact: true })).toBeVisible()
 
   await page.getByRole('button', { name: 'Use local operations account', exact: true }).click()
-  await expect(page.getByRole('button', { name: 'Finance', exact: true })).toBeVisible()
+  await expect(page.getByRole('link', { name: 'Finance', exact: true })).toBeVisible()
   await expect(page.getByText('Providers', { exact: true }).last()).toBeVisible()
 
-  await page.getByRole('button', { name: 'Finance', exact: true }).click()
+  await page.getByRole('link', { name: 'Finance', exact: true }).click()
   const target = page.locator('.finance-admin-list article').filter({ hasText: 'Northstar Studio' })
   await expect(target).toBeVisible()
   await target.getByRole('button', { name: 'Adjust credits', exact: true }).click()
@@ -51,7 +51,7 @@ test('keeps operations usable without page overflow on a mobile viewport', async
   expect(adminSession.ok()).toBeTruthy()
   await page.goto('/admin?tab=providers')
   await expect(page.getByRole('heading', { name: 'Operations', exact: true })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Providers', exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Model management', exact: true })).toBeVisible()
   const widths = await page.evaluate(() => ({ client: document.documentElement.clientWidth, scroll: document.documentElement.scrollWidth }))
   expect(widths.scroll).toBe(widths.client)
   await expect(page.getByText('Local Image Test', { exact: true })).toBeVisible()

@@ -109,7 +109,7 @@ test('keeps Community governance usable without mobile overflow', async ({ page 
   const adminSession = await page.request.post('/api/v1/auth/demo', { data: { actor: 'admin' } })
   expect(adminSession.ok()).toBeTruthy()
   await page.goto('/admin?tab=governance')
-  await expect(page.getByRole('button', { name: 'Governance', exact: true })).toBeVisible()
+  await expect(page.getByRole('link', { name: 'Governance', exact: true })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Report queue', exact: true })).toBeVisible()
   widths = await page.evaluate(() => ({ client: document.documentElement.clientWidth, scroll: document.documentElement.scrollWidth }))
   expect(widths.scroll).toBe(widths.client)

@@ -123,7 +123,7 @@ func deliverNext(t *testing.T, ctx context.Context, repository *notifications.Re
 }
 
 func TestNotificationTargetAllowlist(t *testing.T) {
-	valid := []string{"/notifications", "/workspace/orders", "/market/demands/" + uuid.NewString(), "/workspace/assets/" + uuid.NewString()}
+	valid := []string{"/notifications", "/workspace/orders", "/market/demands/" + uuid.NewString(), "/workspace/assets/" + uuid.NewString(), "/community/posts/" + uuid.NewString()}
 	for _, target := range valid {
 		if !notifications.ValidTargetPath(target) {
 			t.Errorf("valid target rejected: %s", target)

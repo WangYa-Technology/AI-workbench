@@ -63,11 +63,13 @@ func main() {
 		}
 		state.mu.Lock()
 		state.CheckoutCalls++
+		checkoutNumber := state.CheckoutCalls
 		state.LastCheckoutReference = reference
 		state.LastCheckoutKey = r.Header.Get("Idempotency-Key")
 		state.mu.Unlock()
+		checkoutID := fmt.Sprintf("cs_test_paymentdrill%03d", checkoutNumber)
 		writeJSON(w, http.StatusOK, map[string]any{
-			"id": "cs_test_paymentdrill001", "url": "https://checkout.stripe.com/c/pay/payment-drill",
+			"id": checkoutID, "url": "https://checkout.stripe.com/c/pay/payment-drill-" + strconv.Itoa(checkoutNumber),
 			"status": "open", "payment_status": "unpaid", "expires_at": time.Now().Add(time.Hour).Unix(),
 			"livemode": false, "amount_total": amount, "currency": "usd", "client_reference_id": reference,
 		})

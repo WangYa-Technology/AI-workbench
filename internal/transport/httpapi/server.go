@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/hcai-chat/hcai-chat/internal/admin"
 	"github.com/hcai-chat/hcai-chat/internal/assets"
+	"github.com/hcai-chat/hcai-chat/internal/authchallenges"
 	"github.com/hcai-chat/hcai-chat/internal/billing"
 	"github.com/hcai-chat/hcai-chat/internal/community"
 	"github.com/hcai-chat/hcai-chat/internal/creation"
@@ -58,6 +59,7 @@ type Server struct {
 	metrics        *observability.Metrics
 	webhooks       *webhooks.Service
 	emailActions   *emailactions.Service
+	authChallenges *authchallenges.Service
 	payments       *payments.Service
 	reconciliation *reconciliation.Service
 }
@@ -70,37 +72,50 @@ func New(cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger) http.Handle
 	if costRuntimeErr != nil {
 		logger.Error("provider cost reconciliation runtime disabled", "error", costRuntimeErr)
 	}
-	paymentRuntimes := payments.NewRuntimeCatalog()
+	var paymentRuntimeList []payments.ProviderRuntime
 	if cfg.StripeEnabled {
-		paymentRuntimes = payments.NewRuntimeCatalog(payments.NewStripeRuntime(payments.StripeRuntimeConfig{
+		paymentRuntimeList = append(paymentRuntimeList, payments.NewStripeRuntime(payments.StripeRuntimeConfig{
 			SecretKey: cfg.StripeSecretKey, BaseURL: cfg.StripeBaseURL, APIVersion: cfg.StripeAPIVersion,
 			LiveMode: cfg.StripeLiveMode, HTTPClient: &http.Client{Timeout: 20 * time.Second},
 		}))
 	}
+	if cfg.WaffoEnabled {
+		paymentRuntimeList = append(paymentRuntimeList, payments.NewWaffoRuntime(payments.WaffoRuntimeConfig{
+			ConnectorURL: cfg.WaffoConnectorURL, ConnectorToken: cfg.WaffoConnectorToken, Environment: cfg.WaffoEnvironment,
+			StoreID: cfg.WaffoStoreID, ProductIDOnetime: cfg.WaffoProductIDOnetime, ProductIDSubscription: cfg.WaffoProductIDSubscription,
+			HTTPClient: &http.Client{Timeout: 20 * time.Second},
+		}))
+	}
+	paymentRuntimes := payments.NewRuntimeCatalog(paymentRuntimeList...)
 	mediaStores := media.NewCatalogFromConfig(cfg)
 	mediaScanner := assets.NewScannerFromConfig(cfg)
 	server := &Server{
 		config: cfg, pool: pool, logger: logger, started: started,
-		identity:      identity.NewRepository(pool),
-		discovery:     discovery.NewRepository(pool),
-		creation:      creation.NewServiceWithMedia(pool, mediaStores, providerRuntimes),
-		billing:       billing.NewService(pool),
-		assets:        assets.NewServiceWithMedia(pool, mediaStores, mediaScanner),
-		community:     community.NewRepository(pool),
-		tasks:         tasks.NewServiceWithPayments(pool, cfg.StripeEnabled),
-		marketplace:   marketplace.NewService(pool),
-		notifications: notifications.NewRepository(pool),
-		admin:         admin.NewServiceWithRuntimesAndProviderKey(pool, providerRuntimes, cfg.WebhookEncryptionKey),
-		dataRights:    datarights.NewServiceWithMedia(pool, cfg.MediaRoot, mediaStores),
-		developer:     developer.NewService(pool),
-		support:       support.NewService(pool),
-		observability: observability.NewRepository(pool),
-		metrics:       metrics,
-		webhooks:      webhooks.NewService(pool, cfg.WebhookEncryptionKey, cfg.WebhookAllowLocal),
-		emailActions:  emailactions.NewService(pool, cfg.EmailActionKey, cfg.EmailDeliveryMode, cfg.MediaRoot, cfg.WebOrigin),
+		identity:       identity.NewRepository(pool),
+		discovery:      discovery.NewRepository(pool),
+		creation:       creation.NewServiceWithMedia(pool, mediaStores, providerRuntimes),
+		billing:        billing.NewService(pool),
+		assets:         assets.NewServiceWithMedia(pool, mediaStores, mediaScanner),
+		community:      community.NewRepository(pool),
+		// HTTP traffic must never fall back to the legacy local task ledger.
+		// Payment capability is determined by payments.Service at checkout time.
+		tasks:          tasks.NewServiceWithPayments(pool, true),
+		marketplace:    marketplace.NewService(pool),
+		notifications:  notifications.NewRepository(pool),
+		admin:          admin.NewServiceWithRuntimesAndProviderKey(pool, providerRuntimes, cfg.WebhookEncryptionKey),
+		dataRights:     datarights.NewServiceWithMedia(pool, cfg.MediaRoot, mediaStores),
+		developer:      developer.NewService(pool),
+		support:        support.NewService(pool),
+		observability:  observability.NewRepository(pool),
+		metrics:        metrics,
+		webhooks:       webhooks.NewService(pool, cfg.WebhookEncryptionKey, cfg.WebhookAllowLocal),
+		emailActions:   emailactions.NewService(pool, cfg.EmailActionKey, cfg.EmailDeliveryMode, cfg.MediaRoot, cfg.WebOrigin),
+		authChallenges: authchallenges.NewService(pool, cfg.EmailActionKey, cfg.EmailDeliveryMode, cfg.MediaRoot),
 		payments: payments.NewServiceWithRuntimes(pool, payments.ServiceConfig{
-			Enabled: cfg.StripeEnabled, LiveMode: cfg.StripeLiveMode, APIVersion: cfg.StripeAPIVersion,
+			Enabled: cfg.StripeEnabled || cfg.WaffoEnabled, Provider: cfg.PaymentProvider, LiveMode: cfg.StripeLiveMode, APIVersion: cfg.StripeAPIVersion,
 			WebhookSecret: cfg.StripeWebhookSecret, WebhookTolerance: time.Duration(cfg.StripeWebhookToleranceSeconds) * time.Second,
+			WaffoWebhookURL: cfg.WaffoConnectorURL, WaffoConnectorToken: cfg.WaffoConnectorToken, WaffoEnvironment: cfg.WaffoEnvironment, WaffoMerchantID: cfg.WaffoMerchantID, WaffoStoreID: cfg.WaffoStoreID,
+			WaffoProductIDOnetime: cfg.WaffoProductIDOnetime, WaffoProductIDSubscription: cfg.WaffoProductIDSubscription,
 		}, paymentRuntimes),
 		reconciliation: reconciliation.NewService(pool, costRuntime, cfg.OpenAIReconciliationOverageThresholdMicros),
 	}
@@ -115,10 +130,16 @@ func New(cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger) http.Handle
 		api.Get("/principal", server.developerAPIPrincipal)
 		api.Get("/errors", server.developerAPIErrors)
 		api.Get("/meta", server.meta)
+		api.Get("/site-config", server.siteConfiguration)
 		api.Post("/payments/webhooks/stripe", server.receiveStripeWebhook)
+		api.Post("/payments/webhooks/waffo", server.receiveWaffoWebhook)
 		api.Get("/auth/session", server.session)
 		api.Post("/auth/register", server.register)
 		api.Post("/auth/login", server.login)
+		api.Post("/auth/unified/start", server.unifiedAuthStart)
+		api.Post("/auth/unified/send-code", server.unifiedAuthSendCode)
+		api.Post("/auth/unified/login-code", server.unifiedAuthLoginCode)
+		api.Post("/auth/unified/register", server.unifiedAuthRegister)
 		api.Post("/auth/demo", server.demoLogin)
 		api.Post("/auth/logout", server.logout)
 		api.Post("/auth/password-reset-requests", server.requestPasswordReset)
@@ -176,7 +197,8 @@ func New(cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger) http.Handle
 		api.Put("/generations/{generationID}/favorite", server.favoriteGeneration)
 		api.Get("/billing/statement", server.billingStatement)
 		api.Get("/billing/points", server.pointOverview)
-		api.Post("/billing/subscriptions", server.purchaseSubscription)
+		api.Post("/billing/topups/checkout", server.checkoutWalletTopup)
+		api.Post("/billing/subscriptions/checkout", server.checkoutSubscription)
 		api.Get("/assets", server.listAssets)
 		api.Get("/assets/saved-works", server.listSavedWorks)
 		api.Post("/assets/uploads", server.uploadAsset)
@@ -186,7 +208,6 @@ func New(cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger) http.Handle
 		api.Post("/assets/{assetID}/versions", server.uploadAssetVersion)
 		api.Get("/products", server.listProducts)
 		api.Get("/products/{productID}", server.getProduct)
-		api.Post("/products/{productID}/purchase", server.purchaseProduct)
 		api.Post("/products/{productID}/checkout", server.checkoutProduct)
 		api.Get("/orders", server.listOrders)
 		api.Get("/orders/{orderID}", server.getOrder)
@@ -199,6 +220,7 @@ func New(cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger) http.Handle
 		api.Delete("/content-drafts/{draftID}", server.discardContentDraft)
 		api.Post("/content-drafts/{draftID}/publish", server.publishContentDraft)
 		api.Get("/community/posts", server.listPosts)
+		api.Post("/community/posts", server.createCommunityPost)
 		api.Get("/community/posts/{postID}", server.getCommunityPost)
 		api.Get("/community/posts/{postID}/comments", server.listComments)
 		api.Post("/community/posts/{postID}/comments", server.createComment)
@@ -245,7 +267,8 @@ func New(cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger) http.Handle
 		api.Get("/admin/models/routes", server.adminGetModelRoutes)
 		api.Post("/admin/models/routes/{mode}", server.adminUpdateModelRoute)
 		api.Get("/admin/settings", server.adminGetSystemSettings)
-		api.Post("/admin/settings", server.adminUpdateSystemSettings)
+		api.Put("/admin/settings", server.adminUpdateSystemSettings)
+		api.Put("/admin/site-config", server.adminUpdateSiteConfiguration)
 		api.Get("/admin/finance/accounts", server.adminListFinance)
 		api.Post("/admin/finance/accounts/{userID}/adjust", server.adminAdjustFinance)
 		api.Get("/admin/provider-cost-reconciliations", server.adminListProviderCostReconciliations)
@@ -255,6 +278,8 @@ func New(cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger) http.Handle
 		api.Post("/admin/payments/events/{eventID}/replay", server.adminReplayPaymentEvent)
 		api.Get("/admin/payment-destinations", server.adminListPaymentDestinations)
 		api.Put("/admin/payment-destinations/{userID}", server.adminUpdatePaymentDestination)
+		api.Get("/admin/payment-providers", server.adminListPaymentProviderConfigs)
+		api.Put("/admin/payment-providers/{provider}", server.adminUpdatePaymentProviderConfig)
 		api.Get("/admin/risk/signals", server.adminListRiskSignals)
 		api.Post("/admin/risk/signals/{signalID}/review", server.adminReviewRiskSignal)
 		api.Get("/admin/risk/rules", server.adminGetRiskRules)
@@ -293,6 +318,33 @@ func New(cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger) http.Handle
 	return router
 }
 
+// paymentProviderDeploymentStatus exposes only readiness booleans to Admin.
+// Provider credentials remain in their owning deployment/runtime process.
+func (s *Server) paymentProviderDeploymentStatus() map[string]admin.PaymentProviderDeploymentStatus {
+	if s == nil {
+		return nil
+	}
+	stripeEnvironment := "test"
+	if s.config.StripeLiveMode {
+		stripeEnvironment = "prod"
+	}
+	return map[string]admin.PaymentProviderDeploymentStatus{
+		"stripe": {
+			SecretConfigured:    s.config.StripeSecretKey != "" && s.config.StripeWebhookSecret != "",
+			ConnectorConfigured: true,
+			Environment:         stripeEnvironment,
+		},
+		"waffo_pancake": {
+			// WAFFO_ENABLED is the deployment gate for the private connector.
+			// The connector itself refuses to start when its private key is absent.
+			SecretConfigured:    s.config.WaffoEnabled,
+			ConnectorConfigured: s.config.WaffoConnectorURL != "" && s.config.WaffoConnectorToken != "",
+			Environment:         s.config.WaffoEnvironment,
+		},
+		"epay": {},
+	}
+}
+
 func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 	httputil.JSON(w, http.StatusOK, map[string]any{
 		"status":        "ok",
@@ -311,16 +363,27 @@ func (s *Server) ready(w http.ResponseWriter, r *http.Request) {
 	httputil.JSON(w, http.StatusOK, map[string]string{"status": "ready"})
 }
 
-func (s *Server) meta(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) meta(w http.ResponseWriter, r *http.Request) {
+	name := "HCAI CHAT"
+	if siteConfiguration, err := s.admin.GetSiteConfiguration(r.Context()); err == nil {
+		name = siteConfiguration.SiteName
+	}
+	paymentProvider, paymentEnabled, paymentLiveMode := s.config.PaymentProvider, s.config.StripeEnabled || s.config.WaffoEnabled, s.config.StripeLiveMode || (s.config.WaffoEnabled && s.config.WaffoEnvironment == "prod")
+	taskPaymentEnabled := false
+	if s.payments != nil {
+		paymentProvider, paymentEnabled, paymentLiveMode = s.payments.ProductProviderStatus(r.Context())
+		taskPaymentEnabled = s.payments.TaskProviderStatus(r.Context())
+	}
 	httputil.JSON(w, http.StatusOK, map[string]any{
-		"name":               "HCAI CHAT",
+		"name":               name,
 		"environment":        s.config.Environment,
 		"defaultLocale":      "en-US",
 		"supportedLocales":   []string{"en-US", "zh-CN"},
 		"defaultCurrency":    "USD",
 		"localDemoAvailable": s.config.Environment != "production" && s.config.DemoDataEnabled,
 		"localProvider":      map[string]any{"enabled": s.config.LocalProviderEnabled, "label": "Deterministic local test provider"},
-		"paymentProvider":    map[string]any{"enabled": s.config.StripeEnabled, "provider": "stripe", "liveMode": s.config.StripeLiveMode},
+		"paymentProvider":    map[string]any{"enabled": paymentEnabled, "provider": paymentProvider, "liveMode": paymentLiveMode},
+		"taskPaymentProvider": map[string]any{"enabled": taskPaymentEnabled, "provider": paymentProvider, "liveMode": paymentLiveMode},
 		"providerCostReconciliation": map[string]any{
 			"enabled":  s.reconciliation.Available(),
 			"provider": "openai",

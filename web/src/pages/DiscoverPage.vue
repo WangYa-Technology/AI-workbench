@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { ArrowRight, BriefcaseBusiness, RefreshCw, Sparkles, UsersRound } from 'lucide-vue-next'
+import { ArrowRight, BriefcaseBusiness, LayoutGrid, RefreshCw, Sparkles, UsersRound } from 'lucide-vue-next'
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink, useRoute } from 'vue-router'
 import { api, messageFrom, type Work } from '../api/client'
 import AssetMedia from '../components/domain/AssetMedia.vue'
 import UiButton from '../components/ui/UiButton.vue'
+import PageHero from '../components/ui/PageHero.vue'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -20,6 +21,11 @@ const visibleWorks = computed(() => {
 })
 const featured = computed(() => visibleWorks.value[0])
 const supporting = computed(() => visibleWorks.value.slice(1))
+const discoverHeroStats = computed(() => [
+  { value: works.value.length, label: t('discover.publishedWorks'), icon: LayoutGrid, tone: 'blue' as const },
+  { value: new Set(works.value.map(work => work.author.handle)).size, label: t('discover.activeCreators'), icon: UsersRound, tone: 'violet' as const },
+  { value: new Set(works.value.map(work => work.modelName)).size, label: t('discover.modelsInUse'), icon: Sparkles, tone: 'green' as const },
+])
 
 async function load() {
   loading.value = true
@@ -37,13 +43,17 @@ onMounted(() => void load())
 </script>
 
 <template>
-  <section class="discover-page">
-    <header v-if="!loading && !error" class="discover-intro content-width">
-      <div>
-        <h1>{{ t('discover.title') }}</h1>
-        <p>{{ t('discover.summary') }}</p>
-      </div>
-      <nav class="discover-intro-actions" :aria-label="t('actions.quickLinks')">
+  <section class="discover-page content-width">
+    <PageHero
+      :eyebrow="t('discover.eyebrow')"
+      :eyebrow-icon="Sparkles"
+      :title="t('discover.title')"
+      :summary="t('discover.summary')"
+      :stats="discoverHeroStats"
+      :stats-label="t('discover.statsLabel')"
+      artwork-src="/community/community-hero.webp"
+    >
+      <template #actions>
         <UiButton as="RouterLink" class="command-button primary" variant="primary" to="/create/image">
           <template #start>
             <Sparkles :size="17" :stroke-width="1.75" />
@@ -54,9 +64,9 @@ onMounted(() => void load())
             <BriefcaseBusiness :size="17" :stroke-width="1.75" />
           </template>{{ t('actions.findBrief') }}
         </UiButton>
-      </nav>
-    </header>
-    <section v-if="!loading && !error" class="discover-pathways content-width" :aria-label="t('discover.pathwaysLabel')">
+      </template>
+    </PageHero>
+    <section v-if="!loading && !error" class="discover-pathways" :aria-label="t('discover.pathwaysLabel')">
       <RouterLink class="pathway-card" to="/create/image">
         <span class="pathway-icon"><Sparkles :size="18" :stroke-width="1.75" /></span>
         <span><strong>{{ t('discover.pathways.create.title') }}</strong><small>{{ t('discover.pathways.create.summary') }}</small></span>

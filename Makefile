@@ -1,8 +1,9 @@
-.PHONY: bootstrap dev dev-demo api worker web db-up db-down migrate seed test e2e lint build production-config-check media-staging-check media-application-staging-check provider-staging-check creative-provider-staging-check container-build database-backup database-restore metrics-check recovery-drill payment-drill provider-drill
+.PHONY: bootstrap dev dev-demo api worker web waffo-connector db-up db-down migrate seed test e2e lint build production-config-check media-staging-check media-application-staging-check provider-staging-check creative-provider-staging-check container-build database-backup database-restore metrics-check recovery-drill payment-drill billing-drill provider-drill
 
 bootstrap:
 	go mod download
 	npm --prefix web install
+	npm --prefix services/waffo-connector ci
 
 db-up:
 	docker compose up -d postgres
@@ -24,6 +25,9 @@ worker:
 
 web:
 	npm --prefix web run dev
+
+waffo-connector:
+	npm --prefix services/waffo-connector start
 
 dev:
 	./scripts/dev.sh
@@ -82,6 +86,9 @@ recovery-drill:
 
 payment-drill:
 	./scripts/payment-provider-drill.sh
+
+billing-drill:
+	./scripts/billing-provider-drill.sh
 
 provider-drill:
 	./scripts/provider-runtime-drill.sh

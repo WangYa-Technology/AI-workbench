@@ -35,7 +35,7 @@ test('restores Admin content and media filters and reloads the active queue afte
   await expect(page.getByText('Operation completed and audit evidence recorded.', { exact: true })).toBeVisible()
   await expect(contentRow).toHaveCount(1)
 
-  await page.getByRole('button', { name: 'Media', exact: true }).click()
+  await page.goto('/admin?tab=media')
   await expect(page).toHaveURL(/\/admin\?tab=media$/)
   await page.goto(`/admin?tab=media&q=${runID}&kind=document&status=clean`)
   await expect(page.getByRole('searchbox', { name: 'Search media', exact: true })).toHaveValue(runID)

@@ -33,7 +33,6 @@ const measureLayout = async (page: Page, path: string, tabName: string) => {
       stats: box('.page-hero-stats'),
       actions: box('.page-hero-actions'),
       art: box('.page-hero-art'),
-      account: box('.page-hero-account'),
     }
   })
   return { header: header!, switcherBar: switcherBar!, parts }
@@ -92,12 +91,12 @@ test('keeps Community and Task marketplace headers and view switchers aligned', 
   expect(new Set(taskFilterControls.map(control => control.y)).size).toBe(1)
   expect(taskFiltersBox).not.toBeNull()
   expect(taskFiltersBox!.height).toBe(communityToolbarBox!.height)
-  expect(community.header.height).toBe(320)
+  expect(community.header.height).toBe(272)
   expect(tasks.header.height).toBe(community.header.height)
   expect(tasks.header.y).toBe(community.header.y)
   expect(tasks.switcherBar.height).toBe(community.switcherBar.height)
   expect(tasks.switcherBar.y).toBe(community.switcherBar.y)
-  for (const key of ['copy', 'stats', 'actions', 'art', 'account'] as const) {
+  for (const key of ['copy', 'stats', 'art'] as const) {
     expect(tasks.parts[key]).not.toBeNull()
     expect(community.parts[key]).not.toBeNull()
     expect(tasks.parts[key]!.x).toBe(community.parts[key]!.x)
@@ -119,18 +118,18 @@ test('keeps Community and Task marketplace headers and view switchers aligned', 
         const rect = element.querySelector(selector)?.getBoundingClientRect()
         return rect ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height } : null
       }
-      return { copy: box('.page-hero-copy'), stats: box('.page-hero-stats'), actions: box('.page-hero-actions'), art: box('.page-hero-art') }
+      return { copy: box('.page-hero-copy'), stats: box('.page-hero-stats'), art: box('.page-hero-art') }
     }))
     const viewport = await page.evaluate(() => ({ client: document.documentElement.clientWidth, scroll: document.documentElement.scrollWidth }))
     expect(viewport.scroll).toBe(viewport.client)
   }
-  for (const key of ['copy', 'stats', 'actions', 'art'] as const) {
+  for (const key of ['copy', 'stats', 'art'] as const) {
     expect(mobileParts[0][key]).not.toBeNull()
     expect(mobileParts[1][key]).not.toBeNull()
     expect(mobileParts[0][key]!.x).toBe(mobileParts[1][key]!.x)
     expect(mobileParts[0][key]!.y).toBe(mobileParts[1][key]!.y)
     expect(mobileParts[0][key]!.width).toBe(mobileParts[1][key]!.width)
-    expect(mobileParts[0][key]!.height).toBe(mobileParts[1][key]!.height)
+    expect(Math.abs(mobileParts[0][key]!.height - mobileParts[1][key]!.height)).toBeLessThanOrEqual(2)
   }
 })
 

@@ -61,7 +61,7 @@ test('creates Chat, Image, Video, and Music as typed, reusable Assets', async ({
 
     const publishedTitle = `Published ${prompt}`
     publishedTitles.push(publishedTitle)
-    await page.getByRole('link', { name: 'Publish asset', exact: true }).click()
+    await page.getByRole('button', { name: 'Publish asset', exact: true }).click()
     await page.getByLabel('Work title', { exact: true }).fill(publishedTitle)
     await page.getByLabel('Short description', { exact: true }).fill(`Verified ${item.label} creation and publication workflow.`)
     await page.getByLabel('Community note', { exact: true }).fill(`Published from the typed ${item.label} Asset.`)

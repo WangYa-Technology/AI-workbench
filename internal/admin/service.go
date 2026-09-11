@@ -17,27 +17,26 @@ import (
 )
 
 var (
-	ErrNotFound                    = errors.New("admin resource not found")
-	ErrInvalid                     = errors.New("invalid admin command")
-	ErrConflict                    = errors.New("admin resource state conflict")
-	ErrSelfMutation                = errors.New("administrator cannot mutate own access")
-	ErrProviderConfig              = errors.New("provider requires external configuration")
-	ErrInvalidRiskFilter           = errors.New("invalid admin risk filter")
-	ErrInvalidUserFilter           = errors.New("invalid admin user filter")
-	ErrInvalidContentFilter        = errors.New("invalid admin content filter")
-	ErrInvalidMediaFilter          = errors.New("invalid admin media filter")
-	ErrInvalidReportFilter         = errors.New("invalid admin governance report filter")
-	ErrInvalidAppealFilter         = errors.New("invalid admin governance appeal filter")
-	ErrInvalidTaskFilter           = errors.New("invalid admin task filter")
-	ErrInvalidGenerationFilter     = errors.New("invalid admin generation filter")
-	ErrInvalidFinanceFilter        = errors.New("invalid admin finance filter")
-	ErrInvalidPaymentFilter        = errors.New("invalid admin payment filter")
-	ErrInvalidDestinationFilter    = errors.New("invalid admin payment destination filter")
-	ErrInvalidSystemSettingHistory = errors.New("invalid admin system setting history filter")
-	ErrInvalidRiskRuleHistory      = errors.New("invalid admin risk rule history filter")
-	ErrInvalidRankingHistory       = errors.New("invalid admin ranking history filter")
-	ErrInvalidDiscoveryHistory     = errors.New("invalid admin discovery operation history filter")
-	ErrInvalidModelRouteHistory    = errors.New("invalid admin model route history filter")
+	ErrNotFound                 = errors.New("admin resource not found")
+	ErrInvalid                  = errors.New("invalid admin command")
+	ErrConflict                 = errors.New("admin resource state conflict")
+	ErrSelfMutation             = errors.New("administrator cannot mutate own access")
+	ErrProviderConfig           = errors.New("provider requires external configuration")
+	ErrInvalidRiskFilter        = errors.New("invalid admin risk filter")
+	ErrInvalidUserFilter        = errors.New("invalid admin user filter")
+	ErrInvalidContentFilter     = errors.New("invalid admin content filter")
+	ErrInvalidMediaFilter       = errors.New("invalid admin media filter")
+	ErrInvalidReportFilter      = errors.New("invalid admin governance report filter")
+	ErrInvalidAppealFilter      = errors.New("invalid admin governance appeal filter")
+	ErrInvalidTaskFilter        = errors.New("invalid admin task filter")
+	ErrInvalidGenerationFilter  = errors.New("invalid admin generation filter")
+	ErrInvalidFinanceFilter     = errors.New("invalid admin finance filter")
+	ErrInvalidPaymentFilter     = errors.New("invalid admin payment filter")
+	ErrInvalidDestinationFilter = errors.New("invalid admin payment destination filter")
+	ErrInvalidRiskRuleHistory   = errors.New("invalid admin risk rule history filter")
+	ErrInvalidRankingHistory    = errors.New("invalid admin ranking history filter")
+	ErrInvalidDiscoveryHistory  = errors.New("invalid admin discovery operation history filter")
+	ErrInvalidModelRouteHistory = errors.New("invalid admin model route history filter")
 )
 
 type Overview struct {
@@ -740,14 +739,14 @@ const riskSignalSelect = `
 		       CASE s.resource_type
 		            WHEN 'task' THEN COALESCE((SELECT title FROM demands WHERE id=s.resource_id),'Unavailable task')
 		            WHEN 'order' THEN COALESCE((SELECT product_title_snapshot FROM orders WHERE id=s.resource_id),'Unavailable order')
-		            WHEN 'post' THEN COALESCE((SELECT w.title FROM posts p JOIN works w ON w.id=p.work_id WHERE p.id=s.resource_id),'Unavailable post')
+		            WHEN 'post' THEN COALESCE((SELECT COALESCE(p.title,w.title) FROM posts p LEFT JOIN works w ON w.id=p.work_id WHERE p.id=s.resource_id),'Unavailable post')
 		            WHEN 'asset' THEN COALESCE((SELECT title FROM assets WHERE id=s.resource_id),'Unavailable Asset')
 		            WHEN 'user' THEN 'Account @'||subject.handle
 		       END,
 		       CASE s.resource_type
 		            WHEN 'task' THEN '/market/demands?task='||s.resource_id::text
 		            WHEN 'order' THEN '/workspace/orders'
-		            WHEN 'post' THEN COALESCE((SELECT '/works/'||p.work_id::text FROM posts p WHERE p.id=s.resource_id),'/community')
+		            WHEN 'post' THEN '/community/posts/'||s.resource_id::text
 		            WHEN 'asset' THEN '/workspace/assets/'||s.resource_id::text
 		            WHEN 'user' THEN '/admin?tab=users&q='||subject.handle
 		       END,

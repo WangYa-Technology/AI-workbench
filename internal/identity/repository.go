@@ -78,6 +78,111 @@ type LoginInput struct {
 	Password string `json:"password"`
 }
 
+// AccountExists reports whether an active account owns the normalized email.
+// The unified auth flow intentionally exposes this branch so the UI can offer
+// the appropriate password/code or registration form.
+func (r *Repository) AccountExists(ctx context.Context, email string) (bool, error) {
+	email = strings.ToLower(strings.TrimSpace(email))
+	if !validEmail(email) {
+		return false, ErrInvalid
+	}
+	var exists bool
+	if err := r.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM users WHERE lower(email)=$1 AND status='active')`, email).Scan(&exists); err != nil {
+		return false, fmt.Errorf("check account email: %w", err)
+	}
+	return exists, nil
+}
+
+// UserByIDTx reads a user while the caller owns the transaction. It is used by
+// atomic authentication challenge completion.
+func (r *Repository) UserByIDTx(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (User, error) {
+	var user User
+	err := tx.QueryRow(ctx, `
+		SELECT u.id,u.email,u.handle,u.display_name,u.role,u.status,u.locale,u.timezone,u.email_verified_at IS NOT NULL,
+		       ARRAY(SELECT rp.permission_id FROM role_permissions rp WHERE rp.role=u.role ORDER BY rp.permission_id)
+		FROM users u WHERE u.id=$1`, userID).Scan(
+		&user.ID, &user.Email, &user.Handle, &user.DisplayName, &user.Role, &user.Status, &user.Locale, &user.Timezone, &user.EmailVerified, &user.Permissions,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return User{}, ErrNotFound
+	}
+	if err != nil {
+		return User{}, fmt.Errorf("read account in transaction: %w", err)
+	}
+	return user, nil
+}
+
+// LoginWithCodeTx creates a session for an already verified challenge. The
+// challenge service calls this before committing its consume transaction.
+func (r *Repository) LoginWithCodeTx(ctx context.Context, tx pgx.Tx, email string, client ClientInfo) (User, string, error) {
+	email = strings.ToLower(strings.TrimSpace(email))
+	if !validEmail(email) {
+		return User{}, "", ErrInvalidLogin
+	}
+	var userID uuid.UUID
+	var status string
+	if err := tx.QueryRow(ctx, `SELECT id,status FROM users WHERE lower(email)=$1`, email).Scan(&userID, &status); errors.Is(err, pgx.ErrNoRows) {
+		return User{}, "", ErrInvalidLogin
+	} else if err != nil {
+		return User{}, "", fmt.Errorf("read code login account: %w", err)
+	}
+	if status != "active" {
+		return User{}, "", ErrInactive
+	}
+	if _, err := tx.Exec(ctx, `UPDATE users SET email_verified_at=COALESCE(email_verified_at,now()),updated_at=now() WHERE id=$1 AND status='active'`, userID); err != nil {
+		return User{}, "", fmt.Errorf("verify code login email: %w", err)
+	}
+	token, sessionID, err := issueSession(ctx, tx, userID, client)
+	if err != nil {
+		return User{}, "", err
+	}
+	if err := insertAudit(ctx, tx, userID, "identity.login_code", "session", sessionID, client.RequestID, nil); err != nil {
+		return User{}, "", err
+	}
+	user, err := r.UserByIDTx(ctx, tx, userID)
+	return user, token, err
+}
+
+// RegisterVerifiedTx creates an account only after the caller has verified the
+// email challenge in the same transaction. The resulting session is returned
+// to the caller so registration is immediately usable.
+func (r *Repository) RegisterVerifiedTx(ctx context.Context, tx pgx.Tx, input RegisterInput, client ClientInfo) (User, string, error) {
+	email, handle, displayName, locale, timezone, err := validateRegistration(input)
+	if err != nil {
+		return User{}, "", err
+	}
+	passwordHash, err := bcrypt.GenerateFromPassword([]byte(input.Password), bcrypt.DefaultCost)
+	if err != nil {
+		return User{}, "", fmt.Errorf("hash password: %w", err)
+	}
+	if err := systemsettings.RequireTx(ctx, tx, systemsettings.Registrations); err != nil {
+		return User{}, "", err
+	}
+	var userID uuid.UUID
+	err = tx.QueryRow(ctx, `
+		INSERT INTO users(email,handle,display_name,password_hash,role,status,locale,timezone,email_verified_at)
+		VALUES($1,$2,$3,$4,'member','active',$5,$6,now())
+		RETURNING id`, email, handle, displayName, string(passwordHash), locale, timezone).Scan(&userID)
+	if isUniqueViolation(err) {
+		return User{}, "", ErrConflict
+	}
+	if err != nil {
+		return User{}, "", fmt.Errorf("create verified account: %w", err)
+	}
+	token, sessionID, err := issueSession(ctx, tx, userID, client)
+	if err != nil {
+		return User{}, "", err
+	}
+	if _, err := risk.RecordAccountLinkTx(ctx, tx, userID, normalizedClient(client).NetworkHash); err != nil {
+		return User{}, "", fmt.Errorf("record account-link risk: %w", err)
+	}
+	if err := insertAudit(ctx, tx, userID, "identity.registered_verified", "user", userID, client.RequestID, map[string]any{"sessionId": sessionID}); err != nil {
+		return User{}, "", err
+	}
+	user, err := r.UserByIDTx(ctx, tx, userID)
+	return user, token, err
+}
+
 type ProfileInput struct {
 	DisplayName string `json:"displayName"`
 	Locale      string `json:"locale"`

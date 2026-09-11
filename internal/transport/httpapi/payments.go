@@ -98,3 +98,48 @@ func (s *Server) receiveStripeWebhook(w http.ResponseWriter, r *http.Request) {
 		httputil.JSON(w, status, receipt)
 	}
 }
+
+func (s *Server) receiveWaffoWebhook(w http.ResponseWriter, r *http.Request) {
+	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || mediaType != "application/json" {
+		httputil.WriteError(w, r, http.StatusUnsupportedMediaType, "payment_webhook_content_type_invalid", "Send a signed JSON payment event.", false)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxPaymentWebhookBytes)
+	rawBody, err := io.ReadAll(r.Body)
+	if err != nil {
+		var maxBytesError *http.MaxBytesError
+		if errors.As(err, &maxBytesError) {
+			httputil.WriteError(w, r, http.StatusRequestEntityTooLarge, "payment_webhook_too_large", "The payment event exceeds the accepted size.", false)
+			return
+		}
+		s.internalError(w, r, "read Waffo webhook", err)
+		return
+	}
+	receipt, err := s.payments.ReceiveWaffoWebhook(r.Context(), rawBody, r.Header.Get("x-waffo-signature"))
+	switch {
+	case errors.Is(err, payments.ErrDisabled):
+		httputil.WriteError(w, r, http.StatusServiceUnavailable, "payment_provider_unavailable", "Payment processing is not enabled.", false)
+	case errors.Is(err, payments.ErrProviderConfigMismatch):
+		httputil.WriteError(w, r, http.StatusServiceUnavailable, "payment_provider_unavailable", "Payment Provider configuration is incomplete or does not match the deployment.", false)
+	case errors.Is(err, payments.ErrInvalidSignature):
+		httputil.WriteError(w, r, http.StatusUnauthorized, "payment_webhook_signature_invalid", "The payment event signature is invalid.", false)
+	case errors.Is(err, payments.ErrInvalidEvent):
+		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "payment_event_invalid", "The payment event envelope is invalid.", false)
+	case errors.Is(err, payments.ErrEventConflict):
+		httputil.WriteError(w, r, http.StatusConflict, "payment_event_conflict", "The payment event identifier conflicts with earlier evidence.", false)
+	case err != nil:
+		var retryable interface{ Retryable() bool }
+		if errors.As(err, &retryable) && retryable.Retryable() {
+			httputil.WriteError(w, r, http.StatusServiceUnavailable, "payment_provider_unavailable", "The payment Provider verification service is unavailable.", true)
+			return
+		}
+		s.internalError(w, r, "receive Waffo webhook", err)
+	default:
+		status := http.StatusAccepted
+		if receipt.Duplicate {
+			status = http.StatusOK
+		}
+		httputil.JSON(w, status, receipt)
+	}
+}

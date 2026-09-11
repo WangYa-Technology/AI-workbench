@@ -553,7 +553,7 @@ const productSelect = `
 const orderSelect = `
 	SELECT o.id,p.id,o.product_title_snapshot,e.asset_id,o.amount_cents,o.currency,o.status,p.license_code,o.license_name_snapshot,
 	       o.license_version,o.license_terms_snapshot,o.refund_window_days_snapshot,o.refund_requested_at,o.refunded_at,o.created_at,
-	       CASE WHEN pi.provider='stripe' THEN 'stripe' ELSE 'test' END,COALESCE(pi.live_mode,false)
+	       CASE WHEN pi.provider IS NULL THEN 'test' ELSE pi.provider END,COALESCE(pi.live_mode,false)
 	FROM orders o
 	JOIN products p ON p.id=o.product_id
 	LEFT JOIN entitlements e ON e.order_id=o.id

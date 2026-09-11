@@ -2,7 +2,12 @@ import { createRouter, createWebHistory } from 'vue-router'
 
 export const router = createRouter({
   history: createWebHistory(),
-  scrollBehavior: () => ({ top: 0 }),
+  scrollBehavior: (to, from, savedPosition) => {
+    const publishStateChanged = to.path === from.path
+      && (to.query.publish !== from.query.publish || to.query.draftId !== from.query.draftId)
+    if (publishStateChanged) return false
+    return savedPosition || { top: 0 }
+  },
   routes: [
     { path: '/', name: 'home', component: () => import('../pages/GuestHomePage.vue') },
     { path: '/discover', name: 'discover', component: () => import('../pages/DiscoverPage.vue') },
@@ -19,9 +24,20 @@ export const router = createRouter({
     { path: '/workspace/assets/:assetId', name: 'asset', component: () => import('../pages/WorkspacePage.vue') },
     { path: '/workspace/generations', redirect: '/create/image' },
     { path: '/workspace/:section?', name: 'workspace', component: () => import('../pages/WorkspacePage.vue') },
-    { path: '/publish', name: 'publish', component: () => import('../pages/PublishPage.vue') },
+    {
+      path: '/publish',
+      redirect: (to) => {
+        const { assetId, ...query } = to.query
+        const requestedAsset = Array.isArray(assetId) ? assetId[0] : assetId
+        return {
+          path: '/workspace/assets',
+          query: requestedAsset ? { ...query, publish: requestedAsset } : query,
+        }
+      },
+    },
     { path: '/notifications', name: 'notifications', component: () => import('../pages/NotificationsPage.vue') },
     { path: '/support/:caseId?', name: 'support', component: () => import('../pages/SupportPage.vue') },
+    { path: '/auth', name: 'auth', component: () => import('../pages/AuthPage.vue') },
     { path: '/settings', name: 'settings', component: () => import('../pages/AccountPage.vue') },
     { path: '/verify-email', name: 'verify-email', component: () => import('../pages/EmailActionPage.vue') },
     { path: '/reset-password', name: 'reset-password', component: () => import('../pages/EmailActionPage.vue') },

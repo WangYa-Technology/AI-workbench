@@ -75,7 +75,7 @@ func TestPublicMarketplaceReadAndAuthenticatedMutationBoundary(t *testing.T) {
 		body   any
 	}{
 		{http.MethodGet, "/api/v1/tasks?mine=true", nil},
-		{http.MethodPost, "/api/v1/products/" + productID.String() + "/purchase", map[string]any{"licenseAccepted": true}},
+		{http.MethodPost, "/api/v1/products/" + productID.String() + "/checkout", map[string]any{"licenseAccepted": true}},
 		{http.MethodPost, "/api/v1/tasks/" + taskID.String() + "/proposals", map[string]any{"approach": "Private proposal"}},
 		{http.MethodPost, "/api/v1/tasks", map[string]any{"title": "Private mutation"}},
 	} {

@@ -1,4 +1,9 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Locator, type Page } from '@playwright/test'
+
+async function chooseOption(page: Page, trigger: Locator, optionName: string) {
+  await trigger.click()
+  await page.getByRole('option', { name: optionName, exact: true }).click()
+}
 
 test('completes private copyright intake through requester and Admin operations', async ({ page }) => {
   test.setTimeout(90_000)
@@ -15,12 +20,12 @@ test('completes private copyright intake through requester and Admin operations'
   await page.getByRole('button', { name: 'New case', exact: true }).click()
   const intakeForm = page.locator('.support-form')
   await expect(intakeForm).toBeVisible()
-  await intakeForm.getByRole('combobox').nth(0).selectOption('copyright')
+  await chooseOption(page, intakeForm.getByRole('combobox', { name: 'Case category', exact: true }), 'Copyright intake')
   await intakeForm.getByRole('textbox').nth(0).fill(subject)
   await intakeForm.getByRole('textbox').nth(1).fill(`The referenced public work may reproduce controlled material. Review request ${runID}.`)
-  await intakeForm.getByRole('combobox').nth(1).selectOption('work')
+  await chooseOption(page, intakeForm.getByRole('combobox', { name: 'Related resource type', exact: true }), 'Work')
   await intakeForm.getByRole('textbox').nth(2).fill(works.items[0].id)
-  await intakeForm.getByRole('combobox').nth(2).selectOption('rights_holder')
+  await chooseOption(page, intakeForm.getByRole('combobox', { name: 'Relationship to the rights', exact: true }), 'Rights holder')
   await intakeForm.getByRole('textbox').nth(3).fill(`I control the relevant source material and request a bounded platform review for ${runID}.`)
   await page.getByRole('button', { name: 'Submit case', exact: true }).click()
   await expect(page.getByText('Support case created with an auditable intake record.', { exact: true })).toBeVisible()
@@ -33,8 +38,8 @@ test('completes private copyright intake through requester and Admin operations'
   await page.goto('/admin?tab=support')
   const supportFilters = page.locator('.admin-operations-filters')
   await supportFilters.getByLabel('Search cases', { exact: true }).fill(subject)
-  await supportFilters.getByRole('combobox').nth(0).selectOption('open')
-  await supportFilters.getByRole('combobox').nth(1).selectOption('copyright')
+  await chooseOption(page, supportFilters.getByRole('combobox', { name: 'Status', exact: true }), 'Open')
+  await chooseOption(page, supportFilters.getByRole('combobox', { name: 'Category', exact: true }), 'Copyright intake')
   await supportFilters.getByRole('button', { name: 'Apply filters', exact: true }).click()
   await expect(page).toHaveURL(/tab=support.*supportQ=Copyright(?:%20|\+)intake[^&]*&supportStatus=open.*supportCategory=copyright/)
   const caseButton = page.locator('.admin-support-queue > button').filter({ hasText: subject }).first()
@@ -43,17 +48,13 @@ test('completes private copyright intake through requester and Admin operations'
   const controls = page.locator('.admin-support-controls form')
   const replyForm = controls.nth(0)
   await replyForm.getByRole('textbox').nth(0).fill('We received the copyright intake and started reviewing the stable resource reference.')
-  await replyForm.getByRole('textbox').nth(1).fill(`E2E ${runID}: operator acknowledged the bounded copyright evidence.`)
-  await replyForm.getByRole('checkbox').check()
   await replyForm.getByRole('button', { name: 'Send and record', exact: true }).click()
-  await expect(page.getByText('Operation completed and audit evidence recorded.', { exact: true })).toBeVisible()
+  await expect(page.getByText('Operation completed.', { exact: true })).toBeVisible()
 
   const decisionForm = page.locator('.admin-support-controls form').nth(1)
-  await decisionForm.getByRole('combobox').nth(0).selectOption('waiting_for_requester')
-  await decisionForm.getByRole('textbox').fill(`E2E ${runID}: source publication date is needed to continue review.`)
-  await decisionForm.getByRole('checkbox').check()
-  await decisionForm.getByRole('button', { name: 'Apply and record', exact: true }).click()
-  await expect(page.locator('.admin-support-detail').getByText('Needs your reply', { exact: true })).toBeVisible()
+  await chooseOption(page, decisionForm.getByRole('combobox', { name: 'Status', exact: true }), 'Needs your reply')
+  await decisionForm.getByRole('button', { name: 'Apply', exact: true }).click()
+  await expect(page.locator('.admin-support-detail > header > em')).toHaveText('Needs your reply')
 
   const returnToRequester = await page.request.post('/api/v1/auth/demo', { data: { actor: 'creator' } })
   expect(returnToRequester.ok()).toBeTruthy()
@@ -68,16 +69,14 @@ test('completes private copyright intake through requester and Admin operations'
   await page.goto(`/admin?tab=support&supportQ=${encodeURIComponent(subject)}&supportStatus=in_review&supportCategory=copyright`)
   await page.locator('.admin-support-queue > button').filter({ hasText: subject }).first().click()
   const resolutionForm = page.locator('.admin-support-controls form').nth(1)
-  await resolutionForm.getByRole('combobox').nth(0).selectOption('resolved')
-  await resolutionForm.getByRole('combobox').nth(1).selectOption('content_restricted')
-  await resolutionForm.getByRole('textbox').fill(`E2E ${runID}: reviewed evidence supports restricting the referenced content.`)
-  await resolutionForm.getByRole('checkbox').check()
-  await resolutionForm.getByRole('button', { name: 'Apply and record', exact: true }).click()
-  await expect(page.locator('.admin-support-detail').getByText('Resolved', { exact: true })).toBeVisible()
+  await chooseOption(page, resolutionForm.getByRole('combobox', { name: 'Status', exact: true }), 'Resolved')
+  await chooseOption(page, resolutionForm.getByRole('combobox', { name: 'Resolution code', exact: true }), 'Content restricted')
+  await resolutionForm.getByRole('button', { name: 'Apply', exact: true }).click()
+  await expect(page.locator('.admin-support-detail > header > em')).toHaveText('Resolved')
 
   await page.request.post('/api/v1/auth/demo', { data: { actor: 'creator' } })
   await page.goto('/notifications')
-  await expect(page.getByText('Support case updated', { exact: true }).first()).toBeVisible()
+  await expect(page.getByText('Support replied', { exact: true }).first()).toBeVisible()
 })
 
 test('keeps user and Admin support workspaces within a mobile viewport', async ({ page }) => {
@@ -90,7 +89,6 @@ test('keeps user and Admin support workspaces within a mobile viewport', async (
 
   await page.request.post('/api/v1/auth/demo', { data: { actor: 'admin' } })
   await page.goto('/admin?tab=support')
-  await expect(page.getByRole('button', { name: 'Support', exact: true })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Support queue', exact: true })).toBeVisible()
   widths = await page.evaluate(() => ({ client: document.documentElement.clientWidth, scroll: document.documentElement.scrollWidth }))
   expect(widths.scroll).toBe(widths.client)

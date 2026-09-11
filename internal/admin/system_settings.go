@@ -2,8 +2,10 @@ package admin
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -11,122 +13,210 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-type SystemSettingRevision struct {
-	ID                         uuid.UUID  `json:"id"`
-	Version                    int        `json:"version"`
-	ParentRevisionID           *uuid.UUID `json:"parentRevisionId,omitempty"`
-	Name                       string     `json:"name"`
-	RegistrationsEnabled       bool       `json:"registrationsEnabled"`
-	GenerationsEnabled         bool       `json:"generationsEnabled"`
-	PublishingEnabled          bool       `json:"publishingEnabled"`
-	MarketplaceCheckoutEnabled bool       `json:"marketplaceCheckoutEnabled"`
-	TaskCreationEnabled        bool       `json:"taskCreationEnabled"`
-	PublicNotice               string     `json:"publicNotice"`
-	CreatedBy                  *uuid.UUID `json:"createdBy,omitempty"`
-	CreatedByHandle            *string    `json:"createdByHandle,omitempty"`
-	CreatedAt                  time.Time  `json:"createdAt"`
+type SystemSettings struct {
+	RegistrationsEnabled       bool              `json:"registrationsEnabled"`
+	GenerationsEnabled         bool              `json:"generationsEnabled"`
+	PublishingEnabled          bool              `json:"publishingEnabled"`
+	MarketplaceCheckoutEnabled bool              `json:"marketplaceCheckoutEnabled"`
+	TaskCreationEnabled        bool              `json:"taskCreationEnabled"`
+	PublicNotice               string            `json:"publicNotice"`
+	SiteConfiguration          SiteConfiguration `json:"siteConfiguration"`
+	UpdatedBy                  *uuid.UUID        `json:"updatedBy,omitempty"`
+	UpdatedByHandle            *string           `json:"updatedByHandle,omitempty"`
+	UpdatedAt                  time.Time         `json:"updatedAt"`
 }
-type SystemSettingPolicy struct {
-	Current    SystemSettingRevision   `json:"current"`
-	History    []SystemSettingRevision `json:"history"`
-	NextCursor *string                 `json:"nextCursor,omitempty"`
+
+type LocalizedSiteText struct {
+	EnUS string `json:"enUS"`
+	ZhCN string `json:"zhCN"`
 }
+
+type SitePolicyContent struct {
+	Terms      LocalizedSiteText `json:"terms"`
+	Privacy    LocalizedSiteText `json:"privacy"`
+	Cookies    LocalizedSiteText `json:"cookies"`
+	Acceptable LocalizedSiteText `json:"acceptable"`
+	AI         LocalizedSiteText `json:"ai"`
+	Licensing  LocalizedSiteText `json:"licensing"`
+	Refunds    LocalizedSiteText `json:"refunds"`
+	Copyright  LocalizedSiteText `json:"copyright"`
+}
+
+type SiteConfiguration struct {
+	SiteName    string            `json:"siteName"`
+	ServerURL   string            `json:"serverUrl"`
+	SiteIconURL string            `json:"siteIconUrl"`
+	FooterText  LocalizedSiteText `json:"footerText"`
+	Policies    SitePolicyContent `json:"policies"`
+}
+
 type SystemSettingUpdate struct {
-	Name                       string `json:"name"`
 	RegistrationsEnabled       bool   `json:"registrationsEnabled"`
 	GenerationsEnabled         bool   `json:"generationsEnabled"`
 	PublishingEnabled          bool   `json:"publishingEnabled"`
 	MarketplaceCheckoutEnabled bool   `json:"marketplaceCheckoutEnabled"`
 	TaskCreationEnabled        bool   `json:"taskCreationEnabled"`
 	PublicNotice               string `json:"publicNotice"`
-	ExpectedVersion            int    `json:"expectedVersion"`
 }
 
-func (s *Service) GetSystemSettingPolicy(ctx context.Context, inputs ...RevisionHistoryInput) (SystemSettingPolicy, error) {
-	input := RevisionHistoryInput{}
-	if len(inputs) > 0 {
-		input = inputs[0]
-	}
-	if input.Limit == 0 {
-		input.Limit = 20
-	}
-	if input.Limit < 1 || input.Limit > 50 {
-		return SystemSettingPolicy{}, ErrInvalidSystemSettingHistory
-	}
-	var cursorVersion *int
-	if input.Cursor != "" {
-		cursor, err := decodeRevisionHistoryCursor(input.Cursor, ErrInvalidSystemSettingHistory)
-		if err != nil {
-			return SystemSettingPolicy{}, err
-		}
-		cursorVersion = &cursor.Version
-	}
-	var activeID uuid.UUID
-	if err := s.pool.QueryRow(ctx, `SELECT active_revision_id FROM system_setting_state WHERE singleton=true`).Scan(&activeID); errors.Is(err, pgx.ErrNoRows) {
-		return SystemSettingPolicy{}, ErrNotFound
-	} else if err != nil {
-		return SystemSettingPolicy{}, err
-	}
-	policy := SystemSettingPolicy{History: []SystemSettingRevision{}}
-	err := s.pool.QueryRow(ctx, `SELECT r.id,r.version,r.parent_revision_id,r.name,r.registrations_enabled,r.generations_enabled,r.publishing_enabled,r.marketplace_checkout_enabled,r.task_creation_enabled,r.public_notice,r.created_by,u.handle,r.created_at FROM system_setting_revisions r LEFT JOIN users u ON u.id=r.created_by WHERE r.id=$1`, activeID).Scan(
-		&policy.Current.ID, &policy.Current.Version, &policy.Current.ParentRevisionID, &policy.Current.Name, &policy.Current.RegistrationsEnabled, &policy.Current.GenerationsEnabled, &policy.Current.PublishingEnabled, &policy.Current.MarketplaceCheckoutEnabled, &policy.Current.TaskCreationEnabled, &policy.Current.PublicNotice, &policy.Current.CreatedBy, &policy.Current.CreatedByHandle, &policy.Current.CreatedAt,
+func (s *Service) GetSystemSettings(ctx context.Context) (SystemSettings, error) {
+	var settings SystemSettings
+	var configurationJSON []byte
+	err := s.pool.QueryRow(ctx, `
+		SELECT settings.registrations_enabled,settings.generations_enabled,settings.publishing_enabled,
+		       settings.marketplace_checkout_enabled,settings.task_creation_enabled,settings.public_notice,
+		       settings.site_configuration,settings.updated_by,users.handle,settings.updated_at
+		FROM system_settings settings
+		LEFT JOIN users ON users.id=settings.updated_by
+		WHERE settings.singleton=true`).Scan(
+		&settings.RegistrationsEnabled, &settings.GenerationsEnabled, &settings.PublishingEnabled,
+		&settings.MarketplaceCheckoutEnabled, &settings.TaskCreationEnabled, &settings.PublicNotice,
+		&configurationJSON, &settings.UpdatedBy, &settings.UpdatedByHandle, &settings.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return SystemSettingPolicy{}, ErrNotFound
+		return SystemSettings{}, ErrNotFound
 	} else if err != nil {
-		return SystemSettingPolicy{}, err
+		return SystemSettings{}, err
 	}
-	rows, err := s.pool.Query(ctx, `SELECT r.id,r.version,r.parent_revision_id,r.name,r.registrations_enabled,r.generations_enabled,r.publishing_enabled,r.marketplace_checkout_enabled,r.task_creation_enabled,r.public_notice,r.created_by,u.handle,r.created_at FROM system_setting_revisions r LEFT JOIN users u ON u.id=r.created_by WHERE ($1::int IS NULL OR r.version < $1) ORDER BY r.version DESC LIMIT $2`, cursorVersion, input.Limit+1)
-	if err != nil {
-		return SystemSettingPolicy{}, fmt.Errorf("list system settings: %w", err)
+	if err := json.Unmarshal(configurationJSON, &settings.SiteConfiguration); err != nil {
+		return SystemSettings{}, fmt.Errorf("decode site configuration: %w", err)
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var item SystemSettingRevision
-		if err := rows.Scan(&item.ID, &item.Version, &item.ParentRevisionID, &item.Name, &item.RegistrationsEnabled, &item.GenerationsEnabled, &item.PublishingEnabled, &item.MarketplaceCheckoutEnabled, &item.TaskCreationEnabled, &item.PublicNotice, &item.CreatedBy, &item.CreatedByHandle, &item.CreatedAt); err != nil {
-			return policy, err
-		}
-		policy.History = append(policy.History, item)
-	}
-	if err := rows.Err(); err != nil {
-		return policy, err
-	}
-	if len(policy.History) > input.Limit {
-		policy.History = policy.History[:input.Limit]
-		cursor := encodeRevisionHistoryCursor(policy.History[len(policy.History)-1].Version)
-		policy.NextCursor = &cursor
-	}
-	return policy, nil
+	return settings, nil
 }
 
-func (s *Service) UpdateSystemSettingPolicy(ctx context.Context, actorID uuid.UUID, input SystemSettingUpdate, _ string) (SystemSettingPolicy, error) {
-	input.Name, input.PublicNotice = strings.TrimSpace(input.Name), strings.TrimSpace(input.PublicNotice)
-	if input.ExpectedVersion < 1 || len(input.Name) < 3 || len(input.Name) > 80 || len(input.PublicNotice) > 240 {
-		return SystemSettingPolicy{}, ErrInvalid
+func (s *Service) UpdateSystemSettings(ctx context.Context, actorID uuid.UUID, input SystemSettingUpdate, requestID string) (SystemSettings, error) {
+	input.PublicNotice = strings.TrimSpace(input.PublicNotice)
+	if len(input.PublicNotice) > 240 {
+		return SystemSettings{}, ErrInvalid
 	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return SystemSettingPolicy{}, err
+		return SystemSettings{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var activeID uuid.UUID
-	var version int
-	if err := tx.QueryRow(ctx, `SELECT active_revision_id,version FROM system_setting_state WHERE singleton=true FOR UPDATE`).Scan(&activeID, &version); err != nil {
-		return SystemSettingPolicy{}, err
+	var settingsID uuid.UUID
+	err = tx.QueryRow(ctx, `
+		UPDATE system_settings
+		SET registrations_enabled=$1,generations_enabled=$2,publishing_enabled=$3,
+		    marketplace_checkout_enabled=$4,task_creation_enabled=$5,public_notice=$6,
+		    updated_by=$7,updated_at=now()
+		WHERE singleton=true
+		RETURNING id`, input.RegistrationsEnabled, input.GenerationsEnabled, input.PublishingEnabled,
+		input.MarketplaceCheckoutEnabled, input.TaskCreationEnabled, input.PublicNotice, actorID).Scan(&settingsID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return SystemSettings{}, ErrNotFound
+	} else if err != nil {
+		return SystemSettings{}, err
 	}
-	if version != input.ExpectedVersion {
-		return SystemSettingPolicy{}, ErrConflict
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO audit_events(actor_id,action,resource_type,resource_id,reason,request_id,metadata)
+		VALUES($1,'admin.system_settings_updated','system_settings',$2,'Administrator updated current system settings',$3,
+		       jsonb_build_object('registrationsEnabled',$4::boolean,'generationsEnabled',$5::boolean,
+		                          'publishingEnabled',$6::boolean,'marketplaceCheckoutEnabled',$7::boolean,
+		                          'taskCreationEnabled',$8::boolean))`, actorID, settingsID, requestID,
+		input.RegistrationsEnabled, input.GenerationsEnabled, input.PublishingEnabled,
+		input.MarketplaceCheckoutEnabled, input.TaskCreationEnabled); err != nil {
+		return SystemSettings{}, err
 	}
-	newID, newVersion := uuid.New(), version+1
-	_, err = tx.Exec(ctx, `INSERT INTO system_setting_revisions(id,version,parent_revision_id,name,registrations_enabled,generations_enabled,publishing_enabled,marketplace_checkout_enabled,task_creation_enabled,public_notice,reason,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`, newID, newVersion, activeID, input.Name, input.RegistrationsEnabled, input.GenerationsEnabled, input.PublishingEnabled, input.MarketplaceCheckoutEnabled, input.TaskCreationEnabled, input.PublicNotice, "Administrative configuration update", actorID)
+	if err := tx.Commit(ctx); err != nil {
+		return SystemSettings{}, err
+	}
+	return s.GetSystemSettings(ctx)
+}
+
+func (s *Service) GetSiteConfiguration(ctx context.Context) (SiteConfiguration, error) {
+	var configurationJSON []byte
+	if err := s.pool.QueryRow(ctx, `SELECT site_configuration FROM system_settings WHERE singleton=true`).Scan(&configurationJSON); errors.Is(err, pgx.ErrNoRows) {
+		return SiteConfiguration{}, ErrNotFound
+	} else if err != nil {
+		return SiteConfiguration{}, err
+	}
+	var configuration SiteConfiguration
+	if err := json.Unmarshal(configurationJSON, &configuration); err != nil {
+		return SiteConfiguration{}, fmt.Errorf("decode public site configuration: %w", err)
+	}
+	return configuration, nil
+}
+
+func (s *Service) UpdateSiteConfiguration(ctx context.Context, actorID uuid.UUID, configuration SiteConfiguration, requestID string) (SiteConfiguration, error) {
+	normalizeSiteConfiguration(&configuration)
+	if !validSiteConfiguration(configuration) {
+		return SiteConfiguration{}, ErrInvalid
+	}
+	configurationJSON, err := json.Marshal(configuration)
 	if err != nil {
-		return SystemSettingPolicy{}, err
+		return SiteConfiguration{}, fmt.Errorf("encode site configuration: %w", err)
 	}
-	if _, err = tx.Exec(ctx, `UPDATE system_setting_state SET active_revision_id=$1,version=$2,updated_at=now() WHERE singleton=true`, newID, newVersion); err != nil {
-		return SystemSettingPolicy{}, err
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return SiteConfiguration{}, err
 	}
-	if err = tx.Commit(ctx); err != nil {
-		return SystemSettingPolicy{}, err
+	defer func() { _ = tx.Rollback(ctx) }()
+	var settingsID uuid.UUID
+	err = tx.QueryRow(ctx, `
+		UPDATE system_settings
+		SET site_configuration=$1,updated_by=$2,updated_at=now()
+		WHERE singleton=true
+		RETURNING id`, configurationJSON, actorID).Scan(&settingsID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return SiteConfiguration{}, ErrNotFound
+	} else if err != nil {
+		return SiteConfiguration{}, err
 	}
-	return s.GetSystemSettingPolicy(ctx)
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO audit_events(actor_id,action,resource_type,resource_id,reason,request_id,metadata)
+		VALUES($1,'admin.site_configuration_updated','system_settings',$2,'Administrator updated public site configuration',$3,
+		       jsonb_build_object('siteName',$4::text,'serverUrl',$5::text,'siteIconUrl',$6::text))`,
+		actorID, settingsID, requestID, configuration.SiteName, configuration.ServerURL, configuration.SiteIconURL); err != nil {
+		return SiteConfiguration{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return SiteConfiguration{}, err
+	}
+	return configuration, nil
+}
+
+func normalizeSiteConfiguration(configuration *SiteConfiguration) {
+	configuration.SiteName = strings.TrimSpace(configuration.SiteName)
+	configuration.ServerURL = strings.TrimRight(strings.TrimSpace(configuration.ServerURL), "/")
+	configuration.SiteIconURL = strings.TrimSpace(configuration.SiteIconURL)
+	configuration.FooterText.EnUS = strings.TrimSpace(configuration.FooterText.EnUS)
+	configuration.FooterText.ZhCN = strings.TrimSpace(configuration.FooterText.ZhCN)
+	policies := []*LocalizedSiteText{
+		&configuration.Policies.Terms, &configuration.Policies.Privacy, &configuration.Policies.Cookies, &configuration.Policies.Acceptable,
+		&configuration.Policies.AI, &configuration.Policies.Licensing, &configuration.Policies.Refunds, &configuration.Policies.Copyright,
+	}
+	for _, policy := range policies {
+		policy.EnUS = strings.TrimSpace(policy.EnUS)
+		policy.ZhCN = strings.TrimSpace(policy.ZhCN)
+	}
+}
+
+func validSiteConfiguration(configuration SiteConfiguration) bool {
+	if len(configuration.SiteName) < 2 || len(configuration.SiteName) > 80 || !validAbsoluteHTTPURL(configuration.ServerURL) || !validSiteIconURL(configuration.SiteIconURL) ||
+		len(configuration.FooterText.EnUS) > 1000 || len(configuration.FooterText.ZhCN) > 1000 {
+		return false
+	}
+	policies := []LocalizedSiteText{
+		configuration.Policies.Terms, configuration.Policies.Privacy, configuration.Policies.Cookies, configuration.Policies.Acceptable,
+		configuration.Policies.AI, configuration.Policies.Licensing, configuration.Policies.Refunds, configuration.Policies.Copyright,
+	}
+	for _, policy := range policies {
+		if len(policy.EnUS) > 50000 || len(policy.ZhCN) > 50000 {
+			return false
+		}
+	}
+	return true
+}
+
+func validAbsoluteHTTPURL(value string) bool {
+	parsed, err := url.ParseRequestURI(value)
+	return err == nil && (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Host != "" && len(value) <= 2048
+}
+
+func validSiteIconURL(value string) bool {
+	if strings.HasPrefix(value, "/") && !strings.HasPrefix(value, "//") && len(value) <= 2048 {
+		return true
+	}
+	return validAbsoluteHTTPURL(value)
 }

@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/hcai-chat/hcai-chat/internal/authchallenges"
 	"github.com/hcai-chat/hcai-chat/internal/emailactions"
 	"github.com/hcai-chat/hcai-chat/internal/identity"
 	"github.com/hcai-chat/hcai-chat/internal/platform/httputil"
@@ -57,6 +58,204 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	default:
 		setSessionCookie(w, token, s.config.CookieSecure)
 		httputil.JSON(w, http.StatusOK, map[string]any{"user": user, "authentication": "email_password"})
+	}
+}
+
+type unifiedAuthStartInput struct {
+	Email  string `json:"email"`
+	Locale string `json:"locale"`
+}
+
+type unifiedAuthStartResponse struct {
+	Email     string                    `json:"email"`
+	Account   bool                      `json:"accountExists"`
+	Next      string                    `json:"next"`
+	Challenge *authchallenges.Challenge `json:"challenge,omitempty"`
+}
+
+func (s *Server) unifiedAuthStart(w http.ResponseWriter, r *http.Request) {
+	var input unifiedAuthStartInput
+	if !httputil.DecodeJSON(w, r, &input) {
+		return
+	}
+	email := strings.ToLower(strings.TrimSpace(input.Email))
+	locale := strings.TrimSpace(input.Locale)
+	if locale == "" {
+		locale = "en-US"
+	}
+	exists, err := s.identity.AccountExists(r.Context(), email)
+	if errors.Is(err, identity.ErrInvalid) {
+		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_email", "Enter a valid email address.", false)
+		return
+	}
+	if err != nil {
+		s.internalError(w, r, "check unified auth email", err)
+		return
+	}
+	response := unifiedAuthStartResponse{Email: email, Account: exists}
+	if exists {
+		response.Next = "existing_account"
+	} else {
+		challenge, challengeErr := s.authChallenges.Start(r.Context(), email, authchallenges.RegistrationCode, locale, httputil.RequestID(r.Context()))
+		if errors.Is(challengeErr, authchallenges.ErrInvalid) {
+			httputil.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_email", "Enter a valid email address.", false)
+			return
+		}
+		if errors.Is(challengeErr, authchallenges.ErrRateLimited) {
+			httputil.WriteError(w, r, http.StatusTooManyRequests, "auth_code_rate_limited", "A code was sent recently. Wait before requesting another.", true)
+			return
+		}
+		if challengeErr != nil {
+			s.internalError(w, r, "queue registration code", challengeErr)
+			return
+		}
+		response.Next, response.Challenge = "registration", &challenge
+	}
+	httputil.JSON(w, http.StatusOK, response)
+}
+
+type unifiedAuthCodeInput struct {
+	Email   string `json:"email"`
+	Purpose string `json:"purpose"`
+	Locale  string `json:"locale"`
+}
+
+func (s *Server) unifiedAuthSendCode(w http.ResponseWriter, r *http.Request) {
+	var input unifiedAuthCodeInput
+	if !httputil.DecodeJSON(w, r, &input) {
+		return
+	}
+	input.Email = strings.ToLower(strings.TrimSpace(input.Email))
+	input.Purpose = strings.TrimSpace(input.Purpose)
+	input.Locale = strings.TrimSpace(input.Locale)
+	if input.Locale == "" {
+		input.Locale = "en-US"
+	}
+	if input.Purpose != authchallenges.LoginCode && input.Purpose != authchallenges.RegistrationCode {
+		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_auth_code_purpose", "Use a supported authentication code purpose.", false)
+		return
+	}
+	exists, err := s.identity.AccountExists(r.Context(), input.Email)
+	if errors.Is(err, identity.ErrInvalid) {
+		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_email", "Enter a valid email address.", false)
+		return
+	}
+	if err != nil {
+		s.internalError(w, r, "check auth code account", err)
+		return
+	}
+	if input.Purpose == authchallenges.LoginCode && !exists {
+		httputil.WriteError(w, r, http.StatusNotFound, "account_not_found", "No active account uses this email.", false)
+		return
+	}
+	if input.Purpose == authchallenges.RegistrationCode && exists {
+		httputil.WriteError(w, r, http.StatusConflict, "account_exists", "An account already uses this email. Continue with sign-in.", false)
+		return
+	}
+	challenge, err := s.authChallenges.Start(r.Context(), input.Email, input.Purpose, input.Locale, httputil.RequestID(r.Context()))
+	if errors.Is(err, authchallenges.ErrInvalid) {
+		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_email", "Enter a valid email address.", false)
+		return
+	}
+	if errors.Is(err, authchallenges.ErrRateLimited) {
+		httputil.WriteError(w, r, http.StatusTooManyRequests, "auth_code_rate_limited", "A code was sent recently. Wait before requesting another.", true)
+		return
+	}
+	if err != nil {
+		s.internalError(w, r, "queue auth code", err)
+		return
+	}
+	httputil.JSON(w, http.StatusAccepted, map[string]any{"challenge": challenge})
+}
+
+type unifiedAuthConfirmInput struct {
+	ChallengeID string `json:"challengeId"`
+	Email       string `json:"email"`
+	Code        string `json:"code"`
+}
+
+func (s *Server) unifiedAuthLoginCode(w http.ResponseWriter, r *http.Request) {
+	var input unifiedAuthConfirmInput
+	if !httputil.DecodeJSON(w, r, &input) {
+		return
+	}
+	id, err := uuid.Parse(strings.TrimSpace(input.ChallengeID))
+	if err != nil {
+		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_auth_challenge", "The authentication challenge is invalid.", false)
+		return
+	}
+	user, token, err := s.authChallenges.ConfirmLogin(r.Context(), id, input.Email, input.Code, requestClientInfo(r, s.config.TrustedProxyCIDRs))
+	switch {
+	case errors.Is(err, authchallenges.ErrInvalid), errors.Is(err, authchallenges.ErrInvalidCode):
+		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_auth_code", "Enter the six-digit code from your email.", false)
+	case errors.Is(err, authchallenges.ErrNotFound):
+		httputil.WriteError(w, r, http.StatusNotFound, "auth_challenge_not_found", "The authentication code is no longer available.", false)
+	case errors.Is(err, authchallenges.ErrExpired):
+		httputil.WriteError(w, r, http.StatusGone, "auth_code_expired", "That code has expired. Request a new one.", false)
+	case errors.Is(err, authchallenges.ErrRateLimited):
+		httputil.WriteError(w, r, http.StatusTooManyRequests, "auth_code_rate_limited", "Too many attempts. Request a new code.", true)
+	case errors.Is(err, authchallenges.ErrConflict):
+		httputil.WriteError(w, r, http.StatusConflict, "auth_challenge_consumed", "That code can no longer be used.", false)
+	case errors.Is(err, identity.ErrInactive):
+		httputil.WriteError(w, r, http.StatusForbidden, "account_inactive", "This account is not active. Contact support before trying again.", false)
+	case errors.Is(err, identity.ErrInvalidLogin):
+		httputil.WriteError(w, r, http.StatusUnauthorized, "invalid_credentials", "The email or code is incorrect.", false)
+	case err != nil:
+		s.internalError(w, r, "confirm login code", err)
+	default:
+		setSessionCookie(w, token, s.config.CookieSecure)
+		httputil.JSON(w, http.StatusOK, map[string]any{"user": user, "authentication": "email_code"})
+	}
+}
+
+type unifiedAuthRegisterInput struct {
+	ChallengeID string `json:"challengeId"`
+	Code        string `json:"code"`
+	identity.RegisterInput
+}
+
+func (s *Server) unifiedAuthRegister(w http.ResponseWriter, r *http.Request) {
+	var input unifiedAuthRegisterInput
+	if !httputil.DecodeJSON(w, r, &input) {
+		return
+	}
+	// The unified screen intentionally asks only for a handle and password;
+	// keep the legacy registration fields compatible by filling sensible values.
+	if strings.TrimSpace(input.DisplayName) == "" {
+		input.DisplayName = input.Handle
+	}
+	if strings.TrimSpace(input.Locale) == "" {
+		input.Locale = "en-US"
+	}
+	if strings.TrimSpace(input.Timezone) == "" {
+		input.Timezone = "UTC"
+	}
+	id, err := uuid.Parse(strings.TrimSpace(input.ChallengeID))
+	if err != nil {
+		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_auth_challenge", "The authentication challenge is invalid.", false)
+		return
+	}
+	user, token, err := s.authChallenges.CompleteRegistration(r.Context(), id, input.RegisterInput, input.Code, requestClientInfo(r, s.config.TrustedProxyCIDRs))
+	switch {
+	case errors.Is(err, authchallenges.ErrInvalid), errors.Is(err, identity.ErrInvalid):
+		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_registration", "Use a valid code, a 3-30 character lowercase handle, a password of at least 10 characters, and a supported locale and IANA timezone.", false)
+	case errors.Is(err, authchallenges.ErrInvalidCode):
+		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_auth_code", "Enter the six-digit code from your email.", false)
+	case errors.Is(err, authchallenges.ErrNotFound):
+		httputil.WriteError(w, r, http.StatusNotFound, "auth_challenge_not_found", "The registration code is no longer available.", false)
+	case errors.Is(err, authchallenges.ErrExpired):
+		httputil.WriteError(w, r, http.StatusGone, "auth_code_expired", "That code has expired. Request a new one.", false)
+	case errors.Is(err, authchallenges.ErrRateLimited):
+		httputil.WriteError(w, r, http.StatusTooManyRequests, "auth_code_rate_limited", "Too many attempts. Request a new code.", true)
+	case errors.Is(err, authchallenges.ErrConflict), errors.Is(err, identity.ErrConflict):
+		httputil.WriteError(w, r, http.StatusConflict, "account_exists", "An account already uses this email or handle.", false)
+	case errors.Is(err, systemsettings.ErrDisabled):
+		httputil.WriteError(w, r, http.StatusServiceUnavailable, "feature_disabled", "New registrations are temporarily unavailable by an audited platform setting.", false)
+	case err != nil:
+		s.internalError(w, r, "complete unified registration", err)
+	default:
+		setSessionCookie(w, token, s.config.CookieSecure)
+		httputil.JSON(w, http.StatusCreated, map[string]any{"user": user, "authentication": "email_code"})
 	}
 }
 

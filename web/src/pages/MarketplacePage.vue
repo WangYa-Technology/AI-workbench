@@ -1,15 +1,17 @@
 <script setup lang="ts">
 import {
-  ArrowLeft, ArrowRight, BadgeCheck, Check, ChevronRight, CircleDollarSign, FileCheck2,
+  ArrowLeft, ArrowRight, BadgeCheck, Check, ChevronRight, CircleDollarSign,
   Filter, Layers3, LoaderCircle, LogIn, PackageCheck, RefreshCw, Search, ShieldCheck, ShoppingBag,
-  UserPlus, UserRound, Users,
+  UserPlus, Users,
 } from 'lucide-vue-next'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
-import { api, messageFrom, type Product, type Purchase } from '../api/client'
+import { api, messageFrom, type Product } from '../api/client'
 import { formatCurrency } from '../lib/format'
+import { openCheckoutWindow } from '../lib/checkout'
 import { useSessionStore } from '../stores/session'
+import PageHero from '../components/ui/PageHero.vue'
 import UiButton from '../components/ui/UiButton.vue'
 import UiCheckbox from '../components/ui/UiCheckbox.vue'
 import UiIconButton from '../components/ui/UiIconButton.vue'
@@ -22,7 +24,6 @@ const router = useRouter()
 const session = useSessionStore()
 const products = ref<Product[]>([])
 const detail = ref<Product | null>(null)
-const purchase = ref<Purchase | null>(null)
 const loading = ref(true)
 const purchasing = ref(false)
 const error = ref('')
@@ -41,6 +42,11 @@ const marketStats = computed(() => ({
   creators: new Set(products.value.map(item => item.seller.handle)).size,
   types: new Set(products.value.map(item => item.productType)).size,
 }))
+const marketplaceHeroStats = computed(() => [
+  { value: marketStats.value.products, label: t('marketplace.listedProducts'), icon: ShoppingBag, tone: 'blue' as const },
+  { value: marketStats.value.creators, label: t('marketplace.activeCreators'), icon: Users, tone: 'violet' as const },
+  { value: marketStats.value.types, label: t('marketplace.licenseTypes'), icon: Layers3, tone: 'green' as const },
+])
 
 function money(cents: number, currency = 'USD') {
   return formatCurrency(cents, currency, locale.value)
@@ -49,7 +55,6 @@ function money(cents: number, currency = 'USD') {
 async function load() {
   loading.value = true
   error.value = ''
-  purchase.value = null
   try {
     const [, runtime] = await Promise.all([session.ensure(), api.meta()])
     paymentEnabled.value = runtime.paymentProvider.enabled
@@ -77,18 +82,20 @@ async function applyFilters() {
 }
 
 async function buy() {
-  if (!session.user || !detail.value || !accepted.value) return
+  if (!session.user || !detail.value || !accepted.value || !paymentEnabled.value) return
   purchasing.value = true
   error.value = ''
+  let checkoutWindow = null as ReturnType<typeof globalThis.open>
   try {
-    if (paymentEnabled.value) {
-      const checkout = await api.checkoutProduct(detail.value.id, accepted.value)
-      globalThis.location.assign(checkout.checkoutUrl)
-    } else {
-      purchase.value = await api.purchaseProduct(detail.value.id, accepted.value)
-      detail.value = await api.getProduct(detail.value.id)
+    checkoutWindow = openCheckoutWindow()
+    if (!checkoutWindow) {
+      error.value = t('errors.codes.checkout_popup_blocked')
+      return
     }
+    const checkout = await api.checkoutProduct(detail.value.id, accepted.value)
+    checkoutWindow.location.href = checkout.checkoutUrl
   } catch (reason) {
+    checkoutWindow?.close()
     error.value = messageFrom(reason)
   } finally {
     purchasing.value = false
@@ -109,39 +116,33 @@ onMounted(() => void load())
 <template>
   <section class="market-page content-width" :class="{ 'is-detail': isDetail }">
     <template v-if="!isDetail">
-      <header class="page-hero-header page-hero-banner marketplace-header">
-        <div class="page-hero-copy">
-          <span class="page-hero-eyebrow"><ShieldCheck :size="14" aria-hidden="true" />{{ t('marketplace.localTest') }}</span>
-          <h1>{{ t('marketplace.title') }}</h1>
-          <p>{{ t('marketplace.summary') }}</p>
-          <div class="page-hero-stats" :aria-label="t('marketplace.statsLabel')">
-            <article><span class="page-hero-stat-icon" data-tone="blue"><ShoppingBag :size="23" /></span><div><strong>{{ marketStats.products }}</strong><span>{{ t('marketplace.listedProducts') }}</span></div></article>
-            <article><span class="page-hero-stat-icon" data-tone="violet"><Users :size="23" /></span><div><strong>{{ marketStats.creators }}</strong><span>{{ t('marketplace.activeCreators') }}</span></div></article>
-            <article><span class="page-hero-stat-icon" data-tone="green"><Layers3 :size="23" /></span><div><strong>{{ marketStats.types }}</strong><span>{{ t('marketplace.licenseTypes') }}</span></div></article>
-          </div>
-        </div>
-        <div class="page-hero-actions market-header-actions">
+      <PageHero
+        :eyebrow="paymentEnabled ? t(paymentLiveMode ? 'marketplace.providerLiveShort' : 'marketplace.providerTestShort') : t('marketplace.paymentUnavailable')"
+        :eyebrow-icon="ShieldCheck"
+        :title="t('marketplace.title')"
+        :summary="t('marketplace.summary')"
+        :stats="marketplaceHeroStats"
+        :stats-label="t('marketplace.statsLabel')"
+        artwork-src="/tasks/task-hero-transparent.webp"
+      >
+        <template #actions>
           <UiButton v-if="session.user" as="RouterLink" class="command-button secondary" variant="secondary" to="/workspace/orders">
             <template #start>
               <ShoppingBag :size="17" />
             </template>{{ t('marketplace.myOrders') }}
           </UiButton>
-          <UiButton v-if="!session.user" as="RouterLink" class="command-button secondary" variant="secondary" :to="{ path: '/settings', query: { auth: 'login', returnTo: route.fullPath } }">
+          <UiButton v-if="!session.user" as="RouterLink" class="command-button secondary" variant="secondary" :to="{ path: '/auth', query: { auth: 'login', returnTo: route.fullPath } }">
             <template #start>
               <LogIn :size="17" />
             </template>{{ t('account.signIn') }}
           </UiButton>
-          <UiButton v-if="!session.user" as="RouterLink" class="command-button primary" variant="primary" :to="{ path: '/settings', query: { auth: 'register', returnTo: route.fullPath } }">
+          <UiButton v-if="!session.user" as="RouterLink" class="command-button primary" variant="primary" :to="{ path: '/auth', query: { auth: 'register', returnTo: route.fullPath } }">
             <template #start>
               <UserPlus :size="17" />
             </template>{{ t('account.createAccount') }}
           </UiButton>
-        </div>
-        <img class="page-hero-art marketplace-hero-art" src="/tasks/task-hero-transparent.webp" alt="" width="768" height="714" aria-hidden="true" />
-        <div v-if="session.user" class="page-hero-account">
-          <span class="page-hero-avatar"><UserRound :size="22" /></span><span><strong>{{ session.user.displayName }}</strong><small>@{{ session.user.handle }}</small></span><ShieldCheck :size="15" />
-        </div>
-      </header>
+        </template>
+      </PageHero>
 
       <form class="market-filters" role="search" @submit.prevent="applyFilters">
         <label class="market-search"><span class="sr-only">{{ t('actions.search') }}</span><Search :size="17" /><UiInput v-model="search" type="search" :placeholder="t('marketplace.searchPlaceholder')" /></label>
@@ -253,19 +254,16 @@ onMounted(() => void load())
         </main>
 
         <aside class="product-purchase-rail">
-          <span>{{ paymentEnabled ? t('marketplace.providerPrice') : t('marketplace.localTestPrice') }}</span><strong>{{ money(detail.priceCents, detail.currency) }}</strong><p>{{ paymentEnabled ? t(paymentLiveMode ? 'marketplace.liveCharge' : 'marketplace.testCharge') : t('marketplace.noRealCharge') }}</p>
+          <span>{{ t('marketplace.providerPrice') }}</span><strong>{{ money(detail.priceCents, detail.currency) }}</strong><p>{{ paymentEnabled ? t(paymentLiveMode ? 'marketplace.liveCharge' : 'marketplace.testCharge') : t('marketplace.paymentUnavailable') }}</p>
           <dl><div><dt>{{ t('marketplace.license') }}</dt><dd>{{ detail.license.name }}</dd></div><div><dt>{{ t('marketplace.refundWindow') }}</dt><dd>{{ t('marketplace.refundDays', { count: detail.license.refundWindowDays }) }}</dd></div></dl>
-          <div v-if="purchase" class="purchase-success" role="status">
-            <FileCheck2 :size="20" /><div><strong>{{ t('marketplace.purchaseSuccess') }}</strong><span>{{ t('marketplace.assetGranted') }}</span></div>
-          </div>
           <div v-if="!session.user" class="market-auth-prompt">
             <div><h2>{{ t('marketplace.guestTitle') }}</h2><p>{{ t('marketplace.guestSummary') }}</p></div>
-            <UiButton as="RouterLink" class="command-button primary wide" variant="primary" :to="{ path: '/settings', query: { auth: 'login', returnTo: route.fullPath } }">
+            <UiButton as="RouterLink" class="command-button primary wide" variant="primary" :to="{ path: '/auth', query: { auth: 'login', returnTo: route.fullPath } }">
               <template #start>
                 <LogIn :size="17" />
               </template>{{ t('account.signIn') }}
             </UiButton>
-            <UiButton as="RouterLink" class="text-link" variant="ghost" size="sm" :to="{ path: '/settings', query: { auth: 'register', returnTo: route.fullPath } }">
+            <UiButton as="RouterLink" class="text-link" variant="ghost" size="sm" :to="{ path: '/auth', query: { auth: 'register', returnTo: route.fullPath } }">
               {{ t('account.createAccount') }}
             </UiButton>
           </div>
@@ -284,13 +282,13 @@ onMounted(() => void load())
             <p v-if="error" class="form-error" role="alert">
               {{ error }}
             </p>
-            <UiButton class="command-button primary wide" variant="primary" type="submit" :loading="purchasing" :disabled="!accepted">
+            <UiButton class="command-button primary wide" variant="primary" type="submit" :loading="purchasing" :disabled="!paymentEnabled || !accepted">
               <template #start>
                 <CircleDollarSign v-if="!purchasing" :size="17" />
-              </template>{{ purchasing ? t(paymentEnabled ? 'marketplace.openingCheckout' : 'marketplace.purchasing') : t(paymentEnabled ? 'marketplace.openCheckout' : 'marketplace.purchase') }}
+              </template>{{ purchasing ? t('marketplace.openingCheckout') : paymentEnabled ? t('marketplace.openCheckout') : t('marketplace.paymentUnavailable') }}
             </UiButton>
           </form>
-          <small>{{ t(paymentEnabled ? 'marketplace.providerCheckoutEvidence' : 'marketplace.checkoutEvidence') }}</small>
+          <small>{{ t(paymentEnabled ? 'marketplace.providerCheckoutEvidence' : 'marketplace.paymentUnavailable') }}</small>
         </aside>
       </div>
     </template>

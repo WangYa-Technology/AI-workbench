@@ -467,15 +467,7 @@ func (s *Server) adminGetSystemSettings(w http.ResponseWriter, r *http.Request) 
 	if _, ok := s.requirePermission(w, r, "admin:settings"); !ok {
 		return
 	}
-	limit, ok := adminDirectoryLimit(w, r, "invalid_admin_system_setting_history_filters", "system setting history")
-	if !ok {
-		return
-	}
-	item, err := s.admin.GetSystemSettingPolicy(r.Context(), admin.RevisionHistoryInput{Cursor: r.URL.Query().Get("cursor"), Limit: limit})
-	if errors.Is(err, admin.ErrInvalidSystemSettingHistory) {
-		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_admin_system_setting_history_filters", "Use a system setting history page size from 1 to 50 and an unmodified cursor.", false)
-		return
-	}
+	item, err := s.admin.GetSystemSettings(r.Context())
 	s.writeAdminResult(w, r, item, err)
 }
 
@@ -488,7 +480,20 @@ func (s *Server) adminUpdateSystemSettings(w http.ResponseWriter, r *http.Reques
 	if !httputil.DecodeJSON(w, r, &input) {
 		return
 	}
-	item, err := s.admin.UpdateSystemSettingPolicy(r.Context(), actor.ID, input, httputil.RequestID(r.Context()))
+	item, err := s.admin.UpdateSystemSettings(r.Context(), actor.ID, input, httputil.RequestID(r.Context()))
+	s.writeAdminResult(w, r, item, err)
+}
+
+func (s *Server) adminUpdateSiteConfiguration(w http.ResponseWriter, r *http.Request) {
+	actor, ok := s.requirePermission(w, r, "admin:settings")
+	if !ok {
+		return
+	}
+	var input admin.SiteConfiguration
+	if !httputil.DecodeJSON(w, r, &input) {
+		return
+	}
+	item, err := s.admin.UpdateSiteConfiguration(r.Context(), actor.ID, input, httputil.RequestID(r.Context()))
 	s.writeAdminResult(w, r, item, err)
 }
 
@@ -624,6 +629,33 @@ func (s *Server) adminUpdatePaymentDestination(w http.ResponseWriter, r *http.Re
 		return
 	}
 	item, err := s.admin.UpdatePaymentDestination(r.Context(), actor.ID, id, input, httputil.RequestID(r.Context()))
+	s.writeAdminResult(w, r, item, err)
+}
+
+func (s *Server) adminListPaymentProviderConfigs(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requirePermission(w, r, "admin:finance"); !ok {
+		return
+	}
+	items, err := s.admin.ListPaymentProviderConfigsWithDeployment(r.Context(), s.paymentProviderDeploymentStatus())
+	if err != nil {
+		s.internalError(w, r, "admin list payment provider configs", err)
+		return
+	}
+	httputil.JSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (s *Server) adminUpdatePaymentProviderConfig(w http.ResponseWriter, r *http.Request) {
+	actor, ok := s.requirePermission(w, r, "admin:finance")
+	if !ok {
+		return
+	}
+	var input admin.PaymentProviderConfigUpdate
+	if !httputil.DecodeJSON(w, r, &input) {
+		return
+	}
+	provider := strings.ToLower(strings.TrimSpace(chi.URLParam(r, "provider")))
+	deployment := s.paymentProviderDeploymentStatus()[provider]
+	item, err := s.admin.UpdatePaymentProviderConfigWithDeployment(r.Context(), actor.ID, provider, input, httputil.RequestID(r.Context()), &deployment)
 	s.writeAdminResult(w, r, item, err)
 }
 

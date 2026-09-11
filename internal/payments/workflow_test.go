@@ -4,12 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/hcai-chat/hcai-chat/internal/notifications"
 	"github.com/hcai-chat/hcai-chat/internal/platform/jobs"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type productCheckoutRuntime struct {
@@ -17,11 +20,44 @@ type productCheckoutRuntime struct {
 	refundCalls int
 }
 
+type waffoBillingCheckoutRuntime struct {
+	calls          int
+	lastSuccessURL string
+}
+
+func (*waffoBillingCheckoutRuntime) Provider() string { return "waffo_pancake" }
+func (r *waffoBillingCheckoutRuntime) CreateCheckout(_ context.Context, input CheckoutRequest) (CheckoutSession, error) {
+	r.calls++
+	r.lastSuccessURL = input.SuccessURL
+	return CheckoutSession{
+		ProviderID: "CHK_waffo_billing_123", CheckoutURL: "https://pancake.waffo.ai/store/test/checkout/CHK_waffo_billing_123", Status: "open",
+		PaymentStatus: "pending", ExpiresAt: time.Now().Add(time.Hour).UTC(), LiveMode: false,
+	}, nil
+}
+func (*waffoBillingCheckoutRuntime) CreateRefund(context.Context, RefundRequest) (Refund, error) {
+	return Refund{}, ErrProviderUnavailable
+}
+func (*waffoBillingCheckoutRuntime) CreateTransfer(context.Context, TransferRequest) (Transfer, error) {
+	return Transfer{}, ErrProviderUnavailable
+}
+func (*waffoBillingCheckoutRuntime) CreateConnectAccount(context.Context, ConnectAccountRequest) (ConnectAccount, error) {
+	return ConnectAccount{}, ErrProviderUnavailable
+}
+func (*waffoBillingCheckoutRuntime) CreateAccountLink(context.Context, AccountLinkRequest) (AccountLink, error) {
+	return AccountLink{}, ErrProviderUnavailable
+}
+
 func (*productCheckoutRuntime) Provider() string { return "stripe" }
 func (r *productCheckoutRuntime) CreateCheckout(_ context.Context, input CheckoutRequest) (CheckoutSession, error) {
 	r.calls++
+	providerID := "cs_workflow123"
+	checkoutURL := "https://checkout.stripe.com/c/pay/workflow123"
+	if r.calls > 1 {
+		providerID = fmt.Sprintf("cs_workflow%03d", r.calls)
+		checkoutURL = "https://checkout.stripe.com/c/pay/" + providerID
+	}
 	return CheckoutSession{
-		ProviderID: "cs_workflow123", CheckoutURL: "https://checkout.stripe.com/c/pay/workflow123", Status: "open",
+		ProviderID: providerID, CheckoutURL: checkoutURL, Status: "open",
 		PaymentStatus: "unpaid", ExpiresAt: time.Now().Add(time.Hour).UTC(), LiveMode: false,
 	}, nil
 }
@@ -190,6 +226,254 @@ func TestProductCheckoutSignedFulfillmentWorkflow(t *testing.T) {
 		t.Fatalf("replay successful refund event: %v", err)
 	}
 	assertProductRefundState(t, pool, checkout, "refunded", "refunded", "refunded", 0, 0)
+}
+
+func TestExternalBillingCheckoutFulfillmentWorkflow(t *testing.T) {
+	pool, cleanup := paymentTestPool(t)
+	defer cleanup()
+	ctx := context.Background()
+	userID := uuid.New()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO users(id,email,handle,display_name,role)
+		VALUES($1,$2,$3,'Billing Buyer','member')`,
+		userID, userID.String()+"@test.local", "billing_"+userID.String()[:8]); err != nil {
+		t.Fatal(err)
+	}
+
+	var planID uuid.UUID
+	var planAmount int
+	var planPoints int64
+	if err := pool.QueryRow(ctx, `
+		SELECT id,price_cents,included_points
+		FROM subscription_plans WHERE tier_code='creator' AND active=true`).Scan(&planID, &planAmount, &planPoints); err != nil {
+		t.Fatal(err)
+	}
+	var walletBefore int64
+	var pointsBefore int64
+	if err := pool.QueryRow(ctx, `SELECT balance_cents FROM billing_accounts WHERE user_id=$1 AND currency='USD'`, userID).Scan(&walletBefore); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT balance_points FROM point_accounts WHERE user_id=$1`, userID).Scan(&pointsBefore); err != nil {
+		t.Fatal(err)
+	}
+
+	runtime := &productCheckoutRuntime{}
+	service := NewServiceWithRuntimes(pool, ServiceConfig{
+		Enabled: true, Provider: "stripe", LiveMode: false,
+		APIVersion: testStripeAPIVersion, WebhookSecret: testStripeWebhookSecret,
+		WebhookTolerance: 5 * time.Minute,
+	}, NewRuntimeCatalog(runtime))
+
+	topup, created, err := service.BeginWalletTopupCheckout(ctx, userID, 4200, "wallet-topup-workflow-001", "wallet-request", "https://app.example.test/workspace/billing?payment=success", "https://app.example.test/workspace/billing?payment=cancelled")
+	if err != nil || !created || topup.Status != "checkout_open" || topup.Purpose != "wallet_topup" || topup.PaymentMode != "stripe" || runtime.calls != 1 {
+		t.Fatalf("create wallet top-up checkout: checkout=%#v created=%t calls=%d err=%v", topup, created, runtime.calls, err)
+	}
+	topupReplay, created, err := service.BeginWalletTopupCheckout(ctx, userID, 4200, "wallet-topup-workflow-001", "wallet-replay", "https://app.example.test/workspace/billing?payment=success", "https://app.example.test/workspace/billing?payment=cancelled")
+	if err != nil || created || !topupReplay.AlreadyCreated || topupReplay.PaymentID != topup.PaymentID || runtime.calls != 1 {
+		t.Fatalf("wallet top-up idempotency mismatch: checkout=%#v created=%t calls=%d err=%v", topupReplay, created, runtime.calls, err)
+	}
+
+	now := time.Now().UTC().Truncate(time.Second)
+	service.verifier.now = func() time.Time { return now }
+	walletBody := billingStripeCheckoutEvent("evt_wallet_topup_001", topup.PaymentID, topup.ResourceID, "wallet_topup", topup.AmountCents, "pi_wallet_topup_001", now.Unix())
+	walletReceipt, err := service.ReceiveStripeWebhook(ctx, walletBody, "t="+fmt.Sprint(now.Unix())+",v1="+stripeSignature(testStripeWebhookSecret, now.Unix(), walletBody))
+	if err != nil || walletReceipt.Status != "received" || walletReceipt.Duplicate {
+		t.Fatalf("receive wallet top-up webhook: receipt=%#v err=%v", walletReceipt, err)
+	}
+	processPaymentEventJob(t, pool, service, "billing-wallet-worker")
+	walletDuplicate, err := service.ReceiveStripeWebhook(ctx, walletBody, "t="+fmt.Sprint(now.Unix())+",v1="+stripeSignature(testStripeWebhookSecret, now.Unix(), walletBody))
+	if err != nil || !walletDuplicate.Duplicate {
+		t.Fatalf("duplicate wallet webhook mismatch: receipt=%#v err=%v", walletDuplicate, err)
+	}
+	var walletAfter int64
+	var walletEntries, walletIntentPaid int
+	if err := pool.QueryRow(ctx, `SELECT balance_cents FROM billing_accounts WHERE user_id=$1 AND currency='USD'`, userID).Scan(&walletAfter); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM billing_entries WHERE user_id=$1 AND operation_id=$2 AND entry_type='wallet_topup'`, userID, topup.PaymentID).Scan(&walletEntries); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM payment_intents WHERE id=$1 AND status='paid'`, topup.PaymentID).Scan(&walletIntentPaid); err != nil {
+		t.Fatal(err)
+	}
+	if walletAfter != walletBefore+int64(topup.AmountCents) || walletEntries != 1 || walletIntentPaid != 1 {
+		t.Fatalf("wallet top-up fulfillment mismatch: before=%d after=%d entries=%d paid=%d", walletBefore, walletAfter, walletEntries, walletIntentPaid)
+	}
+
+	subscription, created, err := service.BeginSubscriptionCheckout(ctx, userID, planID, "subscription-workflow-001", "subscription-request", "https://app.example.test/workspace/billing?payment=success", "https://app.example.test/workspace/billing?payment=cancelled")
+	if err != nil || !created || subscription.Status != "checkout_open" || subscription.Purpose != "subscription" || subscription.ResourceID != planID || runtime.calls != 2 {
+		t.Fatalf("create subscription checkout: checkout=%#v created=%t calls=%d err=%v", subscription, created, runtime.calls, err)
+	}
+	subscriptionReplay, created, err := service.BeginSubscriptionCheckout(ctx, userID, planID, "subscription-workflow-001", "subscription-replay", "https://app.example.test/workspace/billing?payment=success", "https://app.example.test/workspace/billing?payment=cancelled")
+	if err != nil || created || !subscriptionReplay.AlreadyCreated || subscriptionReplay.PaymentID != subscription.PaymentID || runtime.calls != 2 {
+		t.Fatalf("subscription idempotency mismatch: checkout=%#v created=%t calls=%d err=%v", subscriptionReplay, created, runtime.calls, err)
+	}
+	subscriptionBody := billingStripeCheckoutEvent("evt_subscription_001", subscription.PaymentID, planID, "subscription", subscription.AmountCents, "pi_subscription_001", now.Add(time.Second).Unix())
+	subscriptionReceipt, err := service.ReceiveStripeWebhook(ctx, subscriptionBody, "t="+fmt.Sprint(now.Add(time.Second).Unix())+",v1="+stripeSignature(testStripeWebhookSecret, now.Add(time.Second).Unix(), subscriptionBody))
+	if err != nil || subscriptionReceipt.Status != "received" || subscriptionReceipt.Duplicate {
+		t.Fatalf("receive subscription webhook: receipt=%#v err=%v", subscriptionReceipt, err)
+	}
+	processPaymentEventJob(t, pool, service, "billing-subscription-worker")
+	subscriptionDuplicate, err := service.ReceiveStripeWebhook(ctx, subscriptionBody, "t="+fmt.Sprint(now.Add(time.Second).Unix())+",v1="+stripeSignature(testStripeWebhookSecret, now.Add(time.Second).Unix(), subscriptionBody))
+	if err != nil || !subscriptionDuplicate.Duplicate {
+		t.Fatalf("duplicate subscription webhook mismatch: receipt=%#v err=%v", subscriptionDuplicate, err)
+	}
+	var activePlanID uuid.UUID
+	var activeSubscriptions, subscriptionPointEntries, subscriptionIntentPaid int
+	var pointsAfter int64
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM user_subscriptions WHERE user_id=$1 AND status='active'`, userID).Scan(&activeSubscriptions); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT plan_id FROM user_subscriptions WHERE user_id=$1 AND purchase_operation_id=$2`, userID, subscription.PaymentID).Scan(&activePlanID); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM point_entries WHERE user_id=$1 AND operation_id=$2 AND entry_type='subscription_credit'`, userID, subscription.PaymentID).Scan(&subscriptionPointEntries); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT balance_points FROM point_accounts WHERE user_id=$1`, userID).Scan(&pointsAfter); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM payment_intents WHERE id=$1 AND status='paid'`, subscription.PaymentID).Scan(&subscriptionIntentPaid); err != nil {
+		t.Fatal(err)
+	}
+	if activeSubscriptions != 1 || activePlanID != planID || subscriptionPointEntries != 1 || pointsAfter != pointsBefore+planPoints || subscriptionIntentPaid != 1 || subscription.AmountCents != planAmount {
+		t.Fatalf("subscription fulfillment mismatch: active=%d plan=%s entries=%d pointsBefore=%d pointsAfter=%d expected=%d paid=%d amount=%d expectedAmount=%d", activeSubscriptions, activePlanID, subscriptionPointEntries, pointsBefore, pointsAfter, pointsBefore+planPoints, subscriptionIntentPaid, subscription.AmountCents, planAmount)
+	}
+}
+
+func TestWaffoSubscriptionActivationAndRenewalWorkflow(t *testing.T) {
+	pool, cleanup := paymentTestPool(t)
+	defer cleanup()
+	ctx := context.Background()
+	userID := uuid.New()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO users(id,email,handle,display_name,role)
+		VALUES($1,$2,$3,'Waffo Subscriber','member')`,
+		userID, userID.String()+"@test.local", "waffo_"+userID.String()[:8]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO payment_provider_configs(provider,enabled,environment,merchant_id,store_id,product_id_onetime,product_id_subscription)
+		VALUES('waffo_pancake',true,'test','MER_test','STO_test','PROD_onetime','PROD_subscription')`); err != nil {
+		t.Fatal(err)
+	}
+
+	var planID uuid.UUID
+	var planAmount int
+	var planPoints int64
+	if err := pool.QueryRow(ctx, `
+		SELECT id,price_cents,included_points FROM subscription_plans
+		WHERE tier_code='creator' AND active=true`).Scan(&planID, &planAmount, &planPoints); err != nil {
+		t.Fatal(err)
+	}
+	var pointsBefore int64
+	if err := pool.QueryRow(ctx, `SELECT balance_points FROM point_accounts WHERE user_id=$1`, userID).Scan(&pointsBefore); err != nil {
+		t.Fatal(err)
+	}
+
+	runtime := &waffoBillingCheckoutRuntime{}
+	service := NewServiceWithRuntimes(pool, ServiceConfig{
+		Enabled: true, Provider: "waffo_pancake", WaffoEnvironment: "test", WaffoMerchantID: "MER_test",
+		WaffoStoreID: "STO_test", WaffoProductIDOnetime: "PROD_onetime", WaffoProductIDSubscription: "PROD_subscription",
+	}, NewRuntimeCatalog(runtime))
+	checkout, created, err := service.BeginSubscriptionCheckout(ctx, userID, planID, "waffo-subscription-001", "waffo-subscription-request", "https://app.example.test/workspace/billing?payment=success", "https://app.example.test/workspace/billing?payment=cancelled")
+	if err != nil || !created || checkout.PaymentMode != "waffo_pancake" || checkout.AmountCents != planAmount || runtime.calls != 1 || !strings.Contains(runtime.lastSuccessURL, "paymentId="+checkout.PaymentID.String()) {
+		t.Fatalf("create Waffo subscription checkout: checkout=%#v created=%t calls=%d err=%v", checkout, created, runtime.calls, err)
+	}
+
+	now := time.Now().UTC().Truncate(time.Second)
+	purpose, currency, succeeded := "subscription", "USD", "succeeded"
+	activationAmount := int64(planAmount)
+	activationPaymentID := "PAY_waffo_initial_123"
+	activation := minimizedProviderEvent{
+		ProviderEventID: "delivery_waffo_activation_123", EventType: "subscription.activated", APIVersion: "waffo-pancake-v1",
+		OccurredAt: now, PayloadSHA256: strings.Repeat("a", 64), ObjectID: "ORD_waffo_subscription_123", ObjectType: "order",
+		PaymentID: &checkout.PaymentID, ResourceID: &planID, Purpose: &purpose, AmountCents: &activationAmount, Currency: &currency,
+		PaymentStatus: &succeeded, ProviderPaymentID: &activationPaymentID, Supported: true,
+	}
+	activationReceipt, err := service.receiveProviderEvent(ctx, "waffo_pancake", activation)
+	if err != nil || activationReceipt.Status != "received" || activationReceipt.Duplicate {
+		t.Fatalf("receive Waffo activation: receipt=%#v err=%v", activationReceipt, err)
+	}
+	processPaymentEventJob(t, pool, service, "waffo-activation-worker")
+
+	var initialPeriodEnd time.Time
+	if err := pool.QueryRow(ctx, `SELECT current_period_end FROM user_subscriptions WHERE purchase_operation_id=$1`, checkout.PaymentID).Scan(&initialPeriodEnd); err != nil {
+		t.Fatal(err)
+	}
+	renewalPaymentID := "PAY_waffo_renewal_456"
+	renewal := activation
+	renewal.ProviderEventID = "delivery_waffo_renewal_456"
+	renewal.EventType = "subscription.payment_succeeded"
+	renewal.OccurredAt = now.Add(31 * 24 * time.Hour)
+	renewal.PayloadSHA256 = strings.Repeat("b", 64)
+	renewal.ProviderPaymentID = &renewalPaymentID
+	renewalReceipt, err := service.receiveProviderEvent(ctx, "waffo_pancake", renewal)
+	if err != nil || renewalReceipt.Status != "received" || renewalReceipt.Duplicate {
+		t.Fatalf("receive Waffo renewal: receipt=%#v err=%v", renewalReceipt, err)
+	}
+	processPaymentEventJob(t, pool, service, "waffo-renewal-worker")
+	duplicate, err := service.receiveProviderEvent(ctx, "waffo_pancake", renewal)
+	if err != nil || !duplicate.Duplicate || duplicate.EventID != renewalReceipt.EventID {
+		t.Fatalf("Waffo renewal replay was not idempotent: receipt=%#v err=%v", duplicate, err)
+	}
+
+	var pointsAfter int64
+	var renewedPeriodEnd time.Time
+	var pointCredits, activeSubscriptions, renewalEvents int
+	if err := pool.QueryRow(ctx, `SELECT balance_points FROM point_accounts WHERE user_id=$1`, userID).Scan(&pointsAfter); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT current_period_end FROM user_subscriptions WHERE purchase_operation_id=$1 AND status='active'`, checkout.PaymentID).Scan(&renewedPeriodEnd); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM point_entries WHERE user_id=$1 AND entry_type='subscription_credit' AND operation_id IN ($2,$3)`, userID, checkout.PaymentID, renewalReceipt.EventID).Scan(&pointCredits); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM user_subscriptions WHERE user_id=$1 AND status='active'`, userID).Scan(&activeSubscriptions); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM payment_intent_events WHERE payment_id=$1 AND event_type='subscription.renewed'`, checkout.PaymentID).Scan(&renewalEvents); err != nil {
+		t.Fatal(err)
+	}
+	if pointsAfter != pointsBefore+2*planPoints || pointCredits != 2 || activeSubscriptions != 1 || renewalEvents != 1 || !renewedPeriodEnd.After(initialPeriodEnd) {
+		t.Fatalf("Waffo subscription lifecycle mismatch: pointsBefore=%d pointsAfter=%d expected=%d credits=%d active=%d renewals=%d initialEnd=%s renewedEnd=%s", pointsBefore, pointsAfter, pointsBefore+2*planPoints, pointCredits, activeSubscriptions, renewalEvents, initialPeriodEnd, renewedPeriodEnd)
+	}
+}
+
+func processPaymentEventJob(t *testing.T, pool *pgxpool.Pool, service *Service, workerID string) {
+	t.Helper()
+	repository := jobs.NewRepository(pool)
+	for attempt := 0; attempt < 10; attempt++ {
+		job, err := repository.Claim(context.Background(), workerID, time.Minute)
+		if err != nil {
+			t.Fatalf("claim payment event job: job=%#v err=%v", job, err)
+		}
+		switch job.Kind {
+		case PaymentEventJobKind:
+			if err := service.HandlePaymentEventJob(context.Background(), job); err != nil {
+				t.Fatal(err)
+			}
+			if err := repository.Complete(context.Background(), job, workerID); err != nil {
+				t.Fatal(err)
+			}
+			return
+		case notifications.JobKind:
+			if err := notifications.NewRepository(pool).HandleDeliveryJob(context.Background(), job); err != nil {
+				t.Fatal(err)
+			}
+			if err := repository.Complete(context.Background(), job, workerID); err != nil {
+				t.Fatal(err)
+			}
+		default:
+			t.Fatalf("unexpected job before payment event: %#v", job)
+		}
+	}
+	t.Fatal("payment event job was not claimed")
+}
+
+func billingStripeCheckoutEvent(eventID string, paymentID, resourceID uuid.UUID, purpose string, amount int, providerPaymentID string, created int64) []byte {
+	return []byte(fmt.Sprintf(`{"id":%q,"object":"event","api_version":%q,"created":%d,"livemode":false,"type":"checkout.session.completed","data":{"object":{"id":"cs_%s","object":"checkout.session","status":"complete","payment_status":"paid","amount_total":%d,"currency":"usd","payment_intent":%q,"metadata":{"hcai_payment_id":%q,"hcai_resource_id":%q,"hcai_purpose":%q}}}}`, eventID, testStripeAPIVersion, created, strings.TrimPrefix(eventID, "evt_"), amount, providerPaymentID, paymentID.String(), resourceID.String(), purpose))
 }
 
 func productPaidEvent(paymentID, productID uuid.UUID, created int64, amount int) []byte {

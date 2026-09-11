@@ -43,47 +43,6 @@ func (s *Server) getProduct(w http.ResponseWriter, r *http.Request) {
 	httputil.JSON(w, http.StatusOK, item)
 }
 
-func (s *Server) purchaseProduct(w http.ResponseWriter, r *http.Request) {
-	user, ok := s.requireUser(w, r)
-	if !ok {
-		return
-	}
-	id, ok := pathUUID(w, r, "productID")
-	if !ok {
-		return
-	}
-	var input struct {
-		LicenseAccepted bool `json:"licenseAccepted"`
-	}
-	if !httputil.DecodeJSON(w, r, &input) {
-		return
-	}
-	item, created, err := s.marketplace.Purchase(r.Context(), user.ID, id, idempotencyKey(r), httputil.RequestID(r.Context()), input.LicenseAccepted)
-	switch {
-	case errors.Is(err, marketplace.ErrNotFound):
-		httputil.WriteError(w, r, http.StatusNotFound, "product_not_found", "The requested product is not available.", false)
-	case errors.Is(err, marketplace.ErrInvalidPurchase):
-		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "license_acceptance_required", "Review and accept the displayed license before continuing.", false)
-	case errors.Is(err, marketplace.ErrSellerPurchase):
-		httputil.WriteError(w, r, http.StatusConflict, "seller_purchase_forbidden", "The seller account cannot purchase its own product.", false)
-	case errors.Is(err, marketplace.ErrIdempotencyConflict):
-		httputil.WriteError(w, r, http.StatusConflict, "idempotency_conflict", "This request key was already used for another purchase.", false)
-	case errors.Is(err, billing.ErrInsufficientFunds):
-		httputil.WriteError(w, r, http.StatusPaymentRequired, "insufficient_credits", "This Local Test account does not have enough available credits.", false)
-	case errors.Is(err, systemsettings.ErrDisabled):
-		httputil.WriteError(w, r, http.StatusServiceUnavailable, "feature_disabled", "Marketplace checkout is temporarily unavailable by an audited platform setting.", false)
-	case err != nil:
-		s.internalError(w, r, "purchase marketplace product", err)
-	default:
-		status := http.StatusOK
-		if created {
-			status = http.StatusCreated
-			w.Header().Set("Location", "/api/v1/orders/"+item.OrderID.String())
-		}
-		httputil.JSON(w, status, item)
-	}
-}
-
 func (s *Server) checkoutProduct(w http.ResponseWriter, r *http.Request) {
 	user, ok := s.requireUser(w, r)
 	if !ok {
@@ -105,7 +64,7 @@ func (s *Server) checkoutProduct(w http.ResponseWriter, r *http.Request) {
 		origin+"/workspace/orders?payment=success", origin+"/market/products/"+productID.String()+"?payment=cancelled", input.LicenseAccepted,
 	)
 	switch {
-	case errors.Is(err, payments.ErrDisabled), errors.Is(err, payments.ErrProviderUnavailable):
+	case errors.Is(err, payments.ErrDisabled), errors.Is(err, payments.ErrProviderUnavailable), errors.Is(err, payments.ErrProviderConfigMismatch):
 		httputil.WriteError(w, r, http.StatusServiceUnavailable, "payment_provider_unavailable", "Payment checkout is not enabled.", false)
 	case errors.Is(err, payments.ErrInvalidCheckout):
 		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "payment_checkout_invalid", "Review the product, license acceptance, amount, and request key.", false)
@@ -191,7 +150,11 @@ func (s *Server) refundOrder(w http.ResponseWriter, r *http.Request) {
 		s.writeOrderResult(w, r, current, err)
 		return
 	}
-	if current.PaymentMode == "stripe" {
+	// Local test purchases are fulfilled and refunded entirely in our ledger.
+	// Every configured external provider (Stripe, Waffo, and future providers)
+	// must go through the provider refund workflow so the entitlement remains
+	// active until a signed refund event confirms completion.
+	if current.PaymentMode != "test" && current.PaymentMode != "local_test" {
 		_, err = s.payments.BeginProductRefund(r.Context(), user.ID, id, idempotencyKey(r), httputil.RequestID(r.Context()), input.Reason)
 		if err != nil {
 			s.writeProviderRefundError(w, r, err)
@@ -207,7 +170,7 @@ func (s *Server) refundOrder(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) writeProviderRefundError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
-	case errors.Is(err, payments.ErrDisabled), errors.Is(err, payments.ErrProviderUnavailable):
+	case errors.Is(err, payments.ErrDisabled), errors.Is(err, payments.ErrProviderUnavailable), errors.Is(err, payments.ErrProviderConfigMismatch):
 		httputil.WriteError(w, r, http.StatusServiceUnavailable, "payment_provider_unavailable", "Payment refunds are not enabled.", false)
 	case errors.Is(err, payments.ErrInvalidRefund):
 		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_refund", "Provide a refund reason between 10 and 500 characters and a valid request key.", false)

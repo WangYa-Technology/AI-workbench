@@ -39,6 +39,11 @@ type Publication struct {
 	PostID uuid.UUID `json:"postId"`
 }
 
+type PostCreateInput struct {
+	Title string `json:"title"`
+	Body  string `json:"body"`
+}
+
 type DraftInput struct {
 	PublishInput
 	ExpectedVersion int `json:"expectedVersion"`
@@ -79,28 +84,30 @@ type draftCursor struct {
 }
 
 type Post struct {
-	ID               uuid.UUID `json:"id"`
-	Body             string    `json:"body"`
-	PublishedAt      time.Time `json:"publishedAt"`
-	WorkID           uuid.UUID `json:"workId"`
-	WorkTitle        string    `json:"workTitle"`
-	MediaURL         string    `json:"mediaUrl"`
-	MediaKind        string    `json:"mediaKind"`
-	AIDisclosure     string    `json:"aiDisclosure"`
-	AuthorID         uuid.UUID `json:"authorId"`
-	AuthorHandle     string    `json:"authorHandle"`
-	AuthorName       string    `json:"authorName"`
-	CommentCount     int       `json:"commentCount"`
-	LikeCount        int       `json:"likeCount"`
-	BookmarkCount    int       `json:"bookmarkCount"`
-	ViewerLiked      bool      `json:"viewerLiked"`
-	ViewerBookmarked bool      `json:"viewerBookmarked"`
-	ViewerFollowing  bool      `json:"viewerFollowing"`
+	ID               uuid.UUID  `json:"id"`
+	Title            string     `json:"title"`
+	Body             string     `json:"body"`
+	PublishedAt      time.Time  `json:"publishedAt"`
+	WorkID           *uuid.UUID `json:"workId,omitempty"`
+	WorkTitle        *string    `json:"workTitle,omitempty"`
+	MediaURL         *string    `json:"mediaUrl,omitempty"`
+	MediaKind        *string    `json:"mediaKind,omitempty"`
+	AIDisclosure     *string    `json:"aiDisclosure,omitempty"`
+	AuthorID         uuid.UUID  `json:"authorId"`
+	AuthorHandle     string     `json:"authorHandle"`
+	AuthorName       string     `json:"authorName"`
+	CommentCount     int        `json:"commentCount"`
+	LikeCount        int        `json:"likeCount"`
+	BookmarkCount    int        `json:"bookmarkCount"`
+	ViewerLiked      bool       `json:"viewerLiked"`
+	ViewerBookmarked bool       `json:"viewerBookmarked"`
+	ViewerFollowing  bool       `json:"viewerFollowing"`
 }
 
 type PostListInput struct {
 	Cursor string
 	Limit  int
+	Mine   bool
 }
 
 type PostPage struct {
@@ -185,8 +192,8 @@ func (r *Repository) Publish(ctx context.Context, authorID uuid.UUID, input Publ
 		body = input.Summary
 	}
 	_, err = tx.Exec(ctx, `
-		INSERT INTO posts(id,author_id,work_id,body,status,published_at)
-		VALUES($1,$2,$3,$4,'published',now())`, publication.PostID, authorID, publication.WorkID, body)
+		INSERT INTO posts(id,author_id,work_id,title,body,status,published_at)
+		VALUES($1,$2,$3,$4,$5,'published',now())`, publication.PostID, authorID, publication.WorkID, input.Title, body)
 	if err != nil {
 		return Publication{}, fmt.Errorf("insert post: %w", err)
 	}
@@ -197,6 +204,32 @@ func (r *Repository) Publish(ctx context.Context, authorID uuid.UUID, input Publ
 		return Publication{}, fmt.Errorf("commit publication: %w", err)
 	}
 	return publication, nil
+}
+
+func (r *Repository) CreatePost(ctx context.Context, authorID uuid.UUID, input PostCreateInput) (Post, error) {
+	input.Title = strings.TrimSpace(input.Title)
+	input.Body = strings.TrimSpace(input.Body)
+	if authorID == uuid.Nil || len(input.Title) < 3 || len(input.Title) > 120 || len(input.Body) < 2 || len(input.Body) > 2000 {
+		return Post{}, ErrInvalid
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return Post{}, fmt.Errorf("begin Community post: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := systemsettings.RequireTx(ctx, tx, systemsettings.Publishing); err != nil {
+		return Post{}, err
+	}
+	postID := uuid.New()
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO posts(id,author_id,title,body,status,published_at)
+		VALUES($1,$2,$3,$4,'published',now())`, postID, authorID, input.Title, input.Body); err != nil {
+		return Post{}, fmt.Errorf("insert Community post: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Post{}, fmt.Errorf("commit Community post: %w", err)
+	}
+	return r.GetPostForViewer(ctx, authorID, postID)
 }
 
 func (r *Repository) ListDrafts(ctx context.Context, authorID uuid.UUID, input DraftListInput) (DraftPage, error) {
@@ -278,7 +311,7 @@ func (r *Repository) SaveDraft(ctx context.Context, authorID uuid.UUID, draftID 
 		if err != nil {
 			return Draft{}, fmt.Errorf("create content draft work: %w", err)
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO posts(id,author_id,work_id,body,status) VALUES($1,$2,$3,$4,'draft')`, postID, authorID, workID, input.Body); err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO posts(id,author_id,work_id,title,body,status) VALUES($1,$2,$3,$4,$5,'draft')`, postID, authorID, workID, input.Title, input.Body); err != nil {
 			return Draft{}, fmt.Errorf("create content draft post: %w", err)
 		}
 	} else {
@@ -299,7 +332,7 @@ func (r *Repository) SaveDraft(ctx context.Context, authorID uuid.UUID, draftID 
 		if result.RowsAffected() != 1 {
 			return Draft{}, ErrConflict
 		}
-		if _, err := tx.Exec(ctx, `UPDATE posts SET body=$2,version=version+1,updated_at=now() WHERE id=$1`, postID, input.Body); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE posts SET title=$2,body=$3,version=version+1,updated_at=now() WHERE id=$1`, postID, input.Title, input.Body); err != nil {
 			return Draft{}, err
 		}
 		action = "content.draft_updated"
@@ -468,7 +501,7 @@ func (r *Repository) ListForViewer(ctx context.Context, viewerID uuid.UUID) ([]P
 func (r *Repository) GetPostForViewer(ctx context.Context, viewerID, postID uuid.UUID) (Post, error) {
 	var item Post
 	err := r.pool.QueryRow(ctx, `
-		SELECT p.id,p.body,p.published_at,w.id,w.title,a.media_url,a.kind,w.ai_disclosure,u.id,u.handle,u.display_name,
+		SELECT p.id,COALESCE(p.title,w.title,'Community post'),p.body,p.published_at,w.id,w.title,a.media_url,a.kind,w.ai_disclosure,u.id,u.handle,u.display_name,
 		       (SELECT count(*) FROM comments c WHERE c.post_id=p.id AND c.status='published'),
 		       (SELECT count(*) FROM post_reactions pr WHERE pr.post_id=p.id AND pr.kind='like'),
 		       (SELECT count(*) FROM post_reactions pr WHERE pr.post_id=p.id AND pr.kind='bookmark'),
@@ -476,11 +509,12 @@ func (r *Repository) GetPostForViewer(ctx context.Context, viewerID, postID uuid
 		       EXISTS(SELECT 1 FROM post_reactions pr WHERE pr.post_id=p.id AND pr.user_id=$1 AND pr.kind='bookmark'),
 		       EXISTS(SELECT 1 FROM user_follows f WHERE f.follower_id=$1 AND f.following_id=u.id)
 		FROM posts p
-		JOIN works w ON w.id=p.work_id AND w.status='published'
-		JOIN assets a ON a.id=w.asset_id AND a.scan_status='clean'
+		LEFT JOIN works w ON w.id=p.work_id
+		LEFT JOIN assets a ON a.id=w.asset_id
 		JOIN users u ON u.id=p.author_id
-		WHERE p.id=$2 AND p.status='published'`, viewerID, postID).Scan(
-		&item.ID, &item.Body, &item.PublishedAt, &item.WorkID, &item.WorkTitle, &item.MediaURL,
+		WHERE p.id=$2 AND p.status='published'
+		  AND (p.work_id IS NULL OR (w.status='published' AND a.scan_status='clean'))`, viewerID, postID).Scan(
+		&item.ID, &item.Title, &item.Body, &item.PublishedAt, &item.WorkID, &item.WorkTitle, &item.MediaURL,
 		&item.MediaKind, &item.AIDisclosure, &item.AuthorID, &item.AuthorHandle, &item.AuthorName,
 		&item.CommentCount, &item.LikeCount, &item.BookmarkCount, &item.ViewerLiked, &item.ViewerBookmarked, &item.ViewerFollowing)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -509,7 +543,7 @@ func (r *Repository) ListPageForViewer(ctx context.Context, viewerID uuid.UUID, 
 		cursorTime, cursorID = &cursor.PublishedAt, &cursor.ID
 	}
 	rows, err := r.pool.Query(ctx, `
-		SELECT p.id,p.body,p.published_at,w.id,w.title,a.media_url,a.kind,w.ai_disclosure,u.id,u.handle,u.display_name,
+		SELECT p.id,COALESCE(p.title,w.title,'Community post'),p.body,p.published_at,w.id,w.title,a.media_url,a.kind,w.ai_disclosure,u.id,u.handle,u.display_name,
 		       (SELECT count(*) FROM comments c WHERE c.post_id=p.id AND c.status='published'),
 		       (SELECT count(*) FROM post_reactions pr WHERE pr.post_id=p.id AND pr.kind='like'),
 		       (SELECT count(*) FROM post_reactions pr WHERE pr.post_id=p.id AND pr.kind='bookmark'),
@@ -517,12 +551,14 @@ func (r *Repository) ListPageForViewer(ctx context.Context, viewerID uuid.UUID, 
 		       EXISTS(SELECT 1 FROM post_reactions pr WHERE pr.post_id=p.id AND pr.user_id=$1 AND pr.kind='bookmark'),
 		       EXISTS(SELECT 1 FROM user_follows f WHERE f.follower_id=$1 AND f.following_id=u.id)
 		FROM posts p
-		JOIN works w ON w.id=p.work_id AND w.status='published'
-		JOIN assets a ON a.id=w.asset_id AND a.scan_status='clean'
+		LEFT JOIN works w ON w.id=p.work_id
+		LEFT JOIN assets a ON a.id=w.asset_id
 		JOIN users u ON u.id=p.author_id
 			WHERE p.status='published'
+			  AND (p.work_id IS NULL OR (w.status='published' AND a.scan_status='clean'))
+			  AND ($5::boolean = false OR p.author_id=$1)
 			  AND ($2::timestamptz IS NULL OR (p.published_at,p.id)<($2,$3::uuid))
-			ORDER BY p.published_at DESC,p.id DESC LIMIT $4`, viewerID, cursorTime, cursorID, input.Limit+1)
+			ORDER BY p.published_at DESC,p.id DESC LIMIT $4`, viewerID, cursorTime, cursorID, input.Limit+1, input.Mine)
 	if err != nil {
 		return PostPage{}, fmt.Errorf("list posts: %w", err)
 	}
@@ -530,7 +566,7 @@ func (r *Repository) ListPageForViewer(ctx context.Context, viewerID uuid.UUID, 
 	items := make([]Post, 0)
 	for rows.Next() {
 		var item Post
-		if err := rows.Scan(&item.ID, &item.Body, &item.PublishedAt, &item.WorkID, &item.WorkTitle, &item.MediaURL,
+		if err := rows.Scan(&item.ID, &item.Title, &item.Body, &item.PublishedAt, &item.WorkID, &item.WorkTitle, &item.MediaURL,
 			&item.MediaKind, &item.AIDisclosure, &item.AuthorID, &item.AuthorHandle, &item.AuthorName,
 			&item.CommentCount, &item.LikeCount, &item.BookmarkCount, &item.ViewerLiked, &item.ViewerBookmarked, &item.ViewerFollowing); err != nil {
 			return PostPage{}, fmt.Errorf("scan post: %w", err)

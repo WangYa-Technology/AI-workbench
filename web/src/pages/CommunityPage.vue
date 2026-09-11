@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { Clock3, Eye, Heart, LayoutGrid, LoaderCircle, MessageCircle, MoreHorizontal, RefreshCw, Search, ShieldCheck, Sparkles, Upload, UserRound, X } from 'lucide-vue-next'
+import { Clock3, Eye, Heart, LayoutGrid, LoaderCircle, LogIn, MessageCircle, MessageSquareText, MoreHorizontal, Plus, RefreshCw, Search, ShieldCheck, Sparkles, UserPlus, X } from 'lucide-vue-next'
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { RouterLink, useRouter } from 'vue-router'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { api, messageFrom, type CommunityPost, type CommunityReport } from '../api/client'
 import AssetMedia from '../components/domain/AssetMedia.vue'
+import CommunityPostDrawer from '../components/domain/CommunityPostDrawer.vue'
 import { useSessionStore } from '../stores/session'
+import PageHero from '../components/ui/PageHero.vue'
 import UiButton from '../components/ui/UiButton.vue'
 import UiIconButton from '../components/ui/UiIconButton.vue'
 import UiInput from '../components/ui/UiInput.vue'
@@ -14,6 +16,7 @@ import UiTabs from '../components/ui/UiTabs.vue'
 import UiTextarea from '../components/ui/UiTextarea.vue'
 
 const { locale, t } = useI18n()
+const route = useRoute()
 const router = useRouter()
 const session = useSessionStore()
 const posts = ref<CommunityPost[]>([])
@@ -33,14 +36,22 @@ const sortTabs = computed(() => [
 ])
 const search = ref('')
 const mediaFilter = ref<'all' | 'image' | 'video' | 'music' | 'other'>('all')
+const mineOnly = ref(false)
+const createOpen = ref(false)
 const showCases = ref(false)
 const appealForm = reactive({ reportId: '', reason: '' })
+const communityHeroStats = computed(() => [
+  { value: posts.value.length, label: t('community.discussionsLabel'), icon: LayoutGrid, tone: 'blue' as const },
+  { value: totalReplyCount.value, label: t('community.repliesColumn'), icon: MessageCircle, tone: 'violet' as const },
+  { value: totalLikeCount.value, label: t('community.likesColumn'), icon: Heart, tone: 'green' as const },
+])
 
 function formatPublishedAt(value: string) {
   return new Intl.DateTimeFormat(locale.value, { year: 'numeric', month: 'short', day: 'numeric' }).format(new Date(value))
 }
 
-function formatMediaKind(value: string) {
+function formatMediaKind(value?: string) {
+  if (!value) return t('community.discussionType')
   const normalized = normalizeMediaKind(value)
   if (normalized === 'video') return t('create.modes.video')
   if (normalized === 'music') return t('create.modes.music')
@@ -48,7 +59,8 @@ function formatMediaKind(value: string) {
   return t('community.workTopic')
 }
 
-function normalizeMediaKind(value: string): 'image' | 'video' | 'music' | 'other' {
+function normalizeMediaKind(value?: string): 'image' | 'video' | 'music' | 'other' {
+  if (!value) return 'other'
   const normalized = value.toLowerCase()
   if (normalized.includes('video')) return 'video'
   if (normalized.includes('audio') || normalized.includes('music')) return 'music'
@@ -70,8 +82,8 @@ const displayedPosts = computed(() => {
   const query = search.value.trim().toLocaleLowerCase(locale.value)
   const items = posts.value.filter((post) => {
     const matchesType = mediaFilter.value === 'all' || normalizeMediaKind(post.mediaKind) === mediaFilter.value
-    const matchesSearch = !query || [post.workTitle, post.body, post.authorName, post.authorHandle]
-      .some(value => value.toLocaleLowerCase(locale.value).includes(query))
+    const matchesSearch = !query || [post.title, post.workTitle, post.body, post.authorName, post.authorHandle]
+      .some(value => value?.toLocaleLowerCase(locale.value).includes(query))
     return matchesType && matchesSearch
   })
   if (sortMode.value === 'discussed') {
@@ -93,7 +105,7 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    const page = await api.listCommunityPosts({ limit: 20 })
+    const page = await api.listCommunityPosts({ limit: 20, ...(mineOnly.value ? { mine: true } : {}) })
     posts.value = page.items
     postNextCursor.value = page.nextCursor || null
   } catch (reason) {
@@ -108,7 +120,7 @@ async function loadMorePosts() {
   postLoadingMore.value = true
   feedback.value = ''
   try {
-    const page = await api.listCommunityPosts({ limit: 20, cursor: postNextCursor.value })
+    const page = await api.listCommunityPosts({ limit: 20, cursor: postNextCursor.value, ...(mineOnly.value ? { mine: true } : {}) })
     const known = new Set(posts.value.map(item => item.id))
     posts.value = [...posts.value, ...page.items.filter(item => !known.has(item.id))]
     postNextCursor.value = page.nextCursor || null
@@ -122,8 +134,28 @@ async function loadMorePosts() {
 async function requireAccount() {
   const user = await session.ensure()
   if (user) return true
-  await router.push('/settings')
+  await router.push({ path: '/auth', query: { auth: 'login', returnTo: route.fullPath } })
   return false
+}
+
+async function selectMyPosts() {
+  if (!await requireAccount()) return
+  mineOnly.value = !mineOnly.value
+  const query = { ...route.query }
+  if (mineOnly.value) query.view = 'mine'
+  else delete query.view
+  await router.replace({ path: route.path, query })
+  await load()
+}
+
+async function openCreatePost() {
+  if (!await requireAccount()) return
+  createOpen.value = true
+}
+
+function handlePostCreated(post: CommunityPost) {
+  posts.value = [post, ...posts.value.filter(item => item.id !== post.id)]
+  feedback.value = t('community.postPublished')
 }
 
 async function toggleCases() {
@@ -176,36 +208,37 @@ async function submitAppeal() {
 
 onMounted(async () => {
   await session.ensure()
+  mineOnly.value = route.query.view === 'mine' && Boolean(session.user)
   await load()
 })
 </script>
 
 <template>
   <section class="community-page content-width">
-    <header class="page-hero-header page-hero-banner community-header">
-      <div class="page-hero-copy">
-        <span class="page-hero-eyebrow"><Sparkles :size="14" :stroke-width="1.75" aria-hidden="true" />{{ t('community.networkLabel') }}</span>
-        <h1>{{ t('community.title') }}</h1>
-        <p>{{ t('community.summary') }}</p>
-        <div class="page-hero-stats" :aria-label="t('community.statsLabel')">
-          <article><span class="page-hero-stat-icon" data-tone="blue"><LayoutGrid :size="23" :stroke-width="1.75" aria-hidden="true" /></span><div><strong>{{ posts.length }}</strong><span>{{ t('community.discussionsLabel') }}</span></div></article>
-          <article><span class="page-hero-stat-icon" data-tone="violet"><MessageCircle :size="23" :stroke-width="1.75" aria-hidden="true" /></span><div><strong>{{ totalReplyCount }}</strong><span>{{ t('community.repliesColumn') }}</span></div></article>
-          <article><span class="page-hero-stat-icon" data-tone="green"><Heart :size="23" :stroke-width="1.75" aria-hidden="true" /></span><div><strong>{{ totalLikeCount }}</strong><span>{{ t('community.likesColumn') }}</span></div></article>
-        </div>
-      </div>
-      <div class="page-hero-actions">
-        <UiButton as="RouterLink" class="command-button primary" variant="primary" to="/publish">
-          <template #start>
-            <Upload :size="17" :stroke-width="1.75" aria-hidden="true" />
-          </template>
-          {{ t('actions.publishWork') }}
+    <PageHero
+      :eyebrow="t('community.networkLabel')"
+      :eyebrow-icon="Sparkles"
+      :title="t('community.title')"
+      :summary="t('community.summary')"
+      :stats="communityHeroStats"
+      :stats-label="t('community.statsLabel')"
+      artwork-src="/community/community-hero.webp"
+    >
+      <template #actions>
+        <UiButton v-if="session.user" class="command-button secondary" variant="secondary" :class="{ active: mineOnly }" :aria-pressed="mineOnly" @click="selectMyPosts">
+          <template #start><MessageSquareText :size="17" /></template>{{ t('community.myPosts') }}
         </UiButton>
-      </div>
-      <img class="page-hero-art community-hero-art" src="/community/community-hero.webp" alt="" width="768" height="714" aria-hidden="true" />
-      <div v-if="session.user" class="page-hero-account">
-        <span class="page-hero-avatar"><UserRound :size="22" :stroke-width="1.75" aria-hidden="true" /></span><span><strong>{{ session.user.displayName }}</strong><small>@{{ session.user.handle }}</small></span><ShieldCheck :size="15" :stroke-width="1.75" aria-hidden="true" />
-      </div>
-    </header>
+        <UiButton v-if="session.user" class="command-button primary" variant="primary" @click="openCreatePost">
+          <template #start><Plus :size="17" /></template>{{ t('community.publishPost') }}
+        </UiButton>
+        <UiButton v-if="!session.user" as="RouterLink" class="command-button secondary" variant="secondary" :to="{ path: '/auth', query: { auth: 'login', returnTo: route.fullPath } }">
+          <template #start><LogIn :size="17" /></template>{{ t('account.signIn') }}
+        </UiButton>
+        <UiButton v-if="!session.user" as="RouterLink" class="command-button primary" variant="primary" :to="{ path: '/auth', query: { auth: 'register', returnTo: route.fullPath } }">
+          <template #start><UserPlus :size="17" /></template>{{ t('account.createAccount') }}
+        </UiButton>
+      </template>
+    </PageHero>
     <div v-if="loading" class="community-skeleton" aria-live="polite">
       <span class="sr-only">{{ t('status.loadingCommunity') }}</span>
       <article v-for="index in 5" :key="index">
@@ -223,51 +256,53 @@ onMounted(async () => {
       </UiButton>
     </div>
     <div v-else>
-      <div class="view-switcher-bar">
-        <UiTabs class="view-switcher" :model-value="sortMode" :items="sortTabs" :label="t('community.sortLabel')" @update:model-value="sortMode = $event as 'latest' | 'discussed'" />
+      <div class="controls-with-switcher community-controls-row has-switcher">
+        <div class="view-switcher-bar">
+          <UiTabs class="view-switcher" :model-value="sortMode" :items="sortTabs" :label="t('community.sortLabel')" @update:model-value="sortMode = $event as 'latest' | 'discussed'" />
+        </div>
+        <section class="community-toolbar" :aria-label="t('community.filtersLabel')">
+          <label class="community-search-control">
+            <span class="sr-only">{{ t('community.searchLabel') }}</span>
+            <Search :size="18" :stroke-width="1.75" aria-hidden="true" />
+            <UiInput v-model="search" type="search" maxlength="120" :placeholder="t('community.searchPlaceholder')" />
+          </label>
+          <UiSelect v-model="mediaFilter" class="community-type-control" :aria-label="t('community.typeLabel')">
+            <template #start>
+              <LayoutGrid :size="17" :stroke-width="1.75" aria-hidden="true" />
+            </template>
+            <option value="all">
+              {{ t('community.allTypes') }}
+            </option>
+            <option value="image">
+              {{ t('create.modes.image') }}
+            </option>
+            <option value="video">
+              {{ t('create.modes.video') }}
+            </option>
+            <option value="music">
+              {{ t('create.modes.music') }}
+            </option>
+            <option value="other">
+              {{ t('community.workTopic') }}
+            </option>
+          </UiSelect>
+          <nav class="community-toolbar-actions" :aria-label="t('community.communityActions')">
+            <UiButton variant="ghost" :class="{ active: showCases }" :aria-pressed="showCases" @click="toggleCases">
+              <template #start>
+                <ShieldCheck :size="17" :stroke-width="1.75" aria-hidden="true" />
+              </template>
+              {{ t('community.myCases') }}
+            </UiButton>
+            <UiButton as="RouterLink" variant="ghost" to="/discover">
+              <template #start>
+                <Eye :size="17" :stroke-width="1.75" aria-hidden="true" />
+              </template>
+              {{ t('actions.browseWorks') }}
+            </UiButton>
+          </nav>
+        </section>
       </div>
-      <section class="community-toolbar" :aria-label="t('community.filtersLabel')">
-        <label class="community-search-control">
-          <span class="sr-only">{{ t('community.searchLabel') }}</span>
-          <Search :size="18" :stroke-width="1.75" aria-hidden="true" />
-          <UiInput v-model="search" type="search" maxlength="120" :placeholder="t('community.searchPlaceholder')" />
-        </label>
-        <UiSelect v-model="mediaFilter" class="community-type-control" :aria-label="t('community.typeLabel')">
-          <template #start>
-            <LayoutGrid :size="17" :stroke-width="1.75" aria-hidden="true" />
-          </template>
-          <option value="all">
-            {{ t('community.allTypes') }}
-          </option>
-          <option value="image">
-            {{ t('create.modes.image') }}
-          </option>
-          <option value="video">
-            {{ t('create.modes.video') }}
-          </option>
-          <option value="music">
-            {{ t('create.modes.music') }}
-          </option>
-          <option value="other">
-            {{ t('community.workTopic') }}
-          </option>
-        </UiSelect>
-        <nav class="community-toolbar-actions" :aria-label="t('community.communityActions')">
-          <UiButton variant="ghost" :class="{ active: showCases }" :aria-pressed="showCases" @click="toggleCases">
-            <template #start>
-              <ShieldCheck :size="17" :stroke-width="1.75" aria-hidden="true" />
-            </template>
-            {{ t('community.myCases') }}
-          </UiButton>
-          <UiButton as="RouterLink" variant="ghost" to="/discover">
-            <template #start>
-              <Eye :size="17" :stroke-width="1.75" aria-hidden="true" />
-            </template>
-            {{ t('actions.browseWorks') }}
-          </UiButton>
-        </nav>
-      </section>
-      <p v-if="feedback" class="task-feedback" :class="feedback === t('community.reportSubmitted') || feedback === t('community.appealSubmitted') ? 'success' : 'error'" role="status">
+      <p v-if="feedback" class="task-feedback" :class="[t('community.reportSubmitted'), t('community.appealSubmitted'), t('community.postPublished')].includes(feedback) ? 'success' : 'error'" role="status">
         {{ feedback }}
       </p>
       <section v-if="showCases" class="community-cases" :aria-label="t('community.myCases')">
@@ -307,7 +342,7 @@ onMounted(async () => {
       </section>
       <div v-if="posts.length" class="community-topics">
         <div class="community-results-meta">
-          <span>{{ t('community.resultCount', { count: displayedPosts.length }) }}</span>
+          <span>{{ mineOnly ? t('community.myPostResultCount', { count: displayedPosts.length }) : t('community.resultCount', { count: displayedPosts.length }) }}</span>
           <UiButton v-if="hasActiveFilters" variant="ghost" type="button" @click="clearFilters">
             {{ t('community.clearFilters') }}
           </UiButton>
@@ -322,8 +357,9 @@ onMounted(async () => {
         <div v-if="displayedPosts.length" class="community-feed">
           <article v-for="post in displayedPosts" :key="post.id" class="community-post-row" :data-post-id="post.id">
             <div class="community-post-topic">
-              <RouterLink class="community-post-thumbnail" :to="`/community/posts/${post.id}`" :aria-label="post.workTitle">
-                <AssetMedia :src="post.mediaUrl" :kind="post.mediaKind" :alt="post.workTitle" :width="720" :height="540" :controls="false" />
+              <RouterLink class="community-post-thumbnail" :class="{ 'is-discussion': !post.mediaUrl }" :to="`/community/posts/${post.id}`" :aria-label="post.title">
+                <AssetMedia v-if="post.mediaUrl && post.mediaKind" :src="post.mediaUrl" :kind="post.mediaKind" :alt="post.title" :width="720" :height="540" :controls="false" />
+                <span v-else class="community-discussion-thumbnail"><MessageSquareText :size="28" :stroke-width="1.45" aria-hidden="true" /></span>
               </RouterLink>
               <RouterLink class="community-author-mark" :to="`/creators/${post.authorHandle}`" :aria-label="post.authorName">
                 {{ post.authorName.slice(0, 1) }}
@@ -331,7 +367,7 @@ onMounted(async () => {
               <div class="community-post-copy">
                 <div class="community-post-title-row">
                   <RouterLink class="community-post-title-link" :to="`/community/posts/${post.id}`">
-                    <h2>{{ post.workTitle }}</h2>
+                    <h2>{{ post.title }}</h2>
                   </RouterLink>
                   <span :data-kind="normalizeMediaKind(post.mediaKind)">{{ formatMediaKind(post.mediaKind) }}</span>
                 </div>
@@ -371,21 +407,28 @@ onMounted(async () => {
       <UiButton v-if="postNextCursor" class="command-button secondary community-feed-load-more" type="button" :disabled="postLoadingMore" variant="secondary" @click="loadMorePosts">
         <LoaderCircle v-if="postLoadingMore" class="spin" :size="16" />{{ t('actions.loadMore') }}
       </UiButton>
-      <section v-if="!posts.length" class="community-empty" :aria-label="t('community.emptyTitle')">
-        <div>
-          <span class="status-label">{{ t('community.emptyTitle') }}</span>
-          <h2>{{ t('community.empty') }}</h2>
-          <p>{{ t('community.emptySummary') }}</p>
+      <section v-if="!posts.length" class="community-empty" :class="{ 'is-mine-empty': mineOnly }" :aria-label="mineOnly ? t('community.myPosts') : t('community.emptyTitle')">
+        <div class="community-empty-main">
+          <span class="community-empty-mark" aria-hidden="true"><MessageSquareText :size="21" :stroke-width="1.7" /></span>
+          <div class="community-empty-copy">
+            <span class="status-label">{{ mineOnly ? t('community.myPosts') : t('community.emptyTitle') }}</span>
+            <h2>{{ mineOnly ? t('community.noMyPosts') : t('community.empty') }}</h2>
+            <p>{{ mineOnly ? t('community.noMyPostsSummary') : t('community.emptySummary') }}</p>
+          </div>
         </div>
         <nav class="community-empty-actions" :aria-label="t('community.emptyActionsLabel')">
-          <UiButton as="RouterLink" class="command-button primary" variant="primary" to="/publish">
-            <Upload :size="17" :stroke-width="1.75" />{{ t('actions.publishWork') }}
+          <UiButton v-if="session.user" class="command-button primary" variant="primary" @click="openCreatePost">
+            <Plus :size="17" :stroke-width="1.75" />{{ t('community.publishPost') }}
           </UiButton>
-          <UiButton as="RouterLink" class="command-button secondary" variant="secondary" to="/discover">
+          <UiButton v-if="mineOnly" class="command-button secondary" variant="secondary" @click="selectMyPosts">
+            <LayoutGrid :size="17" :stroke-width="1.75" />{{ t('community.allPosts') }}
+          </UiButton>
+          <UiButton v-else as="RouterLink" class="command-button secondary" variant="secondary" to="/discover">
             <Sparkles :size="17" :stroke-width="1.75" />{{ t('actions.browseWorks') }}
           </UiButton>
         </nav>
       </section>
     </div>
   </section>
+  <CommunityPostDrawer v-model:open="createOpen" @created="handlePostCreated" />
 </template>

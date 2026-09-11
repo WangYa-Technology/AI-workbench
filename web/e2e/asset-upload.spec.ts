@@ -21,7 +21,7 @@ test('uploads, scans, inspects, and administratively reviews an Asset', async ({
   await card.getByRole('link', { name: 'View details', exact: true }).click()
   await expect(page.getByRole('heading', { name: title, exact: true })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Upload and scan evidence', exact: true })).toBeVisible()
-  await expect(page.getByRole('link', { name: 'Publish asset', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Publish asset', exact: true })).toBeVisible()
   const assetURL = page.url()
 
   const adminSession = await page.request.post('/api/v1/auth/demo', { data: { actor: 'admin' } })
@@ -47,7 +47,7 @@ test('uploads, scans, inspects, and administratively reviews an Asset', async ({
   expect(creatorAgain.ok()).toBeTruthy()
   await page.goto(assetURL)
   await expect(page.getByText('Blocked', { exact: true })).toBeVisible()
-  await expect(page.getByRole('link', { name: 'Publish asset', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Publish asset', exact: true })).toHaveCount(0)
 })
 
 test('keeps the upload panel usable on mobile', async ({ page }) => {

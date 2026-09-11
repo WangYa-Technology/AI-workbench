@@ -287,9 +287,10 @@
 .ui-table-wrap { width: 100%; overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius-surface); background: var(--surface); }
 .ui-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .ui-table th, .ui-table td { padding: 11px 13px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: middle; }
-.ui-table th { color: var(--text-secondary); font-size: 11px; font-weight: 620; }
+.ui-table th { height: var(--data-header-height); background: var(--data-header-bg); color: var(--data-header-text); font-size: var(--data-header-font-size); font-weight: 600; line-height: 1.25; }
+.ui-table thead tr { border-bottom: 1px solid var(--data-header-border); }
 .ui-table tr:last-child td { border-bottom: 0; }
-.ui-table caption { padding: 12px 13px; color: var(--text-secondary); text-align: left; }
+.ui-table caption { padding: 12px 13px; color: var(--text-secondary); font-size: 12px; font-weight: 600; text-align: left; }
 .ui-data-list { display: grid; gap: 8px; }
 .ui-avatar { width: 32px; height: 32px; display: inline-grid; place-items: center; overflow: hidden; flex: 0 0 auto; border: 1px solid var(--border); border-radius: 50%; background: var(--accent-soft); color: var(--accent-readable); font-size: 12px; font-weight: 650; }
 .ui-avatar img { width: 100%; height: 100%; object-fit: cover; }

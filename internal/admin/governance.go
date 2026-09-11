@@ -338,7 +338,7 @@ func moderateReportedResource(ctx context.Context, tx pgx.Tx, resourceType strin
 	var previous string
 	switch resourceType {
 	case "post":
-		var workID uuid.UUID
+		var workID *uuid.UUID
 		if err := tx.QueryRow(ctx, `SELECT status,work_id FROM posts WHERE id=$1 FOR UPDATE`, resourceID).Scan(&previous, &workID); errors.Is(err, pgx.ErrNoRows) {
 			return "", ErrNotFound
 		} else if err != nil {
@@ -347,8 +347,10 @@ func moderateReportedResource(ctx context.Context, tx pgx.Tx, resourceType strin
 		if _, err := tx.Exec(ctx, `UPDATE posts SET status=$2,updated_at=now() WHERE id=$1`, resourceID, status); err != nil {
 			return "", err
 		}
-		if _, err := tx.Exec(ctx, `UPDATE works SET status=$2,updated_at=now() WHERE id=$1`, workID, status); err != nil {
-			return "", err
+		if workID != nil {
+			if _, err := tx.Exec(ctx, `UPDATE works SET status=$2,updated_at=now() WHERE id=$1`, *workID, status); err != nil {
+				return "", err
+			}
 		}
 	case "work":
 		if err := tx.QueryRow(ctx, `SELECT status FROM works WHERE id=$1 FOR UPDATE`, resourceID).Scan(&previous); errors.Is(err, pgx.ErrNoRows) {
@@ -419,7 +421,7 @@ func appealDecisionBody(decision string) string {
 
 const governanceReportSelect = `
 	SELECT r.id,r.reporter_id,reporter.handle,r.resource_type,r.resource_id,
-	       CASE r.resource_type WHEN 'post' THEN COALESCE(pw.title,'Community post') WHEN 'work' THEN COALESCE(w.title,'Work') ELSE 'Comment' END,
+	       CASE r.resource_type WHEN 'post' THEN COALESCE(p.title,pw.title,'Community post') WHEN 'work' THEN COALESCE(w.title,'Work') ELSE 'Comment' END,
 	       r.subject_author_id,subject.handle,r.category,r.details,r.status,r.outcome,r.previous_status,r.moderator_id,
 	       r.resolution_reason,r.created_at,r.updated_at,r.resolved_at
 	FROM content_reports r
@@ -447,7 +449,7 @@ func scanGovernanceReport(row scanner) (GovernanceReport, error) {
 
 const governanceAppealSelect = `
 	SELECT a.id,a.report_id,a.appellant_id,u.handle,r.resource_type,r.resource_id,
-	       CASE r.resource_type WHEN 'post' THEN COALESCE(pw.title,'Community post') WHEN 'work' THEN COALESCE(w.title,'Work') ELSE 'Comment' END,
+	       CASE r.resource_type WHEN 'post' THEN COALESCE(p.title,pw.title,'Community post') WHEN 'work' THEN COALESCE(w.title,'Work') ELSE 'Comment' END,
 	       a.reason,a.status,a.reviewer_id,a.resolution_reason,a.created_at,a.resolved_at
 	FROM moderation_appeals a
 	JOIN content_reports r ON r.id=a.report_id

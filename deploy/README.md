@@ -44,6 +44,14 @@ Before a real deployment, require all of the following:
 
 The compose file is a runtime baseline, not production acceptance. API and Worker independently construct the same configured S3-compatible catalog and HTTP scanner contract; no shared media volume is used. The bucket must remain private. Asset delivery stays behind HCAI authorization and clean-scan checks, including bounded single-range streaming for video and audio. The adapter and application commands cover the disposable clean-object path only. Before public activation, separately verify bucket policy, encryption and lifecycle rules, review/rejected application transitions, scanner outage recovery, backup, and infrastructure-level cross-account isolation in staging.
 
+When Waffo is enabled, deploy `services/waffo-connector` as a separate private
+Node service reachable only by the API and Worker. Keep its rotated
+`WAFFO_PRIVATE_KEY` and `WAFFO_CONNECTOR_TOKEN` in that service's secret
+manager scope; do not add the private key to the API/Worker environment or the
+web image. Set `WAFFO_CONNECTOR_URL` to the connector's authenticated HTTPS
+endpoint in production. The base compose file intentionally does not start
+this optional payment connector when Waffo is disabled.
+
 Build and validate the Compose model without starting services:
 
 ```bash

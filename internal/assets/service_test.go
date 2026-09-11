@@ -56,6 +56,22 @@ func TestUploadedAssetScanningAndControlledReview(t *testing.T) {
 	if err != nil || content.MimeType != "text/plain; charset=utf-8" {
 		t.Fatalf("clean content unavailable: mime=%s err=%v", content.MimeType, err)
 	}
+	if _, err := service.Content(ctx, uuid.Nil, clean.ID); !errors.Is(err, assets.ErrForbidden) {
+		t.Fatalf("unconfigured upload was publicly readable: %v", err)
+	}
+	adminService := admin.NewService(pool, true)
+	settings, err := adminService.GetSystemSettings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	configuration := settings.SiteConfiguration
+	configuration.SiteIconURL = clean.MediaURL
+	if _, err := adminService.UpdateSiteConfiguration(ctx, adminID, configuration, "site-icon-test"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Content(ctx, uuid.Nil, clean.ID); err != nil {
+		t.Fatalf("configured site icon was not publicly readable: %v", err)
+	}
 	object, err := content.Open(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -122,7 +138,7 @@ func TestUploadedAssetScanningAndControlledReview(t *testing.T) {
 	if _, err := service.Content(ctx, ownerID, review.ID); !errors.Is(err, assets.ErrNotFound) {
 		t.Fatalf("review content was readable: %v", err)
 	}
-	reviewed, err := admin.NewService(pool, true).ReviewMedia(ctx, adminID, review.ID, admin.MediaReview{
+	reviewed, err := adminService.ReviewMedia(ctx, adminID, review.ID, admin.MediaReview{
 		Status: "clean",
 	}, "admin-media-review")
 	if err != nil || reviewed.ScanStatus != "clean" {

@@ -173,6 +173,15 @@ func TestAdminTaskOperationsResolveDisputesAtomically(t *testing.T) {
 
 	releaseTaskID, releaseDisputeID := createDispute("Release creator task", 32_000)
 	cancelTaskID, cancelDisputeID := createDispute("Cancel without settlement task", 21_000)
+	releasePaymentID := uuid.New()
+	releasePaymentToken := releasePaymentID.String()[:8]
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO payment_intents(id,provider,purpose,payer_id,payee_id,resource_id,amount_cents,currency,status,live_mode,idempotency_key,provider_payment_id,provider_charge_id,paid_at)
+		VALUES($1,'stripe','task',$2,$3,$4,32000,'USD','paid',false,$5,$6,$7,now())`,
+		releasePaymentID, clientID, creatorID, releaseTaskID, "task-release-"+releasePaymentToken,
+		"pi_release_"+releasePaymentToken, "ch_release_"+releasePaymentToken); err != nil {
+		t.Fatal(err)
+	}
 	service := admin.NewService(pool, true)
 	page, err := service.ListTaskOperations(ctx, admin.TaskOperationListInput{})
 	if err != nil || len(page.Items) != 2 || page.Items[0].DisputeVersion == nil {
@@ -196,7 +205,8 @@ func TestAdminTaskOperationsResolveDisputesAtomically(t *testing.T) {
 	if err != nil || cancelled.Status != "cancelled" || cancelled.DisputeStatus == nil || *cancelled.DisputeStatus != "resolved_client" || cancelled.SettlementID != nil {
 		t.Fatalf("client resolution mismatch: %#v %v", cancelled, err)
 	}
-	var settlements, legacyEntries, notificationCount int
+	var settlements, legacyEntries, notificationCount, paymentEvents, transferJobs int
+	var paymentStatus, settlementMode string
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM task_settlements WHERE demand_id=ANY($1)`, []uuid.UUID{releaseTaskID, cancelTaskID}).Scan(&settlements); err != nil {
 		t.Fatal(err)
 	}
@@ -206,8 +216,17 @@ func TestAdminTaskOperationsResolveDisputesAtomically(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM notifications WHERE source_key LIKE 'admin-task-resolution:%'`).Scan(&notificationCount); err != nil {
 		t.Fatal(err)
 	}
-	if settlements != 1 || legacyEntries != 2 || notificationCount != 4 {
-		t.Fatalf("task operations evidence mismatch: settlements=%d ledger=%d notifications=%d", settlements, legacyEntries, notificationCount)
+	if err := pool.QueryRow(ctx, `SELECT pi.status,ts.mode FROM payment_intents pi JOIN task_settlements ts ON ts.demand_id=pi.resource_id WHERE pi.id=$1`, releasePaymentID).Scan(&paymentStatus, &settlementMode); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM payment_intent_events WHERE payment_id=$1`, releasePaymentID).Scan(&paymentEvents); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM jobs WHERE kind=$1`, payments.TaskTransferJobKind).Scan(&transferJobs); err != nil {
+		t.Fatal(err)
+	}
+	if settlements != 1 || legacyEntries != 0 || notificationCount != 4 || paymentStatus != "transfer_pending" || settlementMode != "provider_pending" || paymentEvents != 1 || transferJobs != 1 {
+		t.Fatalf("task operations evidence mismatch: settlements=%d ledger=%d notifications=%d payment=%s settlementMode=%s paymentEvents=%d transferJobs=%d", settlements, legacyEntries, notificationCount, paymentStatus, settlementMode, paymentEvents, transferJobs)
 	}
 	if _, err := pool.Exec(ctx, `UPDATE task_events SET note='tampered task evidence' WHERE demand_id=$1`, releaseTaskID); err == nil {
 		t.Fatal("task event evidence was mutable")
@@ -300,7 +319,7 @@ func TestAdminProviderTaskDisputesQueueTransferOrRefund(t *testing.T) {
 		       (SELECT count(*) FROM ledger_entries WHERE account_id IN ($1,$2))`, clientID, creatorID).Scan(&localEntries); err != nil {
 		t.Fatal(err)
 	}
-	if releaseStatus != "transfer_pending" || settlementMode != "stripe_pending" || cancelStatus != "refund_pending" || refundOperationID == nil || transferJobs != 1 || refundJobs != 1 || localEntries != 0 {
+	if releaseStatus != "transfer_pending" || settlementMode != "provider_pending" || cancelStatus != "refund_pending" || refundOperationID == nil || transferJobs != 1 || refundJobs != 1 || localEntries != 0 {
 		t.Fatalf("Provider dispute evidence mismatch: release=%s settlement=%s cancel=%s operation=%v transferJobs=%d refundJobs=%d localEntries=%d", releaseStatus, settlementMode, cancelStatus, refundOperationID, transferJobs, refundJobs, localEntries)
 	}
 }

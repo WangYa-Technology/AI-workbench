@@ -14,7 +14,7 @@ import (
 	"github.com/hcai-chat/hcai-chat/internal/transport/httpapi"
 )
 
-func TestAdminRevisionHistoriesHTTPPagination(t *testing.T) {
+func TestAdminRiskRuleHistoryHTTPPagination(t *testing.T) {
 	pool, cleanup := httpTestPool(t)
 	defer cleanup()
 	server := httptest.NewServer(httpapi.New(config.Config{Environment: "test", MediaRoot: t.TempDir(), WebOrigin: "http://localhost:5173", LocalProviderEnabled: true}, pool, slog.New(slog.NewTextHandler(io.Discard, nil))))
@@ -27,8 +27,6 @@ func TestAdminRevisionHistoriesHTTPPagination(t *testing.T) {
 		args  []any
 	}{
 		{query: `UPDATE users SET role='admin' WHERE id=$1`, args: []any{administrator.ID}},
-		{query: `INSERT INTO system_setting_revisions(version,name,registrations_enabled,generations_enabled,publishing_enabled,marketplace_checkout_enabled,task_creation_enabled,reason) SELECT version,'System setting revision '||version,true,true,true,true,true,'HTTP pagination evidence for system setting history.' FROM generate_series(2,22) version`},
-		{query: `UPDATE system_setting_state SET active_revision_id=(SELECT id FROM system_setting_revisions WHERE version=22),version=22 WHERE singleton=true`},
 		{query: `INSERT INTO risk_rule_revisions(version,name,task_dispute_score,transaction_refund_score,community_report_score,media_rejection_score,medium_threshold,high_threshold,critical_threshold,reason) SELECT version,'Risk rule revision '||version,85,55,35,75,40,70,90,'HTTP pagination evidence for risk rule history.' FROM generate_series(2,22) version`},
 		{query: `UPDATE risk_rule_state SET active_revision_id=(SELECT id FROM risk_rule_revisions WHERE version=22),version=22 WHERE singleton=true`},
 	}
@@ -38,42 +36,21 @@ func TestAdminRevisionHistoriesHTTPPagination(t *testing.T) {
 		}
 	}
 
-	for _, test := range []struct {
-		path string
-		kind string
-	}{
-		{path: "/api/v1/admin/settings", kind: "settings"},
-		{path: "/api/v1/admin/risk/rules", kind: "risk rules"},
-	} {
-		var first admin.SystemSettingPolicy
-		if test.kind == "settings" {
-			response := requestJSON(t, client, http.MethodGet, server.URL+test.path+"?limit=20", nil, &first)
-			if response.StatusCode != http.StatusOK || first.Current.Version != 22 || len(first.History) != 20 || first.NextCursor == nil {
-				t.Fatalf("%s first page mismatch: status=%d policy=%#v", test.kind, response.StatusCode, first)
-			}
-			var second admin.SystemSettingPolicy
-			response = requestJSON(t, client, http.MethodGet, server.URL+test.path+"?limit=20&cursor="+url.QueryEscape(*first.NextCursor), nil, &second)
-			if response.StatusCode != http.StatusOK || second.Current.Version != 22 || len(second.History) != 2 || second.NextCursor != nil {
-				t.Fatalf("%s second page mismatch: status=%d policy=%#v", test.kind, response.StatusCode, second)
-			}
-		} else {
-			var firstRisk admin.RiskRulePolicy
-			response := requestJSON(t, client, http.MethodGet, server.URL+test.path+"?limit=20", nil, &firstRisk)
-			if response.StatusCode != http.StatusOK || firstRisk.Current.Version != 22 || len(firstRisk.History) != 20 || firstRisk.NextCursor == nil {
-				t.Fatalf("%s first page mismatch: status=%d policy=%#v", test.kind, response.StatusCode, firstRisk)
-			}
-			var secondRisk admin.RiskRulePolicy
-			response = requestJSON(t, client, http.MethodGet, server.URL+test.path+"?limit=20&cursor="+url.QueryEscape(*firstRisk.NextCursor), nil, &secondRisk)
-			if response.StatusCode != http.StatusOK || secondRisk.Current.Version != 22 || len(secondRisk.History) != 2 || secondRisk.NextCursor != nil {
-				t.Fatalf("%s second page mismatch: status=%d policy=%#v", test.kind, response.StatusCode, secondRisk)
-			}
-		}
-		if response := requestJSON(t, client, http.MethodGet, server.URL+test.path+"?cursor=modified", nil, nil); response.StatusCode != http.StatusUnprocessableEntity {
-			t.Fatalf("%s modified cursor status: %d", test.kind, response.StatusCode)
-		}
-		if response := requestJSON(t, client, http.MethodGet, server.URL+test.path+"?limit=51", nil, nil); response.StatusCode != http.StatusUnprocessableEntity {
-			t.Fatalf("%s oversized page status: %d", test.kind, response.StatusCode)
-		}
+	var first admin.RiskRulePolicy
+	response := requestJSON(t, client, http.MethodGet, server.URL+"/api/v1/admin/risk/rules?limit=20", nil, &first)
+	if response.StatusCode != http.StatusOK || first.Current.Version != 22 || len(first.History) != 20 || first.NextCursor == nil {
+		t.Fatalf("risk rules first page mismatch: status=%d policy=%#v", response.StatusCode, first)
+	}
+	var second admin.RiskRulePolicy
+	response = requestJSON(t, client, http.MethodGet, server.URL+"/api/v1/admin/risk/rules?limit=20&cursor="+url.QueryEscape(*first.NextCursor), nil, &second)
+	if response.StatusCode != http.StatusOK || second.Current.Version != 22 || len(second.History) != 2 || second.NextCursor != nil {
+		t.Fatalf("risk rules second page mismatch: status=%d policy=%#v", response.StatusCode, second)
+	}
+	if response := requestJSON(t, client, http.MethodGet, server.URL+"/api/v1/admin/risk/rules?cursor=modified", nil, nil); response.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("risk rules modified cursor status: %d", response.StatusCode)
+	}
+	if response := requestJSON(t, client, http.MethodGet, server.URL+"/api/v1/admin/risk/rules?limit=51", nil, nil); response.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("risk rules oversized page status: %d", response.StatusCode)
 	}
 }
 

@@ -1,13 +1,16 @@
 <script setup lang="ts">
-import { ArrowLeft, CheckCircle2, Clock3, FileWarning, Headphones, MessageSquare, Plus, Send, ShieldCheck } from 'lucide-vue-next'
+import { ArrowLeft, ArrowRight, CheckCircle2, Clock3, Copyright, CreditCard, FileWarning, Headphones, MessageSquare, Plus, ReceiptText, Send, ShieldCheck, UserRound } from 'lucide-vue-next'
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { api, messageFrom, type SupportCase, type SupportCaseCreate } from '../api/client'
 import { formatDateTime } from '../lib/format'
 import { useSessionStore } from '../stores/session'
+import UiBadge from '../components/ui/UiBadge.vue'
 import UiButton from '../components/ui/UiButton.vue'
+import UiIconButton from '../components/ui/UiIconButton.vue'
 import UiInput from '../components/ui/UiInput.vue'
+import PageHero from '../components/ui/PageHero.vue'
 import UiSelect from '../components/ui/UiSelect.vue'
 import UiTextarea from '../components/ui/UiTextarea.vue'
 
@@ -32,6 +35,37 @@ const form = reactive<SupportCaseCreate>({
 const terminal = computed(() => activeCase.value ? ['resolved', 'closed'].includes(activeCase.value.status) : false)
 const isCopyright = computed(() => form.category === 'copyright')
 const selectedID = computed(() => String(route.params.caseId || ''))
+const openCaseCount = computed(() => cases.value.filter(item => item.status === 'open').length)
+const resolvedCaseCount = computed(() => cases.value.filter(item => item.status === 'resolved').length)
+const supportHeroStats = computed(() => [
+  { value: cases.value.length, label: t('support.myCases'), icon: MessageSquare, tone: 'blue' as const },
+  { value: openCaseCount.value, label: t('support.statuses.open'), icon: Clock3, tone: 'violet' as const },
+  { value: resolvedCaseCount.value, label: t('support.statuses.resolved'), icon: CheckCircle2, tone: 'green' as const },
+])
+const primarySupportRoute = computed(() => ({
+  category: 'general_support' as const,
+  icon: Headphones,
+  label: t('support.categories.general_support'),
+  summary: t('support.categorySummaries.general_support'),
+}))
+const supportRoutes = computed(() => [
+  { category: 'account' as const, icon: UserRound, label: t('support.categories.account'), summary: t('support.categorySummaries.account') },
+  { category: 'billing' as const, icon: CreditCard, label: t('support.categories.billing'), summary: t('support.categorySummaries.billing') },
+  { category: 'task_or_order' as const, icon: ReceiptText, label: t('support.categories.task_or_order'), summary: t('support.categorySummaries.task_or_order') },
+])
+const copyrightSupportRoute = computed(() => ({
+  category: 'copyright' as const,
+  icon: Copyright,
+  label: t('support.categories.copyright'),
+  summary: t('support.categorySummaries.copyright'),
+}))
+
+function statusVariant(status: SupportCase['status']) {
+  if (status === 'resolved') return 'success'
+  if (status === 'waiting_for_requester') return 'warning'
+  if (status === 'closed') return 'neutral'
+  return 'primary'
+}
 
 function date(value: string) {
   return formatDateTime(value, locale.value, session.user?.timezone || 'UTC')
@@ -80,8 +114,10 @@ async function selectCase(item: SupportCase) {
   await router.push(`/support/${item.id}`)
 }
 
-function startCreate() {
+function startCreate(category: SupportCaseCreate['category'] = 'general_support') {
   activeCase.value = null
+  form.category = category
+  resetCopyrightFields()
   showCreate.value = true
   success.value = ''
   error.value = ''
@@ -143,14 +179,22 @@ onMounted(() => void load())
 
 <template>
   <section class="support-page content-width">
-    <header class="support-header">
-      <div><span class="status-label"><Headphones :size="14" />{{ t('support.workspaceLabel') }}</span><h1>{{ t('support.title') }}</h1><p>{{ t('support.summary') }}</p></div>
-      <UiButton v-if="session.user" class="command-button primary" variant="primary" @click="startCreate">
-        <template #start>
-          <Plus :size="17" />
-        </template>{{ t('support.newCase') }}
-      </UiButton>
-    </header>
+    <PageHero
+      :eyebrow="t('support.workspaceLabel')"
+      :eyebrow-icon="Headphones"
+      :title="t('support.title')"
+      :summary="t('support.summary')"
+      :stats="supportHeroStats"
+      :stats-label="t('support.myCases')"
+      artwork-src="/support/support-hero.png"
+      adapt-artwork-for-dark
+    >
+      <template #actions>
+        <UiButton v-if="session.user" class="command-button primary" variant="primary" @click="startCreate">
+          <template #start><Plus :size="17" /></template>{{ t('support.newCase') }}
+        </UiButton>
+      </template>
+    </PageHero>
 
     <div v-if="!loading && !session.user" class="support-auth-state">
       <Headphones :size="28" /><h2>{{ t('support.signInTitle') }}</h2><p>{{ t('support.signInSummary') }}</p><UiButton class="command-button primary" variant="primary" @click="useDemo">
@@ -169,14 +213,15 @@ onMounted(() => void load())
         {{ t('support.loading') }}
       </div>
 
-      <div v-else class="support-layout" :class="{ 'detail-open': activeCase || showCreate }">
+      <div v-else class="support-layout" :class="{ 'detail-open': activeCase || showCreate, 'has-no-cases': !cases.length }">
         <aside class="support-case-index">
           <div class="support-index-heading">
             <div><h2>{{ t('support.myCases') }}</h2><span>{{ t('support.caseCount', { count: cases.length }) }}</span></div>
+            <UiIconButton :label="t('support.newCase')" variant="ghost" size="sm" @click="startCreate()"><Plus :size="16" /></UiIconButton>
           </div>
           <UiButton v-for="item in cases" :key="item.id" variant="ghost" type="button" :class="{ active: item.id === activeCase?.id }" @click="selectCase(item)">
             <span><strong>{{ item.subject }}</strong><small>{{ t(`support.categories.${item.category}`) }}</small></span>
-            <span><small>{{ date(item.updatedAt) }}</small><em :data-status="item.status">{{ t(`support.statuses.${item.status}`) }}</em></span>
+            <span><small>{{ date(item.updatedAt) }}</small><UiBadge :variant="statusVariant(item.status)" dot>{{ t(`support.statuses.${item.status}`) }}</UiBadge></span>
           </UiButton>
           <div v-if="nextCursor" class="support-index-pagination">
             <UiButton class="command-button secondary" variant="secondary" :loading="loadingMore" @click="loadMore">
@@ -225,7 +270,7 @@ onMounted(() => void load())
           </UiButton>
           <header class="support-case-header">
             <div><span>{{ t(`support.categories.${activeCase.category}`) }}</span><h2>{{ activeCase.subject }}</h2><p>{{ t('support.caseReference', { id: activeCase.id.slice(0, 8), version: activeCase.version }) }}</p></div>
-            <em :data-status="activeCase.status">{{ t(`support.statuses.${activeCase.status}`) }}</em>
+            <UiBadge :variant="statusVariant(activeCase.status)" dot>{{ t(`support.statuses.${activeCase.status}`) }}</UiBadge>
           </header>
           <dl class="support-evidence">
             <div><dt>{{ t('support.opened') }}</dt><dd>{{ date(activeCase.createdAt) }}</dd></div>
@@ -256,7 +301,28 @@ onMounted(() => void load())
         </section>
 
         <section v-else class="support-detail support-welcome">
-          <Headphones :size="28" /><h2>{{ t('support.selectTitle') }}</h2><p>{{ t('support.selectSummary') }}</p>
+          <div class="support-welcome-heading">
+            <span class="support-state-icon"><Headphones :size="25" /></span>
+            <div><h2>{{ t('support.selectTitle') }}</h2><p>{{ t('support.selectSummary') }}</p></div>
+          </div>
+          <div class="support-route-list">
+            <UiButton class="support-route-card support-route-primary" variant="ghost" @click="startCreate(primarySupportRoute.category)">
+              <span class="support-route-icon"><component :is="primarySupportRoute.icon" :size="18" /></span>
+              <span class="support-route-copy"><strong>{{ primarySupportRoute.label }}</strong><small>{{ primarySupportRoute.summary }}</small></span>
+              <ArrowRight :size="16" />
+            </UiButton>
+            <UiButton v-for="item in supportRoutes" :key="item.category" class="support-route-card support-route-compact" variant="ghost" @click="startCreate(item.category)">
+              <span class="support-route-icon"><component :is="item.icon" :size="18" /></span>
+              <span class="support-route-copy"><strong>{{ item.label }}</strong><small>{{ item.summary }}</small></span>
+              <ArrowRight :size="16" />
+            </UiButton>
+            <UiButton class="support-route-card support-rights-route" variant="ghost" @click="startCreate(copyrightSupportRoute.category)">
+              <span class="support-route-icon"><component :is="copyrightSupportRoute.icon" :size="18" /></span>
+              <span class="support-route-copy"><strong>{{ copyrightSupportRoute.label }}</strong><small>{{ copyrightSupportRoute.summary }}</small></span>
+              <ArrowRight :size="16" />
+            </UiButton>
+          </div>
+          <div class="support-privacy-note"><ShieldCheck :size="18" /><span><strong>{{ t('support.privacyTitle') }}</strong><small>{{ t('support.privacySummary') }}</small></span></div>
         </section>
       </div>
     </template>

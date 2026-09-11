@@ -12,7 +12,9 @@ import {
   api, messageFrom, type Asset, type TaskCreate, type TaskDetail, type TaskSummary,
 } from '../api/client'
 import { formatCurrency, formatDateTime } from '../lib/format'
+import { openCheckoutWindow } from '../lib/checkout'
 import { useSessionStore } from '../stores/session'
+import PageHero from '../components/ui/PageHero.vue'
 import UiButton from '../components/ui/UiButton.vue'
 import UiCheckbox from '../components/ui/UiCheckbox.vue'
 import UiIconButton from '../components/ui/UiIconButton.vue'
@@ -39,7 +41,7 @@ const taskCreateModal = ref<InstanceType<typeof globalThis.HTMLElement> | null>(
 const proposalOpen = ref(false)
 const disputeOpen = ref(false)
 const cancelOpen = ref(false)
-const paymentEnabled = ref(false)
+const taskPaymentEnabled = ref(false)
 const paymentLiveMode = ref(false)
 const fundingPollAttempts = ref(0)
 let fundingPollTimer: number | undefined
@@ -57,12 +59,17 @@ const viewTabs = computed(() => [
 const taskID = computed(() => String(route.params.id || ''))
 const isDetail = computed(() => Boolean(taskID.value))
 const canPublishBrief = computed(() => Boolean(session.user && ['publisher', 'admin'].includes(session.user.role)))
+const taskHeroStats = computed(() => [
+  { value: openTaskCount.value, label: t('tasks.openTasks'), icon: BriefcaseBusiness, tone: 'blue' as const },
+  { value: money(totalTaskReward.value), label: t('tasks.totalReward'), icon: CircleDollarSign, tone: 'violet' as const },
+  { value: totalProposalCount.value, label: t('tasks.totalProposals'), icon: UserRound, tone: 'green' as const },
+])
 const canPropose = computed(() => Boolean(session.user) && detail.value?.viewerRole === 'viewer' && detail.value.status === 'open' && !detail.value.proposals.length)
 const fundingConfirmed = computed(() => Boolean(detail.value?.funding && ['paid', 'transfer_pending', 'transferred'].includes(detail.value.funding.status)))
 const directFundingConfirmed = computed(() => fundingConfirmed.value && !detail.value?.funding?.proposalId)
-const canClaim = computed(() => canPropose.value && detail.value?.allowDirectAccept && (!paymentEnabled.value || directFundingConfirmed.value))
+const canClaim = computed(() => canPropose.value && taskPaymentEnabled.value && detail.value?.allowDirectAccept && directFundingConfirmed.value)
 const canFundDirect = computed(() => Boolean(
-  paymentEnabled.value && detail.value?.viewerRole === 'client' && detail.value.status === 'open' && detail.value.allowDirectAccept
+  taskPaymentEnabled.value && detail.value?.viewerRole === 'client' && detail.value.status === 'open' && detail.value.allowDirectAccept
   && canStartFundingFor(),
 ))
 const canDeliver = computed(() => detail.value?.viewerRole === 'assignee' && ['assigned', 'revision'].includes(detail.value.status))
@@ -144,8 +151,8 @@ async function load() {
   success.value = ''
   try {
     const [, runtime] = await Promise.all([session.ensure(), api.meta()])
-    paymentEnabled.value = runtime.paymentProvider.enabled
-    paymentLiveMode.value = runtime.paymentProvider.liveMode
+    taskPaymentEnabled.value = runtime.taskPaymentProvider.enabled
+    paymentLiveMode.value = runtime.taskPaymentProvider.liveMode
     if (taskID.value) {
       detail.value = await api.getTask(taskID.value)
       if (detail.value.viewerRole === 'assignee') {
@@ -192,12 +199,12 @@ function canStartFundingFor(proposalId?: string) {
 }
 
 function canFundProposal(proposalId: string) {
-  return Boolean(paymentEnabled.value && detail.value?.viewerRole === 'client' && detail.value.status === 'open' && canStartFundingFor(proposalId))
+  return Boolean(taskPaymentEnabled.value && detail.value?.viewerRole === 'client' && detail.value.status === 'open' && canStartFundingFor(proposalId))
 }
 
 function canAcceptProposal(proposalId: string) {
   if (detail.value?.viewerRole !== 'client' || detail.value.status !== 'open') return false
-  return !paymentEnabled.value || (fundingConfirmed.value && fundingMatches(proposalId))
+  return taskPaymentEnabled.value && fundingConfirmed.value && fundingMatches(proposalId)
 }
 
 function fundingActionLabel(proposalId?: string) {
@@ -218,19 +225,29 @@ async function fundTask(proposalId?: string) {
   if (!detail.value) return
   const current = detail.value.funding
   if (fundingMatches(proposalId) && current?.status === 'checkout_open' && current.checkoutUrl) {
-    globalThis.location.assign(current.checkoutUrl)
+    const checkoutWindow = openCheckoutWindow(current.checkoutUrl)
+    if (!checkoutWindow) {
+      error.value = t('tasks.checkoutPopupBlocked')
+    }
     return
   }
   actionLoading.value = true
   error.value = ''
+  let checkoutWindow = null as ReturnType<typeof globalThis.open>
   try {
+    checkoutWindow = openCheckoutWindow()
+    if (!checkoutWindow) {
+      error.value = t('errors.codes.checkout_popup_blocked')
+      return
+    }
     const checkout = await api.checkoutTask(
       detail.value.id,
       proposalId ? { proposalId } : {},
       fundingRequestKey(proposalId),
     )
-    globalThis.location.assign(checkout.checkoutUrl)
+    checkoutWindow.location.href = checkout.checkoutUrl
   } catch (reason) {
+    checkoutWindow?.close()
     error.value = messageFrom(reason)
     detail.value = await api.getTask(detail.value.id)
   } finally {
@@ -239,7 +256,7 @@ async function fundTask(proposalId?: string) {
 }
 
 function applyPaymentReturnState() {
-  if (!detail.value || !paymentEnabled.value) return
+  if (!detail.value || !taskPaymentEnabled.value) return
   const paymentReturn = String(route.query.payment || '')
   if (paymentReturn === 'cancelled') {
     success.value = t('tasks.fundingCheckoutCancelled')
@@ -349,7 +366,7 @@ async function review(decision: 'accept' | 'request_revision') {
   if (!detail.value) return
   await mutate(
     () => api.reviewTask(detail.value!.id, { decision, note: reviewNote.value.trim() }),
-    decision === 'accept' ? t(paymentEnabled.value ? 'tasks.acceptedProvider' : 'tasks.accepted') : t('tasks.revisionSent'),
+    decision === 'accept' ? t('tasks.acceptedProvider') : t('tasks.revisionSent'),
   )
 }
 
@@ -457,18 +474,16 @@ onBeforeUnmount(() => {
 <template>
   <section class="task-market content-width" :class="{ 'is-detail': isDetail }">
     <template v-if="!isDetail">
-      <header class="page-hero-header page-hero-banner task-market-header">
-        <div class="page-hero-copy">
-          <span class="page-hero-eyebrow"><ShieldCheck :size="14" />{{ paymentEnabled ? t(paymentLiveMode ? 'tasks.providerLiveShort' : 'tasks.providerTestShort') : t('tasks.localTestShort') }}</span>
-          <h1>{{ t('tasks.title') }}</h1>
-          <p>{{ t('tasks.summary') }}</p>
-          <div class="page-hero-stats" :aria-label="t('tasks.taskStats')">
-            <article><span class="page-hero-stat-icon" data-tone="blue"><BriefcaseBusiness :size="23" /></span><div><strong>{{ openTaskCount }}</strong><span>{{ t('tasks.openTasks') }}</span></div></article>
-            <article><span class="page-hero-stat-icon" data-tone="violet"><CircleDollarSign :size="23" /></span><div><strong>{{ money(totalTaskReward) }}</strong><span>{{ t('tasks.totalReward') }}</span></div></article>
-            <article><span class="page-hero-stat-icon" data-tone="green"><UserRound :size="23" /></span><div><strong>{{ totalProposalCount }}</strong><span>{{ t('tasks.totalProposals') }}</span></div></article>
-          </div>
-        </div>
-        <div class="page-hero-actions">
+      <PageHero
+        :eyebrow="taskPaymentEnabled ? t(paymentLiveMode ? 'tasks.providerLiveShort' : 'tasks.providerTestShort') : t('tasks.paymentUnavailable')"
+        :eyebrow-icon="ShieldCheck"
+        :title="t('tasks.title')"
+        :summary="t('tasks.summary')"
+        :stats="taskHeroStats"
+        :stats-label="t('tasks.taskStats')"
+        artwork-src="/tasks/task-hero-transparent.webp"
+      >
+        <template #actions>
           <UiButton v-if="session.user" as="RouterLink" class="command-button secondary" variant="secondary" to="/workspace/tasks">
             <template #start>
               <BriefcaseBusiness :size="17" />
@@ -479,45 +494,43 @@ onBeforeUnmount(() => {
               <Plus :size="17" />
             </template>{{ t('tasks.publishBrief') }}
           </UiButton>
-          <UiButton v-if="!session.user" as="RouterLink" class="command-button secondary" variant="secondary" :to="{ path: '/settings', query: { auth: 'login', returnTo: route.fullPath } }">
+          <UiButton v-if="!session.user" as="RouterLink" class="command-button secondary" variant="secondary" :to="{ path: '/auth', query: { auth: 'login', returnTo: route.fullPath } }">
             <template #start>
               <LogIn :size="17" />
             </template>{{ t('account.signIn') }}
           </UiButton>
-          <UiButton v-if="!session.user" as="RouterLink" class="command-button primary" variant="primary" :to="{ path: '/settings', query: { auth: 'register', returnTo: route.fullPath } }">
+          <UiButton v-if="!session.user" as="RouterLink" class="command-button primary" variant="primary" :to="{ path: '/auth', query: { auth: 'register', returnTo: route.fullPath } }">
             <template #start>
               <UserPlus :size="17" />
             </template>{{ t('account.createAccount') }}
           </UiButton>
-        </div>
-        <img class="page-hero-art task-market-hero-art" src="/tasks/task-hero-transparent.webp" alt="" aria-hidden="true" />
-        <div v-if="session.user" class="page-hero-account">
-          <span class="page-hero-avatar"><UserRound :size="22" /></span><span><strong>{{ session.user.displayName }}</strong><small>@{{ session.user.handle }}</small></span><ShieldCheck :size="15" />
-        </div>
-      </header>
+        </template>
+      </PageHero>
 
-      <div v-if="session.user" class="view-switcher-bar">
-        <UiTabs class="view-switcher" :model-value="view" :items="viewTabs" :label="t('tasks.views')" @update:model-value="selectView($event as 'available' | 'mine')" />
+      <div class="controls-with-switcher task-controls-row" :class="{ 'has-switcher': session.user }">
+        <div v-if="session.user" class="view-switcher-bar">
+          <UiTabs class="view-switcher" :model-value="view" :items="viewTabs" :label="t('tasks.views')" @update:model-value="selectView($event as 'available' | 'mine')" />
+        </div>
+
+        <form class="task-filters" role="search" @submit.prevent="applyFilters">
+          <label class="task-search"><span class="sr-only">{{ t('actions.search') }}</span><Search :size="17" /><UiInput v-model="search" type="search" :placeholder="t('tasks.searchPlaceholder')" /></label>
+          <UiSelect v-model="deliverableType" class="task-filter-control" :aria-label="t('tasks.allTypes')" :align-item-with-trigger="false" @change="applyFilters">
+            <template #start><Filter :size="15" aria-hidden="true" /></template>
+            <option value="">{{ t('tasks.allTypes') }}</option><option v-for="item in types" :key="item" :value="item">{{ t(`tasks.types.${item}`) }}</option>
+          </UiSelect>
+          <UiSelect v-model="status" class="task-filter-control" :aria-label="t('tasks.allStatuses')" @change="applyFilters">
+            <option value="">{{ t('tasks.allStatuses') }}</option><option v-for="item in statuses" :key="item" :value="item">{{ t(`tasks.status.${item}`) }}</option>
+          </UiSelect>
+          <UiSelect v-model="sort" class="task-filter-control" :aria-label="t('tasks.sortNewest')" @change="applyFilters">
+            <option value="newest">{{ t('tasks.sortNewest') }}</option><option value="deadline">{{ t('tasks.sortDeadline') }}</option><option value="budget_desc">{{ t('tasks.sortBudget') }}</option>
+          </UiSelect>
+          <UiButton class="command-button primary task-filter-submit" variant="primary" type="submit">
+            <template #start>
+              <Search :size="17" />
+            </template>{{ t('actions.search') }}
+          </UiButton>
+        </form>
       </div>
-
-      <form class="task-filters" role="search" @submit.prevent="applyFilters">
-        <label class="task-search"><span class="sr-only">{{ t('actions.search') }}</span><Search :size="17" /><UiInput v-model="search" type="search" :placeholder="t('tasks.searchPlaceholder')" /></label>
-        <UiSelect v-model="deliverableType" class="task-filter-control" :aria-label="t('tasks.allTypes')" :align-item-with-trigger="false" @change="applyFilters">
-          <template #start><Filter :size="15" aria-hidden="true" /></template>
-          <option value="">{{ t('tasks.allTypes') }}</option><option v-for="item in types" :key="item" :value="item">{{ t(`tasks.types.${item}`) }}</option>
-        </UiSelect>
-        <UiSelect v-model="status" class="task-filter-control" :aria-label="t('tasks.allStatuses')" @change="applyFilters">
-          <option value="">{{ t('tasks.allStatuses') }}</option><option v-for="item in statuses" :key="item" :value="item">{{ t(`tasks.status.${item}`) }}</option>
-        </UiSelect>
-        <UiSelect v-model="sort" class="task-filter-control" :aria-label="t('tasks.sortNewest')" @change="applyFilters">
-          <option value="newest">{{ t('tasks.sortNewest') }}</option><option value="deadline">{{ t('tasks.sortDeadline') }}</option><option value="budget_desc">{{ t('tasks.sortBudget') }}</option>
-        </UiSelect>
-        <UiButton class="command-button primary task-filter-submit" variant="primary" type="submit">
-          <template #start>
-            <Search :size="17" />
-          </template>{{ t('actions.search') }}
-        </UiButton>
-      </form>
 
       <div v-if="loading" class="task-skeleton" aria-live="polite">
         <span v-for="item in 4" :key="item"></span><p>{{ t('tasks.loading') }}</p>
@@ -541,7 +554,7 @@ onBeforeUnmount(() => {
             </UiButton>
           </nav>
           <section class="task-creator-program">
-            <span><Sparkles :size="20" /></span><div><strong>{{ t('tasks.creatorProgram') }}</strong><p>{{ t('tasks.creatorProgramSummary') }}</p></div><RouterLink class="text-link" to="/settings">
+            <span><Sparkles :size="20" /></span><div><strong>{{ t('tasks.creatorProgram') }}</strong><p>{{ t('tasks.creatorProgramSummary') }}</p></div><RouterLink class="text-link" :to="session.user ? '/settings' : { path: '/auth', query: { returnTo: '/settings' } }">
               {{ t('tasks.learnMore') }}<ChevronRight :size="15" />
             </RouterLink>
           </section>
@@ -573,7 +586,7 @@ onBeforeUnmount(() => {
                 <span class="task-row-byline"><span>@{{ item.client.handle }}</span><span>{{ item.proposalCount }} {{ t('tasks.proposalCount') }}</span><span v-if="item.allowDirectAccept && item.status === 'open'">{{ t('tasks.direct') }}</span></span>
               </span>
               <span class="task-row-commercial">
-                <span class="task-row-data"><small>{{ paymentEnabled ? t('tasks.providerReward') : t('tasks.reward') }}</small><strong>{{ money(item.budgetCents, item.currency) }}</strong></span>
+                <span class="task-row-data"><small>{{ t('tasks.providerReward') }}</small><strong>{{ money(item.budgetCents, item.currency) }}</strong></span>
                 <span class="task-row-data"><small><Clock3 :size="13" />{{ t('tasks.deadline') }}</small><strong>{{ date(item.deadline, item.clientTimezone) }}</strong></span>
                 <span class="command-button primary task-row-action">{{ t('tasks.reviewBrief') }}<ChevronRight :size="16" /></span>
               </span>
@@ -645,7 +658,7 @@ onBeforeUnmount(() => {
         <article class="task-brief">
           <header class="task-brief-header">
             <div class="task-brief-signals">
-              <span class="task-status" :data-status="detail.status">{{ t(`tasks.status.${detail.status}`) }}</span><span v-if="detail.allowDirectAccept && detail.status === 'open' && (!paymentEnabled || directFundingConfirmed || detail.viewerRole === 'client')" class="task-direct-signal"><BriefcaseBusiness :size="14" />{{ t(paymentEnabled && !directFundingConfirmed ? 'tasks.directFundingRequired' : 'tasks.direct') }}</span>
+              <span class="task-status" :data-status="detail.status">{{ t(`tasks.status.${detail.status}`) }}</span><span v-if="taskPaymentEnabled && detail.allowDirectAccept && detail.status === 'open' && (directFundingConfirmed || detail.viewerRole === 'client')" class="task-direct-signal"><BriefcaseBusiness :size="14" />{{ t(!directFundingConfirmed ? 'tasks.directFundingRequired' : 'tasks.direct') }}</span>
             </div><h1>{{ detail.title }}</h1><p>{{ detail.summary }}</p>
           </header>
           <section class="task-brief-overview">
@@ -681,7 +694,7 @@ onBeforeUnmount(() => {
 
           <section v-if="detail.proposals.length" class="task-proposals">
             <h2>{{ detail.viewerRole === 'client' ? t('tasks.proposals') : t('tasks.yourProposal') }}</h2><article v-for="item in detail.proposals" :key="item.id">
-              <div><strong>{{ item.creator.displayName }}</strong><span>@{{ item.creator.handle }}</span></div><p>{{ item.approach }}</p><p>{{ item.deliverables }}</p><dl><div><dt>{{ paymentEnabled ? t('tasks.providerReward') : t('tasks.reward') }}</dt><dd>{{ money(item.amountCents) }}</dd></div><div><dt>{{ t('tasks.timelineDays') }}</dt><dd>{{ item.timelineDays }}</dd></div></dl><div v-if="item.status === 'submitted' && detail.status === 'open' && detail.viewerRole === 'client'" class="task-proposal-actions">
+              <div><strong>{{ item.creator.displayName }}</strong><span>@{{ item.creator.handle }}</span></div><p>{{ item.approach }}</p><p>{{ item.deliverables }}</p><dl><div><dt>{{ t('tasks.providerReward') }}</dt><dd>{{ money(item.amountCents) }}</dd></div><div><dt>{{ t('tasks.timelineDays') }}</dt><dd>{{ item.timelineDays }}</dd></div></dl><div v-if="item.status === 'submitted' && detail.status === 'open' && detail.viewerRole === 'client'" class="task-proposal-actions">
                 <UiButton v-if="canFundProposal(item.id)" class="command-button secondary" variant="secondary" :loading="actionLoading" @click="fundTask(item.id)">
                   <template #start>
                     <CircleDollarSign v-if="!actionLoading" :size="17" />
@@ -720,9 +733,9 @@ onBeforeUnmount(() => {
 
         <aside id="task-actions" class="task-action-rail">
           <div class="task-reward">
-            <div><span>{{ paymentEnabled ? t('tasks.providerReward') : t('tasks.reward') }}</span><strong>{{ money(detail.budgetCents, detail.currency) }}</strong></div>
+            <div><span>{{ t('tasks.providerReward') }}</span><strong>{{ money(detail.budgetCents, detail.currency) }}</strong></div>
             <img src="/tasks/task-reward.webp" alt="" aria-hidden="true" />
-            <p><ShieldCheck :size="16" /><span>{{ paymentEnabled ? t(paymentLiveMode ? 'tasks.providerLive' : 'tasks.providerTest') : t('tasks.localTest') }}</span></p>
+            <p><ShieldCheck :size="16" /><span>{{ taskPaymentEnabled ? t(paymentLiveMode ? 'tasks.providerLive' : 'tasks.providerTest') : t('tasks.paymentUnavailable') }}</span></p>
           </div>
           <dl class="task-facts">
             <div><dt><UserRound :size="16" />{{ t('tasks.commissioner') }}</dt><dd>{{ detail.client.displayName }}<small>@{{ detail.client.handle }}</small></dd></div><div><dt><CalendarDays :size="16" />{{ t('tasks.deadline') }}</dt><dd>{{ date(detail.deadline, detail.clientTimezone) }}<small>{{ detail.clientTimezone }}</small></dd></div><div v-if="detail.assignee">
@@ -732,12 +745,12 @@ onBeforeUnmount(() => {
 
           <div v-if="!session.user" class="market-auth-prompt">
             <div><h2>{{ t('tasks.guestTitle') }}</h2><p>{{ t('tasks.guestSummary') }}</p></div>
-            <UiButton as="RouterLink" class="command-button primary wide" variant="primary" :to="{ path: '/settings', query: { auth: 'login', returnTo: route.fullPath } }">
+            <UiButton as="RouterLink" class="command-button primary wide" variant="primary" :to="{ path: '/auth', query: { auth: 'login', returnTo: route.fullPath } }">
               <template #start>
                 <LogIn :size="17" />
               </template>{{ t('account.signIn') }}
             </UiButton>
-            <UiButton as="RouterLink" class="text-link" variant="ghost" size="sm" :to="{ path: '/settings', query: { auth: 'register', returnTo: route.fullPath } }">
+            <UiButton as="RouterLink" class="text-link" variant="ghost" size="sm" :to="{ path: '/auth', query: { auth: 'register', returnTo: route.fullPath } }">
               {{ t('account.createAccount') }}
             </UiButton>
           </div>
@@ -748,6 +761,9 @@ onBeforeUnmount(() => {
           <div v-if="error" class="task-feedback error" role="alert">
             <AlertTriangle :size="17" />{{ error }}
           </div>
+          <p v-if="!taskPaymentEnabled && detail.status === 'open'" class="task-payment-note">
+            <ShieldCheck :size="17" /><span>{{ t('tasks.paymentUnavailable') }}</span>
+          </p>
 
           <div v-if="detail.funding" class="task-settlement task-funding">
             <CircleDollarSign :size="19" /><div><strong>{{ t(`tasks.fundingStatus.${detail.funding.status}`) }}</strong><span>{{ money(detail.funding.amountCents, detail.funding.currency) }} / {{ t(detail.funding.liveMode ? 'tasks.providerLiveMode' : 'tasks.providerTestMode') }}</span></div>
@@ -830,7 +846,7 @@ onBeforeUnmount(() => {
           <div v-if="detail.settlement" class="task-settlement">
             <CircleDollarSign :size="19" /><div><strong>{{ t('tasks.settlement') }}</strong><span>{{ money(detail.settlement.amountCents, detail.settlement.currency) }} / {{ t(`tasks.settlementMode.${detail.settlement.mode}`) }}</span></div>
           </div><p v-else class="task-payment-note">
-            <ShieldCheck :size="17" /><span>{{ t(paymentEnabled ? 'tasks.providerUnsettled' : 'tasks.unsettled') }}</span>
+            <ShieldCheck :size="17" /><span>{{ t(taskPaymentEnabled ? 'tasks.providerUnsettled' : 'tasks.paymentUnavailable') }}</span>
           </p>
 
           <div v-if="session.user" class="demo-actor-switch">

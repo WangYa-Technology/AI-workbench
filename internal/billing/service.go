@@ -136,7 +136,7 @@ func (s *Service) Statement(ctx context.Context, userID uuid.UUID, input Stateme
 
 func validEntryType(value string) bool {
 	switch value {
-	case "generation_charge", "product_purchase", "product_sale", "product_refund", "task_payment", "task_earning", "admin_adjustment", "initial_credit", "subscription_purchase":
+	case "generation_charge", "product_purchase", "product_sale", "product_refund", "task_payment", "task_earning", "admin_adjustment", "initial_credit", "wallet_topup", "subscription_purchase":
 		return true
 	default:
 		return false

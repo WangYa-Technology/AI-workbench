@@ -82,6 +82,16 @@ type Config struct {
 	StripeBaseURL                              string
 	StripeAPIVersion                           string
 	StripeWebhookToleranceSeconds              int
+	PaymentProvider                            string
+	WaffoEnabled                               bool
+	WaffoEnvironment                           string
+	WaffoProductionApproved                    bool
+	WaffoMerchantID                            string
+	WaffoStoreID                               string
+	WaffoConnectorURL                          string
+	WaffoConnectorToken                        string
+	WaffoProductIDOnetime                      string
+	WaffoProductIDSubscription                 string
 }
 
 func Load() (Config, error) {
@@ -154,6 +164,14 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	stripeWebhookToleranceSeconds, err := integer("STRIPE_WEBHOOK_TOLERANCE_SECONDS", 300)
+	if err != nil {
+		return Config{}, err
+	}
+	waffoEnabled, err := strictBoolean("WAFFO_ENABLED", false)
+	if err != nil {
+		return Config{}, err
+	}
+	waffoProductionApproved, err := strictBoolean("WAFFO_PRODUCTION_APPROVED", false)
 	if err != nil {
 		return Config{}, err
 	}
@@ -245,6 +263,16 @@ func Load() (Config, error) {
 		StripeBaseURL:                 value("STRIPE_BASE_URL", "https://api.stripe.com/v1"),
 		StripeAPIVersion:              value("STRIPE_API_VERSION", "2026-02-25.clover"),
 		StripeWebhookToleranceSeconds: stripeWebhookToleranceSeconds,
+		PaymentProvider:               value("PAYMENT_PROVIDER", "stripe"),
+		WaffoEnabled:                  waffoEnabled,
+		WaffoEnvironment:              value("WAFFO_ENVIRONMENT", "test"),
+		WaffoProductionApproved:       waffoProductionApproved,
+		WaffoMerchantID:               strings.TrimSpace(os.Getenv("WAFFO_MERCHANT_ID")),
+		WaffoStoreID:                  strings.TrimSpace(os.Getenv("WAFFO_STORE_ID")),
+		WaffoConnectorURL:             value("WAFFO_CONNECTOR_URL", "http://127.0.0.1:8091"),
+		WaffoConnectorToken:           strings.TrimSpace(os.Getenv("WAFFO_CONNECTOR_TOKEN")),
+		WaffoProductIDOnetime:         strings.TrimSpace(os.Getenv("WAFFO_PRODUCT_ID_ONETIME")),
+		WaffoProductIDSubscription:    strings.TrimSpace(os.Getenv("WAFFO_PRODUCT_ID_SUBSCRIPTION")),
 	}
 	webhookKey := strings.TrimSpace(os.Getenv("WEBHOOK_ENCRYPTION_KEY_B64"))
 	if webhookKey == "" && cfg.Environment != "production" {
@@ -274,6 +302,9 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	if err := validateStripe(&cfg); err != nil {
+		return Config{}, err
+	}
+	if err := validatePayment(&cfg); err != nil {
 		return Config{}, err
 	}
 	if err := validateMedia(&cfg); err != nil {
@@ -461,6 +492,54 @@ func validateStripe(cfg *Config) error {
 		webOrigin, err := url.Parse(cfg.WebOrigin)
 		if err != nil || webOrigin.Scheme != "https" || webOrigin.Host == "" || isLoopbackHost(webOrigin.Hostname()) {
 			return fmt.Errorf("WEB_ORIGIN must be a public HTTPS origin when Stripe is enabled in production")
+		}
+	}
+	return nil
+}
+
+func validatePayment(cfg *Config) error {
+	cfg.PaymentProvider = strings.ToLower(strings.TrimSpace(cfg.PaymentProvider))
+	if !oneOf(cfg.PaymentProvider, "stripe", "waffo_pancake", "epay") {
+		return fmt.Errorf("PAYMENT_PROVIDER must be stripe, waffo_pancake, or epay")
+	}
+	cfg.WaffoEnvironment = strings.ToLower(strings.TrimSpace(cfg.WaffoEnvironment))
+	if !oneOf(cfg.WaffoEnvironment, "test", "prod") {
+		return fmt.Errorf("WAFFO_ENVIRONMENT must be test or prod")
+	}
+	for key, candidate := range map[string]string{
+		"WAFFO_MERCHANT_ID": cfg.WaffoMerchantID, "WAFFO_STORE_ID": cfg.WaffoStoreID,
+		"WAFFO_CONNECTOR_TOKEN": cfg.WaffoConnectorToken, "WAFFO_PRODUCT_ID_ONETIME": cfg.WaffoProductIDOnetime,
+		"WAFFO_PRODUCT_ID_SUBSCRIPTION": cfg.WaffoProductIDSubscription,
+	} {
+		if strings.ContainsAny(candidate, "\r\n") {
+			return fmt.Errorf("%s cannot contain line breaks", key)
+		}
+	}
+	connector, err := url.Parse(strings.TrimRight(strings.TrimSpace(cfg.WaffoConnectorURL), "/"))
+	if err != nil || connector.Host == "" || connector.User != nil || connector.RawQuery != "" || connector.Fragment != "" || !oneOf(connector.Scheme, "http", "https") {
+		return fmt.Errorf("WAFFO_CONNECTOR_URL must be an absolute URL without credentials, query, or fragment")
+	}
+	if connector.Scheme == "http" && (cfg.WaffoEnabled && (cfg.Environment == "production" || !isLoopbackHost(connector.Hostname()))) {
+		return fmt.Errorf("WAFFO_CONNECTOR_URL HTTP is allowed only for loopback development tests")
+	}
+	cfg.WaffoConnectorURL = strings.TrimRight(connector.String(), "/")
+	if cfg.WaffoEnabled {
+		if cfg.PaymentProvider != "waffo_pancake" {
+			return fmt.Errorf("PAYMENT_PROVIDER must be waffo_pancake when WAFFO_ENABLED is true")
+		}
+		if cfg.WaffoMerchantID == "" || cfg.WaffoConnectorToken == "" {
+			return fmt.Errorf("WAFFO_MERCHANT_ID and WAFFO_CONNECTOR_TOKEN are required when WAFFO_ENABLED is true")
+		}
+		if len(cfg.WaffoConnectorToken) < 16 {
+			return fmt.Errorf("WAFFO_CONNECTOR_TOKEN must contain at least 16 characters")
+		}
+	}
+	if cfg.WaffoEnvironment == "prod" && !cfg.WaffoProductionApproved {
+		return fmt.Errorf("WAFFO_PRODUCTION_APPROVED must be true before WAFFO prod mode can be enabled")
+	}
+	if cfg.Environment == "production" && cfg.WaffoEnabled {
+		if cfg.WaffoEnvironment != "prod" || cfg.WaffoConnectorURL == "" || !strings.HasPrefix(cfg.WaffoConnectorURL, "https://") {
+			return fmt.Errorf("production Waffo enablement requires approved prod mode and an HTTPS connector")
 		}
 	}
 	return nil

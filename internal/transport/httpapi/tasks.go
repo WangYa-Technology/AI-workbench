@@ -66,7 +66,7 @@ func (s *Server) checkoutTask(w http.ResponseWriter, r *http.Request) {
 		origin+"/market/demands/"+taskID.String()+"?payment=success", origin+"/market/demands/"+taskID.String()+"?payment=cancelled",
 	)
 	switch {
-	case errors.Is(err, payments.ErrDisabled), errors.Is(err, payments.ErrProviderUnavailable):
+	case errors.Is(err, payments.ErrDisabled), errors.Is(err, payments.ErrProviderUnavailable), errors.Is(err, payments.ErrProviderConfigMismatch):
 		httputil.WriteError(w, r, http.StatusServiceUnavailable, "payment_provider_unavailable", "Task funding is not enabled.", false)
 	case errors.Is(err, payments.ErrInvalidCheckout):
 		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "task_funding_invalid", "Choose an eligible task or proposal and provide a valid request key.", false)
@@ -228,7 +228,7 @@ func (s *Server) writeTaskResult(w http.ResponseWriter, r *http.Request, success
 	case errors.Is(err, tasks.ErrConflict):
 		httputil.WriteError(w, r, http.StatusConflict, "task_state_conflict", "The task changed or this action is no longer available. Refresh and review its current state.", false)
 	case errors.Is(err, billing.ErrInsufficientFunds):
-		httputil.WriteError(w, r, http.StatusPaymentRequired, "insufficient_credits", "The commissioner does not have enough available Local Test credits to settle this task.", false)
+		httputil.WriteError(w, r, http.StatusPaymentRequired, "insufficient_credits", "The commissioner does not have enough available funds to settle this task.", false)
 	case errors.Is(err, systemsettings.ErrDisabled):
 		httputil.WriteError(w, r, http.StatusServiceUnavailable, "feature_disabled", "New task publishing is temporarily unavailable by an audited platform setting.", false)
 	case err != nil:

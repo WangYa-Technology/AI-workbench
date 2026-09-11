@@ -328,7 +328,7 @@ func TestProviderFundedTaskAssignmentAndTransfer(t *testing.T) {
 		t.Fatal(err)
 	}
 	accepted, err := taskService.Review(ctx, clientID, created.ID, tasks.ReviewInput{Decision: "accept", Note: "All funded acceptance rules are satisfied."}, "provider-task-review-001")
-	if err != nil || accepted.Settlement == nil || accepted.Settlement.Mode != "stripe_pending" || accepted.Funding == nil || accepted.Funding.Status != "transfer_pending" {
+	if err != nil || accepted.Settlement == nil || accepted.Settlement.Mode != "provider_pending" || accepted.Funding == nil || accepted.Funding.Status != "transfer_pending" {
 		t.Fatalf("Provider settlement was not queued: settlement=%#v funding=%#v err=%v", accepted.Settlement, accepted.Funding, err)
 	}
 	transferJob := jobs.Job{Kind: payments.TaskTransferJobKind, Payload: []byte(fmt.Sprintf(`{"paymentId":%q}`, checkout.PaymentID.String()))}
@@ -360,11 +360,11 @@ func TestProviderFundedTaskAssignmentAndTransfer(t *testing.T) {
 		SELECT pi.status,ts.mode FROM payment_intents pi JOIN task_settlements ts ON ts.demand_id=pi.resource_id WHERE pi.id=$1`, checkout.PaymentID).Scan(&intentStatus, &settlementMode); err != nil {
 		t.Fatal(err)
 	}
-	if intentStatus != "transferred" || settlementMode != "stripe_transferred" || runtime.transferCalls != 1 {
+	if intentStatus != "transferred" || settlementMode != "provider_transferred" || runtime.transferCalls != 1 {
 		t.Fatalf("task transfer mismatch: intent=%s settlement=%s calls=%d", intentStatus, settlementMode, runtime.transferCalls)
 	}
 	transferred, err := taskService.Get(ctx, creatorID, created.ID)
-	if err != nil || transferred.Funding == nil || transferred.Funding.Status != "transferred" || transferred.Settlement == nil || transferred.Settlement.Mode != "stripe_transferred" {
+	if err != nil || transferred.Funding == nil || transferred.Funding.Status != "transferred" || transferred.Settlement == nil || transferred.Settlement.Mode != "provider_transferred" {
 		t.Fatalf("transferred task projection mismatch: funding=%#v settlement=%#v err=%v", transferred.Funding, transferred.Settlement, err)
 	}
 }

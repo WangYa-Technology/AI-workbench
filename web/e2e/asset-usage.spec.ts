@@ -25,7 +25,7 @@ test('traces an Asset into downstream creation and publication usage', async ({ 
   await page.getByRole('button', { name: 'Generate image', exact: true }).click()
   await expect(page.locator('.studio-task').filter({ hasText: downstreamPrompt }).first().locator('.studio-task-status')).toContainText('Saved to Assets')
 
-  await page.goto(`/publish?assetId=${sourceAssetID}`)
+  await page.goto(`/workspace/assets?publish=${sourceAssetID}`)
   await page.getByLabel('Work title', { exact: true }).fill(workTitle)
   await page.getByLabel('Short description', { exact: true }).fill('Published evidence for the downstream Asset usage graph.')
   await page.getByLabel('Community note', { exact: true }).fill(`Usage graph verification ${runID}.`)

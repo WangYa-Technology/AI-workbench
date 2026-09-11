@@ -12,6 +12,7 @@ import BrandLogo from '../components/brand/BrandLogo.vue'
 import { formatCurrency } from '../lib/format'
 import { usePreferencesStore } from '../stores/preferences'
 import { useSessionStore } from '../stores/session'
+import { useSiteConfigStore } from '../stores/siteConfig'
 import UiButton from '../components/ui/UiButton.vue'
 import UiIconButton from '../components/ui/UiIconButton.vue'
 import UiInput from '../components/ui/UiInput.vue'
@@ -22,6 +23,7 @@ const { t, locale } = useI18n()
 const router = useRouter()
 const session = useSessionStore()
 const preferences = usePreferencesStore()
+const siteConfig = useSiteConfigStore()
 const works = ref<Work[]>([])
 const tasks = ref<TaskSummary[]>([])
 const loading = ref(true)
@@ -114,8 +116,8 @@ onBeforeUnmount(() => {
   <div class="guest-home">
     <header class="home-header">
       <div class="home-header-inner home-width">
-        <RouterLink class="home-brand" to="/" :aria-label="t('brand')">
-          <BrandLogo class="brand-mark" /><strong>{{ t('brand') }}</strong>
+        <RouterLink class="home-brand" to="/" :aria-label="siteConfig.current.siteName">
+          <BrandLogo class="brand-mark" /><strong>{{ siteConfig.current.siteName }}</strong>
         </RouterLink>
         <nav class="home-nav" :aria-label="t('accessibility.primaryNavigation')">
           <RouterLink to="/create/image">
@@ -138,10 +140,10 @@ onBeforeUnmount(() => {
           <UiIconButton class="home-icon-button" :label="t('actions.theme')" @click="preferences.toggleTheme">
             <Sun v-if="preferences.resolvedTheme === 'dark'" :size="16" :stroke-width="1.7" /><Moon v-else :size="16" :stroke-width="1.7" />
           </UiIconButton>
-          <RouterLink class="home-sign-in" :to="{ path: '/settings', query: { auth: 'login', returnTo: '/' } }">
+          <RouterLink class="home-sign-in" :to="{ path: '/auth', query: { auth: 'login', returnTo: '/' } }">
             {{ t('home.signIn') }}
           </RouterLink>
-          <UiButton as="RouterLink" class="home-register" variant="primary" :to="{ path: '/settings', query: { auth: 'register', returnTo: '/create/image' } }">
+          <UiButton as="RouterLink" class="home-register" variant="primary" :to="{ path: '/auth', query: { auth: 'register', returnTo: '/create/image' } }">
             {{ t('home.createAccount') }}
           </UiButton>
         </div>
@@ -321,7 +323,7 @@ onBeforeUnmount(() => {
       <section class="closing-section" data-home-reveal>
         <div class="home-width">
           <div><h2>{{ t('home.closing.title') }}</h2><p>{{ t('home.closing.summary') }}</p></div><nav>
-            <UiButton as="RouterLink" class="closing-primary" variant="primary" :to="{ path: '/settings', query: { auth: 'register', returnTo: '/create/image' } }">
+            <UiButton as="RouterLink" class="closing-primary" variant="primary" :to="{ path: '/auth', query: { auth: 'register', returnTo: '/create/image' } }">
               {{ t('home.createAccount') }}<ArrowRight :size="15" />
             </UiButton><RouterLink to="/create/image">
               {{ t('home.startCreating') }}
@@ -333,8 +335,8 @@ onBeforeUnmount(() => {
 
     <footer class="home-footer">
       <RouterLink class="home-brand" to="/">
-        <BrandLogo class="brand-mark" /><strong>{{ t('brand') }}</strong>
-      </RouterLink><p>{{ t('home.footer') }}</p><nav :aria-label="t('legal.footerLabel')">
+        <BrandLogo class="brand-mark" /><strong>{{ siteConfig.current.siteName }}</strong>
+      </RouterLink><p>{{ siteConfig.footerText }}</p><nav :aria-label="t('legal.footerLabel')">
         <RouterLink to="/policies/terms">
           {{ t('legal.topics.terms.title') }}
         </RouterLink><RouterLink to="/policies/privacy">

@@ -244,6 +244,22 @@ func TestStripeConfigurationRejectsUnsafeEndpointAndTolerance(t *testing.T) {
 	}
 }
 
+func TestWaffoEnablementRequiresConnectorConfiguration(t *testing.T) {
+	clearProviderEnv(t)
+	t.Setenv("PAYMENT_PROVIDER", "waffo_pancake")
+	t.Setenv("WAFFO_ENABLED", "true")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "WAFFO_MERCHANT_ID") {
+		t.Fatalf("Waffo enablement without connector configuration did not fail closed: %v", err)
+	}
+	t.Setenv("WAFFO_MERCHANT_ID", "MER_contract")
+	t.Setenv("WAFFO_CONNECTOR_TOKEN", "connector-contract-token")
+	t.Setenv("WAFFO_CONNECTOR_URL", "http://127.0.0.1:18091")
+	cfg, err := Load()
+	if err != nil || !cfg.WaffoEnabled || cfg.PaymentProvider != "waffo_pancake" || cfg.WaffoEnvironment != "test" {
+		t.Fatalf("valid Waffo test configuration failed: cfg=%+v err=%v", cfg, err)
+	}
+}
+
 func TestProductionStripeRequiresLiveApprovalAndPublicOrigin(t *testing.T) {
 	clearProviderEnv(t)
 	setValidProductionEnv(t)
@@ -372,6 +388,12 @@ func clearProviderEnv(t *testing.T) {
 	for _, key := range []string{
 		"STRIPE_ENABLED", "STRIPE_LIVE_MODE", "STRIPE_LIVE_MODE_APPROVED", "STRIPE_SECRET_KEY",
 		"STRIPE_WEBHOOK_SECRET", "STRIPE_BASE_URL", "STRIPE_API_VERSION", "STRIPE_WEBHOOK_TOLERANCE_SECONDS",
+	} {
+		t.Setenv(key, "")
+	}
+	for _, key := range []string{
+		"PAYMENT_PROVIDER", "WAFFO_ENABLED", "WAFFO_ENVIRONMENT", "WAFFO_PRODUCTION_APPROVED", "WAFFO_MERCHANT_ID", "WAFFO_STORE_ID",
+		"WAFFO_CONNECTOR_URL", "WAFFO_CONNECTOR_TOKEN", "WAFFO_PRODUCT_ID_ONETIME", "WAFFO_PRODUCT_ID_SUBSCRIPTION",
 	} {
 		t.Setenv(key, "")
 	}

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { CheckCircle2, Copy, Download, FileKey2, Github, Globe2, KeyRound, Landmark, Laptop2, LogOut, Mail, MailCheck, Plus, RefreshCw, Send, ShieldCheck, Smartphone, Trash2, UserRound, UsersRound, Webhook } from 'lucide-vue-next'
+import { CheckCircle2, Copy, Download, FileKey2, Github, Globe2, KeyRound, Landmark, Laptop2, LogOut, Mail, MailCheck, Pencil, Plus, RefreshCw, Send, ShieldCheck, Smartphone, Trash2, UserRound, Webhook, X } from 'lucide-vue-next'
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
@@ -10,9 +10,14 @@ import { usePreferencesStore } from '../stores/preferences'
 import { useSessionStore } from '../stores/session'
 import UiButton from '../components/ui/UiButton.vue'
 import UiCheckbox from '../components/ui/UiCheckbox.vue'
+import UiAvatar from '../components/ui/UiAvatar.vue'
 import UiInput from '../components/ui/UiInput.vue'
+import UiDrawer from '../components/ui/UiDrawer.vue'
+import UiIconButton from '../components/ui/UiIconButton.vue'
 import UiSelect from '../components/ui/UiSelect.vue'
+import UiStatus from '../components/ui/UiStatus.vue'
 import UiTextarea from '../components/ui/UiTextarea.vue'
+import PageHero from '../components/ui/PageHero.vue'
 
 const { t, locale } = useI18n()
 const route = useRoute()
@@ -20,7 +25,6 @@ const router = useRouter()
 const session = useSessionStore()
 const notifications = useNotificationsStore()
 const preferences = usePreferencesStore()
-const authMode = ref<'login' | 'register' | 'reset'>(route.query.auth === 'register' ? 'register' : 'login')
 const sessions = ref<AccountSession[]>([])
 const sessionNextCursor = ref<string | null>(null)
 const sessionsLoadingMore = ref(false)
@@ -38,16 +42,12 @@ const revealedCredential = ref<DeveloperCredential | null>(null)
 const webhookAccess = ref<DeveloperWebhookAccess | null>(null)
 const revealedWebhookCredential = ref<DeveloperWebhookCredential | null>(null)
 const webhookDeliveriesLoading = ref<Record<string, boolean>>({})
-const localDemoAvailable = ref(false)
 const loadingEvidence = ref(false)
 const actionID = ref('')
 const error = ref('')
 const success = ref('')
+const profileDrawerOpen = ref(false)
 
-const guessedTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
-const loginForm = reactive({ email: '', password: '' })
-const resetRequestForm = reactive({ email: '' })
-const registerForm = reactive({ email: '', password: '', handle: '', displayName: '', locale: 'en-US' as 'en-US' | 'zh-CN', timezone: guessedTimezone })
 const profileForm = reactive({ displayName: '', locale: 'en-US' as 'en-US' | 'zh-CN', timezone: 'UTC' })
 const rightsForm = reactive({ identityConfirmation: '', deletionConfirmed: false })
 const developerForm = reactive({ accountName: '', ttlDays: 90, ipAllowlist: '', reason: '', confirmed: false })
@@ -57,11 +57,37 @@ const section = computed(() => {
   const value = String(route.query.section || 'profile')
   return ['profile', 'security', 'connections', 'payouts', 'developer', 'privacy'].includes(value) ? value : 'profile'
 })
-const safeReturnTo = computed(() => {
-  const value = String(route.query.returnTo || '')
-  return value.startsWith('/') && !value.startsWith('//') ? value : ''
+
+const accountInitials = computed(() => {
+  const displayName = session.user?.displayName.trim() || ''
+  if (!displayName) return '?'
+  return displayName.split(/\s+/).map(part => part[0]).join('').slice(0, 2).toUpperCase()
 })
 
+const accountSections = computed(() => [
+  { id: 'profile', label: t('account.profile'), summary: t('account.profileSummary'), icon: UserRound },
+  { id: 'security', label: t('account.security'), summary: t('account.emailVerificationSummary'), icon: ShieldCheck },
+  { id: 'connections', label: t('account.signInMethods'), summary: t('account.signInMethodsSummary'), icon: KeyRound },
+  { id: 'payouts', label: t('account.payouts'), summary: t('account.payoutsSummary'), icon: Landmark },
+  { id: 'developer', label: t('account.developerAccess'), summary: t('account.developerAccessSummary'), icon: Webhook },
+  { id: 'privacy', label: t('account.privacyRights'), summary: t('account.privacyRightsSummary'), icon: FileKey2 },
+])
+
+const accountHeroStats = computed(() => {
+  if (!session.user) return []
+  return [
+    { value: t(`account.roleNames.${session.user.role}`), label: t('account.role'), icon: UserRound, tone: 'blue' as const },
+    { value: t(`account.statusNames.${session.user.status}`), label: t('account.status'), icon: ShieldCheck, tone: 'green' as const },
+    { value: session.user.emailVerified ? t('account.verified') : t('account.unverified'), label: t('account.email'), icon: MailCheck, tone: 'violet' as const },
+  ]
+})
+
+function openProfileEditor() {
+  syncProfile()
+  error.value = ''
+  success.value = ''
+  profileDrawerOpen.value = true
+}
 function date(value: string) {
   return formatDateTime(value, locale.value, session.user?.timezone || 'UTC')
 }
@@ -139,20 +165,6 @@ async function requestVerification() {
       if (current && current.status !== 'queued') break
       await new Promise(resolve => globalThis.setTimeout(resolve, 250))
     }
-  } catch (reason) {
-    error.value = messageFrom(reason)
-  } finally {
-    actionID.value = ''
-  }
-}
-
-async function requestReset() {
-  actionID.value = 'password-reset'
-  error.value = ''
-  success.value = ''
-  try {
-    await api.requestPasswordReset(resetRequestForm.email)
-    success.value = t('account.resetRequestAccepted')
   } catch (reason) {
     error.value = messageFrom(reason)
   } finally {
@@ -410,47 +422,6 @@ function bytes(value: number) {
   return new Intl.NumberFormat(locale.value, { style: 'unit', unit: value >= 1024 ? 'kilobyte' : 'byte', maximumFractionDigits: 1 }).format(value >= 1024 ? value / 1024 : value)
 }
 
-async function submitLogin() {
-  error.value = ''
-  success.value = ''
-  const user = await session.login(loginForm)
-  if (!user) {
-    error.value = session.error
-    return
-  }
-  syncProfile()
-  await Promise.all([loadEvidence(), loadDataRights(), notifications.refreshCount()])
-  if (safeReturnTo.value) await router.replace(safeReturnTo.value)
-}
-
-async function submitRegistration() {
-  error.value = ''
-  success.value = ''
-  const user = await session.register(registerForm)
-  if (!user) {
-    error.value = session.error
-    return
-  }
-  preferences.locale = registerForm.locale
-  syncProfile()
-  success.value = t('account.created')
-  await Promise.all([loadEvidence(), loadDataRights(), notifications.refreshCount()])
-  if (safeReturnTo.value) await router.replace(safeReturnTo.value)
-}
-
-async function startDemo(actor: 'creator' | 'publisher') {
-  actionID.value = `demo-${actor}`
-  error.value = ''
-  const user = await session.startDemoSession(actor)
-  actionID.value = ''
-  if (!user) {
-    error.value = session.error
-    return
-  }
-  syncProfile()
-  await Promise.all([loadEvidence(), loadDataRights(), notifications.refreshCount()])
-}
-
 async function saveProfile() {
   error.value = ''
   success.value = ''
@@ -461,6 +432,7 @@ async function saveProfile() {
   }
   preferences.locale = profileForm.locale
   success.value = t('account.profileSaved')
+  profileDrawerOpen.value = false
 }
 
 async function revoke(item: AccountSession) {
@@ -503,15 +475,11 @@ async function signOut() {
   await session.logout()
   notifications.clear()
   sessions.value = []
-  authMode.value = 'login'
+  await router.replace({ path: '/auth', query: { returnTo: route.fullPath } })
 }
 
 watch(() => session.user?.id, () => {
   syncProfile()
-})
-
-watch(() => route.query.auth, value => {
-  if (!session.user && (value === 'login' || value === 'register')) authMode.value = value
 })
 
 watch(section, value => {
@@ -520,18 +488,19 @@ watch(section, value => {
 })
 
 onMounted(async () => {
-  const [user, meta, providerResponse] = await Promise.all([
+  const [user, providerResponse] = await Promise.all([
     session.ensure(),
-    api.meta().catch(() => null),
     api.listOAuthProviders().catch(() => ({ items: [] as OAuthProvider[] })),
   ])
-  localDemoAvailable.value = Boolean(meta?.localDemoAvailable)
   providers.value = providerResponse.items
-  if (user) {
-    syncProfile()
-    await Promise.all([loadEvidence(), loadDataRights(), section.value === 'developer' ? loadDeveloperAccess() : Promise.resolve(), section.value === 'payouts' ? loadPayoutStatus() : Promise.resolve()])
-    if (route.query.connect === 'return' || route.query.connect === 'refresh') success.value = t('account.payoutReturned')
+  if (!user) {
+    const returnTo = String(route.query.returnTo || route.fullPath)
+    await router.replace({ path: '/auth', query: returnTo.startsWith('/') && !returnTo.startsWith('//') ? { returnTo } : undefined })
+    return
   }
+  syncProfile()
+  await Promise.all([loadEvidence(), loadDataRights(), section.value === 'developer' ? loadDeveloperAccess() : Promise.resolve(), section.value === 'payouts' ? loadPayoutStatus() : Promise.resolve()])
+  if (route.query.connect === 'return' || route.query.connect === 'refresh') success.value = t('account.payoutReturned')
 })
 </script>
 
@@ -541,249 +510,151 @@ onMounted(async () => {
       {{ t('account.checkingSession') }}
     </div>
 
-    <div v-else-if="!session.user" class="auth-layout">
-      <header class="auth-intro">
-        <span class="status-label">{{ t('account.identityLabel') }}</span>
-        <h1>{{ t('account.authTitle') }}</h1>
-        <p>{{ t('account.authSummary') }}</p>
-        <dl>
-          <div><ShieldCheck :size="19" /><dt>{{ t('account.sessionProtection') }}</dt><dd>{{ t('account.sessionProtectionDetail') }}</dd></div>
-          <div><KeyRound :size="19" /><dt>{{ t('account.credentialProtection') }}</dt><dd>{{ t('account.credentialProtectionDetail') }}</dd></div>
-        </dl>
-      </header>
-
-      <div class="auth-panel">
-        <nav class="auth-tabs" :aria-label="t('account.authMode')">
-          <UiButton type="button" variant="ghost" :class="{ active: authMode === 'login' }" @click="authMode = 'login'">
-            {{ t('account.signIn') }}
+    <template v-else-if="session.user">
+      <PageHero
+        class="account-hero"
+        :eyebrow="t('account.accountLabel')"
+        :eyebrow-icon="UserRound"
+        :title="session.user.displayName"
+        :summary="t('account.identityOverviewSummary')"
+        :stats="accountHeroStats"
+        :stats-label="t('account.identityOverview')"
+      >
+        <template #actions>
+          <UiButton class="command-button secondary" variant="secondary" @click="signOut">
+            <template #start><LogOut :size="17" /></template>{{ t('account.signOut') }}
           </UiButton>
-          <UiButton type="button" variant="ghost" :class="{ active: authMode === 'register' }" @click="authMode = 'register'">
-            {{ t('account.createAccount') }}
-          </UiButton>
-        </nav>
-
-        <form v-if="authMode === 'login'" class="account-form" @submit.prevent="submitLogin">
-          <label>{{ t('account.email') }}<UiInput v-model="loginForm.email" type="email" autocomplete="email" required /></label>
-          <label>{{ t('account.password') }}<UiInput v-model="loginForm.password" type="password" autocomplete="current-password" required /></label>
-          <p v-if="error" class="form-error" role="alert">
-            {{ error }}
-          </p>
-          <UiButton class="command-button primary" variant="primary" type="submit" :loading="session.loading">
-            <template #start>
-              <Mail v-if="!session.loading" :size="17" />
-            </template>{{ session.loading ? t('account.signingIn') : t('account.signIn') }}
-          </UiButton>
-          <UiButton class="text-link" variant="ghost" size="sm" type="button" @click="resetRequestForm.email = loginForm.email; authMode = 'reset'; error = ''; success = ''">
-            {{ t('account.forgotPassword') }}
-          </UiButton>
-        </form>
-
-        <form v-else-if="authMode === 'register'" class="account-form" @submit.prevent="submitRegistration">
-          <div class="form-pair">
-            <label>{{ t('account.displayName') }}<UiInput v-model="registerForm.displayName" autocomplete="name" minlength="2" maxlength="80" required /></label>
-            <label>{{ t('account.handle') }}<UiInput v-model="registerForm.handle" pattern="[a-z0-9_]{3,30}" autocomplete="username" required /></label>
+        </template>
+        <template #visual>
+          <div class="account-hero-visual" aria-hidden="true">
+            <span class="account-hero-avatar-mark">
+              <UiAvatar :initials="accountInitials" />
+              <span class="account-hero-shield"><ShieldCheck :size="20" /></span>
+            </span>
           </div>
-          <label>{{ t('account.email') }}<UiInput v-model="registerForm.email" type="email" autocomplete="email" required /></label>
-          <label>{{ t('account.password') }}<UiInput v-model="registerForm.password" type="password" autocomplete="new-password" minlength="10" maxlength="128" required /><small>{{ t('account.passwordHint') }}</small></label>
-          <div class="form-pair">
-            <label>{{ t('account.language') }}<UiSelect v-model="registerForm.locale"><option value="en-US">English (US)</option><option value="zh-CN">简体中文</option></UiSelect></label>
-            <label>{{ t('account.timezone') }}<UiInput v-model="registerForm.timezone" autocomplete="off" required /></label>
-          </div>
-          <p v-if="error" class="form-error" role="alert">
-            {{ error }}
-          </p>
-          <UiButton class="command-button primary" variant="primary" type="submit" :loading="session.loading">
-            <template #start>
-              <UserRound v-if="!session.loading" :size="17" />
-            </template>{{ session.loading ? t('account.creating') : t('account.createAccount') }}
-          </UiButton>
-        </form>
+        </template>
+      </PageHero>
 
-        <form v-else class="account-form" @submit.prevent="requestReset">
-          <div>
-            <h2>{{ t('account.resetPassword') }}</h2><p>
-              {{ t('account.resetPasswordSummary') }}
-            </p>
-          </div>
-          <label>{{ t('account.email') }}<UiInput v-model="resetRequestForm.email" type="email" autocomplete="email" required /></label>
-          <p v-if="success" class="task-feedback success" role="status">
-            {{ success }}
-          </p>
-          <p v-if="error" class="form-error" role="alert">
-            {{ error }}
-          </p>
-          <UiButton class="command-button primary" variant="primary" type="submit" :loading="Boolean(actionID)">
-            <template #start>
-              <Send v-if="!actionID" :size="17" />
-            </template>{{ t('account.sendResetLink') }}
-          </UiButton>
-          <UiButton class="text-link" variant="ghost" size="sm" type="button" @click="authMode = 'login'; error = ''; success = ''">
-            {{ t('account.backToSignIn') }}
-          </UiButton>
-        </form>
-
-        <section class="oauth-boundary" aria-labelledby="oauth-heading">
-          <h2 id="oauth-heading">
-            {{ t('account.otherMethods') }}
-          </h2>
-          <UiButton v-for="provider in providers" :key="provider.provider" class="provider-row" variant="ghost" disabled :title="t('account.signInMethodsSummary')">
-            <template #start>
-              <Github v-if="provider.provider === 'github'" :size="19" /><Globe2 v-else :size="19" />
-            </template>
-            <span><strong>{{ provider.name }}</strong><small>{{ t('account.signInMethodsSummary') }}</small></span>
-            <template #end>
-              <span class="availability-label">{{ t('account.unavailable') }}</span>
-            </template>
-          </UiButton>
-        </section>
-
-        <section v-if="localDemoAvailable" class="local-demo-boundary">
-          <h2>{{ t('account.localDemo') }}</h2>
-          <p>{{ t('account.localDemoDetail') }}</p>
-          <div>
-            <UiButton class="command-button secondary" variant="secondary" :loading="actionID === 'demo-creator'" :disabled="Boolean(actionID)" @click="startDemo('creator')">
-              <template #start>
-                <UserRound v-if="actionID !== 'demo-creator'" :size="17" />
-              </template>{{ t('account.demoCreator') }}
-            </UiButton>
-            <UiButton class="command-button secondary" variant="secondary" :loading="actionID === 'demo-publisher'" :disabled="Boolean(actionID)" @click="startDemo('publisher')">
-              <template #start>
-                <UsersRound v-if="actionID !== 'demo-publisher'" :size="17" />
-              </template>{{ t('account.demoPublisher') }}
-            </UiButton>
-          </div>
-        </section>
-      </div>
-    </div>
-
-    <template v-else>
-      <header class="account-header">
-        <div>
-          <span class="status-label">{{ t('account.accountLabel') }}</span>
-          <h1>{{ session.user.displayName }}</h1>
-          <p>@{{ session.user.handle }} · {{ session.user.email }}</p>
-        </div>
-        <UiButton class="command-button secondary" variant="secondary" @click="signOut">
-          <template #start>
-            <LogOut :size="17" />
-          </template>{{ t('account.signOut') }}
-        </UiButton>
-      </header>
-
-      <nav class="account-section-nav" :aria-label="t('account.settingsSections')">
-        <RouterLink :to="{ path: '/settings', query: { section: 'profile' } }" :class="{ active: section === 'profile' }">
-          <UserRound :size="17" />{{ t('account.profile') }}
-        </RouterLink>
-        <RouterLink :to="{ path: '/settings', query: { section: 'security' } }" :class="{ active: section === 'security' }">
-          <ShieldCheck :size="17" />{{ t('account.security') }}
-        </RouterLink>
-        <RouterLink :to="{ path: '/settings', query: { section: 'connections' } }" :class="{ active: section === 'connections' }">
-          <KeyRound :size="17" />{{ t('account.signInMethods') }}
-        </RouterLink>
-        <RouterLink :to="{ path: '/settings', query: { section: 'payouts' } }" :class="{ active: section === 'payouts' }">
-          <Landmark :size="17" />{{ t('account.payouts') }}
-        </RouterLink>
-        <RouterLink :to="{ path: '/settings', query: { section: 'developer' } }" :class="{ active: section === 'developer' }">
-          <KeyRound :size="17" />{{ t('account.developerAccess') }}
-        </RouterLink>
-        <RouterLink :to="{ path: '/settings', query: { section: 'privacy' } }" :class="{ active: section === 'privacy' }">
-          <FileKey2 :size="17" />{{ t('account.privacyRights') }}
-        </RouterLink>
-      </nav>
-
-      <div v-if="success" class="task-feedback success account-feedback" role="status">
-        <CheckCircle2 :size="18" />{{ success }}
-      </div>
-      <div v-if="error" class="task-feedback error account-feedback" role="alert">
-        <RefreshCw :size="18" />{{ error }}
-      </div>
-
-      <div v-if="section === 'profile'" class="settings-layout">
-        <aside><h2>{{ t('account.profile') }}</h2><p>{{ t('account.profileSummary') }}</p></aside>
-        <form class="settings-panel account-form" @submit.prevent="saveProfile">
-          <label>{{ t('account.displayName') }}<UiInput v-model="profileForm.displayName" minlength="2" maxlength="80" required /></label>
-          <div class="identity-readonly">
-            <span>{{ t('account.handle') }}</span><strong>@{{ session.user.handle }}</strong><small>{{ t('account.handleStable') }}</small>
-          </div>
-          <div class="identity-readonly">
-            <span>{{ t('account.email') }}</span><strong>{{ session.user.email }}</strong><small>{{ t('account.emailStable') }}</small>
-          </div>
-          <div class="form-pair">
-            <label>{{ t('account.language') }}<UiSelect v-model="profileForm.locale"><option value="en-US">English (US)</option><option value="zh-CN">简体中文</option></UiSelect></label>
-            <label>{{ t('account.timezone') }}<UiInput v-model="profileForm.timezone" required /></label>
-          </div>
-          <UiButton class="command-button primary" variant="primary" type="submit" :loading="session.loading">
-            {{ t('account.saveProfile') }}
-          </UiButton>
-        </form>
-
-        <aside><h2>{{ t('account.access') }}</h2><p>{{ t('account.accessSummary') }}</p></aside>
-        <section class="settings-panel access-evidence">
-          <div><span>{{ t('account.role') }}</span><strong>{{ session.user.role }}</strong></div>
-          <div><span>{{ t('account.status') }}</span><strong>{{ session.user.status }}</strong></div>
-          <ul>
-            <li v-for="permission in session.user.permissions" :key="permission">
-              <CheckCircle2 :size="15" />{{ permission }}
-            </li>
-          </ul>
-        </section>
-      </div>
-
-      <div v-else-if="section === 'security'" class="settings-layout">
-        <aside><h2>{{ t('account.emailVerification') }}</h2><p>{{ t('account.emailVerificationSummary') }}</p></aside>
-        <section class="settings-panel connection-list">
-          <article>
-            <MailCheck :size="19" />
-            <div><strong>{{ session.user.email }}</strong><span>{{ session.user.emailVerified ? t('account.verified') : t('account.unverified') }}</span></div>
-            <span v-if="session.user.emailVerified" class="availability-label available">{{ t('account.verified') }}</span>
-            <UiButton v-else class="command-button secondary" variant="secondary" :loading="actionID === 'email-verification'" :disabled="Boolean(actionID)" @click="requestVerification">
-              <template #start>
-                <Send v-if="actionID !== 'email-verification'" :size="16" />
-              </template>{{ t('account.sendVerification') }}
-            </UiButton>
-          </article>
-          <article v-for="item in emailActions" :key="item.id">
-            <Mail :size="19" /><div><strong>{{ t(`account.emailActionKinds.${item.kind}`) }}</strong><span>{{ item.emailHint }} · {{ t(`account.emailActionStatuses.${item.status}`) }}</span><small>{{ t('account.emailActionEvidence', { attempts: item.attemptCount, date: date(item.expiresAt) }) }}</small></div>
-          </article>
-          <div v-if="emailActionNextCursor" class="account-evidence-pagination">
-            <UiButton class="command-button secondary" variant="secondary" :loading="emailActionsLoadingMore" @click="loadMoreEmailActions">
-              {{ t('actions.loadMore') }}
-            </UiButton>
-          </div>
-        </section>
-        <aside>
-          <h2>{{ t('account.activeSessions') }}</h2><p>{{ t('account.activeSessionsSummary') }}</p><UiButton class="text-link" variant="ghost" size="sm" type="button" :loading="actionID === 'others'" @click="revokeOthers">
-            {{ t('account.signOutOthers') }}
-          </UiButton>
+      <div class="account-workspace">
+        <aside class="account-section-nav task-category-panel">
+          <h2>{{ t('account.accountNavigation') }}</h2>
+          <nav :aria-label="t('account.settingsSections')">
+            <RouterLink v-for="item in accountSections" :key="item.id" :to="{ path: '/settings', query: { section: item.id } }" :aria-label="item.label" :class="{ active: section === item.id }">
+              <component :is="item.icon" :size="18" />
+              <span><strong>{{ item.label }}</strong><small>{{ item.summary }}</small></span>
+            </RouterLink>
+          </nav>
         </aside>
-        <section class="settings-panel session-list">
-          <div v-if="loadingEvidence" class="inline-empty">
-            {{ t('account.loadingSessions') }}
+
+        <div class="account-settings-main task-results">
+          <div v-if="success" class="task-feedback success account-feedback" role="status">
+            <CheckCircle2 :size="18" />{{ success }}
           </div>
-          <article v-for="item in sessions" v-else :key="item.id" class="session-row">
-            <span class="session-icon"><Smartphone v-if="/iOS|Android/.test(item.clientLabel)" :size="19" /><Laptop2 v-else :size="19" /></span>
-            <div><strong>{{ item.clientLabel }}</strong><span>{{ item.current ? t('account.currentSession') : t(`account.sessionStatus.${item.status}`) }}</span><small>{{ t('account.lastActive', { date: date(item.lastSeenAt) }) }}<template v-if="item.networkHint"> · {{ t('account.networkHint', { hint: item.networkHint }) }}</template></small></div>
-            <UiButton class="command-button secondary" variant="secondary" type="button" :loading="actionID === item.id" :disabled="item.status !== 'active'" @click="revoke(item)">
-              {{ item.current ? t('account.signOut') : t('account.revoke') }}
+          <div v-if="error" class="task-feedback error account-feedback" role="alert">
+            <RefreshCw :size="18" />{{ error }}
+          </div>
+
+          <div v-if="section === 'profile'" class="account-profile-overview">
+            <section class="account-profile-section">
+              <header>
+                <div><h3>{{ t('account.identityOverview') }}</h3><p>{{ t('account.identityOverviewSummary') }}</p></div>
+                <UiButton variant="secondary" @click="openProfileEditor">
+                  <template #start><Pencil :size="16" /></template>{{ t('account.editProfile') }}
+                </UiButton>
+              </header>
+              <dl class="account-profile-data">
+                <div><dt>{{ t('account.displayName') }}</dt><dd>{{ session.user.displayName }}</dd></div>
+                <div><dt>{{ t('account.handle') }}</dt><dd>@{{ session.user.handle }}</dd></div>
+                <div><dt>{{ t('account.email') }}</dt><dd>{{ session.user.email }}<UiStatus :variant="session.user.emailVerified ? 'success' : 'neutral'" :label="session.user.emailVerified ? t('account.verified') : t('account.unverified')" /></dd></div>
+              </dl>
+            </section>
+
+            <section class="account-profile-section">
+              <header><div><h3>{{ t('account.regionalPreferences') }}</h3><p>{{ t('account.regionalPreferencesSummary') }}</p></div></header>
+              <dl class="account-profile-data compact">
+                <div><dt>{{ t('account.language') }}</dt><dd>{{ session.user.locale === 'zh-CN' ? '简体中文' : 'English (US)' }}</dd></div>
+                <div><dt>{{ t('account.timezone') }}</dt><dd>{{ session.user.timezone }}</dd></div>
+              </dl>
+            </section>
+
+            <section class="account-profile-section">
+              <header><div><h3>{{ t('account.access') }}</h3><p>{{ t('account.accessSummary') }}</p></div></header>
+              <dl class="account-profile-data compact">
+                <div><dt>{{ t('account.role') }}</dt><dd>{{ t(`account.roleNames.${session.user.role}`) }}</dd></div>
+                <div><dt>{{ t('account.status') }}</dt><dd>{{ t(`account.statusNames.${session.user.status}`) }}</dd></div>
+              </dl>
+              <ul class="account-permissions" :aria-label="t('account.permissions')">
+                <li v-for="permission in session.user.permissions" :key="permission"><CheckCircle2 :size="14" />{{ permission }}</li>
+              </ul>
+            </section>
+          </div>
+
+      <div v-else-if="section === 'security'" class="account-security-grid">
+        <section class="account-settings-card">
+          <header class="account-settings-card-header">
+            <span class="account-settings-card-icon"><MailCheck :size="20" /></span>
+            <div><h3>{{ t('account.emailVerification') }}</h3><p>{{ t('account.emailVerificationSummary') }}</p></div>
+          </header>
+          <div class="account-settings-card-body connection-list">
+            <article>
+              <span class="account-setting-row-icon"><MailCheck :size="19" /></span>
+              <div><strong>{{ session.user.email }}</strong><span>{{ session.user.emailVerified ? t('account.verified') : t('account.unverified') }}</span></div>
+              <span v-if="session.user.emailVerified" class="availability-label available">{{ t('account.verified') }}</span>
+              <UiButton v-else class="command-button secondary" variant="secondary" :loading="actionID === 'email-verification'" :disabled="Boolean(actionID)" @click="requestVerification">
+                <template #start>
+                  <Send v-if="actionID !== 'email-verification'" :size="16" />
+                </template>{{ t('account.sendVerification') }}
+              </UiButton>
+            </article>
+            <article v-for="item in emailActions" :key="item.id">
+              <span class="account-setting-row-icon"><Mail :size="19" /></span>
+              <div><strong>{{ t(`account.emailActionKinds.${item.kind}`) }}</strong><span>{{ item.emailHint }} · {{ t(`account.emailActionStatuses.${item.status}`) }}</span><small>{{ t('account.emailActionEvidence', { attempts: item.attemptCount, date: date(item.expiresAt) }) }}</small></div>
+            </article>
+            <div v-if="emailActionNextCursor" class="account-evidence-pagination">
+              <UiButton class="command-button secondary" variant="secondary" :loading="emailActionsLoadingMore" @click="loadMoreEmailActions">
+                {{ t('actions.loadMore') }}
+              </UiButton>
+            </div>
+          </div>
+        </section>
+
+        <section class="account-settings-card">
+          <header class="account-settings-card-header account-settings-card-header--action">
+            <span class="account-settings-card-icon"><Laptop2 :size="20" /></span>
+            <div><h3>{{ t('account.activeSessions') }}</h3><p>{{ t('account.activeSessionsSummary') }}</p></div>
+            <UiButton variant="secondary" size="sm" type="button" :loading="actionID === 'others'" @click="revokeOthers">
+              {{ t('account.signOutOthers') }}
             </UiButton>
-          </article>
-          <div v-if="sessionNextCursor" class="account-evidence-pagination">
-            <UiButton class="command-button secondary" variant="secondary" :loading="sessionsLoadingMore" @click="loadMoreSessions">
-              {{ t('actions.loadMore') }}
-            </UiButton>
+          </header>
+          <div class="account-settings-card-body session-list">
+            <div v-if="loadingEvidence" class="inline-empty">
+              {{ t('account.loadingSessions') }}
+            </div>
+            <article v-for="item in sessions" v-else :key="item.id" class="session-row">
+              <span class="session-icon"><Smartphone v-if="/iOS|Android/.test(item.clientLabel)" :size="19" /><Laptop2 v-else :size="19" /></span>
+              <div><strong>{{ item.clientLabel }}</strong><span>{{ item.current ? t('account.currentSession') : t(`account.sessionStatus.${item.status}`) }}</span><small>{{ t('account.lastActive', { date: date(item.lastSeenAt) }) }}<template v-if="item.networkHint"> · {{ t('account.networkHint', { hint: item.networkHint }) }}</template></small></div>
+              <UiButton class="command-button secondary" variant="secondary" type="button" :loading="actionID === item.id" :disabled="item.status !== 'active'" @click="revoke(item)">
+                {{ item.current ? t('account.signOut') : t('account.revoke') }}
+              </UiButton>
+            </article>
+            <div v-if="sessionNextCursor" class="account-evidence-pagination">
+              <UiButton class="command-button secondary" variant="secondary" :loading="sessionsLoadingMore" @click="loadMoreSessions">
+                {{ t('actions.loadMore') }}
+              </UiButton>
+            </div>
           </div>
         </section>
       </div>
 
       <div v-else-if="section === 'connections'" class="settings-layout">
-        <aside><h2>{{ t('account.signInMethods') }}</h2><p>{{ t('account.signInMethodsSummary') }}</p></aside>
+        <aside><span class="settings-aside-title">{{ t('account.signInMethods') }}</span><p>{{ t('account.signInMethodsSummary') }}</p></aside>
         <section class="settings-panel connection-list">
           <article><Mail :size="19" /><div><strong>{{ t('account.emailPassword') }}</strong><span>{{ session.user.email }}</span></div><span class="availability-label available">{{ t('account.active') }}</span></article>
           <article v-for="provider in providers" :key="provider.provider">
             <Github v-if="provider.provider === 'github'" :size="19" /><Globe2 v-else :size="19" /><div><strong>{{ provider.name }}</strong><span>{{ t('account.signInMethodsSummary') }}</span></div><span class="availability-label">{{ t('account.unavailable') }}</span>
           </article>
         </section>
-        <aside><h2>{{ t('account.notifications') }}</h2><p>{{ t('account.notificationsSummary') }}</p></aside>
+        <aside><span class="settings-aside-title">{{ t('account.notifications') }}</span><p>{{ t('account.notificationsSummary') }}</p></aside>
         <section class="settings-panel connection-list">
           <RouterLink class="settings-command" to="/notifications?view=preferences">
             <span><strong>{{ t('account.manageNotifications') }}</strong><small>{{ t('account.manageNotificationsSummary') }}</small></span><RefreshCw :size="17" />
@@ -792,7 +663,7 @@ onMounted(async () => {
       </div>
 
       <div v-else-if="section === 'payouts'" class="settings-layout payout-layout">
-        <aside><h2>{{ t('account.payouts') }}</h2><p>{{ t('account.payoutsSummary') }}</p></aside>
+        <aside><span class="settings-aside-title">{{ t('account.payouts') }}</span><p>{{ t('account.payoutsSummary') }}</p></aside>
         <section class="settings-panel payout-panel">
           <div v-if="payoutLoading" class="inline-empty">
             {{ t('account.checkingSession') }}
@@ -827,7 +698,7 @@ onMounted(async () => {
       </div>
 
       <div v-else-if="section === 'developer'" class="settings-layout developer-layout">
-        <aside><h2>{{ t('account.developerAccess') }}</h2><p>{{ t('account.developerAccessSummary') }}</p></aside>
+        <aside><span class="settings-aside-title">{{ t('account.developerAccess') }}</span><p>{{ t('account.developerAccessSummary') }}</p></aside>
         <section class="settings-panel developer-control-evidence">
           <div v-if="!developerAccess" class="inline-empty">
             {{ t('account.developerLoading') }}
@@ -841,7 +712,7 @@ onMounted(async () => {
           </template>
         </section>
 
-        <aside><h2>{{ t('account.serviceAccounts') }}</h2><p>{{ t('account.serviceAccountsSummary') }}</p></aside>
+        <aside><span class="settings-aside-title">{{ t('account.serviceAccounts') }}</span><p>{{ t('account.serviceAccountsSummary') }}</p></aside>
         <section class="settings-panel developer-accounts">
           <form class="account-form developer-create" @submit.prevent="createDeveloperAccount">
             <label>{{ t('account.serviceAccountName') }}<UiInput v-model="developerForm.accountName" minlength="3" maxlength="80" required /></label>
@@ -892,7 +763,7 @@ onMounted(async () => {
           </div>
         </section>
 
-        <aside><h2>{{ t('account.oneTimeKey') }}</h2><p>{{ t('account.oneTimeKeySummary') }}</p></aside>
+        <aside><span class="settings-aside-title">{{ t('account.oneTimeKey') }}</span><p>{{ t('account.oneTimeKeySummary') }}</p></aside>
         <section class="settings-panel developer-secret">
           <div v-if="revealedCredential">
             <code>{{ revealedCredential.plaintextKey }}</code><UiButton class="command-button secondary" variant="secondary" @click="copyDeveloperKey">
@@ -906,7 +777,7 @@ onMounted(async () => {
           </p>
         </section>
 
-        <aside><h2>{{ t('account.webhookEndpoints') }}</h2><p>{{ t('account.webhookEndpointsSummary') }}</p></aside>
+        <aside><span class="settings-aside-title">{{ t('account.webhookEndpoints') }}</span><p>{{ t('account.webhookEndpointsSummary') }}</p></aside>
         <section class="settings-panel webhook-endpoints">
           <form class="account-form webhook-create" @submit.prevent="createDeveloperWebhook">
             <div class="form-pair">
@@ -972,7 +843,7 @@ onMounted(async () => {
           </div>
         </section>
 
-        <aside><h2>{{ t('account.oneTimeWebhookSecret') }}</h2><p>{{ t('account.oneTimeWebhookSecretSummary') }}</p></aside>
+        <aside><span class="settings-aside-title">{{ t('account.oneTimeWebhookSecret') }}</span><p>{{ t('account.oneTimeWebhookSecretSummary') }}</p></aside>
         <section class="settings-panel developer-secret">
           <div v-if="revealedWebhookCredential">
             <code>{{ revealedWebhookCredential.signingSecret }}</code><UiButton class="command-button secondary" variant="secondary" @click="copyWebhookSecret">
@@ -988,7 +859,7 @@ onMounted(async () => {
       </div>
 
       <div v-else-if="section === 'privacy'" class="settings-layout data-rights-layout">
-        <aside><h2>{{ t('account.privacyRights') }}</h2><p>{{ t('account.privacyRightsSummary') }}</p></aside>
+        <aside><span class="settings-aside-title">{{ t('account.privacyRights') }}</span><p>{{ t('account.privacyRightsSummary') }}</p></aside>
         <section class="settings-panel data-rights-actions">
           <label>{{ t('account.confirmHandle') }}<UiInput v-model="rightsForm.identityConfirmation" autocomplete="off" :placeholder="session.user.handle" /></label>
           <article>
@@ -1013,7 +884,7 @@ onMounted(async () => {
           </p>
         </section>
 
-        <aside><h2>{{ t('account.rightsHistory') }}</h2><p>{{ t('account.rightsHistorySummary') }}</p></aside>
+        <aside><span class="settings-aside-title">{{ t('account.rightsHistory') }}</span><p>{{ t('account.rightsHistorySummary') }}</p></aside>
         <section class="settings-panel data-rights-list">
           <p v-if="!dataRightsRequests.length" class="inline-empty">
             {{ t('account.noRightsRequests') }}
@@ -1042,6 +913,34 @@ onMounted(async () => {
           </div>
         </section>
       </div>
+        </div>
+      </div>
+
+      <UiDrawer v-model:open="profileDrawerOpen" size="md" :label="t('account.editProfile')">
+        <form class="account-profile-drawer" @submit.prevent="saveProfile">
+          <header>
+            <div><span class="status-label">{{ t('account.accountLabel') }}</span><h2>{{ t('account.editProfile') }}</h2><p>{{ t('account.editProfileSummary') }}</p></div>
+            <UiIconButton variant="ghost" :label="t('actions.close')" @click="profileDrawerOpen = false"><X :size="19" /></UiIconButton>
+          </header>
+          <div class="account-profile-drawer-body account-form">
+            <label>{{ t('account.displayName') }}<UiInput v-model="profileForm.displayName" minlength="2" maxlength="80" required /></label>
+            <div class="identity-readonly">
+              <span>{{ t('account.handle') }}</span><strong>@{{ session.user.handle }}</strong><small>{{ t('account.handleStable') }}</small>
+            </div>
+            <div class="identity-readonly">
+              <span>{{ t('account.email') }}</span><strong>{{ session.user.email }}</strong><small>{{ t('account.emailStable') }}</small>
+            </div>
+            <div class="form-pair">
+              <label>{{ t('account.language') }}<UiSelect v-model="profileForm.locale"><option value="en-US">English (US)</option><option value="zh-CN">简体中文</option></UiSelect></label>
+              <label>{{ t('account.timezone') }}<UiInput v-model="profileForm.timezone" required /></label>
+            </div>
+          </div>
+          <footer>
+            <UiButton variant="secondary" @click="profileDrawerOpen = false">{{ t('actions.cancel') }}</UiButton>
+            <UiButton variant="primary" type="submit" :loading="session.loading">{{ t('account.saveProfile') }}</UiButton>
+          </footer>
+        </form>
+      </UiDrawer>
     </template>
   </section>
 </template>

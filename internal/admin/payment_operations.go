@@ -151,7 +151,7 @@ type PaymentRecovery struct {
 }
 
 type PaymentEventReplay struct {
-	ExpectedVersion int    `json:"expectedVersion"`
+	ExpectedVersion int `json:"expectedVersion"`
 }
 
 const paymentOperationSelect = `
@@ -159,8 +159,10 @@ const paymentOperationSelect = `
 		SELECT pi.id AS payment_id,pi.purpose,pi.status AS payment_status,pi.amount_cents,pi.currency,pi.live_mode,
 		       pi.payer_id,payer.email AS payer_email,payer.handle AS payer_handle,payer.display_name AS payer_display_name,
 		       pi.payee_id,payee.handle AS payee_handle,payee.display_name AS payee_display_name,pi.resource_id,
-		       COALESCE(d.title,o.product_title_snapshot,'Unavailable resource') AS resource_title,
-		       CASE WHEN pi.purpose='task' THEN '/market/demands?task='||pi.resource_id::text ELSE '/workspace/orders' END AS target_path,
+		       COALESCE(d.title,o.product_title_snapshot,sp.name,CASE WHEN pi.purpose='wallet_topup' THEN 'Wallet top-up' END,'Unavailable resource') AS resource_title,
+		       CASE WHEN pi.purpose='task' THEN '/market/demands?task='||pi.resource_id::text
+		            WHEN pi.purpose IN ('wallet_topup','subscription') THEN '/workspace/billing'
+		            ELSE '/workspace/orders' END AS target_path,
 		       pi.order_id,pi.proposal_id,pi.provider_checkout_id,pi.provider_payment_id,pi.provider_charge_id,
 		       pi.provider_refund_id,pi.provider_transfer_id,pi.version,pi.paid_at,pi.transferred_at,pi.refunded_at,
 		       pi.checkout_expires_at,pi.created_at AS payment_created_at,pi.updated_at AS payment_updated_at,
@@ -190,6 +192,7 @@ const paymentOperationSelect = `
 		LEFT JOIN users payee ON payee.id=pi.payee_id
 		LEFT JOIN demands d ON pi.purpose='task' AND d.id=pi.resource_id
 		LEFT JOIN orders o ON pi.purpose='product' AND o.id=pi.order_id
+		LEFT JOIN subscription_plans sp ON pi.purpose='subscription' AND sp.id=pi.resource_id
 		LEFT JOIN payment_destinations destination ON destination.provider='stripe' AND destination.user_id=pi.payee_id
 		LEFT JOIN LATERAL (
 			SELECT j.id,j.kind,j.status,j.attempts,j.max_attempts,j.last_error_code,j.available_at,j.updated_at
@@ -216,7 +219,7 @@ func (s *Service) ListPaymentOperations(ctx context.Context, input PaymentOperat
 	input.Status = strings.ToLower(strings.TrimSpace(input.Status))
 	input.Mode = strings.ToLower(strings.TrimSpace(input.Mode))
 	input.Attention = strings.ToLower(strings.TrimSpace(input.Attention))
-	if len(input.Query) > 120 || (input.Purpose != "" && !oneOf(input.Purpose, "product", "task")) ||
+	if len(input.Query) > 120 || (input.Purpose != "" && !oneOf(input.Purpose, "product", "task", "wallet_topup", "subscription")) ||
 		(input.Status != "" && !oneOf(input.Status, "checkout_pending", "checkout_open", "paid", "payment_failed", "transfer_pending", "transferred", "refund_pending", "refund_failed", "refunded", "cancelled")) ||
 		(input.Mode != "" && !oneOf(input.Mode, "test", "live")) ||
 		(input.Attention != "" && !oneOf(input.Attention, "needs_attention", "healthy")) {

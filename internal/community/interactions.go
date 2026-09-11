@@ -171,8 +171,11 @@ func (r *Repository) CreateComment(ctx context.Context, actorID, postID uuid.UUI
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	var postAuthorID uuid.UUID
-	var workTitle string
-	if err := tx.QueryRow(ctx, `SELECT p.author_id,w.title FROM posts p JOIN works w ON w.id=p.work_id WHERE p.id=$1 AND p.status='published' AND w.status='published'`, postID).Scan(&postAuthorID, &workTitle); errors.Is(err, pgx.ErrNoRows) {
+	var postTitle string
+	if err := tx.QueryRow(ctx, `
+		SELECT p.author_id,COALESCE(p.title,w.title,'Community post')
+		FROM posts p LEFT JOIN works w ON w.id=p.work_id
+		WHERE p.id=$1 AND p.status='published' AND (p.work_id IS NULL OR w.status='published')`, postID).Scan(&postAuthorID, &postTitle); errors.Is(err, pgx.ErrNoRows) {
 		return Comment{}, ErrNotFound
 	} else if err != nil {
 		return Comment{}, err
@@ -189,8 +192,8 @@ func (r *Repository) CreateComment(ctx context.Context, actorID, postID uuid.UUI
 	}
 	if postAuthorID != actorID {
 		if err := notifications.CreateTx(ctx, tx, notifications.CreateInput{
-			UserID: postAuthorID, Kind: "community.comment", Title: "New comment", Body: item.AuthorName + " commented on " + workTitle + ".",
-			TargetPath: "/community", ResourceType: "comment", ResourceID: &item.ID, SourceKey: "comment:" + item.ID.String(),
+			UserID: postAuthorID, Kind: "community.comment", Title: "New comment", Body: item.AuthorName + " commented on " + postTitle + ".",
+			TargetPath: "/community/posts/" + postID.String(), ResourceType: "comment", ResourceID: &item.ID, SourceKey: "comment:" + item.ID.String(),
 		}); err != nil {
 			return Comment{}, err
 		}
@@ -212,7 +215,7 @@ func (r *Repository) SetReaction(ctx context.Context, actorID, postID uuid.UUID,
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	var exists bool
-	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM posts p JOIN works w ON w.id=p.work_id WHERE p.id=$1 AND p.status='published' AND w.status='published')`, postID).Scan(&exists); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM posts p LEFT JOIN works w ON w.id=p.work_id WHERE p.id=$1 AND p.status='published' AND (p.work_id IS NULL OR w.status='published'))`, postID).Scan(&exists); err != nil {
 		return InteractionState{}, err
 	}
 	if !exists {
@@ -290,7 +293,7 @@ func (r *Repository) ReportPost(ctx context.Context, actorID, postID uuid.UUID, 
 	defer func() { _ = tx.Rollback(ctx) }()
 	var authorID uuid.UUID
 	var title, handle string
-	if err := tx.QueryRow(ctx, `SELECT p.author_id,w.title,u.handle FROM posts p JOIN works w ON w.id=p.work_id JOIN users u ON u.id=p.author_id WHERE p.id=$1 AND p.status='published'`, postID).Scan(&authorID, &title, &handle); errors.Is(err, pgx.ErrNoRows) {
+	if err := tx.QueryRow(ctx, `SELECT p.author_id,COALESCE(p.title,w.title,'Community post'),u.handle FROM posts p LEFT JOIN works w ON w.id=p.work_id JOIN users u ON u.id=p.author_id WHERE p.id=$1 AND p.status='published' AND (p.work_id IS NULL OR w.status='published')`, postID).Scan(&authorID, &title, &handle); errors.Is(err, pgx.ErrNoRows) {
 		return Report{}, ErrNotFound
 	} else if err != nil {
 		return Report{}, err
@@ -415,7 +418,7 @@ func (r *Repository) CreateAppeal(ctx context.Context, actorID, reportID uuid.UU
 
 const reportSelect = `
 		SELECT r.id,r.reporter_id,r.resource_type,r.resource_id,
-		       CASE r.resource_type WHEN 'post' THEN COALESCE(w.title,'Community post') WHEN 'work' THEN COALESCE(ww.title,'Work') ELSE 'Comment' END,
+		       CASE r.resource_type WHEN 'post' THEN COALESCE(p.title,w.title,'Community post') WHEN 'work' THEN COALESCE(ww.title,'Work') ELSE 'Comment' END,
 		       r.subject_author_id,u.handle,r.category,r.details,r.status,r.outcome,r.resolution_reason,r.created_at,r.updated_at,r.resolved_at,
 		       a.id,a.appellant_id,COALESCE(au.handle,''),a.reason,a.status,a.resolution_reason,a.created_at,a.resolved_at
 		FROM content_reports r

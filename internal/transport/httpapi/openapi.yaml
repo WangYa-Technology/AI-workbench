@@ -58,6 +58,17 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Meta'
+  /site-config:
+    get:
+      tags: [Runtime]
+      operationId: getSiteConfiguration
+      responses:
+        '200':
+          description: Public branding, footer, and policy configuration
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SiteConfiguration'
   /payments/webhooks/stripe:
     post:
       tags: [Payments]
@@ -77,6 +88,29 @@ paths:
         '200': { description: Duplicate event safely acknowledged, content: { application/json: { schema: { $ref: '#/components/schemas/PaymentWebhookReceipt' } } } }
         '202': { description: Signed event accepted for idempotent processing, content: { application/json: { schema: { $ref: '#/components/schemas/PaymentWebhookReceipt' } } } }
         '400': { $ref: '#/components/responses/ValidationFailed' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/ValidationFailed' }
+        '415': { $ref: '#/components/responses/ValidationFailed' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /payments/webhooks/waffo:
+    post:
+      tags: [Payments]
+      operationId: receiveWaffoWebhook
+      description: Receives a bounded Waffo Pancake event. The raw body is verified by the isolated Pancake connector before durable event insertion.
+      parameters:
+        - name: x-waffo-signature
+          in: header
+          required: true
+          schema: { type: string, maxLength: 4096 }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, additionalProperties: true } } }
+      responses:
+        '200': { description: Duplicate event safely acknowledged, content: { application/json: { schema: { $ref: '#/components/schemas/PaymentWebhookReceipt' } } } }
+        '202': { description: Signed event accepted for idempotent processing, content: { application/json: { schema: { $ref: '#/components/schemas/PaymentWebhookReceipt' } } } }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '409': { $ref: '#/components/responses/Conflict' }
         '413': { $ref: '#/components/responses/ValidationFailed' }
         '415': { $ref: '#/components/responses/ValidationFailed' }
@@ -123,6 +157,54 @@ paths:
           content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+  /auth/unified/start:
+    post:
+      tags: [Identity]
+      operationId: startUnifiedAuthentication
+      description: Identifies the email branch. Unknown emails receive a registration code challenge; existing accounts continue to password or email-code sign-in.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/UnifiedAuthStartRequest' } } }
+      responses:
+        '200':
+          description: Unified authentication branch and optional registration challenge
+          content: { application/json: { schema: { $ref: '#/components/schemas/UnifiedAuthStartResponse' } } }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+  /auth/unified/send-code:
+    post:
+      tags: [Identity]
+      operationId: sendUnifiedAuthCode
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/UnifiedAuthCodeRequest' } } }
+      responses:
+        '202': { description: Code email queued, content: { application/json: { schema: { type: object, required: [challenge], properties: { challenge: { $ref: '#/components/schemas/AuthChallenge' } } } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+  /auth/unified/login-code:
+    post:
+      tags: [Identity]
+      operationId: confirmUnifiedLoginCode
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/UnifiedAuthConfirmRequest' } } }
+      responses:
+        '200': { description: Email-code session created, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '410': { description: Code expired }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+  /auth/unified/register:
+    post:
+      tags: [Identity]
+      operationId: completeUnifiedRegistration
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/UnifiedAuthRegisterRequest' } } }
+      responses:
+        '201': { description: Verified account and session created, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '410': { description: Code expired }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
   /auth/demo:
     post:
       tags: [Identity]
@@ -923,7 +1005,7 @@ paths:
           schema: { type: string, enum: [debit, credit] }
         - name: entryType
           in: query
-          schema: { type: string, enum: [generation_charge, product_purchase, product_sale, product_refund, task_payment, task_earning, admin_adjustment, initial_credit, subscription_purchase] }
+          schema: { type: string, enum: [generation_charge, product_purchase, product_sale, product_refund, task_payment, task_earning, admin_adjustment, initial_credit, wallet_topup, subscription_purchase] }
         - name: dateFrom
           in: query
           schema: { type: string, format: date-time }
@@ -949,10 +1031,35 @@ paths:
       responses:
         '200': { description: Current point balance, active subscription, purchasable plans, and recent point entries, content: { application/json: { schema: { $ref: '#/components/schemas/PointOverview' } } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
-  /billing/subscriptions:
+  /billing/topups/checkout:
     post:
       tags: [Billing]
-      operationId: purchaseSubscription
+      operationId: checkoutWalletTopup
+      description: Creates a hosted payment checkout for adding USD wallet balance. The balance is credited only after a verified Provider webhook is processed by the Worker.
+      security: [{ sessionCookie: [] }]
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [amountCents]
+              properties:
+                amountCents: { type: integer, minimum: 50, maximum: 99999999 }
+      responses:
+        '201': { description: Hosted wallet top-up checkout created, content: { application/json: { schema: { $ref: '#/components/schemas/BillingCheckout' } } } }
+        '200': { description: Existing checkout returned for the same idempotency key, content: { application/json: { schema: { $ref: '#/components/schemas/BillingCheckout' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /billing/subscriptions/checkout:
+    post:
+      tags: [Billing]
+      operationId: checkoutSubscription
+      description: Creates a hosted payment checkout for a subscription plan. Points and access are granted only after a verified Provider webhook is processed by the Worker.
       security: [{ sessionCookie: [] }]
       parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
       requestBody:
@@ -963,12 +1070,15 @@ paths:
               type: object
               additionalProperties: false
               required: [planId]
-              properties: { planId: { type: string, format: uuid } }
+              properties:
+                planId: { type: string, format: uuid }
       responses:
-        '201': { description: Subscription purchased and included points credited atomically, content: { application/json: { schema: { $ref: '#/components/schemas/PointOverview' } } } }
-        '402': { description: Insufficient USD wallet balance, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } } }
+        '201': { description: Hosted subscription checkout created, content: { application/json: { schema: { $ref: '#/components/schemas/BillingCheckout' } } } }
+        '200': { description: Existing checkout returned for the same idempotency key, content: { application/json: { schema: { $ref: '#/components/schemas/BillingCheckout' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
+        '503': { $ref: '#/components/responses/Unavailable' }
   /assets:
     get:
       tags: [Assets]
@@ -1164,35 +1274,11 @@ paths:
           description: Public product media, included files, AI disclosure, and license; an optional session adds ownership state
           content: { application/json: { schema: { $ref: '#/components/schemas/Product' } } }
         '404': { $ref: '#/components/responses/NotFound' }
-  /products/{productId}/purchase:
-    post:
-      tags: [Marketplace]
-      operationId: purchaseProduct
-      security: [{ sessionCookie: [] }]
-      parameters: [{ $ref: '#/components/parameters/ProductId' }, { $ref: '#/components/parameters/IdempotencyKey' }]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              required: [licenseAccepted]
-              properties: { licenseAccepted: { type: boolean } }
-      responses:
-        '201':
-          description: Local Test order fulfilled, entitlement granted, and Asset created atomically
-          content: { application/json: { schema: { $ref: '#/components/schemas/Purchase' } } }
-        '200':
-          description: Existing active entitlement returned without a duplicate order
-          content: { application/json: { schema: { $ref: '#/components/schemas/Purchase' } } }
-        '409': { $ref: '#/components/responses/Conflict' }
-        '422': { $ref: '#/components/responses/ValidationFailed' }
   /products/{productId}/checkout:
     post:
       tags: [Payments]
       operationId: checkoutProduct
-      description: Creates or resumes a default-off Stripe hosted checkout. Entitlement is granted only after a signed payment event is processed.
+      description: Creates or resumes an external-provider hosted checkout. Entitlement is granted only after a signed payment event is processed.
       security: [{ sessionCookie: [] }]
       parameters: [{ $ref: '#/components/parameters/ProductId' }, { $ref: '#/components/parameters/IdempotencyKey' }]
       requestBody:
@@ -1359,12 +1445,28 @@ paths:
       parameters:
         - { name: cursor, in: query, schema: { type: string }, description: Opaque stable reverse-chronological Community feed cursor }
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
+        - { name: mine, in: query, schema: { type: boolean, default: false }, description: Return only the authenticated viewer's published posts }
       responses:
         '200':
           description: Published community posts
           content:
             application/json:
               schema: { $ref: '#/components/schemas/CommunityPostPage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+    post:
+      tags: [Community]
+      operationId: createCommunityPost
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CommunityPostCreate' }
+      responses:
+        '201': { description: Standalone Community post created, content: { application/json: { schema: { $ref: '#/components/schemas/CommunityPost' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
   /community/posts/{postId}:
     get:
@@ -1515,7 +1617,7 @@ paths:
     post:
       tags: [Payments]
       operationId: checkoutTask
-      description: Creates or resumes default-off Stripe funding for a direct-claim task or one exact submitted proposal. Assignment remains unavailable until a signed payment event confirms the funds.
+      description: Creates or resumes external-provider funding for a direct-claim task or one exact submitted proposal. Assignment remains unavailable until a signed payment event confirms the funds.
       security: [{ sessionCookie: [] }]
       parameters: [{ $ref: '#/components/parameters/TaskId' }, { $ref: '#/components/parameters/IdempotencyKey' }]
       requestBody:
@@ -1929,22 +2031,27 @@ paths:
       tags: [Admin]
       operationId: getAdminSystemSettings
       security: [{ sessionCookie: [] }]
-      parameters:
-        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
-        - { name: cursor, in: query, schema: { type: string }, description: Opaque immutable revision-version cursor }
       responses:
-        '200': { description: Active immutable platform availability revision and stably paginated history, content: { application/json: { schema: { $ref: '#/components/schemas/AdminSystemSettingPolicy' } } } }
+        '200': { description: Current platform availability and public site configuration, content: { application/json: { schema: { $ref: '#/components/schemas/AdminSystemSettings' } } } }
         '403': { $ref: '#/components/responses/Forbidden' }
-        '422': { $ref: '#/components/responses/ValidationFailed' }
-    post:
+    put:
       tags: [Admin]
       operationId: updateAdminSystemSettings
       security: [{ sessionCookie: [] }]
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/AdminSystemSettingUpdate' } } } }
       responses:
-        '200': { description: New platform availability revision activated, content: { application/json: { schema: { $ref: '#/components/schemas/AdminSystemSettingPolicy' } } } }
+        '200': { description: Current platform availability updated, content: { application/json: { schema: { $ref: '#/components/schemas/AdminSystemSettings' } } } }
         '403': { $ref: '#/components/responses/Forbidden' }
-        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+  /admin/site-config:
+    put:
+      tags: [Admin]
+      operationId: updateAdminSiteConfiguration
+      security: [{ sessionCookie: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/SiteConfiguration' } } } }
+      responses:
+        '200': { description: Public site configuration updated, content: { application/json: { schema: { $ref: '#/components/schemas/SiteConfiguration' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
   /admin/finance/accounts:
     get:
@@ -2001,7 +2108,7 @@ paths:
       security: [{ sessionCookie: [] }]
       parameters:
         - { name: q, in: query, schema: { type: string, maxLength: 120 }, description: Payment ID, resource title, payer, or creator search }
-        - { name: purpose, in: query, schema: { type: string, enum: [product, task] } }
+        - { name: purpose, in: query, schema: { type: string, enum: [product, task, wallet_topup, subscription] } }
         - { name: status, in: query, schema: { type: string, enum: [checkout_pending, checkout_open, paid, payment_failed, transfer_pending, transferred, refund_pending, refund_failed, refunded, cancelled] } }
         - { name: mode, in: query, schema: { type: string, enum: [test, live] } }
         - { name: attention, in: query, schema: { type: string, enum: [needs_attention, healthy] } }
@@ -2063,6 +2170,25 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+  /admin/payment-providers:
+    get:
+      tags: [Admin]
+      operationId: listAdminPaymentProviderConfigs
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200': { description: Public payment Provider configuration and secret presence flags, content: { application/json: { schema: { type: object, required: [items], properties: { items: { type: array, items: { $ref: '#/components/schemas/AdminPaymentProviderConfig' } } } } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /admin/payment-providers/{provider}:
+    put:
+      tags: [Admin]
+      operationId: updateAdminPaymentProviderConfig
+      security: [{ sessionCookie: [] }]
+      parameters: [{ name: provider, in: path, required: true, schema: { type: string, enum: [stripe, waffo_pancake, epay] } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/AdminPaymentProviderConfigUpdate' } } } }
+      responses:
+        '200': { description: Payment Provider configuration updated, content: { application/json: { schema: { $ref: '#/components/schemas/AdminPaymentProviderConfig' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
   /admin/risk/signals:
     get:
@@ -2625,9 +2751,36 @@ components:
           schema:
             $ref: '#/components/schemas/ErrorEnvelope'
   schemas:
+    LocalizedSiteText:
+      type: object
+      required: [enUS, zhCN]
+      properties:
+        enUS: { type: string, maxLength: 50000 }
+        zhCN: { type: string, maxLength: 50000 }
+    SitePolicyContent:
+      type: object
+      required: [terms, privacy, cookies, acceptable, ai, licensing, refunds, copyright]
+      properties:
+        terms: { $ref: '#/components/schemas/LocalizedSiteText' }
+        privacy: { $ref: '#/components/schemas/LocalizedSiteText' }
+        cookies: { $ref: '#/components/schemas/LocalizedSiteText' }
+        acceptable: { $ref: '#/components/schemas/LocalizedSiteText' }
+        ai: { $ref: '#/components/schemas/LocalizedSiteText' }
+        licensing: { $ref: '#/components/schemas/LocalizedSiteText' }
+        refunds: { $ref: '#/components/schemas/LocalizedSiteText' }
+        copyright: { $ref: '#/components/schemas/LocalizedSiteText' }
+    SiteConfiguration:
+      type: object
+      required: [siteName, serverUrl, siteIconUrl, footerText, policies]
+      properties:
+        siteName: { type: string, minLength: 2, maxLength: 80 }
+        serverUrl: { type: string, format: uri, maxLength: 2048 }
+        siteIconUrl: { type: string, maxLength: 2048 }
+        footerText: { $ref: '#/components/schemas/LocalizedSiteText' }
+        policies: { $ref: '#/components/schemas/SitePolicyContent' }
     Meta:
       type: object
-      required: [name, environment, defaultLocale, supportedLocales, defaultCurrency, localDemoAvailable, localProvider, paymentProvider, providerCostReconciliation]
+      required: [name, environment, defaultLocale, supportedLocales, defaultCurrency, localDemoAvailable, localProvider, paymentProvider, taskPaymentProvider, providerCostReconciliation]
       properties:
         name:
           type: string
@@ -2656,7 +2809,14 @@ components:
           required: [enabled, provider, liveMode]
           properties:
             enabled: { type: boolean }
-            provider: { type: string, enum: [stripe] }
+            provider: { type: string, enum: [stripe, waffo_pancake, epay] }
+            liveMode: { type: boolean }
+        taskPaymentProvider:
+          type: object
+          required: [enabled, provider, liveMode]
+          properties:
+            enabled: { type: boolean }
+            provider: { type: string, enum: [stripe, waffo_pancake, epay] }
             liveMode: { type: boolean }
         providerCostReconciliation:
           type: object
@@ -2664,6 +2824,59 @@ components:
           properties:
             enabled: { type: boolean }
             provider: { type: string, enum: [openai] }
+    AuthChallenge:
+      type: object
+      required: [challengeId, purpose, emailHint, expiresAt, resendAfterSeconds]
+      properties:
+        challengeId: { type: string, format: uuid }
+        purpose: { type: string, enum: [login_code, registration_code] }
+        emailHint: { type: string }
+        expiresAt: { type: string, format: date-time }
+        resendAfterSeconds: { type: integer, minimum: 1 }
+    UnifiedAuthStartRequest:
+      type: object
+      additionalProperties: false
+      required: [email]
+      properties:
+        email: { type: string, format: email, maxLength: 254 }
+        locale: { type: string, enum: [en-US, zh-CN] }
+    UnifiedAuthStartResponse:
+      type: object
+      required: [email, accountExists, next]
+      properties:
+        email: { type: string, format: email }
+        accountExists: { type: boolean }
+        next: { type: string, enum: [existing_account, registration] }
+        challenge: { $ref: '#/components/schemas/AuthChallenge' }
+    UnifiedAuthCodeRequest:
+      type: object
+      additionalProperties: false
+      required: [email, purpose]
+      properties:
+        email: { type: string, format: email, maxLength: 254 }
+        purpose: { type: string, enum: [login_code, registration_code] }
+        locale: { type: string, enum: [en-US, zh-CN] }
+    UnifiedAuthConfirmRequest:
+      type: object
+      additionalProperties: false
+      required: [challengeId, email, code]
+      properties:
+        challengeId: { type: string, format: uuid }
+        email: { type: string, format: email, maxLength: 254 }
+        code: { type: string, pattern: '^[0-9]{6}$' }
+    UnifiedAuthRegisterRequest:
+      type: object
+      additionalProperties: false
+      required: [challengeId, code, email, password, handle]
+      properties:
+        challengeId: { type: string, format: uuid }
+        code: { type: string, pattern: '^[0-9]{6}$' }
+        email: { type: string, format: email, maxLength: 254 }
+        password: { type: string, minLength: 10, maxLength: 128 }
+        handle: { type: string, pattern: '^[a-z0-9_]{3,30}$' }
+        displayName: { type: string, minLength: 2, maxLength: 80 }
+        locale: { type: string, enum: [en-US, zh-CN] }
+        timezone: { type: string, maxLength: 80 }
     RegisterRequest:
       type: object
       additionalProperties: false
@@ -3628,7 +3841,7 @@ components:
         generation: { $ref: '#/components/schemas/GenerationProvenance' }
     PurchaseProvenance:
       type: object
-      required: [orderId, productId, productTitle, sellerId, sellerName, sellerHandle, licenseCode, licenseName, orderStatus, grantedAt, paymentMode]
+      required: [orderId, productId, productTitle, sellerId, sellerName, sellerHandle, licenseCode, licenseName, orderStatus, grantedAt, paymentMode, realCharge]
       properties:
         orderId: { type: string, format: uuid }
         productId: { type: string, format: uuid }
@@ -3640,7 +3853,8 @@ components:
         licenseName: { type: string }
         orderStatus: { type: string }
         grantedAt: { type: string, format: date-time }
-        paymentMode: { type: string, enum: [test, stripe] }
+        paymentMode: { type: string, enum: [test, stripe, waffo_pancake, epay] }
+        realCharge: { type: boolean }
     SourceAssetReference:
       type: object
       required: [id, title, sourceType, licenseCode]
@@ -3697,23 +3911,6 @@ components:
         license: { $ref: '#/components/schemas/MarketplaceLicense' }
         ownedAssetId: { type: string, format: uuid }
         createdAt: { type: string, format: date-time }
-    Purchase:
-      type: object
-      required: [orderId, productId, productTitle, entitlementId, assetId, status, licenseCode, amountCents, currency, paymentMode, realCharge, alreadyOwned, createdAt]
-      properties:
-        orderId: { type: string, format: uuid }
-        productId: { type: string, format: uuid }
-        productTitle: { type: string }
-        entitlementId: { type: string, format: uuid }
-        assetId: { type: string, format: uuid }
-        status: { type: string }
-        licenseCode: { type: string }
-        amountCents: { type: integer }
-        currency: { type: string }
-        paymentMode: { type: string, enum: [test] }
-        realCharge: { type: boolean, const: false }
-        alreadyOwned: { type: boolean }
-        createdAt: { type: string, format: date-time }
     OrderEvent:
       type: object
       required: [toStatus, reason, createdAt]
@@ -3738,7 +3935,7 @@ components:
         licenseVersion: { type: string }
         licenseTerms: { type: string }
         refundWindowDays: { type: integer }
-        paymentMode: { type: string, enum: [test, stripe] }
+        paymentMode: { type: string, enum: [test, stripe, waffo_pancake, epay] }
         realCharge: { type: boolean }
         refundRequestedAt: { type: string, format: date-time }
         refundedAt: { type: string, format: date-time }
@@ -3757,8 +3954,8 @@ components:
         expiresAt: { type: string, format: date-time }
         amountCents: { type: integer, minimum: 50 }
         currency: { type: string, enum: [USD] }
-        paymentMode: { type: string, enum: [stripe] }
-        realCharge: { type: boolean, description: True only when explicitly approved Stripe live mode is active }
+        paymentMode: { type: string, enum: [stripe, waffo_pancake, epay] }
+        realCharge: { type: boolean, description: True only when the selected Provider's approved production mode is active }
         liveMode: { type: boolean }
         alreadyCreated: { type: boolean }
     OrderPage:
@@ -3857,11 +4054,13 @@ components:
         nextCursor: { type: string }
     CommunityPost:
       type: object
-      required: [id, body, publishedAt, workId, workTitle, mediaUrl, mediaKind, aiDisclosure, authorId, authorHandle, authorName, commentCount, likeCount, bookmarkCount, viewerLiked, viewerBookmarked, viewerFollowing]
+      required: [id, title, body, publishedAt, authorId, authorHandle, authorName, commentCount, likeCount, bookmarkCount, viewerLiked, viewerBookmarked, viewerFollowing]
       properties:
         id:
           type: string
           format: uuid
+        title:
+          type: string
         body:
           type: string
         publishedAt:
@@ -3891,6 +4090,13 @@ components:
         viewerLiked: { type: boolean }
         viewerBookmarked: { type: boolean }
         viewerFollowing: { type: boolean }
+    CommunityPostCreate:
+      type: object
+      additionalProperties: false
+      required: [title, body]
+      properties:
+        title: { type: string, minLength: 3, maxLength: 120 }
+        body: { type: string, minLength: 2, maxLength: 2000 }
     CommunityPostPage:
       type: object
       additionalProperties: false
@@ -4038,7 +4244,7 @@ components:
         id: { type: string, format: uuid }
         amountCents: { type: integer }
         currency: { type: string }
-        mode: { type: string, enum: [local_test, stripe_pending, stripe_transferred] }
+        mode: { type: string, enum: [local_test, stripe_pending, stripe_transferred, provider_pending, provider_transferred] }
         createdAt: { type: string, format: date-time }
     TaskFunding:
       type: object
@@ -4047,7 +4253,7 @@ components:
         status: { type: string, enum: [checkout_pending, checkout_open, paid, payment_failed, transfer_pending, transferred, refund_pending, refund_failed, refunded, cancelled] }
         amountCents: { type: integer, minimum: 50 }
         currency: { type: string, enum: [USD] }
-        paymentMode: { type: string, enum: [stripe] }
+        paymentMode: { type: string, enum: [stripe, waffo_pancake, epay] }
         liveMode: { type: boolean }
         proposalId: { type: string, format: uuid }
         checkoutUrl: { type: string, format: uri, description: Present only to the commissioner while the hosted checkout remains open }
@@ -4071,8 +4277,8 @@ components:
         expiresAt: { type: string, format: date-time }
         amountCents: { type: integer, minimum: 50 }
         currency: { type: string, enum: [USD] }
-        paymentMode: { type: string, enum: [stripe] }
-        realCharge: { type: boolean, description: True only when explicitly approved Stripe live mode is active }
+        paymentMode: { type: string, enum: [stripe, waffo_pancake, epay] }
+        realCharge: { type: boolean, description: True only when the active external payment provider is in approved live mode }
         liveMode: { type: boolean }
         alreadyCreated: { type: boolean }
     TaskDetail:
@@ -4151,7 +4357,7 @@ components:
       properties:
         id: { type: string, format: uuid }
         operationId: { type: string, format: uuid }
-        entryType: { type: string }
+        entryType: { type: string, enum: [generation_charge, product_purchase, product_sale, product_refund, task_payment, task_earning, admin_adjustment, initial_credit, wallet_topup, subscription_purchase] }
         direction: { type: string, enum: [debit, credit] }
         amountCents: { type: integer, minimum: 1 }
         currency: { type: string, enum: [USD] }
@@ -4166,6 +4372,22 @@ components:
         account: { $ref: '#/components/schemas/BillingAccount' }
         entries: { type: array, items: { $ref: '#/components/schemas/BillingEntry' } }
         nextCursor: { type: string }
+    BillingCheckout:
+      type: object
+      required: [paymentId, resourceId, purpose, status, checkoutUrl, expiresAt, amountCents, currency, paymentMode, realCharge, liveMode, alreadyCreated]
+      properties:
+        paymentId: { type: string, format: uuid }
+        resourceId: { type: string, format: uuid, description: User ID for wallet_topup; subscription plan ID for subscription }
+        purpose: { type: string, enum: [wallet_topup, subscription] }
+        status: { type: string, enum: [checkout_pending, checkout_open] }
+        checkoutUrl: { type: string, format: uri }
+        expiresAt: { type: string, format: date-time }
+        amountCents: { type: integer, minimum: 50 }
+        currency: { type: string, enum: [USD] }
+        paymentMode: { type: string, enum: [stripe, waffo_pancake, epay] }
+        realCharge: { type: boolean }
+        liveMode: { type: boolean }
+        alreadyCreated: { type: boolean }
     PointAccount:
       type: object
       required: [userId, balancePoints, reservedPoints, availablePoints, lifetimeEarnedPoints, lifetimeSpentPoints, version, updatedAt]
@@ -4531,43 +4753,31 @@ components:
         timeoutSeconds: { type: integer, minimum: 5, maximum: 600 }
         maxAttempts: { type: integer, minimum: 1, maximum: 5 }
         expectedVersion: { type: integer, minimum: 1 }
-    AdminSystemSettingRevision:
+    AdminSystemSettings:
       type: object
-      required: [id, version, name, registrationsEnabled, generationsEnabled, publishingEnabled, marketplaceCheckoutEnabled, taskCreationEnabled, publicNotice, createdAt]
+      required: [registrationsEnabled, generationsEnabled, publishingEnabled, marketplaceCheckoutEnabled, taskCreationEnabled, publicNotice, siteConfiguration, updatedAt]
       properties:
-        id: { type: string, format: uuid }
-        version: { type: integer, minimum: 1 }
-        parentRevisionId: { type: string, format: uuid }
-        name: { type: string, minLength: 3, maxLength: 80 }
         registrationsEnabled: { type: boolean }
         generationsEnabled: { type: boolean }
         publishingEnabled: { type: boolean }
         marketplaceCheckoutEnabled: { type: boolean }
         taskCreationEnabled: { type: boolean }
         publicNotice: { type: string, maxLength: 240 }
-        createdBy: { type: string, format: uuid }
-        createdByHandle: { type: string }
-        createdAt: { type: string, format: date-time }
-    AdminSystemSettingPolicy:
-      type: object
-      required: [current, history]
-      properties:
-        current: { $ref: '#/components/schemas/AdminSystemSettingRevision' }
-        history: { type: array, items: { $ref: '#/components/schemas/AdminSystemSettingRevision' } }
-        nextCursor: { type: string }
+        siteConfiguration: { $ref: '#/components/schemas/SiteConfiguration' }
+        updatedBy: { type: string, format: uuid }
+        updatedByHandle: { type: string }
+        updatedAt: { type: string, format: date-time }
     AdminSystemSettingUpdate:
       type: object
       additionalProperties: false
-      required: [name, registrationsEnabled, generationsEnabled, publishingEnabled, marketplaceCheckoutEnabled, taskCreationEnabled, publicNotice, expectedVersion]
+      required: [registrationsEnabled, generationsEnabled, publishingEnabled, marketplaceCheckoutEnabled, taskCreationEnabled, publicNotice]
       properties:
-        name: { type: string, minLength: 3, maxLength: 80 }
         registrationsEnabled: { type: boolean }
         generationsEnabled: { type: boolean }
         publishingEnabled: { type: boolean }
         marketplaceCheckoutEnabled: { type: boolean }
         taskCreationEnabled: { type: boolean }
         publicNotice: { type: string, maxLength: 240 }
-        expectedVersion: { type: integer, minimum: 1 }
     AdminFinanceAccount:
       allOf:
         - $ref: '#/components/schemas/BillingAccount'
@@ -4584,6 +4794,32 @@ components:
       properties:
         deltaCents: { type: integer, minimum: -1000000, maximum: 1000000, not: { const: 0 } }
         currency: { type: string, enum: [USD] }
+    AdminPaymentProviderConfig:
+      type: object
+      required: [id, provider, enabled, environment, merchantId, storeId, productIdOnetime, productIdSubscription, secretConfigured, connectorConfigured, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        provider: { type: string, enum: [stripe, waffo_pancake, epay] }
+        enabled: { type: boolean }
+        environment: { type: string, enum: [test, prod] }
+        merchantId: { type: string, maxLength: 255 }
+        storeId: { type: string, maxLength: 255 }
+        productIdOnetime: { type: string, maxLength: 255 }
+        productIdSubscription: { type: string, maxLength: 255 }
+        secretConfigured: { type: boolean }
+        connectorConfigured: { type: boolean }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    AdminPaymentProviderConfigUpdate:
+      type: object
+      additionalProperties: false
+      properties:
+        enabled: { type: boolean }
+        environment: { type: string, enum: [test, prod] }
+        merchantId: { type: string, maxLength: 255 }
+        storeId: { type: string, maxLength: 255 }
+        productIdOnetime: { type: string, maxLength: 255 }
+        productIdSubscription: { type: string, maxLength: 255 }
     AdminProviderCostReconciliation:
       type: object
       required: [id, provider, periodStart, periodEnd, overageThresholdMicros, status, requestedBy, version, createdAt, updatedAt]

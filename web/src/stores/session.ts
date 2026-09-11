@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { api, APIError, messageFrom, type LoginRequest, type ProfileUpdate, type RegisterRequest, type User } from '../api/client'
+import { api, APIError, messageFrom, type LoginRequest, type ProfileUpdate, type RegisterRequest, type UnifiedAuthConfirmRequest, type UnifiedAuthRegisterRequest, type User } from '../api/client'
 
 let pendingSession: Promise<User | null> | null = null
 
@@ -39,8 +39,14 @@ export const useSessionStore = defineStore('session', {
     async login(input: LoginRequest) {
       return this.establish(() => api.login(input))
     },
+    async loginWithCode(input: UnifiedAuthConfirmRequest) {
+      return this.establish(() => api.unifiedAuthLoginCode(input))
+    },
     async register(input: RegisterRequest) {
       return this.establish(() => api.register(input))
+    },
+    async registerWithCode(input: UnifiedAuthRegisterRequest) {
+      return this.establish(() => api.unifiedAuthRegister(input))
     },
     async establish(request: () => ReturnType<typeof api.login>) {
       this.loading = true

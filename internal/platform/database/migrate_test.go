@@ -26,6 +26,18 @@ func TestMigrateEmptySchema(t *testing.T) {
 	if tables != 5 {
 		t.Fatalf("expected five core tables, got %d", tables)
 	}
+	var currentSettings, legacySettingsTables int
+	err = pool.QueryRow(context.Background(), `
+		SELECT
+		  (SELECT count(*) FROM system_settings WHERE singleton=true),
+		  (SELECT count(*) FROM information_schema.tables
+		   WHERE table_schema=current_schema() AND table_name IN ('system_setting_state','system_setting_revisions'))`).Scan(&currentSettings, &legacySettingsTables)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if currentSettings != 1 || legacySettingsTables != 0 {
+		t.Fatalf("system settings migration mismatch: current=%d legacy_tables=%d", currentSettings, legacySettingsTables)
+	}
 
 	if err := database.Migrate(context.Background(), pool); err != nil {
 		t.Fatalf("second migration must be idempotent: %v", err)

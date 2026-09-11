@@ -68,6 +68,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/site-config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getSiteConfiguration"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/payments/webhooks/stripe": {
         parameters: {
             query?: never;
@@ -79,6 +95,23 @@ export interface paths {
         put?: never;
         /** @description Receives a bounded, signed Stripe event. The endpoint is disabled unless the payment Provider is explicitly configured. */
         post: operations["receiveStripeWebhook"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/payments/webhooks/waffo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Receives a bounded Waffo Pancake event. The raw body is verified by the isolated Pancake connector before durable event insertion. */
+        post: operations["receiveWaffoWebhook"];
         delete?: never;
         options?: never;
         head?: never;
@@ -127,6 +160,71 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["loginAccount"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/unified/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Identifies the email branch. Unknown emails receive a registration code challenge; existing accounts continue to password or email-code sign-in. */
+        post: operations["startUnifiedAuthentication"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/unified/send-code": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["sendUnifiedAuthCode"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/unified/login-code": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["confirmUnifiedLoginCode"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/unified/register": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["completeUnifiedRegistration"];
         delete?: never;
         options?: never;
         head?: never;
@@ -973,7 +1071,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/billing/subscriptions": {
+    "/billing/topups/checkout": {
         parameters: {
             query?: never;
             header?: never;
@@ -982,7 +1080,25 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        post: operations["purchaseSubscription"];
+        /** @description Creates a hosted payment checkout for adding USD wallet balance. The balance is credited only after a verified Provider webhook is processed by the Worker. */
+        post: operations["checkoutWalletTopup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/billing/subscriptions/checkout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Creates a hosted payment checkout for a subscription plan. Points and access are granted only after a verified Provider webhook is processed by the Worker. */
+        post: operations["checkoutSubscription"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1137,22 +1253,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/products/{productId}/purchase": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["purchaseProduct"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/products/{productId}/checkout": {
         parameters: {
             query?: never;
@@ -1162,7 +1262,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** @description Creates or resumes a default-off Stripe hosted checkout. Entitlement is granted only after a signed payment event is processed. */
+        /** @description Creates or resumes an external-provider hosted checkout. Entitlement is granted only after a signed payment event is processed. */
         post: operations["checkoutProduct"];
         delete?: never;
         options?: never;
@@ -1291,7 +1391,7 @@ export interface paths {
         };
         get: operations["listCommunityPosts"];
         put?: never;
-        post?: never;
+        post: operations["createCommunityPost"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1451,7 +1551,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** @description Creates or resumes default-off Stripe funding for a direct-claim task or one exact submitted proposal. Assignment remains unavailable until a signed payment event confirms the funds. */
+        /** @description Creates or resumes external-provider funding for a direct-claim task or one exact submitted proposal. Assignment remains unavailable until a signed payment event confirms the funds. */
         post: operations["checkoutTask"];
         delete?: never;
         options?: never;
@@ -1963,8 +2063,24 @@ export interface paths {
             cookie?: never;
         };
         get: operations["getAdminSystemSettings"];
-        put?: never;
-        post: operations["updateAdminSystemSettings"];
+        put: operations["updateAdminSystemSettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/site-config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["updateAdminSiteConfiguration"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2092,6 +2208,38 @@ export interface paths {
         };
         get?: never;
         put: operations["updateAdminPaymentDestination"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/payment-providers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listAdminPaymentProviderConfigs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/payment-providers/{provider}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["updateAdminPaymentProviderConfig"];
         post?: never;
         delete?: never;
         options?: never;
@@ -2615,6 +2763,28 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        LocalizedSiteText: {
+            enUS: string;
+            zhCN: string;
+        };
+        SitePolicyContent: {
+            terms: components["schemas"]["LocalizedSiteText"];
+            privacy: components["schemas"]["LocalizedSiteText"];
+            cookies: components["schemas"]["LocalizedSiteText"];
+            acceptable: components["schemas"]["LocalizedSiteText"];
+            ai: components["schemas"]["LocalizedSiteText"];
+            licensing: components["schemas"]["LocalizedSiteText"];
+            refunds: components["schemas"]["LocalizedSiteText"];
+            copyright: components["schemas"]["LocalizedSiteText"];
+        };
+        SiteConfiguration: {
+            siteName: string;
+            /** Format: uri */
+            serverUrl: string;
+            siteIconUrl: string;
+            footerText: components["schemas"]["LocalizedSiteText"];
+            policies: components["schemas"]["SitePolicyContent"];
+        };
         Meta: {
             name: string;
             environment: string;
@@ -2629,7 +2799,13 @@ export interface components {
             paymentProvider: {
                 enabled: boolean;
                 /** @enum {string} */
-                provider: "stripe";
+                provider: "stripe" | "waffo_pancake" | "epay";
+                liveMode: boolean;
+            };
+            taskPaymentProvider: {
+                enabled: boolean;
+                /** @enum {string} */
+                provider: "stripe" | "waffo_pancake" | "epay";
                 liveMode: boolean;
             };
             providerCostReconciliation: {
@@ -2637,6 +2813,58 @@ export interface components {
                 /** @enum {string} */
                 provider: "openai";
             };
+        };
+        AuthChallenge: {
+            /** Format: uuid */
+            challengeId: string;
+            /** @enum {string} */
+            purpose: "login_code" | "registration_code";
+            emailHint: string;
+            /** Format: date-time */
+            expiresAt: string;
+            resendAfterSeconds: number;
+        };
+        UnifiedAuthStartRequest: {
+            /** Format: email */
+            email: string;
+            /** @enum {string} */
+            locale?: "en-US" | "zh-CN";
+        };
+        UnifiedAuthStartResponse: {
+            /** Format: email */
+            email: string;
+            accountExists: boolean;
+            /** @enum {string} */
+            next: "existing_account" | "registration";
+            challenge?: components["schemas"]["AuthChallenge"];
+        };
+        UnifiedAuthCodeRequest: {
+            /** Format: email */
+            email: string;
+            /** @enum {string} */
+            purpose: "login_code" | "registration_code";
+            /** @enum {string} */
+            locale?: "en-US" | "zh-CN";
+        };
+        UnifiedAuthConfirmRequest: {
+            /** Format: uuid */
+            challengeId: string;
+            /** Format: email */
+            email: string;
+            code: string;
+        };
+        UnifiedAuthRegisterRequest: {
+            /** Format: uuid */
+            challengeId: string;
+            code: string;
+            /** Format: email */
+            email: string;
+            password: string;
+            handle: string;
+            displayName?: string;
+            /** @enum {string} */
+            locale?: "en-US" | "zh-CN";
+            timezone?: string;
         };
         RegisterRequest: {
             /** Format: email */
@@ -3439,7 +3667,8 @@ export interface components {
             /** Format: date-time */
             grantedAt: string;
             /** @enum {string} */
-            paymentMode: "test" | "stripe";
+            paymentMode: "test" | "stripe" | "waffo_pancake" | "epay";
+            realCharge: boolean;
         };
         SourceAssetReference: {
             /** Format: uuid */
@@ -3499,28 +3728,6 @@ export interface components {
             /** Format: date-time */
             createdAt: string;
         };
-        Purchase: {
-            /** Format: uuid */
-            orderId: string;
-            /** Format: uuid */
-            productId: string;
-            productTitle: string;
-            /** Format: uuid */
-            entitlementId: string;
-            /** Format: uuid */
-            assetId: string;
-            status: string;
-            licenseCode: string;
-            amountCents: number;
-            currency: string;
-            /** @enum {string} */
-            paymentMode: "test";
-            /** @constant */
-            realCharge: false;
-            alreadyOwned: boolean;
-            /** Format: date-time */
-            createdAt: string;
-        };
         OrderEvent: {
             fromStatus?: string;
             toStatus: string;
@@ -3546,7 +3753,7 @@ export interface components {
             licenseTerms: string;
             refundWindowDays: number;
             /** @enum {string} */
-            paymentMode: "test" | "stripe";
+            paymentMode: "test" | "stripe" | "waffo_pancake" | "epay";
             realCharge: boolean;
             /** Format: date-time */
             refundRequestedAt?: string;
@@ -3575,8 +3782,8 @@ export interface components {
             /** @enum {string} */
             currency: "USD";
             /** @enum {string} */
-            paymentMode: "stripe";
-            /** @description True only when explicitly approved Stripe live mode is active */
+            paymentMode: "stripe" | "waffo_pancake" | "epay";
+            /** @description True only when the selected Provider's approved production mode is active */
             realCharge: boolean;
             liveMode: boolean;
             alreadyCreated: boolean;
@@ -3652,15 +3859,16 @@ export interface components {
         CommunityPost: {
             /** Format: uuid */
             id: string;
+            title: string;
             body: string;
             /** Format: date-time */
             publishedAt: string;
             /** Format: uuid */
-            workId: string;
-            workTitle: string;
-            mediaUrl: string;
-            mediaKind: string;
-            aiDisclosure: string;
+            workId?: string;
+            workTitle?: string;
+            mediaUrl?: string;
+            mediaKind?: string;
+            aiDisclosure?: string;
             /** Format: uuid */
             authorId: string;
             authorHandle: string;
@@ -3671,6 +3879,10 @@ export interface components {
             viewerLiked: boolean;
             viewerBookmarked: boolean;
             viewerFollowing: boolean;
+        };
+        CommunityPostCreate: {
+            title: string;
+            body: string;
         };
         CommunityPostPage: {
             items: components["schemas"]["CommunityPost"][];
@@ -3838,7 +4050,7 @@ export interface components {
             amountCents: number;
             currency: string;
             /** @enum {string} */
-            mode: "local_test" | "stripe_pending" | "stripe_transferred";
+            mode: "local_test" | "stripe_pending" | "stripe_transferred" | "provider_pending" | "provider_transferred";
             /** Format: date-time */
             createdAt: string;
         };
@@ -3849,7 +4061,7 @@ export interface components {
             /** @enum {string} */
             currency: "USD";
             /** @enum {string} */
-            paymentMode: "stripe";
+            paymentMode: "stripe" | "waffo_pancake" | "epay";
             liveMode: boolean;
             /** Format: uuid */
             proposalId?: string;
@@ -3886,8 +4098,8 @@ export interface components {
             /** @enum {string} */
             currency: "USD";
             /** @enum {string} */
-            paymentMode: "stripe";
-            /** @description True only when explicitly approved Stripe live mode is active */
+            paymentMode: "stripe" | "waffo_pancake" | "epay";
+            /** @description True only when the active external payment provider is in approved live mode */
             realCharge: boolean;
             liveMode: boolean;
             alreadyCreated: boolean;
@@ -3963,7 +4175,8 @@ export interface components {
             id: string;
             /** Format: uuid */
             operationId: string;
-            entryType: string;
+            /** @enum {string} */
+            entryType: "generation_charge" | "product_purchase" | "product_sale" | "product_refund" | "task_payment" | "task_earning" | "admin_adjustment" | "initial_credit" | "wallet_topup" | "subscription_purchase";
             /** @enum {string} */
             direction: "debit" | "credit";
             amountCents: number;
@@ -3982,6 +4195,31 @@ export interface components {
             account: components["schemas"]["BillingAccount"];
             entries: components["schemas"]["BillingEntry"][];
             nextCursor?: string;
+        };
+        BillingCheckout: {
+            /** Format: uuid */
+            paymentId: string;
+            /**
+             * Format: uuid
+             * @description User ID for wallet_topup; subscription plan ID for subscription
+             */
+            resourceId: string;
+            /** @enum {string} */
+            purpose: "wallet_topup" | "subscription";
+            /** @enum {string} */
+            status: "checkout_pending" | "checkout_open";
+            /** Format: uri */
+            checkoutUrl: string;
+            /** Format: date-time */
+            expiresAt: string;
+            amountCents: number;
+            /** @enum {string} */
+            currency: "USD";
+            /** @enum {string} */
+            paymentMode: "stripe" | "waffo_pancake" | "epay";
+            realCharge: boolean;
+            liveMode: boolean;
+            alreadyCreated: boolean;
         };
         PointAccount: {
             /** Format: uuid */
@@ -4390,39 +4628,27 @@ export interface components {
             maxAttempts: number;
             expectedVersion: number;
         };
-        AdminSystemSettingRevision: {
-            /** Format: uuid */
-            id: string;
-            version: number;
-            /** Format: uuid */
-            parentRevisionId?: string;
-            name: string;
+        AdminSystemSettings: {
             registrationsEnabled: boolean;
             generationsEnabled: boolean;
             publishingEnabled: boolean;
             marketplaceCheckoutEnabled: boolean;
             taskCreationEnabled: boolean;
             publicNotice: string;
+            siteConfiguration: components["schemas"]["SiteConfiguration"];
             /** Format: uuid */
-            createdBy?: string;
-            createdByHandle?: string;
+            updatedBy?: string;
+            updatedByHandle?: string;
             /** Format: date-time */
-            createdAt: string;
-        };
-        AdminSystemSettingPolicy: {
-            current: components["schemas"]["AdminSystemSettingRevision"];
-            history: components["schemas"]["AdminSystemSettingRevision"][];
-            nextCursor?: string;
+            updatedAt: string;
         };
         AdminSystemSettingUpdate: {
-            name: string;
             registrationsEnabled: boolean;
             generationsEnabled: boolean;
             publishingEnabled: boolean;
             marketplaceCheckoutEnabled: boolean;
             taskCreationEnabled: boolean;
             publicNotice: string;
-            expectedVersion: number;
         };
         AdminFinanceAccount: components["schemas"]["BillingAccount"] & {
             /** Format: email */
@@ -4434,6 +4660,34 @@ export interface components {
             deltaCents: number;
             /** @enum {string} */
             currency: "USD";
+        };
+        AdminPaymentProviderConfig: {
+            /** Format: uuid */
+            id: string;
+            /** @enum {string} */
+            provider: "stripe" | "waffo_pancake" | "epay";
+            enabled: boolean;
+            /** @enum {string} */
+            environment: "test" | "prod";
+            merchantId: string;
+            storeId: string;
+            productIdOnetime: string;
+            productIdSubscription: string;
+            secretConfigured: boolean;
+            connectorConfigured: boolean;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        AdminPaymentProviderConfigUpdate: {
+            enabled?: boolean;
+            /** @enum {string} */
+            environment?: "test" | "prod";
+            merchantId?: string;
+            storeId?: string;
+            productIdOnetime?: string;
+            productIdSubscription?: string;
         };
         AdminProviderCostReconciliation: {
             /** Format: uuid */
@@ -5295,6 +5549,26 @@ export interface operations {
             };
         };
     };
+    getSiteConfiguration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Public branding, footer, and policy configuration */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SiteConfiguration"];
+                };
+            };
+        };
+    };
     receiveStripeWebhook: {
         parameters: {
             query?: never;
@@ -5331,6 +5605,50 @@ export interface operations {
                 };
             };
             400: components["responses"]["ValidationFailed"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["ValidationFailed"];
+            415: components["responses"]["ValidationFailed"];
+            422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    receiveWaffoWebhook: {
+        parameters: {
+            query?: never;
+            header: {
+                "x-waffo-signature": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Duplicate event safely acknowledged */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaymentWebhookReceipt"];
+                };
+            };
+            /** @description Signed event accepted for idempotent processing */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaymentWebhookReceipt"];
+                };
+            };
+            400: components["responses"]["ValidationFailed"];
+            401: components["responses"]["Unauthorized"];
             409: components["responses"]["Conflict"];
             413: components["responses"]["ValidationFailed"];
             415: components["responses"]["ValidationFailed"];
@@ -5409,6 +5727,125 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+        };
+    };
+    startUnifiedAuthentication: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UnifiedAuthStartRequest"];
+            };
+        };
+        responses: {
+            /** @description Unified authentication branch and optional registration challenge */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnifiedAuthStartResponse"];
+                };
+            };
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    sendUnifiedAuthCode: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UnifiedAuthCodeRequest"];
+            };
+        };
+        responses: {
+            /** @description Code email queued */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        challenge: components["schemas"]["AuthChallenge"];
+                    };
+                };
+            };
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    confirmUnifiedLoginCode: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UnifiedAuthConfirmRequest"];
+            };
+        };
+        responses: {
+            /** @description Email-code session created */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Session"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description Code expired */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    completeUnifiedRegistration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UnifiedAuthRegisterRequest"];
+            };
+        };
+        responses: {
+            /** @description Verified account and session created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Session"];
+                };
+            };
+            409: components["responses"]["Conflict"];
+            /** @description Code expired */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            422: components["responses"]["ValidationFailed"];
         };
     };
     startDemoSession: {
@@ -6842,7 +7279,7 @@ export interface operations {
         parameters: {
             query?: {
                 direction?: "debit" | "credit";
-                entryType?: "generation_charge" | "product_purchase" | "product_sale" | "product_refund" | "task_payment" | "task_earning" | "admin_adjustment" | "initial_credit" | "subscription_purchase";
+                entryType?: "generation_charge" | "product_purchase" | "product_sale" | "product_refund" | "task_payment" | "task_earning" | "admin_adjustment" | "initial_credit" | "wallet_topup" | "subscription_purchase";
                 dateFrom?: string;
                 dateTo?: string;
                 /** @description Opaque stable pagination cursor returned by the previous statement page. */
@@ -6889,7 +7326,48 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
         };
     };
-    purchaseSubscription: {
+    checkoutWalletTopup: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    amountCents: number;
+                };
+            };
+        };
+        responses: {
+            /** @description Existing checkout returned for the same idempotency key */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BillingCheckout"];
+                };
+            };
+            /** @description Hosted wallet top-up checkout created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BillingCheckout"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    checkoutSubscription: {
         parameters: {
             query?: never;
             header: {
@@ -6907,26 +7385,28 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Subscription purchased and included points credited atomically */
+            /** @description Existing checkout returned for the same idempotency key */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BillingCheckout"];
+                };
+            };
+            /** @description Hosted subscription checkout created */
             201: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["PointOverview"];
+                    "application/json": components["schemas"]["BillingCheckout"];
                 };
             };
-            /** @description Insufficient USD wallet balance */
-            402: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
+            401: components["responses"]["Unauthorized"];
             409: components["responses"]["Conflict"];
             422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["Unavailable"];
         };
     };
     listAssets: {
@@ -7230,47 +7710,6 @@ export interface operations {
                 };
             };
             404: components["responses"]["NotFound"];
-        };
-    };
-    purchaseProduct: {
-        parameters: {
-            query?: never;
-            header: {
-                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-            };
-            path: {
-                productId: components["parameters"]["ProductId"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": {
-                    licenseAccepted: boolean;
-                };
-            };
-        };
-        responses: {
-            /** @description Existing active entitlement returned without a duplicate order */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Purchase"];
-                };
-            };
-            /** @description Local Test order fulfilled, entitlement granted, and Asset created atomically */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Purchase"];
-                };
-            };
-            409: components["responses"]["Conflict"];
-            422: components["responses"]["ValidationFailed"];
         };
     };
     checkoutProduct: {
@@ -7592,6 +8031,8 @@ export interface operations {
                 /** @description Opaque stable reverse-chronological Community feed cursor */
                 cursor?: string;
                 limit?: number;
+                /** @description Return only the authenticated viewer's published posts */
+                mine?: boolean;
             };
             header?: never;
             path?: never;
@@ -7608,6 +8049,34 @@ export interface operations {
                     "application/json": components["schemas"]["CommunityPostPage"];
                 };
             };
+            401: components["responses"]["Unauthorized"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    createCommunityPost: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CommunityPostCreate"];
+            };
+        };
+        responses: {
+            /** @description Standalone Community post created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommunityPost"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
             422: components["responses"]["ValidationFailed"];
         };
     };
@@ -8892,28 +9361,23 @@ export interface operations {
     };
     getAdminSystemSettings: {
         parameters: {
-            query?: {
-                limit?: number;
-                /** @description Opaque immutable revision-version cursor */
-                cursor?: string;
-            };
+            query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Active immutable platform availability revision and stably paginated history */
+            /** @description Current platform availability and public site configuration */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AdminSystemSettingPolicy"];
+                    "application/json": components["schemas"]["AdminSystemSettings"];
                 };
             };
             403: components["responses"]["Forbidden"];
-            422: components["responses"]["ValidationFailed"];
         };
     };
     updateAdminSystemSettings: {
@@ -8929,17 +9393,42 @@ export interface operations {
             };
         };
         responses: {
-            /** @description New platform availability revision activated */
+            /** @description Current platform availability updated */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AdminSystemSettingPolicy"];
+                    "application/json": components["schemas"]["AdminSystemSettings"];
                 };
             };
             403: components["responses"]["Forbidden"];
-            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    updateAdminSiteConfiguration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SiteConfiguration"];
+            };
+        };
+        responses: {
+            /** @description Public site configuration updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SiteConfiguration"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
             422: components["responses"]["ValidationFailed"];
         };
     };
@@ -9062,7 +9551,7 @@ export interface operations {
             query?: {
                 /** @description Payment ID */
                 q?: string;
-                purpose?: "product" | "task";
+                purpose?: "product" | "task" | "wallet_topup" | "subscription";
                 status?: "checkout_pending" | "checkout_open" | "paid" | "payment_failed" | "transfer_pending" | "transferred" | "refund_pending" | "refund_failed" | "refunded" | "cancelled";
                 mode?: "test" | "live";
                 attention?: "needs_attention" | "healthy";
@@ -9205,6 +9694,57 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    listAdminPaymentProviderConfigs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Public payment Provider configuration and secret presence flags */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["AdminPaymentProviderConfig"][];
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    updateAdminPaymentProviderConfig: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider: "stripe" | "waffo_pancake" | "epay";
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminPaymentProviderConfigUpdate"];
+            };
+        };
+        responses: {
+            /** @description Payment Provider configuration updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminPaymentProviderConfig"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
             422: components["responses"]["ValidationFailed"];
         };
     };

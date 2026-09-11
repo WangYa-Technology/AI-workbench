@@ -17,6 +17,7 @@ import (
 	"github.com/hcai-chat/hcai-chat/internal/creation"
 	"github.com/hcai-chat/hcai-chat/internal/discovery"
 	"github.com/hcai-chat/hcai-chat/internal/identity"
+	"github.com/hcai-chat/hcai-chat/internal/payments"
 	"github.com/hcai-chat/hcai-chat/internal/platform/httputil"
 	"github.com/hcai-chat/hcai-chat/internal/platform/media"
 	"github.com/hcai-chat/hcai-chat/internal/systemsettings"
@@ -401,7 +402,49 @@ func (s *Server) pointOverview(w http.ResponseWriter, r *http.Request) {
 	httputil.JSON(w, http.StatusOK, overview)
 }
 
-func (s *Server) purchaseSubscription(w http.ResponseWriter, r *http.Request) {
+func (s *Server) checkoutWalletTopup(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.requireUser(w, r)
+	if !ok {
+		return
+	}
+	var input struct {
+		AmountCents int `json:"amountCents"`
+	}
+	if !httputil.DecodeJSON(w, r, &input) {
+		return
+	}
+	origin := strings.TrimRight(s.config.WebOrigin, "/")
+	item, created, err := s.payments.BeginWalletTopupCheckout(
+		r.Context(), user.ID, input.AmountCents, idempotencyKey(r), httputil.RequestID(r.Context()),
+		origin+"/workspace/billing?payment=success", origin+"/workspace/billing?payment=cancelled",
+	)
+	switch {
+	case errors.Is(err, payments.ErrDisabled), errors.Is(err, payments.ErrProviderUnavailable), errors.Is(err, payments.ErrProviderConfigMismatch):
+		httputil.WriteError(w, r, http.StatusServiceUnavailable, "payment_provider_unavailable", "Payment checkout is not enabled or configured for wallet top-ups.", false)
+	case errors.Is(err, payments.ErrInvalidCheckout):
+		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "payment_checkout_invalid", "Provide a valid wallet top-up amount and request key.", false)
+	case errors.Is(err, payments.ErrCheckoutConflict):
+		httputil.WriteError(w, r, http.StatusConflict, "payment_checkout_conflict", "The request key belongs to another wallet top-up checkout.", false)
+	case err != nil:
+		var classified interface{ Retryable() bool }
+		if errors.As(err, &classified) {
+			httputil.WriteError(w, r, http.StatusServiceUnavailable, "payment_checkout_unavailable", "The payment Provider could not create wallet top-up checkout.", classified.Retryable())
+			return
+		}
+		s.internalError(w, r, "create wallet top-up checkout", err)
+	default:
+		if created {
+			w.Header().Set("Location", "/api/v1/billing/statement")
+		}
+		status := http.StatusOK
+		if created {
+			status = http.StatusCreated
+		}
+		httputil.JSON(w, status, item)
+	}
+}
+
+func (s *Server) checkoutSubscription(w http.ResponseWriter, r *http.Request) {
 	user, ok := s.requireUser(w, r)
 	if !ok {
 		return
@@ -412,20 +455,34 @@ func (s *Server) purchaseSubscription(w http.ResponseWriter, r *http.Request) {
 	if !httputil.DecodeJSON(w, r, &input) {
 		return
 	}
-	overview, err := s.billing.PurchaseSubscription(r.Context(), user.ID, input.PlanID, r.Header.Get("Idempotency-Key"))
+	origin := strings.TrimRight(s.config.WebOrigin, "/")
+	item, created, err := s.payments.BeginSubscriptionCheckout(
+		r.Context(), user.ID, input.PlanID, idempotencyKey(r), httputil.RequestID(r.Context()),
+		origin+"/workspace/billing?payment=success", origin+"/workspace/billing?payment=cancelled",
+	)
 	switch {
-	case errors.Is(err, billing.ErrInvalidPlan):
-		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_subscription", "Choose an active subscription plan and provide a valid idempotency key.", false)
-	case errors.Is(err, billing.ErrSubscriptionReplay):
-		httputil.WriteError(w, r, http.StatusConflict, "idempotency_conflict", "This request key was already used for a different subscription.", false)
-	case errors.Is(err, billing.ErrSubscriptionActive):
-		httputil.WriteError(w, r, http.StatusConflict, "subscription_already_active", "This subscription plan is already active for the current billing period.", false)
-	case errors.Is(err, billing.ErrInsufficientFunds):
-		httputil.WriteError(w, r, http.StatusPaymentRequired, "insufficient_wallet_balance", "Add funds to the USD wallet before purchasing this subscription.", false)
+	case errors.Is(err, payments.ErrDisabled), errors.Is(err, payments.ErrProviderUnavailable), errors.Is(err, payments.ErrProviderConfigMismatch):
+		httputil.WriteError(w, r, http.StatusServiceUnavailable, "payment_provider_unavailable", "Payment checkout is not enabled or configured for subscriptions.", false)
+	case errors.Is(err, payments.ErrInvalidCheckout):
+		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "payment_checkout_invalid", "Choose an active subscription plan and provide a valid request key.", false)
+	case errors.Is(err, payments.ErrCheckoutConflict):
+		httputil.WriteError(w, r, http.StatusConflict, "payment_checkout_conflict", "The request key belongs to another subscription checkout or the plan is already active.", false)
 	case err != nil:
-		s.internalError(w, r, "purchase subscription", err)
+		var classified interface{ Retryable() bool }
+		if errors.As(err, &classified) {
+			httputil.WriteError(w, r, http.StatusServiceUnavailable, "payment_checkout_unavailable", "The payment Provider could not create subscription checkout.", classified.Retryable())
+			return
+		}
+		s.internalError(w, r, "create subscription checkout", err)
 	default:
-		httputil.JSON(w, http.StatusCreated, overview)
+		if created {
+			w.Header().Set("Location", "/api/v1/billing/points")
+		}
+		status := http.StatusOK
+		if created {
+			status = http.StatusCreated
+		}
+		httputil.JSON(w, status, item)
 	}
 }
 
@@ -989,6 +1046,22 @@ func writeContentDraft(w http.ResponseWriter, r *http.Request, s *Server, item c
 
 func (s *Server) listPosts(w http.ResponseWriter, r *http.Request) {
 	input := community.PostListInput{Cursor: r.URL.Query().Get("cursor")}
+	viewerID := s.optionalViewer(r)
+	if raw := strings.TrimSpace(r.URL.Query().Get("mine")); raw != "" {
+		mine, err := strconv.ParseBool(raw)
+		if err != nil {
+			httputil.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_post_filters", "Use a page size from 1 to 50, a boolean mine filter, and an unmodified Community feed cursor.", false)
+			return
+		}
+		input.Mine = mine
+		if mine {
+			viewer, ok := s.requireUser(w, r)
+			if !ok {
+				return
+			}
+			viewerID = viewer.ID
+		}
+	}
 	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
 		limit, err := strconv.Atoi(raw)
 		if err != nil {
@@ -997,7 +1070,7 @@ func (s *Server) listPosts(w http.ResponseWriter, r *http.Request) {
 		}
 		input.Limit = limit
 	}
-	page, err := s.community.ListPageForViewer(r.Context(), s.optionalViewer(r), input)
+	page, err := s.community.ListPageForViewer(r.Context(), viewerID, input)
 	if errors.Is(err, community.ErrInvalidPostFilter) {
 		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_post_filters", "Use a page size from 1 to 50 and an unmodified Community feed cursor.", false)
 		return

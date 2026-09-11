@@ -271,17 +271,16 @@ func (s *Service) Get(ctx context.Context, actorID, demandID uuid.UUID) (Detail,
 	item.Events = events
 	var funding Funding
 	err = s.pool.QueryRow(ctx, `
-		SELECT status,amount_cents,currency,live_mode,proposal_id,
+		SELECT provider,status,amount_cents,currency,live_mode,proposal_id,
 		       CASE WHEN payer_id=$2 AND status='checkout_open' THEN checkout_url END,
 		       CASE WHEN payer_id=$2 AND status='checkout_open' THEN checkout_expires_at END,
 		       updated_at
 		FROM payment_intents
 		WHERE purpose='task' AND resource_id=$1
 		ORDER BY created_at DESC,id DESC LIMIT 1`, demandID, actorID).Scan(
-		&funding.Status, &funding.AmountCents, &funding.Currency, &funding.LiveMode, &funding.ProposalID,
+		&funding.PaymentMode, &funding.Status, &funding.AmountCents, &funding.Currency, &funding.LiveMode, &funding.ProposalID,
 		&funding.CheckoutURL, &funding.CheckoutExpiresAt, &funding.UpdatedAt)
 	if err == nil {
-		funding.PaymentMode = "stripe"
 		item.Funding = &funding
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return Detail{}, fmt.Errorf("get task funding: %w", err)
@@ -658,7 +657,7 @@ func (s *Service) Review(ctx context.Context, actorID, demandID uuid.UUID, input
 			if err != nil {
 				return Detail{}, err
 			}
-			settlementMode = "stripe_pending"
+			settlementMode = "provider_pending"
 			settlementMessage = "Your delivery for “" + taskTitle + "” was accepted. The verified Provider payout is pending."
 			if _, err = tx.Exec(ctx, `INSERT INTO task_settlements(id,demand_id,client_id,creator_id,amount_cents,currency,mode) VALUES($1,$2,$3,$4,$5,$6,$7)`, settlementID, demandID, clientID, *assigneeID, budget, currency, settlementMode); err != nil {
 				return Detail{}, err
@@ -834,16 +833,16 @@ func (s *Service) Cancel(ctx context.Context, actorID, demandID uuid.UUID, reaso
 	cancellationEvidence := map[string]any{"paymentMode": "local_test"}
 	if s.providerPayments {
 		var paymentID uuid.UUID
-		var paymentStatus string
+		var paymentProvider, paymentStatus string
 		err = tx.QueryRow(ctx, `
-			SELECT id,status FROM payment_intents
+			SELECT id,provider,status FROM payment_intents
 			WHERE purpose='task' AND resource_id=$1
-			ORDER BY created_at DESC,id DESC LIMIT 1 FOR UPDATE`, demandID).Scan(&paymentID, &paymentStatus)
+			ORDER BY created_at DESC,id DESC LIMIT 1 FOR UPDATE`, demandID).Scan(&paymentID, &paymentProvider, &paymentStatus)
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return Detail{}, err
 		}
 		if err == nil {
-			cancellationEvidence = map[string]any{"paymentMode": "stripe", "paymentId": paymentID, "fundingStatus": paymentStatus}
+			cancellationEvidence = map[string]any{"paymentMode": paymentProvider, "paymentId": paymentID, "fundingStatus": paymentStatus}
 			switch paymentStatus {
 			case "checkout_pending", "checkout_open", "payment_failed":
 				if _, err = tx.Exec(ctx, `UPDATE payment_intents SET status='cancelled',updated_at=now(),version=version+1 WHERE id=$1`, paymentID); err != nil {

@@ -172,6 +172,7 @@ type PurchaseProvenance struct {
 	OrderStatus  string    `json:"orderStatus"`
 	GrantedAt    time.Time `json:"grantedAt"`
 	PaymentMode  string    `json:"paymentMode"`
+	RealCharge   bool      `json:"realCharge"`
 }
 
 type GenerationProvenance struct {
@@ -728,7 +729,8 @@ func (s *Service) Content(ctx context.Context, viewerID, assetID uuid.UUID) (Con
 	err := s.pool.QueryRow(ctx, `
 			SELECT a.owner_id,a.mime_type,COALESCE(origin.source_type,a.source_type),
 			       COALESCE(origin.storage_backend,a.storage_backend),COALESCE(origin.storage_key,a.storage_key),
-			       EXISTS(SELECT 1 FROM works w WHERE w.asset_id IN (a.id,a.origin_asset_id) AND w.status='published'),
+			       (EXISTS(SELECT 1 FROM works w WHERE w.asset_id IN (a.id,a.origin_asset_id) AND w.status='published') OR
+			        EXISTS(SELECT 1 FROM system_settings ss WHERE ss.singleton=true AND ss.site_configuration->>'siteIconUrl'=a.media_url)),
 			       a.source_type<>'purchase' OR EXISTS(SELECT 1 FROM entitlements e WHERE e.asset_id=a.id AND e.user_id=a.owner_id AND e.status='active')
 			FROM assets a
 			LEFT JOIN assets origin ON origin.id=a.origin_asset_id
@@ -788,7 +790,7 @@ func (s *Service) purchaseProvenance(ctx context.Context, assetID uuid.UUID) (*P
 	var result PurchaseProvenance
 	err := s.pool.QueryRow(ctx, `
 		SELECT e.order_id,p.id,o.product_title_snapshot,u.id,u.display_name,u.handle,e.license_code,o.license_name_snapshot,o.status,e.granted_at,
-		       CASE WHEN pi.provider='stripe' THEN 'stripe' ELSE 'test' END
+	       CASE WHEN pi.provider IS NULL THEN 'test' ELSE pi.provider END,COALESCE(pi.live_mode,false)
 		FROM entitlements e
 		JOIN orders o ON o.id=e.order_id
 		JOIN products p ON p.id=e.product_id
@@ -796,7 +798,7 @@ func (s *Service) purchaseProvenance(ctx context.Context, assetID uuid.UUID) (*P
 		LEFT JOIN payment_intents pi ON pi.order_id=o.id
 		WHERE e.asset_id=$1`, assetID).Scan(
 		&result.OrderID, &result.ProductID, &result.ProductTitle, &result.SellerID, &result.SellerName,
-		&result.SellerHandle, &result.LicenseCode, &result.LicenseName, &result.OrderStatus, &result.GrantedAt, &result.PaymentMode)
+		&result.SellerHandle, &result.LicenseCode, &result.LicenseName, &result.OrderStatus, &result.GrantedAt, &result.PaymentMode, &result.RealCharge)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}

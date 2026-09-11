@@ -15,7 +15,8 @@
   --accent-soft: #e8f0ff;
   --accent-contrast: #ffffff;
   --accent-secondary: #007f7a;
-  --focus: #008f89;
+  /* Focus follows the primary accent; green is reserved for semantic success. */
+  --focus: var(--accent);
   --success: #138a63;
   --success-readable: #08734f;
   --warning: #9a5b00;
@@ -58,11 +59,16 @@
   --color-danger: var(--danger);
   --color-success: var(--success);
   --color-warning: var(--warning);
-  --focus-ring: 0 0 0 3px color-mix(in srgb, var(--focus) 26%, transparent);
+  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--focus) 26%, transparent);
   --control-height-sm: 32px;
   --control-height-md: 36px;
   --control-height-lg: 42px;
   --control-height-toolbar: 44px;
+  --data-header-height: 42px;
+  --data-header-bg: color-mix(in srgb, var(--surface-muted) 68%, var(--surface));
+  --data-header-text: var(--text-secondary);
+  --data-header-font-size: 12px;
+  --data-header-border: var(--border);
   --shadow-panel: 0 1px 2px rgb(20 33 61 / 4%), 0 8px 24px rgb(20 33 61 / 6%);
 }
 
@@ -83,7 +89,7 @@
   --accent-soft: #213556;
   --accent-contrast: #ffffff;
   --accent-secondary: #40c9c0;
-  --focus: #40c9c0;
+  --focus: var(--accent-readable);
   --success: #4cc38a;
   --success-readable: #69d69f;
   --warning: #d7a044;
@@ -117,7 +123,7 @@
   --color-danger: var(--danger);
   --color-success: var(--success);
   --color-warning: var(--warning);
-  --focus-ring: 0 0 0 3px color-mix(in srgb, var(--focus) 30%, transparent);
+  --focus-ring: 0 0 0 2px color-mix(in srgb, var(--focus) 30%, transparent);
   --control-height-sm: 32px;
   --control-height-md: 36px;
   --control-height-lg: 42px;

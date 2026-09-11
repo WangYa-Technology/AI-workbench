@@ -13,7 +13,6 @@ test('keeps the Chinese core workflow localized and within mobile and desktop vi
   const routes = [
     ['/create/image', '创作图片'],
     ['/workspace/assets', '资产'],
-    ['/publish', '发布作品'],
     ['/market', '数字产品市场'],
     ['/market/demands', '任务广场'],
     ['/community', '社区'],

@@ -50,7 +50,7 @@ test('versions an Asset and publishes a restored server draft', async ({ page })
   await expect(page.locator('.asset-version-block')).toContainText('v2 · Clean')
   await expect(page.locator('.asset-version-block')).toContainText('v1 · Clean')
 
-  await page.getByRole('link', { name: 'Publish asset', exact: true }).click()
+  await page.getByRole('button', { name: 'Publish asset', exact: true }).click()
   await page.getByLabel('Work title', { exact: true }).fill(workTitle)
   await page.getByLabel('Short description', { exact: true }).fill(restoredSummary)
   await page.getByLabel('Community note', { exact: true }).fill(`Private draft publication note ${runID}.`)
@@ -66,7 +66,7 @@ test('versions an Asset and publishes a restored server draft', async ({ page })
 
   await page.getByLabel('Short description', { exact: true }).fill(publishedSummary)
   await page.getByRole('button', { name: 'Save draft', exact: true }).click()
-  await expect(page.locator('#publish-draft option:checked')).toContainText('v2')
+  await expect(page.locator('#asset-publish-draft option:checked')).toContainText('v2')
   await page.getByRole('button', { name: 'Publish work', exact: true }).click()
 
   await expect(page).toHaveURL(/\/works\/[0-9a-f-]+$/)

@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/hcai-chat/hcai-chat/internal/billing"
 	"github.com/hcai-chat/hcai-chat/internal/notifications"
 	"github.com/hcai-chat/hcai-chat/internal/payments"
 	"github.com/jackc/pgx/v5"
@@ -178,13 +177,13 @@ func (s *Service) ResolveTaskDispute(ctx context.Context, actorID, taskID uuid.U
 
 	providerPayment := false
 	var paymentID uuid.UUID
-	var paymentStatus, paymentCurrency string
+	var paymentProvider, paymentStatus, paymentCurrency string
 	var paymentPayeeID *uuid.UUID
 	var paymentAmount int
 	err = tx.QueryRow(ctx, `
-		SELECT id,status,payee_id,amount_cents,currency FROM payment_intents
+		SELECT id,provider,status,payee_id,amount_cents,currency FROM payment_intents
 		WHERE purpose='task' AND resource_id=$1 ORDER BY created_at DESC,id DESC LIMIT 1 FOR UPDATE`, taskID).Scan(
-		&paymentID, &paymentStatus, &paymentPayeeID, &paymentAmount, &paymentCurrency)
+		&paymentID, &paymentProvider, &paymentStatus, &paymentPayeeID, &paymentAmount, &paymentCurrency)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return TaskOperation{}, err
 	}
@@ -194,11 +193,16 @@ func (s *Service) ResolveTaskDispute(ctx context.Context, actorID, taskID uuid.U
 			return TaskOperation{}, ErrConflict
 		}
 	}
+	if input.Decision == "release_creator" && !providerPayment {
+		// Historical local-ledger tasks can be cancelled, but Operations must
+		// never fabricate a creator payout without a provider payment intent.
+		return TaskOperation{}, ErrConflict
+	}
 
 	note := "Administrative decision: " + input.Decision
-	metadata := map[string]any{"decision": input.Decision, "previousStatus": status, "disputeId": disputeID, "amountCents": 0, "currency": currency, "paymentMode": "local_test"}
+	metadata := map[string]any{"decision": input.Decision, "previousStatus": status, "disputeId": disputeID, "amountCents": 0, "currency": currency, "paymentMode": "none"}
 	if providerPayment {
-		metadata["paymentMode"] = "stripe"
+		metadata["paymentMode"] = paymentProvider
 		metadata["paymentId"] = paymentID
 	}
 	toStatus := "cancelled"
@@ -218,33 +222,20 @@ func (s *Service) ResolveTaskDispute(ctx context.Context, actorID, taskID uuid.U
 			return TaskOperation{}, err
 		}
 		settlementID = uuid.New()
-		settlementMode := "local_test"
-		if providerPayment {
-			settlementMode = "stripe_pending"
-			if _, err = tx.Exec(ctx, `INSERT INTO task_settlements(id,demand_id,client_id,creator_id,amount_cents,currency,mode) VALUES($1,$2,$3,$4,$5,$6,$7)`, settlementID, taskID, clientID, *assigneeID, amount, currency, settlementMode); err != nil {
-				return TaskOperation{}, err
-			}
-			if _, err = tx.Exec(ctx, `UPDATE payment_intents SET status='transfer_pending',updated_at=now(),version=version+1 WHERE id=$1`, paymentID); err != nil {
-				return TaskOperation{}, err
-			}
-			if _, err = tx.Exec(ctx, `
-				INSERT INTO payment_intent_events(payment_id,event_type,from_status,to_status,evidence)
-				VALUES($1,'transfer.requested',$2,'transfer_pending',jsonb_build_object('taskId',$3::text,'settlementId',$4::text,'adminDisputeId',$5::text))`, paymentID, paymentStatus, taskID, settlementID, disputeID); err != nil {
-				return TaskOperation{}, err
-			}
-			if _, err = tx.Exec(ctx, `INSERT INTO jobs(kind,payload,max_attempts) VALUES($1,jsonb_build_object('paymentId',$2::text),20)`, payments.TaskTransferJobKind, paymentID); err != nil {
-				return TaskOperation{}, err
-			}
-		} else {
-			if _, err = tx.Exec(ctx, `INSERT INTO task_settlements(id,demand_id,client_id,creator_id,amount_cents,currency,mode) VALUES($1,$2,$3,$4,$5,$6,$7)`, settlementID, taskID, clientID, *assigneeID, amount, currency, settlementMode); err != nil {
-				return TaskOperation{}, err
-			}
-			if err = billing.TransferTx(ctx, tx, clientID, *assigneeID, settlementID, amount, currency, "task_payment", "task_earning", "Local Test administrator dispute settlement"); err != nil {
-				return TaskOperation{}, err
-			}
-			if _, err = tx.Exec(ctx, `INSERT INTO ledger_entries(account_id,operation_id,direction,amount_cents,currency,reason) VALUES($1,$3,'debit',$4,$5,'task_local_test_admin_settlement'),($2,$3,'credit',$4,$5,'task_local_test_admin_settlement')`, clientID, *assigneeID, settlementID, amount, currency); err != nil {
-				return TaskOperation{}, err
-			}
+		settlementMode := "provider_pending"
+		if _, err = tx.Exec(ctx, `INSERT INTO task_settlements(id,demand_id,client_id,creator_id,amount_cents,currency,mode) VALUES($1,$2,$3,$4,$5,$6,$7)`, settlementID, taskID, clientID, *assigneeID, amount, currency, settlementMode); err != nil {
+			return TaskOperation{}, err
+		}
+		if _, err = tx.Exec(ctx, `UPDATE payment_intents SET status='transfer_pending',updated_at=now(),version=version+1 WHERE id=$1`, paymentID); err != nil {
+			return TaskOperation{}, err
+		}
+		if _, err = tx.Exec(ctx, `
+			INSERT INTO payment_intent_events(payment_id,event_type,from_status,to_status,evidence)
+			VALUES($1,'transfer.requested',$2,'transfer_pending',jsonb_build_object('taskId',$3::text,'settlementId',$4::text,'adminDisputeId',$5::text))`, paymentID, paymentStatus, taskID, settlementID, disputeID); err != nil {
+			return TaskOperation{}, err
+		}
+		if _, err = tx.Exec(ctx, `INSERT INTO jobs(kind,payload,max_attempts) VALUES($1,jsonb_build_object('paymentId',$2::text),20)`, payments.TaskTransferJobKind, paymentID); err != nil {
+			return TaskOperation{}, err
 		}
 		toStatus = "accepted"
 		resolutionStatus = "resolved_creator"
@@ -297,13 +288,11 @@ func (s *Service) ResolveTaskDispute(ctx context.Context, actorID, taskID uuid.U
 
 func notifyTaskResolution(ctx context.Context, tx pgx.Tx, userID, taskID, disputeID uuid.UUID, taskTitle, decision, paymentMode string, client bool) error {
 	title := "Task dispute resolved"
-	body := "Operations cancelled “" + taskTitle + "” without a Local Test settlement."
+	body := "Operations cancelled “" + taskTitle + "” without a payment settlement."
 	if decision == "release_creator" {
-		body = "Operations accepted the delivery for “" + taskTitle + "” and recorded the Local Test USD settlement."
+		body = "Operations accepted the delivery for “" + taskTitle + "”. The payment provider payout is pending."
 	}
-	if paymentMode == "stripe" && decision == "release_creator" {
-		body = "Operations accepted the delivery for “" + taskTitle + "”. The verified Provider payout is pending."
-	} else if paymentMode == "stripe" {
+	if paymentMode != "none" && decision != "release_creator" {
 		body = "Operations cancelled “" + taskTitle + "”. The Provider refund is pending signed confirmation."
 	}
 	audience := "creator"

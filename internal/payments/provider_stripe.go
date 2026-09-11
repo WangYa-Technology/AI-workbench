@@ -41,11 +41,15 @@ func NewStripeRuntime(config StripeRuntimeConfig) *StripeRuntime {
 
 func (r *StripeRuntime) Provider() string { return "stripe" }
 
+func (r *StripeRuntime) Capabilities() ProviderCapabilities {
+	return ProviderCapabilities{Checkout: true, Refund: true, Transfer: true, ConnectedAccounts: true}
+}
+
 func (r *StripeRuntime) CreateCheckout(ctx context.Context, input CheckoutRequest) (CheckoutSession, error) {
 	input.Purpose = strings.TrimSpace(strings.ToLower(input.Purpose))
 	input.Currency = strings.TrimSpace(strings.ToLower(input.Currency))
 	input.Name = strings.TrimSpace(input.Name)
-	if input.PaymentID == uuid.Nil || input.ResourceID == uuid.Nil || !oneOf(input.Purpose, "product", "task") ||
+	if input.PaymentID == uuid.Nil || input.ResourceID == uuid.Nil || !oneOf(input.Purpose, "product", "task", "wallet_topup", "subscription") ||
 		input.AmountCents < 50 || input.AmountCents > 99999999 || input.Currency != "usd" ||
 		utf8.RuneCountInString(input.Name) < 3 || utf8.RuneCountInString(input.Name) > 120 ||
 		!validReturnURL(input.SuccessURL) || !validReturnURL(input.CancelURL) {
@@ -104,9 +108,9 @@ func (r *StripeRuntime) ExpireCheckout(ctx context.Context, providerID string) e
 		return newProviderFailure("payment_invalid_request", 0)
 	}
 	var response struct {
-		ID        string `json:"id"`
-		Status    string `json:"status"`
-		LiveMode  bool   `json:"livemode"`
+		ID            string `json:"id"`
+		Status        string `json:"status"`
+		LiveMode      bool   `json:"livemode"`
 		PaymentStatus string `json:"payment_status"`
 	}
 	if err := r.postForm(ctx, "/checkout/sessions/"+url.PathEscape(providerID)+"/expire", nil, "expire-checkout-"+providerID, &response); err != nil {

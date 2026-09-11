@@ -165,6 +165,14 @@ make payment-drill
 
 This drill builds real API and worker binaries plus a loopback-only Stripe fixture, applies migrations and demo seed data in a temporary PostgreSQL schema, and enables Stripe test mode only inside the child processes. It proves one hosted product Checkout call, signed payment and refund Webhooks, durable worker processing, entitlement grant then revocation, Checkout/Webhook/refund idempotency, one Connect Express account, two single-use Account Link renewals, signed `account.updated` synchronization to a verified payout destination, and Admin payment evidence. `PAYMENT_DRILL_HTTP_PORT` and `PAYMENT_DRILL_FIXTURE_PORT` default to `18082` and `18083`; the script rejects occupied ports and removes every process, file, and schema it creates.
 
+Run the isolated wallet top-up and subscription checkout drill with the same PostgreSQL client tools, `jq`, `curl`, `lsof`, and `openssl`:
+
+```bash
+make billing-drill
+```
+
+This drill uses real API and Worker binaries plus the loopback Stripe fixture to create a hosted USD wallet top-up and a paid subscription checkout. It submits signed payment Webhooks, waits for Worker fulfillment, verifies the wallet ledger and subscription points, and replays both Checkout and Webhook requests to prove that each balance or entitlement is granted exactly once. `BILLING_DRILL_HTTP_PORT` and `BILLING_DRILL_FIXTURE_PORT` default to `18086` and `18087`; all processes, media, schema, and ports are cleaned up afterward.
+
 ## Configuration
 
 Copy values from `.env.example` into the process environment as needed. Important variables:
@@ -201,6 +209,13 @@ Copy values from `.env.example` into the process environment as needed. Importan
 | `STRIPE_BASE_URL` | Defaults to `https://api.stripe.com/v1`; development HTTP is loopback-only, production is pinned to the official endpoint. |
 | `STRIPE_API_VERSION` | Pinned Stripe API version used by request and Webhook contracts. |
 | `STRIPE_WEBHOOK_TOLERANCE_SECONDS` | Signed-event timestamp tolerance, bounded to 60-900 seconds; defaults to 300. |
+| `PAYMENT_PROVIDER` | Product checkout provider: `stripe`, `waffo_pancake`, or reserved `epay`. Defaults to `stripe`. |
+| `WAFFO_ENABLED` | Registers the server-side Waffo runtime and connector boundary. Defaults to `false`; requires the Waffo deployment values below. |
+| `WAFFO_ENVIRONMENT` / `WAFFO_PRODUCTION_APPROVED` | Selects Waffo `test`/`prod`; production requires an explicit approval gate. |
+| `WAFFO_MERCHANT_ID` | Waffo merchant identity bound to the rotated connector private key. It is deployment configuration and is never exposed to the browser. |
+| `WAFFO_STORE_ID` | Optional deployment fallback store ID; Admin can provide the store ID in the persisted Provider configuration. |
+| `WAFFO_CONNECTOR_URL` / `WAFFO_CONNECTOR_TOKEN` | Authenticated API-to-connector boundary. Production requires an HTTPS connector; the token is never persisted. |
+| `WAFFO_PRODUCT_ID_ONETIME` / `WAFFO_PRODUCT_ID_SUBSCRIPTION` | Optional deployment fallback product IDs created and published in the matching Waffo environment. One-time checkout requires an effective one-time product ID from either deployment configuration or Admin. |
 | `OPENAI_ENABLED` | Registers the OpenAI Chat/Image runtime only when explicit paid-call approval and credentials are also present. Defaults to `false`. |
 | `OPENAI_PAID_CALLS_APPROVED` | Explicit operational authorization required before `OPENAI_ENABLED=true` is accepted. Defaults to `false`. |
 | `OPENAI_API_KEY` | OpenAI API credential. Required only for enabled runtime processes and never persisted in business data. |
@@ -244,13 +259,49 @@ npm --prefix web run generate:api
 
 ## Stripe payment boundary
 
-Stripe is disabled by default. When `STRIPE_ENABLED=true` is explicitly configured with a matching test key and endpoint signing secret, product checkout and task funding create hosted Checkout Sessions in test mode. The API never accepts card numbers or stores payment credentials. Entitlements, task assignment, transfers, and refunds advance only after a signed Stripe event is verified against the pinned API version and configured test/live mode.
+Stripe is disabled by default. When `STRIPE_ENABLED=true` is explicitly configured with a matching test key and endpoint signing secret, product checkout, task funding, wallet top-ups, and subscription purchases create hosted Checkout Sessions in test mode. The API never accepts card numbers or stores payment credentials. Entitlements, task assignment, wallet credits, subscription points, transfers, and refunds advance only after a signed Stripe event is verified against the pinned API version and configured test/live mode.
 
 `POST /api/v1/payments/webhooks/stripe` accepts only bounded JSON with a valid `Stripe-Signature`. Events are minimized before persistence, keyed by `(provider, provider_event_id)`, and queued for the worker. Replayed events are acknowledged idempotently; a changed payload for the same event ID is rejected. Worker jobs perform provider-side refunds and creator transfers with bounded retries, while Admin Finance exposes exact payment, destination, event, and recovery evidence with optimistic versions and audit requirements.
 
 Local and staging verification must use Stripe test mode (`STRIPE_LIVE_MODE=false`, `sk_test_...`) against a loopback-compatible test server or Stripe's test API. Production requires `STRIPE_LIVE_MODE=true`, separate live-mode approval, `sk_live_...`, a public HTTPS origin, the official Stripe API endpoint, a registered Webhook endpoint, merchant/legal scope, and sandbox-to-production reconciliation evidence. No real payment activity is authorized by this repository or its default configuration.
 
 `make payment-drill` is the reproducible pre-credential acceptance baseline. It never contacts Stripe and does not replace the required test-account acceptance for Connect onboarding, KYC, disputes, tax, invoices, reconciliation, or live-mode approval.
+
+## Waffo Pancake payment boundary
+
+Waffo Pancake is integrated through the private Node connector at
+`services/waffo-connector`. The connector is the only process that imports
+`@waffo/pancake-ts` and owns `WAFFO_PRIVATE_KEY` or
+`WAFFO_PRIVATE_KEY_BASE64`; the Go API and database never receive the private
+key. It exposes authenticated internal checkout, refund, and raw Webhook
+verification routes, while the public API receives
+`POST /api/v1/payments/webhooks/waffo` and persists minimized, idempotent event
+evidence.
+
+The Admin Finance page can maintain the provider's enabled state, environment,
+store ID, and one-time/subscription product IDs. The same provider boundary
+serves product checkout, wallet top-ups, and subscription purchases. The merchant ID is displayed
+for audit and must match the deployment identity bound to the connector key.
+Secret material and
+the connector token remain deployment-managed. The runtime is registered only
+when `WAFFO_ENABLED=true` passes the fail-closed configuration checks; the
+checkout provider uses the single enabled row in the Admin configuration (and
+falls back to `PAYMENT_PROVIDER` for an unconfigured installation). The
+deployment environment must still select `PAYMENT_PROVIDER=waffo_pancake` or
+register the Waffo runtime before it can process Waffo traffic. The
+development script starts the connector automatically in that mode, using the
+already injected environment, while stripping the private key from the API and
+Worker child environments.
+
+Create or select Waffo one-time and subscription products in the Dashboard,
+publish them in the target environment, and register the public HTTPS Webhook
+for `order.completed`, `subscription.activated`, `subscription.payment_succeeded`, `refund.succeeded`,
+and `refund.failed` as described in
+[`services/waffo-connector/README.md`](services/waffo-connector/README.md).
+Because the private key supplied in a chat message is considered exposed, it
+must be revoked and rotated before enabling the connector. A real checkout
+also needs the resulting Waffo product ID; neither value is present in this
+repository.
 
 Run the isolated OpenAI Chat/Image runtime drill with PostgreSQL client tools, `jq`, `curl`, and `lsof` available:
 

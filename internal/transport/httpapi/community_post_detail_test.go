@@ -50,7 +50,7 @@ func TestCommunityPostDetailHTTPContract(t *testing.T) {
 
 	var publicDetail community.Post
 	response := requestJSON(t, testHTTPClient(t), http.MethodGet, server.URL+"/api/v1/community/posts/"+postID.String(), nil, &publicDetail)
-	if response.StatusCode != http.StatusOK || publicDetail.ID != postID || publicDetail.WorkID != workID || publicDetail.CommentCount != 1 {
+	if response.StatusCode != http.StatusOK || publicDetail.ID != postID || publicDetail.WorkID == nil || *publicDetail.WorkID != workID || publicDetail.CommentCount != 1 {
 		t.Fatalf("public detail contract failed: status=%d post=%#v", response.StatusCode, publicDetail)
 	}
 	if publicDetail.ViewerLiked || publicDetail.ViewerBookmarked || publicDetail.ViewerFollowing {

@@ -1,14 +1,19 @@
 <script setup lang="ts">
 import { ArrowUpRight, BookOpen, FileWarning, ShieldCheck } from 'lucide-vue-next'
-import { computed } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink, useRoute } from 'vue-router'
 import UiButton from '../components/ui/UiButton.vue'
+import MarkdownContent from '../components/ui/MarkdownContent.vue'
+import { useSiteConfigStore } from '../stores/siteConfig'
 
 const { t } = useI18n()
 const route = useRoute()
+const siteConfig = useSiteConfigStore()
 const topics = ['terms', 'privacy', 'cookies', 'acceptable', 'ai', 'licensing', 'refunds', 'copyright'] as const
 const active = computed(() => topics.includes(String(route.params.policy) as typeof topics[number]) ? String(route.params.policy) : 'terms')
+const policyContent = computed(() => siteConfig.policy(active.value as typeof topics[number]) || t(`legal.topics.${active.value}.summary`))
+onMounted(() => siteConfig.ensure())
 </script>
 
 <template>
@@ -23,7 +28,7 @@ const active = computed(() => topics.includes(String(route.params.policy) as typ
         </RouterLink>
       </nav>
       <article class="legal-policy-copy">
-        <span>{{ t('legal.policiesLabel') }}</span><h2>{{ t(`legal.topics.${active}.title`) }}</h2><p>{{ t(`legal.topics.${active}.summary`) }}</p>
+        <span>{{ t('legal.policiesLabel') }}</span><h2>{{ t(`legal.topics.${active}.title`) }}</h2><MarkdownContent class="legal-policy-content" :source="policyContent" />
         <div v-if="active === 'copyright'" class="legal-intake">
           <ShieldCheck :size="22" /><div>
             <h3>{{ t('legal.copyrightTitle') }}</h3><p>{{ t('legal.copyrightSummary') }}</p><UiButton as="RouterLink" class="command-button primary" variant="primary" to="/support">
