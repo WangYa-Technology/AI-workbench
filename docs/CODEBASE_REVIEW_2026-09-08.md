@@ -168,7 +168,7 @@ function queryParameters(query: Record<string, unknown>): URLSearchParams {
 | 新增契约测试，旧 client 实现 | 58 个测试通过 |
 | 重构后前端全量 | 11 个文件、84 个测试通过 |
 | `npm --prefix web run typecheck` | 通过 |
-| `npm --prefix web run lint` | 退出码 0；0 错误、2,289 条现有警告 |
+| `npm --prefix web run lint` | 退出码 0；0 错误、0 条警告（2026-09-12 复审后重新验证） |
 | 默认数据库环境下 Go 全量 | 命令成功，但 127 通过、137 跳过，不能视为完整验证 |
 | 隔离 PostgreSQL 17.10，pgcrypto 位于 public，`go test -json -count=1 ./...` | 268 个测试通过、0 失败、0 跳过，禁用缓存 |
 | `go vet ./...` | 通过 |
