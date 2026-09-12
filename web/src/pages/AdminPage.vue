@@ -32,6 +32,7 @@ import UiTable from '../components/ui/UiTable.vue'
 import UiTabs from '../components/ui/UiTabs.vue'
 import UiTextarea from '../components/ui/UiTextarea.vue'
 import AdminOverviewMetrics from '../components/admin/AdminOverviewMetrics.vue'
+import AdminUserDirectory from '../components/admin/AdminUserDirectory.vue'
 
 type Tab = AdminTab
 type CommandKind = 'user' | 'content' | 'media' | 'report' | 'appeal' | 'generation' | 'task' | 'provider' | 'finance' | 'payment' | 'paymentEvent' | 'paymentDestination' | 'risk' | 'dataRightsHold' | 'holdRelease'
@@ -2143,90 +2144,27 @@ onMounted(() => void initialize())
             </section>
           </div>
 
-          <div v-else-if="activeTab === 'users'" class="admin-user-directory">
-            <form class="admin-user-filters" @submit.prevent="applyUserFilters">
-              <label>{{ t('admin.userSearch') }}<UiInput v-model="userQuery" type="search" maxlength="120" :placeholder="t('admin.userSearchPlaceholder')" /></label>
-              <label>{{ t('admin.role') }}<UiSelect v-model="userRole"><option value="">{{ t('admin.allRoles') }}</option><option v-for="role in ['member','creator','publisher','moderator','admin']" :key="role" :value="role">{{ localizedLabel(roleKeys, role) }}</option></UiSelect></label>
-              <label>{{ t('admin.status') }}<UiSelect v-model="userStatus"><option value="">{{ t('admin.allStatuses') }}</option><option v-for="status in ['active','suspended','deleted']" :key="status" :value="status">{{ t(`admin.states.${status}`) }}</option></UiSelect></label>
-              <UiButton class="command-button secondary" variant="secondary" type="submit">
-                <template #start>
-                  <ListFilter :size="16" />
-                </template>{{ t('actions.applyFilters') }}
-              </UiButton>
-              <UiIconButton class="icon-button" :label="t('actions.clearFilters')" @click="clearUserFilters">
-                <X :size="16" />
-              </UiIconButton>
-            </form>
-            <UiTable v-if="users.length" class="admin-user-table-shell" table-class="admin-user-table" :caption="t('admin.userTableCaption')">
-              <thead>
-                <tr>
-                  <th scope="col" class="admin-user-col-identity">
-                    {{ t('admin.userIdentity') }}
-                  </th>
-                  <th scope="col" class="admin-user-col-id">
-                    {{ t('admin.userId') }}
-                  </th>
-                  <th scope="col" class="admin-user-col-status">
-                    {{ t('admin.status') }}
-                  </th>
-                  <th scope="col" class="admin-user-col-role">
-                    {{ t('admin.role') }}
-                  </th>
-                  <th scope="col" class="admin-user-col-locale">
-                    {{ t('admin.localeAndTimezone') }}
-                  </th>
-                  <th scope="col" class="admin-user-col-created">
-                    {{ t('admin.createdAt') }}
-                  </th>
-                  <th scope="col" class="admin-user-col-last-active">
-                    {{ t('admin.lastActive') }}
-                  </th>
-                  <th scope="col" class="admin-user-col-actions">
-                    <span class="sr-only">{{ t('admin.userActions') }}</span>
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="item in users" :key="item.id" :data-status="item.status">
-                  <td class="admin-user-col-identity">
-                    <div class="admin-user-identity">
-                      <strong>{{ item.displayName }}</strong>
-                      <span>@{{ item.handle }} · {{ item.email }}</span>
-                    </div>
-                  </td>
-                  <td class="admin-user-col-id">
-                    <code :title="item.id">{{ shortUserId(item.id) }}</code>
-                  </td>
-                  <td class="admin-user-col-status">
-                    <span class="admin-user-status" :data-status="item.status"><i aria-hidden="true"></i>{{ t(`admin.states.${item.status}`) }}</span>
-                  </td>
-                  <td class="admin-user-col-role" :title="localizedLabel(roleKeys, item.role)">
-                    {{ localizedLabel(roleKeys, item.role) }}
-                  </td>
-                  <td class="admin-user-col-locale">
-                    <span>{{ item.locale }}</span><small>{{ item.timezone }}</small>
-                  </td>
-                  <td class="admin-user-col-created">
-                    <time :datetime="item.createdAt">{{ date(item.createdAt) }}</time>
-                  </td>
-                  <td class="admin-user-col-last-active">
-                    <time v-if="item.lastSeenAt" :datetime="item.lastSeenAt">{{ date(item.lastSeenAt) }}</time><span v-else>{{ t('admin.neverActive') }}</span>
-                  </td>
-                  <td class="admin-user-col-actions">
-                    <UiIconButton size="sm" variant="ghost" :label="t('admin.manage')" @click="openUser(item)">
-                      <Pencil :size="15" />
-                    </UiIconButton>
-                  </td>
-                </tr>
-              </tbody>
-            </UiTable>
-            <p v-if="!users.length" class="inline-empty">
-              {{ t('admin.noUsers') }}
-            </p>
-            <UiButton v-if="userNextCursor" class="command-button secondary admin-load-more" type="button" :disabled="userLoadingMore" variant="secondary" @click="loadMoreUsers">
-              <LoaderCircle v-if="userLoadingMore" class="spin" :size="16" /><ListFilter v-else :size="16" />{{ t('actions.loadMore') }}
-            </UiButton>
-          </div>
+          <AdminUserDirectory
+            v-else-if="activeTab === 'users'"
+            :users="users"
+            :query="userQuery"
+            :role="userRole"
+            :status="userStatus"
+            :next-cursor="userNextCursor"
+            :loading-more="userLoadingMore"
+            :t="(key) => t(key)"
+            :localized-label="localizedLabel"
+            :role-keys="roleKeys"
+            :short-user-id="shortUserId"
+            :date="date"
+            @update:query="userQuery = $event"
+            @update:role="userRole = $event"
+            @update:status="userStatus = $event"
+            @apply="applyUserFilters"
+            @clear="clearUserFilters"
+            @more="loadMoreUsers"
+            @open="openUser"
+          />
 
           <div v-else-if="activeTab === 'content'" class="admin-content-directory">
             <form class="admin-user-filters" @submit.prevent="applyContentFilters">
