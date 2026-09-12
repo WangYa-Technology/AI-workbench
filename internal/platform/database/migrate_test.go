@@ -47,6 +47,13 @@ func TestMigrateEmptySchema(t *testing.T) {
 	if auditLookupIndex != 1 {
 		t.Fatalf("audit evidence lookup index missing: %d", auditLookupIndex)
 	}
+	var extensionSchema string
+	if err := pool.QueryRow(context.Background(), `SELECT n.nspname FROM pg_extension e JOIN pg_namespace n ON n.oid=e.extnamespace WHERE e.extname='pgcrypto'`).Scan(&extensionSchema); err != nil {
+		t.Fatal(err)
+	}
+	if extensionSchema != "public" {
+		t.Fatalf("pgcrypto must be installed in public schema, got %q", extensionSchema)
+	}
 
 	if err := database.Migrate(context.Background(), pool); err != nil {
 		t.Fatalf("second migration must be idempotent: %v", err)
