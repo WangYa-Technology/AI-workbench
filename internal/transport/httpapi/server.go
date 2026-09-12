@@ -72,31 +72,16 @@ func New(cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger) http.Handle
 	if costRuntimeErr != nil {
 		logger.Error("provider cost reconciliation runtime disabled", "error", costRuntimeErr)
 	}
-	var paymentRuntimeList []payments.ProviderRuntime
-	if cfg.StripeEnabled {
-		paymentRuntimeList = append(paymentRuntimeList, payments.NewStripeRuntime(payments.StripeRuntimeConfig{
-			SecretKey: cfg.StripeSecretKey, BaseURL: cfg.StripeBaseURL, APIVersion: cfg.StripeAPIVersion,
-			LiveMode: cfg.StripeLiveMode, HTTPClient: &http.Client{Timeout: 20 * time.Second},
-		}))
-	}
-	if cfg.WaffoEnabled {
-		paymentRuntimeList = append(paymentRuntimeList, payments.NewWaffoRuntime(payments.WaffoRuntimeConfig{
-			ConnectorURL: cfg.WaffoConnectorURL, ConnectorToken: cfg.WaffoConnectorToken, Environment: cfg.WaffoEnvironment,
-			StoreID: cfg.WaffoStoreID, ProductIDOnetime: cfg.WaffoProductIDOnetime, ProductIDSubscription: cfg.WaffoProductIDSubscription,
-			HTTPClient: &http.Client{Timeout: 20 * time.Second},
-		}))
-	}
-	paymentRuntimes := payments.NewRuntimeCatalog(paymentRuntimeList...)
 	mediaStores := media.NewCatalogFromConfig(cfg)
 	mediaScanner := assets.NewScannerFromConfig(cfg)
 	server := &Server{
 		config: cfg, pool: pool, logger: logger, started: started,
-		identity:       identity.NewRepository(pool),
-		discovery:      discovery.NewRepository(pool),
-		creation:       creation.NewServiceWithMedia(pool, mediaStores, providerRuntimes),
-		billing:        billing.NewService(pool),
-		assets:         assets.NewServiceWithMedia(pool, mediaStores, mediaScanner),
-		community:      community.NewRepository(pool),
+		identity:  identity.NewRepository(pool),
+		discovery: discovery.NewRepository(pool),
+		creation:  creation.NewServiceWithMedia(pool, mediaStores, providerRuntimes),
+		billing:   billing.NewService(pool),
+		assets:    assets.NewServiceWithMedia(pool, mediaStores, mediaScanner),
+		community: community.NewRepository(pool),
 		// HTTP traffic must never fall back to the legacy local task ledger.
 		// Payment capability is determined by payments.Service at checkout time.
 		tasks:          tasks.NewServiceWithPayments(pool, true),
@@ -111,12 +96,7 @@ func New(cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger) http.Handle
 		webhooks:       webhooks.NewService(pool, cfg.WebhookEncryptionKey, cfg.WebhookAllowLocal),
 		emailActions:   emailactions.NewService(pool, cfg.EmailActionKey, cfg.EmailDeliveryMode, cfg.MediaRoot, cfg.WebOrigin),
 		authChallenges: authchallenges.NewService(pool, cfg.EmailActionKey, cfg.EmailDeliveryMode, cfg.MediaRoot),
-		payments: payments.NewServiceWithRuntimes(pool, payments.ServiceConfig{
-			Enabled: cfg.StripeEnabled || cfg.WaffoEnabled, Provider: cfg.PaymentProvider, LiveMode: cfg.StripeLiveMode, APIVersion: cfg.StripeAPIVersion,
-			WebhookSecret: cfg.StripeWebhookSecret, WebhookTolerance: time.Duration(cfg.StripeWebhookToleranceSeconds) * time.Second,
-			WaffoWebhookURL: cfg.WaffoConnectorURL, WaffoConnectorToken: cfg.WaffoConnectorToken, WaffoEnvironment: cfg.WaffoEnvironment, WaffoMerchantID: cfg.WaffoMerchantID, WaffoStoreID: cfg.WaffoStoreID,
-			WaffoProductIDOnetime: cfg.WaffoProductIDOnetime, WaffoProductIDSubscription: cfg.WaffoProductIDSubscription,
-		}, paymentRuntimes),
+		payments:       payments.NewServiceFromConfig(pool, cfg),
 		reconciliation: reconciliation.NewService(pool, costRuntime, cfg.OpenAIReconciliationOverageThresholdMicros),
 	}
 	router := chi.NewRouter()
@@ -375,14 +355,14 @@ func (s *Server) meta(w http.ResponseWriter, r *http.Request) {
 		taskPaymentEnabled = s.payments.TaskProviderStatus(r.Context())
 	}
 	httputil.JSON(w, http.StatusOK, map[string]any{
-		"name":               name,
-		"environment":        s.config.Environment,
-		"defaultLocale":      "en-US",
-		"supportedLocales":   []string{"en-US", "zh-CN"},
-		"defaultCurrency":    "USD",
-		"localDemoAvailable": s.config.Environment != "production" && s.config.DemoDataEnabled,
-		"localProvider":      map[string]any{"enabled": s.config.LocalProviderEnabled, "label": "Deterministic local test provider"},
-		"paymentProvider":    map[string]any{"enabled": paymentEnabled, "provider": paymentProvider, "liveMode": paymentLiveMode},
+		"name":                name,
+		"environment":         s.config.Environment,
+		"defaultLocale":       "en-US",
+		"supportedLocales":    []string{"en-US", "zh-CN"},
+		"defaultCurrency":     "USD",
+		"localDemoAvailable":  s.config.Environment != "production" && s.config.DemoDataEnabled,
+		"localProvider":       map[string]any{"enabled": s.config.LocalProviderEnabled, "label": "Deterministic local test provider"},
+		"paymentProvider":     map[string]any{"enabled": paymentEnabled, "provider": paymentProvider, "liveMode": paymentLiveMode},
 		"taskPaymentProvider": map[string]any{"enabled": taskPaymentEnabled, "provider": paymentProvider, "liveMode": paymentLiveMode},
 		"providerCostReconciliation": map[string]any{
 			"enabled":  s.reconciliation.Available(),

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -83,27 +82,7 @@ func main() {
 	emailActionService := emailactions.NewService(pool, cfg.EmailActionKey, cfg.EmailDeliveryMode, cfg.MediaRoot, cfg.WebOrigin)
 	authChallengeService := authchallenges.NewService(pool, cfg.EmailActionKey, cfg.EmailDeliveryMode, cfg.MediaRoot)
 	notificationService := notifications.NewRepository(pool)
-	var paymentRuntimeList []payments.ProviderRuntime
-	if cfg.StripeEnabled {
-		paymentRuntimeList = append(paymentRuntimeList, payments.NewStripeRuntime(payments.StripeRuntimeConfig{
-			SecretKey: cfg.StripeSecretKey, BaseURL: cfg.StripeBaseURL, APIVersion: cfg.StripeAPIVersion,
-			LiveMode: cfg.StripeLiveMode, HTTPClient: &http.Client{Timeout: 20 * time.Second},
-		}))
-	}
-	if cfg.WaffoEnabled {
-		paymentRuntimeList = append(paymentRuntimeList, payments.NewWaffoRuntime(payments.WaffoRuntimeConfig{
-			ConnectorURL: cfg.WaffoConnectorURL, ConnectorToken: cfg.WaffoConnectorToken, Environment: cfg.WaffoEnvironment,
-			StoreID: cfg.WaffoStoreID, ProductIDOnetime: cfg.WaffoProductIDOnetime, ProductIDSubscription: cfg.WaffoProductIDSubscription,
-			HTTPClient: &http.Client{Timeout: 20 * time.Second},
-		}))
-	}
-	paymentRuntimes := payments.NewRuntimeCatalog(paymentRuntimeList...)
-	paymentService := payments.NewServiceWithRuntimes(pool, payments.ServiceConfig{
-		Enabled: cfg.StripeEnabled || cfg.WaffoEnabled, Provider: cfg.PaymentProvider, LiveMode: cfg.StripeLiveMode, APIVersion: cfg.StripeAPIVersion,
-		WebhookSecret: cfg.StripeWebhookSecret, WebhookTolerance: time.Duration(cfg.StripeWebhookToleranceSeconds) * time.Second,
-		WaffoWebhookURL: cfg.WaffoConnectorURL, WaffoConnectorToken: cfg.WaffoConnectorToken, WaffoEnvironment: cfg.WaffoEnvironment, WaffoMerchantID: cfg.WaffoMerchantID, WaffoStoreID: cfg.WaffoStoreID,
-		WaffoProductIDOnetime: cfg.WaffoProductIDOnetime, WaffoProductIDSubscription: cfg.WaffoProductIDSubscription,
-	}, paymentRuntimes)
+	paymentService := payments.NewServiceFromConfig(pool, cfg)
 	worker.Handle(creation.JobKind, creationService.HandleJob)
 	worker.Handle(creation.FailureEvidenceJobKind, creationService.HandleJob)
 	worker.Handle(assets.ScanJobKind, assetService.HandleScanJob)
