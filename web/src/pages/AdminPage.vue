@@ -61,18 +61,20 @@ const contentType = ref('')
 const contentStatus = ref('')
 const contentNextCursor = contentDirectory.nextCursor
 const contentLoadingMore = contentDirectory.loadingMore
-const generations = ref<AdminGeneration[]>([])
+const generationDirectory = useCursorDirectory<AdminGeneration>(cursor => api.adminListGenerations(generationListQuery(cursor)))
+const generations = generationDirectory.items
 const generationQuery = ref('')
 const generationMode = ref('')
 const generationStatus = ref('')
-const generationNextCursor = ref<string | null>(null)
-const generationLoadingMore = ref(false)
-const taskOperations = ref<AdminTaskOperation[]>([])
+const generationNextCursor = generationDirectory.nextCursor
+const generationLoadingMore = generationDirectory.loadingMore
+const taskDirectory = useCursorDirectory<AdminTaskOperation>(cursor => api.adminListTasks(taskListQuery(cursor)))
+const taskOperations = taskDirectory.items
 const taskQuery = ref('')
 const taskStatus = ref('')
 const taskDisputeStatus = ref('')
-const taskNextCursor = ref<string | null>(null)
-const taskLoadingMore = ref(false)
+const taskNextCursor = taskDirectory.nextCursor
+const taskLoadingMore = taskDirectory.loadingMore
 const providers = ref<AdminProvider[]>([])
 const providerConfigs = ref<AdminProviderConfig[]>([])
 const initializedProviderSwitches = ref(new Set<string>())
@@ -603,14 +605,7 @@ function generationListQuery(cursor = '') {
 }
 
 async function loadGenerationDirectory(cursor = '') {
-  const page = await api.adminListGenerations(generationListQuery(cursor))
-  if (cursor) {
-    const known = new Set(generations.value.map(item => item.id))
-    generations.value = [...generations.value, ...page.items.filter(item => !known.has(item.id))]
-  } else {
-    generations.value = page.items
-  }
-  generationNextCursor.value = page.nextCursor || null
+	await generationDirectory.load(cursor)
 }
 
 async function applyGenerationFilters() {
@@ -909,14 +904,7 @@ function taskListQuery(cursor = '') {
 }
 
 async function loadTaskDirectory(cursor = '') {
-  const page = await api.adminListTasks(taskListQuery(cursor))
-  if (cursor) {
-    const known = new Set(taskOperations.value.map(item => item.id))
-    taskOperations.value = [...taskOperations.value, ...page.items.filter(item => !known.has(item.id))]
-  } else {
-    taskOperations.value = page.items
-  }
-  taskNextCursor.value = page.nextCursor || null
+	await taskDirectory.load(cursor)
 }
 
 async function applyTaskFilters() {
