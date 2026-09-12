@@ -312,7 +312,7 @@ export default {
         proposal_submitted: '已提交提案', proposal_accepted: '提案已接受', directly_accepted: '需求已被直接接单', delivery_submitted: '已提交交付',
         revision_requested: '已要求返修', delivery_accepted: '交付已验收', funding_confirmed: '任务资助已确认', payout_transferred: '创作者收款已转账', refund_requested: '已请求任务退款', refunded: '任务资助已退款', refund_failed: '任务退款需要审核', dispute_opened: '已发起争议', dispute_resolved: '争议已解决', cancelled: '需求已取消',
       },
-	  marketplace: { order_fulfilled: '订单已交付', order_refunded: '订单已退款', refund_failed: '退款未完成' }, generation: { completed: '生成已完成' }, community: { comment: '新评论', follow: '新关注', moderation: '治理决定' }, security: { webhook_replayed: 'Webhook 投递已回放', email_delivery_retried: '身份邮件投递已重试' }, support: { case_updated: '支持工单更新' },
+	  marketplace: { order_fulfilled: '订单已交付', order_refunded: '订单已退款', refund_failed: '退款未完成' }, generation: { completed: '生成已完成', failed: '生成失败，已释放预留积分' }, community: { comment: '新评论', follow: '新关注', moderation: '治理决定' }, security: { webhook_replayed: 'Webhook 投递已回放', email_delivery_retried: '身份邮件投递已重试' }, support: { case_updated: '支持工单更新' },
     },
     kindDescriptions: {
       account: { data_rights: '私有导出包或账户删除请求的状态发生变化。' },
@@ -322,7 +322,7 @@ export default {
         delivery_submitted: '新的交付版本等待委托方审核。', revision_requested: '委托方要求提交新的交付版本。', delivery_accepted: '交付和本地测试结算已通过。',
         funding_confirmed: '签名支付证据确认委托方已资助此任务。', payout_transferred: '支付 Provider 已创建向创作者的验证转账。', refund_requested: '已取消的资助任务正在等待 Provider 的签名退款确认。', refunded: '签名 Provider 证据确认任务资助已退款。', refund_failed: 'Provider 未完成退款，需要运营人员审核。', dispute_opened: '参与方通过争议暂停结算。', dispute_resolved: '运营人员解决任务争议并记录结算结果。', cancelled: '包含你提案的开放需求已取消。',
       },
-	  marketplace: { order_fulfilled: '购买的授权内容已进入资产库。', order_refunded: '已确认的退款会撤销权益。', refund_failed: '支付服务商未完成退款，当前访问权益仍然有效。' }, generation: { completed: '生成结果已成为你拥有的资产。' }, community: { comment: '有人评论了你发布的作品。', follow: '有人关注了你的社区作品。', moderation: '举报或申诉收到了治理决定。' }, security: { webhook_replayed: '运营人员记录接收端恢复证据后，回放了一次死信 Webhook 投递。', email_delivery_retried: '运营人员记录恢复证据后，重试了一次失败的身份邮件投递。' }, support: { case_updated: '支持或版权工单收到了回复或状态决定。' },
+	  marketplace: { order_fulfilled: '购买的授权内容已进入资产库。', order_refunded: '已确认的退款会撤销权益。', refund_failed: '支付服务商未完成退款，当前访问权益仍然有效。' }, generation: { completed: '生成结果已成为你拥有的资产。', failed: '生成失败，预留积分已经释放。' }, community: { comment: '有人评论了你发布的作品。', follow: '有人关注了你的社区作品。', moderation: '举报或申诉收到了治理决定。' }, security: { webhook_replayed: '运营人员记录接收端恢复证据后，回放了一次死信 Webhook 投递。', email_delivery_retried: '运营人员记录恢复证据后，重试了一次失败的身份邮件投递。' }, support: { case_updated: '支持或版权工单收到了回复或状态决定。' },
     },
   },
   support: {
