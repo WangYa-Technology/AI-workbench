@@ -146,12 +146,13 @@ const providerCostReconciliations = ref<AdminProviderCostReconciliation[]>([])
 const providerCostReconciliationAvailable = ref(false)
 const providerCostReconciliationLoading = ref(false)
 const providerCostReconciliationForm = reactive({ periodStart: '', periodEnd: '' })
-const riskSignals = ref<AdminRiskSignal[]>([])
+const riskDirectory = useCursorDirectory<AdminRiskSignal>(cursor => api.adminListRiskSignals(riskListQuery(cursor)))
+const riskSignals = riskDirectory.items
 const riskQuery = ref('')
 const riskStatus = ref('')
 const riskSeverity = ref('')
-const riskNextCursor = ref<string | null>(null)
-const riskLoadingMore = ref(false)
+const riskNextCursor = riskDirectory.nextCursor
+const riskLoadingMore = riskDirectory.loadingMore
 const riskRulePolicy = ref<AdminRiskRulePolicy | null>(null)
 const riskRuleNextCursor = ref<string | null>(null)
 const riskRuleLoadingMore = ref(false)
@@ -203,12 +204,13 @@ const dataRightsNextCursor = ref<string | null>(null)
 const legalHoldsNextCursor = ref<string | null>(null)
 const dataRightsLoadingMore = ref(false)
 const legalHoldsLoadingMore = ref(false)
-const supportCases = ref<SupportCase[]>([])
+const supportDirectory = useCursorDirectory<SupportCase>(cursor => api.adminListSupportCases(supportListQuery(cursor)))
+const supportCases = supportDirectory.items
 const supportQuery = ref('')
 const supportStatus = ref('')
 const supportCategory = ref('')
-const supportNextCursor = ref<string | null>(null)
-const supportLoadingMore = ref(false)
+const supportNextCursor = supportDirectory.nextCursor
+const supportLoadingMore = supportDirectory.loadingMore
 const selectedSupport = ref<SupportCase | null>(null)
 const supportReply = reactive({ body: '' })
 const supportDecision = reactive({ status: 'in_review', resolutionCode: '' })
@@ -970,14 +972,7 @@ function supportListQuery(cursor = '') {
 }
 
 async function loadSupportDirectory(cursor = '') {
-  const page = await api.adminListSupportCases(supportListQuery(cursor))
-  if (cursor) {
-    const known = new Set(supportCases.value.map(item => item.id))
-    supportCases.value = [...supportCases.value, ...page.items.filter(item => !known.has(item.id))]
-  } else {
-    supportCases.value = page.items
-  }
-  supportNextCursor.value = page.nextCursor || null
+	await supportDirectory.load(cursor)
 }
 
 async function applySupportFilters() {
@@ -1025,14 +1020,7 @@ function riskListQuery(cursor = '') {
 }
 
 async function loadRiskDirectory(cursor = '') {
-  const page = await api.adminListRiskSignals(riskListQuery(cursor))
-  if (cursor) {
-    const known = new Set(riskSignals.value.map(item => item.id))
-    riskSignals.value = [...riskSignals.value, ...page.items.filter(item => !known.has(item.id))]
-  } else {
-    riskSignals.value = page.items
-  }
-  riskNextCursor.value = page.nextCursor || null
+	await riskDirectory.load(cursor)
 }
 
 function riskRouteQuery() {
