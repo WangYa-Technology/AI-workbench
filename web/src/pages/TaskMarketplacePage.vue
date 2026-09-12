@@ -623,7 +623,7 @@ onBeforeUnmount(() => {
                     <WandSparkles :size="17" />
                   </template>{{ t('tasks.createInstead') }}
                 </UiButton>
-                <UiButton v-if="canPublishBrief" class="command-button primary" variant="primary" @click="createOpen = true">
+                <UiButton v-if="canPublishBrief && view !== 'mine'" class="command-button primary" variant="primary" @click="createOpen = true">
                   <template #start>
                     <Plus :size="17" />
                   </template>{{ t('tasks.publishBrief') }}
