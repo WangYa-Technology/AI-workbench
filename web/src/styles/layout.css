@@ -1092,7 +1092,7 @@
   .controls-with-switcher .community-toolbar { grid-template-columns: minmax(160px, 1fr) 136px auto; gap: 6px; }
   .controls-with-switcher .community-toolbar-actions { gap: 2px; }
   .controls-with-switcher .community-toolbar-actions .ui-button { padding-inline: 7px; font-size: 10px; }
-  .controls-with-switcher .task-filters { grid-template-columns: minmax(160px, 1fr) 144px 106px 116px 80px; gap: 6px; }
+  .controls-with-switcher .task-filters { grid-template-columns: minmax(180px, 1fr) 128px 112px 112px 76px; gap: 5px; }
 }
 
 [data-theme='dark'] .community-page { --community-primary: #78a6ff; --community-primary-hover: #91b6ff; --community-primary-soft: #243957; }
