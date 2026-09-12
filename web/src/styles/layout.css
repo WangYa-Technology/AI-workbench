@@ -1740,7 +1740,7 @@
   .task-detail-layout { grid-template-columns: 1fr; gap: 28px; }
   .task-action-rail { position: static; min-height: 0; max-height: none; }
 }
-@media (min-width: 1024px) and (max-width: 1160px) {
+@media (min-width: 1024px) and (max-width: 1320px) {
   .generation-row {
     grid-template-columns: 22px 56px minmax(140px, 1fr) 110px 130px 70px 100px minmax(120px, auto);
     gap: 8px;
