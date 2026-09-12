@@ -30,6 +30,7 @@ import UiSwitch from '../components/ui/UiSwitch.vue'
 import UiTable from '../components/ui/UiTable.vue'
 import UiTabs from '../components/ui/UiTabs.vue'
 import UiTextarea from '../components/ui/UiTextarea.vue'
+import AdminOverviewMetrics from '../components/admin/AdminOverviewMetrics.vue'
 
 type Tab = AdminTab
 type CommandKind = 'user' | 'content' | 'media' | 'report' | 'appeal' | 'generation' | 'task' | 'provider' | 'finance' | 'payment' | 'paymentEvent' | 'paymentDestination' | 'risk' | 'dataRightsHold' | 'holdRelease'
@@ -2121,15 +2122,7 @@ onMounted(() => void initialize())
           </div>
 
           <div v-else-if="activeTab === 'overview' && overview" class="admin-overview">
-            <div class="admin-overview-grid overview-metrics-grid" role="list" :aria-label="t('admin.tabs.overview')">
-              <article v-for="key in ['users','works','generations','orders','tasks','risks','providers'] as const" :key="key" role="listitem">
-                <span>{{ t(`admin.metrics.${key}`) }}</span>
-                <strong>{{ overview[key].total }}</strong>
-                <div class="admin-metric-breakdown">
-                  <small v-for="(count, status) in overview[key].byStatus" :key="status"><span>{{ overviewStatusLabel(key, status) }}</span><b>{{ count }}</b></small>
-                </div>
-              </article>
-            </div>
+            <AdminOverviewMetrics :overview="overview" :label="(key) => key === 'overview' ? t('admin.tabs.overview') : t(`admin.${key}`)" :status-label="overviewStatusLabel" />
 
             <section v-if="systemSettings" class="site-configuration-workspace">
               <header class="site-configuration-heading">
