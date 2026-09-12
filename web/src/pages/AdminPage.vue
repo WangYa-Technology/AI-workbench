@@ -185,19 +185,21 @@ const emailQuery = ref('')
 const emailKind = ref('')
 const emailNextCursor = emailDirectory.nextCursor
 const emailLoadingMore = emailDirectory.loadingMore
-const governanceReports = ref<AdminGovernanceReport[]>([])
-const governanceAppeals = ref<AdminGovernanceAppeal[]>([])
+const reportDirectory = useCursorDirectory<AdminGovernanceReport>(cursor => api.adminListGovernanceReports(reportListQuery(cursor)))
+const governanceReports = reportDirectory.items
+const appealDirectory = useCursorDirectory<AdminGovernanceAppeal>(cursor => api.adminListGovernanceAppeals(appealListQuery(cursor)))
+const governanceAppeals = appealDirectory.items
 const reportQuery = ref('')
 const reportType = ref('')
 const reportCategory = ref('')
 const reportStatus = ref('')
-const reportNextCursor = ref<string | null>(null)
-const reportLoadingMore = ref(false)
+const reportNextCursor = reportDirectory.nextCursor
+const reportLoadingMore = reportDirectory.loadingMore
 const appealQuery = ref('')
 const appealType = ref('')
 const appealStatus = ref('')
-const appealNextCursor = ref<string | null>(null)
-const appealLoadingMore = ref(false)
+const appealNextCursor = appealDirectory.nextCursor
+const appealLoadingMore = appealDirectory.loadingMore
 const mediaDirectory = useCursorDirectory<AdminMediaItem>(cursor => api.adminListMedia(mediaListQuery(cursor)))
 const mediaItems = mediaDirectory.items
 const mediaQuery = ref('')
@@ -519,25 +521,11 @@ function appealListQuery(cursor = '') {
 }
 
 async function loadReportDirectory(cursor = '') {
-  const page = await api.adminListGovernanceReports(reportListQuery(cursor))
-  if (cursor) {
-    const known = new Set(governanceReports.value.map(item => item.id))
-    governanceReports.value = [...governanceReports.value, ...page.items.filter(item => !known.has(item.id))]
-  } else {
-    governanceReports.value = page.items
-  }
-  reportNextCursor.value = page.nextCursor || null
+	await reportDirectory.load(cursor)
 }
 
 async function loadAppealDirectory(cursor = '') {
-  const page = await api.adminListGovernanceAppeals(appealListQuery(cursor))
-  if (cursor) {
-    const known = new Set(governanceAppeals.value.map(item => item.id))
-    governanceAppeals.value = [...governanceAppeals.value, ...page.items.filter(item => !known.has(item.id))]
-  } else {
-    governanceAppeals.value = page.items
-  }
-  appealNextCursor.value = page.nextCursor || null
+	await appealDirectory.load(cursor)
 }
 
 function governanceRouteQuery() {
