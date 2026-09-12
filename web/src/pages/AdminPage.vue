@@ -131,7 +131,8 @@ const paymentMode = ref('')
 const paymentAttention = ref('needs_attention')
 const paymentNextCursor = paymentDirectory.nextCursor
 const paymentLoadingMore = paymentDirectory.loadingMore
-const paymentDestinations = ref<AdminPaymentDestination[]>([])
+const paymentDestinationDirectory = useCursorDirectory<AdminPaymentDestination>(cursor => api.adminListPaymentDestinations({ cursor: cursor || undefined, limit: 20 }))
+const paymentDestinations = paymentDestinationDirectory.items
 const paymentProviderConfigs = ref<AdminPaymentProviderConfig[]>([])
 const paymentProviderEditorOpen = ref(false)
 const paymentProviderForm = reactive<AdminPaymentProviderConfig>({ id: '', provider: 'waffo_pancake', enabled: false, environment: 'test', merchantId: '', storeId: '', productIdOnetime: '', productIdSubscription: '', secretConfigured: false, connectorConfigured: false, createdAt: '', updatedAt: '' })
@@ -146,7 +147,8 @@ const paymentGatewayGeneral = reactive({ unitPrice: 1, minimumTopup: 1 })
 const topupAmounts = ref<number[]>([10, 20, 50, 100, 200])
 const newTopupAmount = ref<number | undefined>(undefined)
 const discountTiers = ref<Array<{ amount: number; rate: number }>>([{ amount: 100, rate: 0.95 }])
-const paymentDestinationNextCursor = ref<string | null>(null)
+const paymentDestinationNextCursor = paymentDestinationDirectory.nextCursor
+const paymentDestinationLoadingMore = paymentDestinationDirectory.loadingMore
 const providerCostReconciliations = ref<AdminProviderCostReconciliation[]>([])
 const providerCostReconciliationAvailable = ref(false)
 const providerCostReconciliationLoading = ref(false)
@@ -693,14 +695,7 @@ async function loadPaymentOperations(cursor = '') {
 }
 
 async function loadPaymentDestinations(cursor = '') {
-  const page = await api.adminListPaymentDestinations({ cursor: cursor || undefined, limit: 20 })
-  if (cursor) {
-    const known = new Set(paymentDestinations.value.map(item => item.id))
-    paymentDestinations.value = [...paymentDestinations.value, ...page.items.filter(item => !known.has(item.id))]
-  } else {
-    paymentDestinations.value = page.items
-  }
-  paymentDestinationNextCursor.value = page.nextCursor || null
+	await paymentDestinationDirectory.load(cursor)
 }
 
 function openPaymentProviderConfig(item: AdminPaymentProviderConfig) {
@@ -874,10 +869,8 @@ async function loadMorePayments() {
 }
 
 async function loadMorePaymentDestinations() {
-  if (!paymentDestinationNextCursor.value || paymentLoadingMore.value) return
-  paymentLoadingMore.value = true
   error.value = ''
-  try { await loadPaymentDestinations(paymentDestinationNextCursor.value) } catch (reason) { error.value = messageFrom(reason) } finally { paymentLoadingMore.value = false }
+  try { await paymentDestinationDirectory.loadMore() } catch (reason) { error.value = messageFrom(reason) }
 }
 
 function syncTaskFilters() {
@@ -3240,8 +3233,8 @@ onMounted(() => void initialize())
               <p v-else class="inline-empty">
                 {{ t('admin.noPaymentDestinations') }}
               </p>
-              <UiButton v-if="paymentDestinationNextCursor" class="command-button secondary admin-load-more" type="button" :disabled="paymentLoadingMore" variant="secondary" @click="loadMorePaymentDestinations">
-                <LoaderCircle v-if="paymentLoadingMore" class="spin" :size="16" /><ListFilter v-else :size="16" />{{ t('actions.loadMore') }}
+              <UiButton v-if="paymentDestinationNextCursor" class="command-button secondary admin-load-more" type="button" :disabled="paymentDestinationLoadingMore" variant="secondary" @click="loadMorePaymentDestinations">
+                <LoaderCircle v-if="paymentDestinationLoadingMore" class="spin" :size="16" /><ListFilter v-else :size="16" />{{ t('actions.loadMore') }}
               </UiButton>
             </section>
           </div>
