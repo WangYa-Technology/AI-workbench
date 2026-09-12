@@ -1045,7 +1045,7 @@ func writeContentDraft(w http.ResponseWriter, r *http.Request, s *Server, item c
 }
 
 func (s *Server) listPosts(w http.ResponseWriter, r *http.Request) {
-	input := community.PostListInput{Cursor: r.URL.Query().Get("cursor")}
+	input := community.PostListInput{Cursor: r.URL.Query().Get("cursor"), Category: r.URL.Query().Get("category")}
 	viewerID := s.optionalViewer(r)
 	if raw := strings.TrimSpace(r.URL.Query().Get("mine")); raw != "" {
 		mine, err := strconv.ParseBool(raw)

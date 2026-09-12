@@ -4,6 +4,91 @@
  */
 
 export interface paths {
+    "/task-types": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listCategories"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/task-types": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["createCategory"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/task-types/{code}": {
+        parameters: {
+            query?: {
+                /** @description Task mutations require admin:tasks; community and marketplace mutations require admin:content. */
+                scope?: components["parameters"]["CategoryScope"];
+            };
+            header?: never;
+            path: {
+                code: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["deleteCategory"];
+        options?: never;
+        head?: never;
+        patch: operations["updateCategory"];
+        trace?: never;
+    };
+    "/admin/content-category": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listCategoryContent"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/content-category/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch: operations["assignContentCategory"];
+        trace?: never;
+    };
     "/": {
         parameters: {
             query?: never;
@@ -2763,6 +2848,16 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        ContentCategory: {
+            code?: string;
+            /** @enum {string} */
+            scope?: "task" | "community" | "marketplace";
+            nameZh: string;
+            nameEn: string;
+            /** @enum {string} */
+            icon: "image" | "video" | "audio" | "prompt" | "workflow" | "mixed";
+            sortOrder: number;
+        };
         LocalizedSiteText: {
             enUS: string;
             zhCN: string;
@@ -3701,6 +3796,7 @@ export interface components {
             refundWindowDays: number;
         };
         Product: {
+            category?: string;
             /** Format: uuid */
             id: string;
             title: string;
@@ -3796,6 +3892,7 @@ export interface components {
             reason: string;
         };
         PublicationCreate: {
+            category?: string;
             /** Format: uuid */
             assetId: string;
             title: string;
@@ -3813,6 +3910,7 @@ export interface components {
             postId: string;
         };
         ContentDraftSave: {
+            category?: string;
             /** Format: uuid */
             assetId: string;
             title?: string;
@@ -3828,6 +3926,7 @@ export interface components {
             expectedVersion: number;
         };
         ContentDraft: {
+            category?: string;
             /** Format: uuid */
             id: string;
             /** Format: uuid */
@@ -3857,6 +3956,7 @@ export interface components {
             nextCursor?: string;
         };
         CommunityPost: {
+            category?: string;
             /** Format: uuid */
             id: string;
             title: string;
@@ -3881,6 +3981,7 @@ export interface components {
             viewerFollowing: boolean;
         };
         CommunityPostCreate: {
+            category?: string;
             title: string;
             body: string;
         };
@@ -5448,6 +5549,8 @@ export interface components {
         };
     };
     parameters: {
+        /** @description Task mutations require admin:tasks; community and marketplace mutations require admin:content. */
+        CategoryScope: "task" | "community" | "marketplace";
         WorkId: string;
         GenerationId: string;
         AssetId: string;
@@ -5471,6 +5574,189 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    listCategories: {
+        parameters: {
+            query?: {
+                /** @description Task mutations require admin:tasks; community and marketplace mutations require admin:content. */
+                scope?: components["parameters"]["CategoryScope"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Categories ordered by sortOrder and code */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["ContentCategory"][];
+                    };
+                };
+            };
+        };
+    };
+    createCategory: {
+        parameters: {
+            query?: {
+                /** @description Task mutations require admin:tasks; community and marketplace mutations require admin:content. */
+                scope?: components["parameters"]["CategoryScope"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ContentCategory"];
+            };
+        };
+        responses: {
+            /** @description Category created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContentCategory"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    deleteCategory: {
+        parameters: {
+            query?: {
+                /** @description Task mutations require admin:tasks; community and marketplace mutations require admin:content. */
+                scope?: components["parameters"]["CategoryScope"];
+            };
+            header?: never;
+            path: {
+                code: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description Same-scope category required when content references the source */
+                    replacement?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description References transferred atomically and category physically deleted */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    updateCategory: {
+        parameters: {
+            query?: {
+                /** @description Task mutations require admin:tasks; community and marketplace mutations require admin:content. */
+                scope?: components["parameters"]["CategoryScope"];
+            };
+            header?: never;
+            path: {
+                code: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ContentCategory"];
+            };
+        };
+        responses: {
+            /** @description Category renamed or reordered */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContentCategory"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    listCategoryContent: {
+        parameters: {
+            query?: {
+                /** @description Task mutations require admin:tasks; community and marketplace mutations require admin:content. */
+                scope?: components["parameters"]["CategoryScope"];
+                q?: string;
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Content available for classification, 50 items per page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        nextCursor: string;
+                        items: {
+                            /** Format: uuid */
+                            id: string;
+                            title: string;
+                            category: string;
+                        }[];
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    assignContentCategory: {
+        parameters: {
+            query?: {
+                /** @description Task mutations require admin:tasks; community and marketplace mutations require admin:content. */
+                scope?: components["parameters"]["CategoryScope"];
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    category: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Content assigned to a category in its own directory */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
     getDeveloperAPIContract: {
         parameters: {
             query?: never;
@@ -7664,6 +7950,7 @@ export interface operations {
     listProducts: {
         parameters: {
             query?: {
+                category?: string;
                 q?: string;
                 type?: "prompt" | "workflow" | "asset" | "work";
                 license?: string;
@@ -8028,6 +8315,7 @@ export interface operations {
     listCommunityPosts: {
         parameters: {
             query?: {
+                category?: string;
                 /** @description Opaque stable reverse-chronological Community feed cursor */
                 cursor?: string;
                 limit?: number;

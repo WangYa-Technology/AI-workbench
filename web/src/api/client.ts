@@ -55,7 +55,7 @@ export type TaskDeliveryCreate = components['schemas']['TaskDeliveryCreate']
 export type TaskReview = components['schemas']['TaskReview']
 export type TaskCheckoutRequest = components['schemas']['TaskCheckoutRequest']
 export type TaskPaymentCheckout = components['schemas']['TaskPaymentCheckout']
-export type TaskType = { code: string; nameZh: string; nameEn: string; icon: string; sortOrder: number }
+export type TaskType = { scope?: string; code: string; nameZh: string; nameEn: string; icon: string; sortOrder: number }
 export type Product = components['schemas']['Product']
 export type PaymentCheckout = components['schemas']['PaymentCheckout']
 export type Order = components['schemas']['Order']
@@ -425,6 +425,7 @@ export const api = {
     if (query.cursor) params.set('cursor', query.cursor)
     if (query.limit) params.set('limit', String(query.limit))
     if (query.mine !== undefined) params.set('mine', String(query.mine))
+    if (query.category) params.set('category', query.category)
     return request<CommunityPostPage>(`/community/posts${params.size ? `?${params}` : ''}`)
   },
   createCommunityPost: (input: CommunityPostCreate) => request<CommunityPost>('/community/posts', {
@@ -456,7 +457,7 @@ export const api = {
   createCommunityAppeal: (reportId: string, reason: string) => request<CommunityAppeal>(`/community/reports/${encodeURIComponent(reportId)}/appeals`, {
     method: 'POST', body: JSON.stringify({ reason }),
   }),
-  listProducts: (query: { q?: string; type?: string; license?: string; sort?: string } = {}) => {
+  listProducts: (query: { q?: string; type?: string; category?: string; license?: string; sort?: string } = {}) => {
     const params = new URLSearchParams()
     Object.entries(query).forEach(([key, value]) => {
       if (value) params.set(key, value)
@@ -464,6 +465,8 @@ export const api = {
     return request<{ items: Product[] }>(`/products${params.size ? `?${params}` : ''}`)
   },
   getProduct: (id: string) => request<Product>(`/products/${encodeURIComponent(id)}`),
+  adminAssignCategory: (scope: string, id: string, category: string) => request<{ updated: boolean }>(`/admin/content-category/${encodeURIComponent(id)}?scope=${encodeURIComponent(scope)}`, { method: 'PATCH', body: JSON.stringify({ category }) }),
+  adminCategoryContent: (scope: string, q = '', cursor = '') => request<{ items: { id: string; title: string; category: string }[]; nextCursor: string }>(`/admin/content-category?${new URLSearchParams({ scope, q, cursor })}`),
   checkoutProduct: (id: string, licenseAccepted: boolean) => marketplaceCommand<PaymentCheckout>(`/products/${encodeURIComponent(id)}/checkout`, { licenseAccepted }),
   listOrders: (query: OrderQuery = {}) => {
     const params = new URLSearchParams()
@@ -480,7 +483,7 @@ export const api = {
     })
     return request<{ items: TaskSummary[] }>(`/tasks${params.size ? `?${params}` : ''}`)
   },
-  listTaskTypes: () => request<{ items: TaskType[] }>('/task-types'),
+  listTaskTypes: (scope = 'task') => request<{ items: TaskType[] }>(`/task-types?scope=${encodeURIComponent(scope)}`),
   getTask: (id: string) => request<TaskDetail>(`/tasks/${encodeURIComponent(id)}`),
   checkoutTask: (id: string, input: TaskCheckoutRequest, idempotencyKey: string) => request<TaskPaymentCheckout>(`/tasks/${encodeURIComponent(id)}/checkout`, {
     method: 'POST', headers: { 'Idempotency-Key': idempotencyKey }, body: JSON.stringify(input),
@@ -533,10 +536,10 @@ export const api = {
   adminListPaymentProviderConfigs: () => request<{ items: AdminPaymentProviderConfig[] }>('/admin/payment-providers'),
   adminUpdatePaymentProviderConfig: (provider: string, input: AdminPaymentProviderConfigUpdate) => request<AdminPaymentProviderConfig>(`/admin/payment-providers/${encodeURIComponent(provider)}`, { method: 'PUT', body: JSON.stringify(input) }),
   adminListProviders: () => request<{ items: AdminProvider[] }>('/admin/providers'),
-  adminListTaskTypes: () => request<{ items: TaskType[] }>('/task-types'),
-  adminCreateTaskType: (input: Omit<TaskType, 'version'>) => request<TaskType>('/admin/task-types', { method: 'POST', body: JSON.stringify(input) }),
-  adminUpdateTaskType: (code: string, input: Omit<TaskType, 'code' | 'version'>) => request<TaskType>(`/admin/task-types/${encodeURIComponent(code)}`, { method: 'PATCH', body: JSON.stringify(input) }),
-  adminDeleteTaskType: (code: string, replacement = '') => request<{ deleted: boolean }>(`/admin/task-types/${encodeURIComponent(code)}`, { method: 'DELETE', body: JSON.stringify({ replacement }) }),
+  adminListTaskTypes: (scope = 'task') => request<{ items: TaskType[] }>(`/task-types?scope=${scope}`),
+  adminCreateTaskType: (input: Omit<TaskType, 'version'>) => request<TaskType>(`/admin/task-types?scope=${input.scope || 'task'}`,  { method: 'POST', body: JSON.stringify(input) }),
+  adminUpdateTaskType: (code: string, input: Omit<TaskType, 'code' | 'version'>) => request<TaskType>(`/admin/task-types/${encodeURIComponent(code)}?scope=${input.scope || 'task'}`, { method: 'PATCH', body: JSON.stringify(input) }),
+  adminDeleteTaskType: (code: string, replacement = '', scope = 'task') => request<{ deleted: boolean }>(`/admin/task-types/${encodeURIComponent(code)}?scope=${scope}`, { method: 'DELETE', body: JSON.stringify({ replacement }) }),
   adminUpdateProvider: (id: string, input: AdminProviderUpdate) => request<AdminProvider>(`/admin/providers/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(input) }),
   adminListProviderConfigs: () => request<{ items: AdminProviderConfig[] }>('/admin/provider-configs'),
   adminCreateProviderConfig: (input: AdminProviderConfigCreate) => request<AdminProviderConfig>('/admin/provider-configs', { method: 'POST', body: JSON.stringify(input) }),

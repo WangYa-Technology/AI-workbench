@@ -1,0 +1,11 @@
+DROP TRIGGER posts_category_scope ON posts;
+DROP TRIGGER demands_category_scope ON demands;
+DROP FUNCTION validate_demand_category();
+DROP TRIGGER products_category_scope ON products;
+DROP FUNCTION validate_content_category();
+ALTER TABLE posts DROP CONSTRAINT posts_category_fk;
+ALTER TABLE products DROP CONSTRAINT products_category_fk;
+ALTER TABLE posts DROP COLUMN category;
+ALTER TABLE products DROP COLUMN category;
+DELETE FROM task_types WHERE scope IN ('community','marketplace');
+ALTER TABLE task_types DROP COLUMN scope;

@@ -34,6 +34,7 @@ var (
 type ListFilter struct {
 	Query       string
 	ProductType string
+	Category    string
 	LicenseCode string
 	Sort        string
 	Limit       int
@@ -63,6 +64,7 @@ type Product struct {
 	Title         string     `json:"title"`
 	Description   string     `json:"description"`
 	ProductType   string     `json:"productType"`
+	Category      string     `json:"category"`
 	PriceCents    int        `json:"priceCents"`
 	Currency      string     `json:"currency"`
 	Status        string     `json:"status"`
@@ -150,6 +152,7 @@ func NewService(pool *pgxpool.Pool) *Service {
 func (s *Service) ListProducts(ctx context.Context, viewerID uuid.UUID, filter ListFilter) ([]Product, error) {
 	filter.Query = strings.TrimSpace(strings.ToLower(filter.Query))
 	filter.ProductType = strings.TrimSpace(strings.ToLower(filter.ProductType))
+	filter.Category = strings.TrimSpace(strings.ToLower(filter.Category))
 	filter.LicenseCode = strings.TrimSpace(filter.LicenseCode)
 	if filter.Limit <= 0 || filter.Limit > 100 {
 		filter.Limit = 50
@@ -165,8 +168,9 @@ func (s *Service) ListProducts(ctx context.Context, viewerID uuid.UUID, filter L
 		WHERE p.status='active'
 		  AND ($2='' OR lower(p.title||' '||p.description||' '||u.display_name) LIKE '%%'||$2||'%%')
 		  AND ($3='' OR p.product_type=$3)
-		  AND ($4='' OR p.license_code=$4)
-		ORDER BY %s LIMIT $5`, order), viewerID, filter.Query, filter.ProductType, filter.LicenseCode, filter.Limit)
+		  AND ($4='' OR p.category=$4)
+		  AND ($5='' OR p.license_code=$5)
+		ORDER BY %s LIMIT $6`, order), viewerID, filter.Query, filter.ProductType, filter.Category, filter.LicenseCode, filter.Limit)
 	if err != nil {
 		return nil, fmt.Errorf("list products: %w", err)
 	}
@@ -539,7 +543,7 @@ func (s *Service) orderEvents(ctx context.Context, orderID uuid.UUID) ([]OrderEv
 }
 
 const productSelect = `
-	SELECT p.id,p.title,p.description,p.product_type,p.price_cents,p.currency,p.status,p.asset_id,
+	SELECT p.id,p.title,p.description,p.product_type,p.category,p.price_cents,p.currency,p.status,p.asset_id,
 	       a.media_url,a.kind,a.width,a.height,p.ai_disclosure,p.included_files,p.compatibility,
 	       u.id,u.handle,u.display_name,
 	       l.code,l.name,l.summary,l.terms,l.version,l.allows_commercial,l.allows_derivatives,l.allows_redistribution,
@@ -587,7 +591,7 @@ type scanner interface {
 
 func scanProduct(row scanner) (Product, error) {
 	var item Product
-	err := row.Scan(&item.ID, &item.Title, &item.Description, &item.ProductType, &item.PriceCents, &item.Currency,
+	err := row.Scan(&item.ID, &item.Title, &item.Description, &item.ProductType, &item.Category, &item.PriceCents, &item.Currency,
 		&item.Status, &item.AssetID, &item.MediaURL, &item.MediaKind, &item.Width, &item.Height, &item.AIDisclosure, &item.IncludedFiles, &item.Compatibility,
 		&item.Seller.ID, &item.Seller.Handle, &item.Seller.DisplayName,
 		&item.License.Code, &item.License.Name, &item.License.Summary, &item.License.Terms, &item.License.Version,

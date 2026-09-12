@@ -3,7 +3,7 @@ import { ArrowLeft, ArrowRight, Flag, LoaderCircle, MessageCircle, RefreshCw, Sp
 import { reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
-import { api, messageFrom, type CommunityComment, type CommunityPost, type CommunityReport } from '../api/client'
+import { api, messageFrom, type CommunityComment, type CommunityPost, type CommunityReport, type TaskType } from '../api/client'
 import AssetMedia from '../components/domain/AssetMedia.vue'
 import MotionFavoriteIcon from '../components/ui/MotionFavoriteIcon.vue'
 import { useSessionStore } from '../stores/session'
@@ -17,6 +17,8 @@ const route = useRoute()
 const router = useRouter()
 const session = useSessionStore()
 const post = ref<CommunityPost | null>(null)
+const categories = ref<TaskType[]>([])
+const categoryName = (code?: string) => { const item = categories.value.find(i => i.code === code); return item ? (locale.value.startsWith('zh') ? item.nameZh : item.nameEn) : code || '' }
 const comments = ref<CommunityComment[]>([])
 const commentNextCursor = ref<string | null>(null)
 const commentDraft = ref('')
@@ -59,11 +61,13 @@ async function load() {
   try {
     await session.ensure()
     const postId = String(route.params.id)
-    const [postItem, commentPage] = await Promise.all([
+    const [postItem, commentPage, directory] = await Promise.all([
       api.getCommunityPost(postId),
       api.listCommunityComments(postId, { limit: 20 }),
+      api.listTaskTypes('community'),
     ])
     post.value = postItem
+    categories.value = directory.items
     comments.value = commentPage.items
     commentNextCursor.value = commentPage.nextCursor || null
   } catch (reason) {
@@ -187,7 +191,7 @@ watch(() => route.params.id, () => void load(), { immediate: true })
                 <strong>{{ post.authorName }}</strong>
                 <small>@{{ post.authorHandle }}</small>
               </RouterLink>
-              <span>{{ formatMediaKind(post.mediaKind) }}</span>
+              <span>{{ categoryName(post.category) }} · {{ formatMediaKind(post.mediaKind) }}</span>
             </div>
             <time :datetime="post.publishedAt">{{ formatPublishedAt(post.publishedAt) }}</time>
           </header>

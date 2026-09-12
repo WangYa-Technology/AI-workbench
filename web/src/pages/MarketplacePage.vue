@@ -11,6 +11,8 @@ import { api, messageFrom, type Product } from '../api/client'
 import { formatCurrency } from '../lib/format'
 import { openCheckoutWindow } from '../lib/checkout'
 import { useSessionStore } from '../stores/session'
+import CategoryBrowser from '../components/domain/CategoryBrowser.vue'
+import type { TaskType } from '../api/client'
 import PageHero from '../components/ui/PageHero.vue'
 import UiButton from '../components/ui/UiButton.vue'
 import UiCheckbox from '../components/ui/UiCheckbox.vue'
@@ -31,12 +33,15 @@ const accepted = ref(false)
 const paymentEnabled = ref(false)
 const paymentLiveMode = ref(false)
 const search = ref(String(route.query.q || ''))
-const productType = ref(String(route.query.type || ''))
 const sort = ref(String(route.query.sort || 'newest'))
 
 const productID = computed(() => String(route.params.id || ''))
 const isDetail = computed(() => Boolean(productID.value))
-const types = ['prompt', 'workflow', 'asset', 'work']
+const types = ref<TaskType[]>([])
+const categoryFromRoute = () => String(route.query.category || (route.query.type ? `market_${route.query.type}` : ''))
+const category = ref(categoryFromRoute())
+const categoryName = (code?: string) => { const item = types.value.find(i => i.code === code); return item ? (locale.value.startsWith('zh') ? item.nameZh : item.nameEn) : code || '' }
+async function selectCategory(value: string) { category.value = value; await applyFilters() }
 const marketStats = computed(() => ({
   products: products.value.length,
   creators: new Set(products.value.map(item => item.seller.handle)).size,
@@ -52,31 +57,40 @@ function money(cents: number, currency = 'USD') {
   return formatCurrency(cents, currency, locale.value)
 }
 
+let loadVersion = 0
 async function load() {
+  const version = ++loadVersion
+  const id = productID.value
+  const filters = { q: search.value, category: category.value, sort: sort.value }
   loading.value = true
   error.value = ''
   try {
-    const [, runtime] = await Promise.all([session.ensure(), api.meta()])
+    const [, runtime, directory] = await Promise.all([session.ensure(), api.meta(), api.listTaskTypes('marketplace')])
+    if (version !== loadVersion) return
+    types.value = directory.items
     paymentEnabled.value = runtime.paymentProvider.enabled
     paymentLiveMode.value = runtime.paymentProvider.liveMode
-    if (productID.value) {
-      detail.value = await api.getProduct(productID.value)
+    if (id) {
+      const result = await api.getProduct(id)
+      if (version !== loadVersion) return
+      detail.value = result
     } else {
-      const response = await api.listProducts({ q: search.value, type: productType.value, sort: sort.value })
+      const response = await api.listProducts(filters)
+      if (version !== loadVersion) return
       products.value = response.items
       detail.value = null
     }
   } catch (reason) {
-    error.value = messageFrom(reason)
+    if (version === loadVersion) error.value = messageFrom(reason)
   } finally {
-    loading.value = false
+    if (version === loadVersion) loading.value = false
   }
 }
 
 async function applyFilters() {
   await router.push({ path: '/market', query: {
     ...(search.value.trim() ? { q: search.value.trim() } : {}),
-    ...(productType.value ? { type: productType.value } : {}),
+    ...(category.value ? { category: category.value } : {}),
     ...(sort.value !== 'newest' ? { sort: sort.value } : {}),
   } })
 }
@@ -103,8 +117,8 @@ async function buy() {
 }
 
 watch(() => route.fullPath, () => {
+  category.value = categoryFromRoute()
   search.value = String(route.query.q || '')
-  productType.value = String(route.query.type || '')
   sort.value = String(route.query.sort || 'newest')
   accepted.value = false
   void load()
@@ -114,7 +128,7 @@ onMounted(() => void load())
 </script>
 
 <template>
-  <section class="market-page content-width" :class="{ 'is-detail': isDetail }">
+  <section class="market-page content-width" :class="{ 'is-detail': isDetail, 'has-category-sidebar': types.length > 0 }">
     <template v-if="!isDetail">
       <PageHero
         :eyebrow="paymentEnabled ? t(paymentLiveMode ? 'marketplace.providerLiveShort' : 'marketplace.providerTestShort') : t('marketplace.paymentUnavailable')"
@@ -146,15 +160,15 @@ onMounted(() => void load())
 
       <form class="market-filters" role="search" @submit.prevent="applyFilters">
         <label class="market-search"><span class="sr-only">{{ t('actions.search') }}</span><Search :size="17" /><UiInput v-model="search" type="search" :placeholder="t('marketplace.searchPlaceholder')" /></label>
-        <UiSelect v-model="productType" class="market-filter-control" :aria-label="t('marketplace.allTypes')" :align-item-with-trigger="false" @change="applyFilters">
+        <UiSelect v-model="category" class="market-filter-control category-filter" :aria-label="t('marketplace.allTypes')" :align-item-with-trigger="false" @change="applyFilters">
           <template #start>
             <Filter :size="16" aria-hidden="true" />
           </template>
           <option value="">
             {{ t('marketplace.allTypes') }}
           </option>
-          <option v-for="item in types" :key="item" :value="item">
-            {{ t(`marketplace.types.${item}`) }}
+          <option v-for="item in types" :key="item.code" :value="item.code">
+            {{ categoryName(item.code) }}
           </option>
         </UiSelect>
         <UiSelect v-model="sort" class="market-filter-control" :aria-label="t('marketplace.sortNewest')" @change="applyFilters">
@@ -173,37 +187,39 @@ onMounted(() => void load())
         </UiIconButton>
       </form>
 
-      <div v-if="loading" class="page-state" aria-live="polite">
-        <LoaderCircle class="spin" :size="20" />{{ t('marketplace.loading') }}
-      </div>
-      <div v-else-if="error" class="page-state" role="alert">
-        <p>{{ error }}</p><UiButton class="command-button secondary" variant="secondary" @click="load">
-          <template #start>
-            <RefreshCw :size="17" />
-          </template>{{ t('actions.retry') }}
-        </UiButton>
-      </div>
-      <div v-else-if="!products.length" class="page-state">
-        <p>{{ t('marketplace.noResults') }}</p>
-      </div>
-      <template v-else>
-        <div class="market-results-meta">
-          <strong>{{ products.length }} {{ t('marketplace.results') }}</strong>
+      <CategoryBrowser :items="types" :model-value="category" @update:model-value="selectCategory">
+        <div v-if="loading" class="page-state" aria-live="polite">
+          <LoaderCircle class="spin" :size="20" />{{ t('marketplace.loading') }}
         </div>
-        <div class="product-grid">
-          <RouterLink v-for="item in products" :key="item.id" class="product-card" :to="`/market/assets/${item.id}`">
-            <div class="product-media">
-              <img :src="item.mediaUrl" :alt="item.title" :width="item.width || 1200" :height="item.height || 900" /><span>{{ t(`marketplace.types.${item.productType}`) }}</span><strong v-if="item.ownedAssetId"><BadgeCheck :size="15" />{{ t('marketplace.owned') }}</strong>
-            </div>
-            <div class="product-card-copy">
-              <div><span>@{{ item.seller.handle }}</span><span>{{ item.license.name }}</span></div>
-              <h2>{{ item.title }}</h2>
-              <p>{{ item.description }}</p>
-              <footer><strong>{{ money(item.priceCents, item.currency) }}</strong><ChevronRight :size="17" /></footer>
-            </div>
-          </RouterLink>
+        <div v-else-if="error" class="page-state" role="alert">
+          <p>{{ error }}</p><UiButton class="command-button secondary" variant="secondary" @click="load">
+            <template #start>
+              <RefreshCw :size="17" />
+            </template>{{ t('actions.retry') }}
+          </UiButton>
         </div>
-      </template>
+        <div v-else-if="!products.length" class="page-state">
+          <p>{{ t('marketplace.noResults') }}</p>
+        </div>
+        <template v-else>
+          <div class="market-results-meta">
+            <strong>{{ products.length }} {{ t('marketplace.results') }}</strong>
+          </div>
+          <div class="product-grid">
+            <RouterLink v-for="item in products" :key="item.id" class="product-card" :to="`/market/assets/${item.id}`">
+              <div class="product-media">
+                <img :src="item.mediaUrl" :alt="item.title" :width="item.width || 1200" :height="item.height || 900" /><span>{{ categoryName(item.category) }}</span><strong v-if="item.ownedAssetId"><BadgeCheck :size="15" />{{ t('marketplace.owned') }}</strong>
+              </div>
+              <div class="product-card-copy">
+                <div><span>@{{ item.seller.handle }}</span><span>{{ item.license.name }}</span></div>
+                <h2>{{ item.title }}</h2>
+                <p>{{ item.description }}</p>
+                <footer><strong>{{ money(item.priceCents, item.currency) }}</strong><ChevronRight :size="17" /></footer>
+              </div>
+            </RouterLink>
+          </div>
+        </template>
+      </CategoryBrowser>
     </template>
 
     <template v-else>
@@ -226,7 +242,7 @@ onMounted(() => void load())
             <img :src="detail.mediaUrl" :alt="detail.title" :width="detail.width || 1600" :height="detail.height || 1200" /><span>{{ t('status.demo') }}</span>
           </div>
           <section class="product-description">
-            <span>{{ t(`marketplace.types.${detail.productType}`) }}</span><h1>{{ detail.title }}</h1><p>{{ detail.description }}</p><div class="product-seller">
+            <span>{{ categoryName(detail.category) }}</span><h1>{{ detail.title }}</h1><p>{{ detail.description }}</p><div class="product-seller">
               <BadgeCheck :size="18" /><span>{{ t('marketplace.soldBy') }}</span><RouterLink :to="`/creators/${detail.seller.handle}`">
                 <strong>{{ detail.seller.displayName }}</strong><small>@{{ detail.seller.handle }}</small>
               </RouterLink>

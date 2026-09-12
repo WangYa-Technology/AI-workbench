@@ -235,6 +235,8 @@ func New(cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger) http.Handle
 		api.Post("/admin/generations/{generationID}/cancel", server.adminCancelGeneration)
 		api.Get("/admin/tasks", server.adminListTasks)
 		api.Post("/admin/task-types", server.adminCreateTaskType)
+		api.Patch("/admin/content-category/{id}", server.adminAssignCategory)
+		api.Get("/admin/content-category", server.adminListCategoryContent)
 		api.Patch("/admin/task-types/{code}", server.adminUpdateTaskType)
 		api.Delete("/admin/task-types/{code}", server.adminDeleteTaskType)
 		api.Post("/admin/tasks/{taskID}/resolve", server.adminResolveTaskDispute)

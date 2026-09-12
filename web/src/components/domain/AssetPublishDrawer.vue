@@ -3,7 +3,7 @@ import { Save, Send, ShieldCheck, Trash2, Upload, X } from 'lucide-vue-next'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
-import { api, messageFrom, type Asset, type ContentDraft, type ContentDraftSave } from '../../api/client'
+import { api, messageFrom, type Asset, type ContentDraft, type ContentDraftSave, type TaskType } from '../../api/client'
 import AssetMedia from './AssetMedia.vue'
 import UiBadge from '../ui/UiBadge.vue'
 import UiButton from '../ui/UiButton.vue'
@@ -19,7 +19,9 @@ const props = withDefaults(defineProps<{
 }>(), { open: false, assetId: '' })
 const emit = defineEmits<{ 'update:open': [value: boolean] }>()
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
+const categories = ref<TaskType[]>([])
+const category = ref('')
 const route = useRoute()
 const router = useRouter()
 const asset = ref<Asset | null>(null)
@@ -53,6 +55,7 @@ function resetForm() {
   promptVisibility.value = 'public'
   disclosure.value = t('publish.defaultDisclosure')
   body.value = ''
+  category.value = categories.value[0]?.code || ''
   error.value = ''
   success.value = ''
 }
@@ -66,6 +69,7 @@ function applyDraft(draft?: ContentDraft) {
   promptVisibility.value = draft.promptVisibility
   disclosure.value = draft.aiDisclosure
   body.value = draft.body
+  category.value = draft.category || categories.value[0]?.code || ''
 }
 
 async function load() {
@@ -77,6 +81,8 @@ async function load() {
   resetForm()
   try {
     const requestedDraftId = String(route.query.draftId || '')
+    categories.value = (await api.listTaskTypes('community')).items
+    category.value = categories.value[0]?.code || ''
     const [selectedAsset, draftPage, requestedDraft] = await Promise.all([
       api.getAsset(props.assetId),
       api.listContentDrafts(),
@@ -141,6 +147,7 @@ function draftPayload(expectedVersion?: number): ContentDraftSave {
     promptVisibility: promptVisibility.value,
     aiDisclosure: disclosure.value,
     body: body.value,
+    category: category.value,
     ...(expectedVersion !== undefined ? { expectedVersion } : {}),
   }
 }
@@ -274,6 +281,12 @@ watch(() => [props.open, props.assetId] as const, ([open]) => {
 
           <fieldset class="asset-publish-section">
             <legend>{{ t('publish.detailsSection') }}</legend>
+            <label for="asset-category">{{ t('community.typeLabel') }}</label>
+            <UiSelect id="asset-category" v-model="category" required>
+              <option v-for="item in categories" :key="item.code" :value="item.code">
+                {{ locale.startsWith('zh') ? item.nameZh : item.nameEn }}
+              </option>
+            </UiSelect>
             <label for="asset-publish-title">{{ t('publish.titleLabel') }}</label>
             <UiInput id="asset-publish-title" v-model="title" required minlength="3" maxlength="120" />
             <label for="asset-publish-summary">{{ t('publish.summaryLabel') }}</label>

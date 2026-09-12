@@ -25,6 +25,7 @@ var (
 )
 
 type PublishInput struct {
+	Category         string    `json:"category"`
 	AssetID          uuid.UUID `json:"assetId"`
 	Title            string    `json:"title"`
 	Summary          string    `json:"summary"`
@@ -40,8 +41,9 @@ type Publication struct {
 }
 
 type PostCreateInput struct {
-	Title string `json:"title"`
-	Body  string `json:"body"`
+	Title    string `json:"title"`
+	Body     string `json:"body"`
+	Category string `json:"category"`
 }
 
 type DraftInput struct {
@@ -50,6 +52,7 @@ type DraftInput struct {
 }
 
 type Draft struct {
+	Category         string    `json:"category"`
 	ID               uuid.UUID `json:"id"`
 	PostID           uuid.UUID `json:"postId"`
 	AssetID          uuid.UUID `json:"assetId"`
@@ -84,6 +87,7 @@ type draftCursor struct {
 }
 
 type Post struct {
+	Category         string     `json:"category"`
 	ID               uuid.UUID  `json:"id"`
 	Title            string     `json:"title"`
 	Body             string     `json:"body"`
@@ -105,9 +109,10 @@ type Post struct {
 }
 
 type PostListInput struct {
-	Cursor string
-	Limit  int
-	Mine   bool
+	Category string
+	Cursor   string
+	Limit    int
+	Mine     bool
 }
 
 type PostPage struct {
@@ -192,8 +197,8 @@ func (r *Repository) Publish(ctx context.Context, authorID uuid.UUID, input Publ
 		body = input.Summary
 	}
 	_, err = tx.Exec(ctx, `
-		INSERT INTO posts(id,author_id,work_id,title,body,status,published_at)
-		VALUES($1,$2,$3,$4,$5,'published',now())`, publication.PostID, authorID, publication.WorkID, input.Title, body)
+		INSERT INTO posts(id,author_id,work_id,title,body,status,published_at,category)
+		VALUES($1,$2,$3,$4,$5,'published',now(),$6)`, publication.PostID, authorID, publication.WorkID, input.Title, body, input.Category)
 	if err != nil {
 		return Publication{}, fmt.Errorf("insert post: %w", err)
 	}
@@ -222,8 +227,8 @@ func (r *Repository) CreatePost(ctx context.Context, authorID uuid.UUID, input P
 	}
 	postID := uuid.New()
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO posts(id,author_id,title,body,status,published_at)
-		VALUES($1,$2,$3,$4,'published',now())`, postID, authorID, input.Title, input.Body); err != nil {
+		INSERT INTO posts(id,author_id,title,body,status,published_at,category)
+		VALUES($1,$2,$3,$4,'published',now(),$5)`, postID, authorID, input.Title, input.Body, input.Category); err != nil {
 		return Post{}, fmt.Errorf("insert Community post: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -311,7 +316,7 @@ func (r *Repository) SaveDraft(ctx context.Context, authorID uuid.UUID, draftID 
 		if err != nil {
 			return Draft{}, fmt.Errorf("create content draft work: %w", err)
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO posts(id,author_id,work_id,title,body,status) VALUES($1,$2,$3,$4,$5,'draft')`, postID, authorID, workID, input.Title, input.Body); err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO posts(id,author_id,work_id,title,body,status,category) VALUES($1,$2,$3,$4,$5,'draft',$6)`, postID, authorID, workID, input.Title, input.Body, input.Category); err != nil {
 			return Draft{}, fmt.Errorf("create content draft post: %w", err)
 		}
 	} else {
@@ -332,7 +337,7 @@ func (r *Repository) SaveDraft(ctx context.Context, authorID uuid.UUID, draftID 
 		if result.RowsAffected() != 1 {
 			return Draft{}, ErrConflict
 		}
-		if _, err := tx.Exec(ctx, `UPDATE posts SET title=$2,body=$3,version=version+1,updated_at=now() WHERE id=$1`, postID, input.Title, input.Body); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE posts SET title=$2,body=$3,category=CASE WHEN $4='' THEN category ELSE $4 END,version=version+1,updated_at=now() WHERE id=$1`, postID, input.Title, input.Body, input.Category); err != nil {
 			return Draft{}, err
 		}
 		action = "content.draft_updated"
@@ -437,13 +442,13 @@ func (r *Repository) DiscardDraft(ctx context.Context, authorID, draftID uuid.UU
 
 const draftSelect = `
 	SELECT w.id,p.id,w.asset_id,a.title,a.media_url,a.kind,a.scan_status,w.title,w.summary,COALESCE(w.prompt,''),w.prompt_visibility,
-	       w.ai_disclosure,p.body,w.version,w.created_at,w.updated_at
+	       w.ai_disclosure,p.body,p.category,w.version,w.created_at,w.updated_at
 	FROM works w JOIN posts p ON p.work_id=w.id JOIN assets a ON a.id=w.asset_id`
 
 func scanDraft(row interface{ Scan(...any) error }) (Draft, error) {
 	var item Draft
 	err := row.Scan(&item.ID, &item.PostID, &item.AssetID, &item.AssetTitle, &item.AssetMediaURL, &item.AssetKind, &item.AssetScanStatus,
-		&item.Title, &item.Summary, &item.Prompt, &item.PromptVisibility, &item.AIDisclosure, &item.Body, &item.Version, &item.CreatedAt, &item.UpdatedAt)
+		&item.Title, &item.Summary, &item.Prompt, &item.PromptVisibility, &item.AIDisclosure, &item.Body, &item.Category, &item.Version, &item.CreatedAt, &item.UpdatedAt)
 	return item, err
 }
 
@@ -501,7 +506,7 @@ func (r *Repository) ListForViewer(ctx context.Context, viewerID uuid.UUID) ([]P
 func (r *Repository) GetPostForViewer(ctx context.Context, viewerID, postID uuid.UUID) (Post, error) {
 	var item Post
 	err := r.pool.QueryRow(ctx, `
-		SELECT p.id,COALESCE(p.title,w.title,'Community post'),p.body,p.published_at,w.id,w.title,a.media_url,a.kind,w.ai_disclosure,u.id,u.handle,u.display_name,
+		SELECT p.id,p.category,COALESCE(p.title,w.title,'Community post'),p.body,p.published_at,w.id,w.title,a.media_url,a.kind,w.ai_disclosure,u.id,u.handle,u.display_name,
 		       (SELECT count(*) FROM comments c WHERE c.post_id=p.id AND c.status='published'),
 		       (SELECT count(*) FROM post_reactions pr WHERE pr.post_id=p.id AND pr.kind='like'),
 		       (SELECT count(*) FROM post_reactions pr WHERE pr.post_id=p.id AND pr.kind='bookmark'),
@@ -514,7 +519,7 @@ func (r *Repository) GetPostForViewer(ctx context.Context, viewerID, postID uuid
 		JOIN users u ON u.id=p.author_id
 		WHERE p.id=$2 AND p.status='published'
 		  AND (p.work_id IS NULL OR (w.status='published' AND a.scan_status='clean'))`, viewerID, postID).Scan(
-		&item.ID, &item.Title, &item.Body, &item.PublishedAt, &item.WorkID, &item.WorkTitle, &item.MediaURL,
+		&item.ID, &item.Category, &item.Title, &item.Body, &item.PublishedAt, &item.WorkID, &item.WorkTitle, &item.MediaURL,
 		&item.MediaKind, &item.AIDisclosure, &item.AuthorID, &item.AuthorHandle, &item.AuthorName,
 		&item.CommentCount, &item.LikeCount, &item.BookmarkCount, &item.ViewerLiked, &item.ViewerBookmarked, &item.ViewerFollowing)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -543,7 +548,7 @@ func (r *Repository) ListPageForViewer(ctx context.Context, viewerID uuid.UUID, 
 		cursorTime, cursorID = &cursor.PublishedAt, &cursor.ID
 	}
 	rows, err := r.pool.Query(ctx, `
-		SELECT p.id,COALESCE(p.title,w.title,'Community post'),p.body,p.published_at,w.id,w.title,a.media_url,a.kind,w.ai_disclosure,u.id,u.handle,u.display_name,
+		SELECT p.id,p.category,COALESCE(p.title,w.title,'Community post'),p.body,p.published_at,w.id,w.title,a.media_url,a.kind,w.ai_disclosure,u.id,u.handle,u.display_name,
 		       (SELECT count(*) FROM comments c WHERE c.post_id=p.id AND c.status='published'),
 		       (SELECT count(*) FROM post_reactions pr WHERE pr.post_id=p.id AND pr.kind='like'),
 		       (SELECT count(*) FROM post_reactions pr WHERE pr.post_id=p.id AND pr.kind='bookmark'),
@@ -557,8 +562,9 @@ func (r *Repository) ListPageForViewer(ctx context.Context, viewerID uuid.UUID, 
 			WHERE p.status='published'
 			  AND (p.work_id IS NULL OR (w.status='published' AND a.scan_status='clean'))
 			  AND ($5::boolean = false OR p.author_id=$1)
+			  AND ($6='' OR p.category=$6)
 			  AND ($2::timestamptz IS NULL OR (p.published_at,p.id)<($2,$3::uuid))
-			ORDER BY p.published_at DESC,p.id DESC LIMIT $4`, viewerID, cursorTime, cursorID, input.Limit+1, input.Mine)
+			ORDER BY p.published_at DESC,p.id DESC LIMIT $4`, viewerID, cursorTime, cursorID, input.Limit+1, input.Mine, input.Category)
 	if err != nil {
 		return PostPage{}, fmt.Errorf("list posts: %w", err)
 	}
@@ -566,7 +572,7 @@ func (r *Repository) ListPageForViewer(ctx context.Context, viewerID uuid.UUID, 
 	items := make([]Post, 0)
 	for rows.Next() {
 		var item Post
-		if err := rows.Scan(&item.ID, &item.Title, &item.Body, &item.PublishedAt, &item.WorkID, &item.WorkTitle, &item.MediaURL,
+		if err := rows.Scan(&item.ID, &item.Category, &item.Title, &item.Body, &item.PublishedAt, &item.WorkID, &item.WorkTitle, &item.MediaURL,
 			&item.MediaKind, &item.AIDisclosure, &item.AuthorID, &item.AuthorHandle, &item.AuthorName,
 			&item.CommentCount, &item.LikeCount, &item.BookmarkCount, &item.ViewerLiked, &item.ViewerBookmarked, &item.ViewerFollowing); err != nil {
 			return PostPage{}, fmt.Errorf("scan post: %w", err)

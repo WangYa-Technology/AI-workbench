@@ -22,6 +22,103 @@ tags:
   - name: Developer
   - name: Admin
 paths:
+  /task-types:
+    get:
+      tags: [Community, Marketplace, Tasks]
+      operationId: listCategories
+      parameters:
+        - { $ref: '#/components/parameters/CategoryScope' }
+      responses:
+        '200':
+          description: Categories ordered by sortOrder and code
+          content:
+            application/json:
+              schema: { type: object, required: [items], properties: { items: { type: array, items: { $ref: '#/components/schemas/ContentCategory' } } } }
+  /admin/task-types:
+    post:
+      tags: [Admin]
+      operationId: createCategory
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/CategoryScope' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ContentCategory' }
+      responses:
+        '201': { description: Category created, content: { application/json: { schema: { $ref: '#/components/schemas/ContentCategory' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+  /admin/task-types/{code}:
+    parameters:
+      - { $ref: '#/components/parameters/CategoryScope' }
+      - { name: code, in: path, required: true, schema: { type: string } }
+    patch:
+      tags: [Admin]
+      operationId: updateCategory
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ContentCategory' }
+      responses:
+        '200': { description: Category renamed or reordered, content: { application/json: { schema: { $ref: '#/components/schemas/ContentCategory' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+    delete:
+      tags: [Admin]
+      operationId: deleteCategory
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, properties: { replacement: { type: string, description: Same-scope category required when content references the source } } }
+      responses:
+        '200': { description: References transferred atomically and category physically deleted }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+  /admin/content-category:
+    get:
+      tags: [Admin]
+      operationId: listCategoryContent
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/CategoryScope' }
+        - { name: q, in: query, schema: { type: string } }
+        - { name: cursor, in: query, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Content available for classification, 50 items per page
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  nextCursor: { type: string }
+                  items: { type: array, items: { type: object, required: [id, title, category], properties: { id: { type: string, format: uuid }, title: { type: string }, category: { type: string } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+  /admin/content-category/{id}:
+    patch:
+      tags: [Admin]
+      operationId: assignContentCategory
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/CategoryScope' }
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, required: [category], properties: { category: { type: string } } }
+      responses:
+        '200': { description: Content assigned to a category in its own directory }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
   /:
     get:
       tags: [Developer]
@@ -1244,11 +1341,13 @@ paths:
         '413': { description: Upload exceeds 10 MiB, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } } }
         '422': { $ref: '#/components/responses/ValidationFailed' }
   /products:
+    # Business categories are independent of the fixed product/media format.
     get:
       tags: [Marketplace]
       operationId: listProducts
       security: [{}, { sessionCookie: [] }]
       parameters:
+        - { name: category, in: query, schema: { type: string } }
         - { name: q, in: query, schema: { type: string } }
         - { name: type, in: query, schema: { type: string, enum: [prompt, workflow, asset, work] } }
         - { name: license, in: query, schema: { type: string } }
@@ -1443,6 +1542,7 @@ paths:
       tags: [Community]
       operationId: listCommunityPosts
       parameters:
+        - { name: category, in: query, schema: { type: string } }
         - { name: cursor, in: query, schema: { type: string }, description: Opaque stable reverse-chronological Community feed cursor }
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
         - { name: mine, in: query, schema: { type: boolean, default: false }, description: Return only the authenticated viewer's published posts }
@@ -2619,6 +2719,11 @@ components:
       scheme: bearer
       bearerFormat: hcai_sk
   parameters:
+    CategoryScope:
+      name: scope
+      in: query
+      description: Task mutations require admin:tasks; community and marketplace mutations require admin:content.
+      schema: { type: string, enum: [task, community, marketplace], default: task }
     WorkId:
       name: workId
       in: path
@@ -2751,6 +2856,17 @@ components:
           schema:
             $ref: '#/components/schemas/ErrorEnvelope'
   schemas:
+    ContentCategory:
+      type: object
+      additionalProperties: false
+      required: [nameZh, nameEn, icon, sortOrder]
+      properties:
+        code: { type: string, pattern: '^[a-z][a-z0-9_-]{0,47}$' }
+        scope: { type: string, enum: [task, community, marketplace] }
+        nameZh: { type: string, minLength: 1, maxLength: 80 }
+        nameEn: { type: string, minLength: 1, maxLength: 80 }
+        icon: { type: string, enum: [image, video, audio, prompt, workflow, mixed] }
+        sortOrder: { type: integer, minimum: 0, maximum: 100000 }
     LocalizedSiteText:
       type: object
       required: [enUS, zhCN]
@@ -3892,6 +4008,7 @@ components:
       type: object
       required: [id, title, description, productType, priceCents, currency, status, assetId, mediaUrl, mediaKind, aiDisclosure, includedFiles, compatibility, seller, license, createdAt]
       properties:
+        category: { type: string }
         id: { type: string, format: uuid }
         title: { type: string }
         description: { type: string }
@@ -3974,6 +4091,7 @@ components:
       additionalProperties: false
       required: [assetId, title, summary, prompt, promptVisibility, aiDisclosure, body]
       properties:
+        category: { type: string }
         assetId:
           type: string
           format: uuid
@@ -4012,6 +4130,7 @@ components:
       additionalProperties: false
       required: [assetId, promptVisibility]
       properties:
+        category: { type: string }
         assetId: { type: string, format: uuid }
         title: { type: string, maxLength: 120 }
         summary: { type: string, maxLength: 500 }
@@ -4030,6 +4149,7 @@ components:
       type: object
       required: [id, postId, assetId, assetTitle, assetMediaUrl, assetKind, assetScanStatus, title, summary, prompt, promptVisibility, aiDisclosure, body, version, createdAt, updatedAt]
       properties:
+        category: { type: string }
         id: { type: string, format: uuid }
         postId: { type: string, format: uuid }
         assetId: { type: string, format: uuid }
@@ -4056,6 +4176,7 @@ components:
       type: object
       required: [id, title, body, publishedAt, authorId, authorHandle, authorName, commentCount, likeCount, bookmarkCount, viewerLiked, viewerBookmarked, viewerFollowing]
       properties:
+        category: { type: string }
         id:
           type: string
           format: uuid
@@ -4095,6 +4216,7 @@ components:
       additionalProperties: false
       required: [title, body]
       properties:
+        category: { type: string }
         title: { type: string, minLength: 3, maxLength: 120 }
         body: { type: string, minLength: 2, maxLength: 2000 }
     CommunityPostPage:

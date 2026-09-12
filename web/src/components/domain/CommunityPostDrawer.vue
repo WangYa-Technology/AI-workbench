@@ -2,7 +2,8 @@
 import { MessageSquareText, Send, X } from 'lucide-vue-next'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { api, messageFrom, type CommunityPost } from '../../api/client'
+import { api, messageFrom, type CommunityPost, type TaskType } from '../../api/client'
+import UiSelect from '../ui/UiSelect.vue'
 import UiButton from '../ui/UiButton.vue'
 import UiDrawer from '../ui/UiDrawer.vue'
 import UiIconButton from '../ui/UiIconButton.vue'
@@ -15,14 +16,16 @@ const emit = defineEmits<{
   created: [post: CommunityPost]
 }>()
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
+const categories = ref<TaskType[]>([])
+const category = ref('')
 const title = ref('')
 const body = ref('')
 const submitting = ref(false)
 const error = ref('')
 const titleLength = computed(() => title.value.trim().length)
 const bodyLength = computed(() => body.value.trim().length)
-const canSubmit = computed(() => titleLength.value >= 3 && titleLength.value <= 120 && bodyLength.value >= 2 && bodyLength.value <= 2000)
+const canSubmit = computed(() => Boolean(category.value) && titleLength.value >= 3 && titleLength.value <= 120 && bodyLength.value >= 2 && bodyLength.value <= 2000)
 
 function reset() {
   title.value = ''
@@ -35,7 +38,7 @@ async function submit() {
   submitting.value = true
   error.value = ''
   try {
-    const post = await api.createCommunityPost({ title: title.value.trim(), body: body.value.trim() })
+    const post = await api.createCommunityPost({ title: title.value.trim(), body: body.value.trim(), category: category.value })
     emit('created', post)
     emit('update:open', false)
   } catch (reason) {
@@ -45,8 +48,14 @@ async function submit() {
   }
 }
 
-watch(() => props.open, (open) => {
-  if (open) reset()
+watch(() => props.open, async (open) => {
+  if (!open) return
+  reset(); category.value = ''; categories.value = []
+  try {
+    categories.value = (await api.listTaskTypes('community')).items
+    category.value = categories.value[0]?.code || ''
+    if (!category.value) error.value = locale.value.startsWith('zh') ? '请管理员先添加社区分类。' : 'Ask an administrator to add a category first.'
+  } catch (reason) { error.value = messageFrom(reason) }
 })
 </script>
 
@@ -75,6 +84,12 @@ watch(() => props.open, (open) => {
 
         <fieldset class="community-post-fields">
           <legend>{{ t('community.postDetails') }}</legend>
+          <label for="post-category">{{ t('community.typeLabel') }}</label>
+          <UiSelect id="post-category" v-model="category" required>
+            <option v-for="item in categories" :key="item.code" :value="item.code">
+              {{ locale.startsWith('zh') ? item.nameZh : item.nameEn }}
+            </option>
+          </UiSelect>
           <label for="community-post-title">
             <span>{{ t('community.postTitle') }}</span>
             <small aria-hidden="true">{{ titleLength }}/120</small>

@@ -31,10 +31,13 @@ func TestPersistedContentDraftLifecycle(t *testing.T) {
 	}
 	repository := community.NewRepository(pool)
 	draft, err := repository.SaveDraft(ctx, ownerID, nil, community.DraftInput{PublishInput: community.PublishInput{
-		AssetID: cleanAssetID, PromptVisibility: "private",
+		AssetID: cleanAssetID, PromptVisibility: "private", Category: "community_tutorial",
 	}}, "draft-create")
 	if err != nil || draft.Version != 1 || draft.AssetID != cleanAssetID || draft.Title != "" {
 		t.Fatalf("create incomplete private draft: %#v %v", draft, err)
+	}
+	if draft.Category != "community_tutorial" {
+		t.Fatal("draft category not persisted")
 	}
 	if _, err := repository.SaveDraft(ctx, ownerID, nil, community.DraftInput{PublishInput: community.PublishInput{AssetID: cleanAssetID, PromptVisibility: "public"}}, "draft-duplicate"); !errors.Is(err, community.ErrConflict) {
 		t.Fatalf("duplicate active Asset draft was accepted: %v", err)
@@ -52,12 +55,19 @@ func TestPersistedContentDraftLifecycle(t *testing.T) {
 	if err != nil || updated.Version != 2 || updated.Title != "Persisted studio draft" {
 		t.Fatalf("update draft: %#v %v", updated, err)
 	}
+	if updated.Category != draft.Category {
+		t.Fatal("omitting category on update changed it")
+	}
 	if _, err := repository.SaveDraft(ctx, ownerID, &draft.ID, community.DraftInput{PublishInput: updatedToInput(updated), ExpectedVersion: 1}, "draft-stale"); !errors.Is(err, community.ErrConflict) {
 		t.Fatalf("stale draft update was accepted: %v", err)
 	}
 	publication, err := repository.PublishDraft(ctx, ownerID, draft.ID, updated.Version, "draft-publish")
 	if err != nil || publication.WorkID != draft.ID || publication.PostID != draft.PostID {
 		t.Fatalf("publish persisted draft: %#v %v", publication, err)
+	}
+	post, err := repository.GetPostForViewer(ctx, ownerID, publication.PostID)
+	if err != nil || post.Category != draft.Category {
+		t.Fatalf("published draft lost category: %v %v", post, err)
 	}
 	if _, err := repository.GetDraft(ctx, ownerID, draft.ID); !errors.Is(err, community.ErrNotFound) {
 		t.Fatalf("published draft remained editable: %v", err)

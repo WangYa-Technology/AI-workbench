@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import CategoryManager from '../components/domain/CategoryManager.vue'
 import {
   Activity, Ban, BriefcaseBusiness, CircleDollarSign, Code2, CreditCard, Database, FileCheck2, FlaskConical, LoaderCircle, RefreshCw,
   Globe2, Headphones, KeyRound, ListFilter, MessageSquare, Pencil, Plus, Search, Save, Send, Settings2, ShieldAlert, ShieldCheck, SlidersHorizontal, Trash2, Undo2, WandSparkles, X,
@@ -9,7 +10,7 @@ import { RouterLink, useRoute, useRouter } from 'vue-router'
 import {
   api, messageFrom, type AdminContent, type AdminFinanceAccount, type AdminOperationalDiagnostics, type AdminPaymentDestination, type AdminPaymentOperation, type AdminPaymentProviderConfig,
   type AdminGeneration, type AdminGovernanceAppeal, type AdminGovernanceReport, type AdminMediaItem, type AdminModelRoutePolicy, type AdminModelRouteUpdate, type AdminOverview, type AdminProvider, type AdminProviderConfig, type AdminProviderConfigCreate, type AdminProviderConfigUpdate, type AdminProviderModel, type ModelCapabilities, type AdminUser,
-  type AdminDiscoveryOperations, type AdminProviderCostReconciliation, type AdminRankingPolicy, type AdminRankingUpdate, type AdminRiskRulePolicy, type AdminRiskRuleUpdate, type AdminRiskSignal, type AdminSystemSettings, type AdminSystemSettingUpdate, type AdminTaskOperation, type Asset, type DataRightsLegalHold, type DataRightsRequest, type DeveloperAccess, type DeveloperControlUpdate, type DeveloperWebhookDelivery, type IdentityEmailAction, type ModelPointPricing, type SiteConfiguration, type SubscriptionPlan, type SubscriptionPlanInput, type SupportCase, type TaskType,
+  type AdminDiscoveryOperations, type AdminProviderCostReconciliation, type AdminRankingPolicy, type AdminRankingUpdate, type AdminRiskRulePolicy, type AdminRiskRuleUpdate, type AdminRiskSignal, type AdminSystemSettings, type AdminSystemSettingUpdate, type AdminTaskOperation, type Asset, type DataRightsLegalHold, type DataRightsRequest, type DeveloperAccess, type DeveloperControlUpdate, type DeveloperWebhookDelivery, type IdentityEmailAction, type ModelPointPricing, type SiteConfiguration, type SubscriptionPlan, type SubscriptionPlanInput, type SupportCase,
 } from '../api/client'
 import { formatCurrency, formatDateTime } from '../lib/format'
 import { adminNavigationItems, type AdminTab } from '../lib/admin-navigation'
@@ -251,8 +252,6 @@ const modelRouteForm = reactive<AdminModelRouteUpdate>({ providerProfileId: '', 
 const systemSettingForm = reactive<AdminSystemSettingUpdate>({ registrationsEnabled: true, generationsEnabled: true, publishingEnabled: true, marketplaceCheckoutEnabled: true, taskCreationEnabled: true, publicNotice: '' })
 const siteConfigurationForm = reactive<SiteConfiguration>(cloneSiteConfiguration(siteConfig.current))
 const developerControlForm = reactive<DeveloperControlUpdate>({ enabled: false, maxServiceAccounts: 5, maxActiveKeys: 3, defaultTtlDays: 90, expectedVersion: 1 })
-const taskTypeItems = ref<TaskType[]>([])
-const taskTypeForm = reactive({ code: '', nameZh: '', nameEn: '', icon: 'image', sortOrder: 10 })
 
 const availableAdminNavigation = computed(() => adminNavigationItems.filter(item => session.user?.permissions.includes(item.permission)))
 const tabs = computed(() => availableAdminNavigation.value.map(item => item.tab))
@@ -1162,7 +1161,6 @@ async function load() {
       syncTaskFilters()
       await loadTaskDirectory()
     }
-    if (tab === 'taskTypes') taskTypeItems.value = (await api.adminListTaskTypes()).items
     if (tab === 'providers') providerConfigs.value = (await api.adminListProviderConfigs()).items
     if (tab === 'models') {
       const [policy, providerResult] = await Promise.all([api.adminGetModelRoutes({ limit: 20 }), api.adminListProviders()])
@@ -2364,16 +2362,8 @@ onMounted(() => void initialize())
             </section>
           </div>
 
-          <div v-else-if="activeTab === 'taskTypes'" class="admin-governance task-operations-admin">
-            <section>
-              <header><div><h2>{{ t('admin.tabs.taskTypes') }}</h2><p>{{ locale.startsWith('zh') ? '管理任务发布和筛选使用的类型。' : 'Manage types used by task publishing and filters.' }}</p></div></header>
-              <form class="admin-user-filters" @submit.prevent="async () => { const saved = await api.adminCreateTaskType(taskTypeForm); taskTypeItems.push(saved); Object.assign(taskTypeForm, { code: '', nameZh: '', nameEn: '', icon: 'image', sortOrder: 10 }) }">
-                <label>Code<UiInput v-model="taskTypeForm.code" required /></label><label>{{ locale.startsWith('zh') ? '中文名称' : 'Chinese name' }}<UiInput v-model="taskTypeForm.nameZh" required /></label><label>{{ locale.startsWith('zh') ? '英文名称' : 'English name' }}<UiInput v-model="taskTypeForm.nameEn" required /></label><label>{{ locale.startsWith('zh') ? '图标' : 'Icon' }}<UiSelect v-model="taskTypeForm.icon"><option v-for="item in ['image','video','audio','prompt','workflow','mixed']" :key="item" :value="item">{{ item }}</option></UiSelect></label><label>{{ locale.startsWith('zh') ? '排序' : 'Order' }}<UiInput v-model.number="taskTypeForm.sortOrder" type="number" /></label><UiButton class="command-button primary" type="submit" variant="primary"><Plus :size="16" />{{ t('actions.create') }}</UiButton>
-              </form>
-              <div class="admin-list"><article v-for="item in taskTypeItems" :key="item.code"><div><strong>{{ locale.startsWith('zh') ? item.nameZh : item.nameEn }}</strong><span>{{ item.code }} · {{ item.icon }}</span></div><span>{{ item.sortOrder }}</span><UiButton class="command-button secondary" type="button" variant="secondary" @click="async () => { await api.adminUpdateTaskType(item.code, { nameZh: item.nameZh, nameEn: item.nameEn, icon: item.icon, sortOrder: item.sortOrder }); success = t('actions.saved') }"><Save :size="16" />{{ t('actions.save') }}</UiButton><UiButton class="command-button secondary" type="button" variant="secondary" @click="async () => { await api.adminDeleteTaskType(item.code); taskTypeItems = taskTypeItems.filter((candidate: TaskType) => candidate.code !== item.code) }"><Trash2 :size="16" />{{ t('actions.delete') }}</UiButton></article></div>
-            </section>
-          </div>
-
+          <CategoryManager v-else-if="activeTab === 'communityCategories' || activeTab === 'marketplaceCategories'" :key="activeTab" :scope="activeTab === 'communityCategories' ? 'community' : 'marketplace'" />
+          <CategoryManager v-else-if="activeTab === 'taskTypes'" scope="task" />
           <div v-else-if="activeTab === 'providers'" class="provider-registry-admin">
             <header class="provider-registry-header">
               <div><h2>{{ t('admin.providerRegistryTitle') }}</h2><p>{{ t('admin.providerRegistrySummary') }}</p></div>

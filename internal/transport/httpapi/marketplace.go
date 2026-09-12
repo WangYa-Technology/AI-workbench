@@ -16,7 +16,7 @@ import (
 func (s *Server) listProducts(w http.ResponseWriter, r *http.Request) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	items, err := s.marketplace.ListProducts(r.Context(), s.optionalViewer(r), marketplace.ListFilter{
-		Query: r.URL.Query().Get("q"), ProductType: r.URL.Query().Get("type"),
+		Query: r.URL.Query().Get("q"), ProductType: r.URL.Query().Get("type"), Category: r.URL.Query().Get("category"),
 		LicenseCode: r.URL.Query().Get("license"), Sort: r.URL.Query().Get("sort"), Limit: limit,
 	})
 	if err != nil {
