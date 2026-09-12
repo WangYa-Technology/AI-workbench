@@ -54,6 +54,13 @@ func TestMigrateEmptySchema(t *testing.T) {
 	if extensionSchema != "public" {
 		t.Fatalf("pgcrypto must be installed in public schema, got %q", extensionSchema)
 	}
+	var checksum string
+	if err := pool.QueryRow(context.Background(), `SELECT encode(public.digest('migration smoke'::bytea, 'sha256'), 'hex')`).Scan(&checksum); err != nil {
+		t.Fatalf("public.digest unavailable under isolated search_path: %v", err)
+	}
+	if checksum == "" {
+		t.Fatal("public.digest returned an empty checksum")
+	}
 
 	if err := database.Migrate(context.Background(), pool); err != nil {
 		t.Fatalf("second migration must be idempotent: %v", err)
