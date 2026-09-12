@@ -16,6 +16,7 @@ import { adminNavigationItems, type AdminTab } from '../lib/admin-navigation'
 import { cloneSiteConfiguration, sitePolicyKeys } from '../lib/siteConfiguration'
 import { useSessionStore } from '../stores/session'
 import { useSiteConfigStore } from '../stores/siteConfig'
+import { useCursorDirectory } from '../composables/useCursorDirectory'
 import UiButton from '../components/ui/UiButton.vue'
 import UiCheckbox from '../components/ui/UiCheckbox.vue'
 import UiDrawer from '../components/ui/UiDrawer.vue'
@@ -46,18 +47,20 @@ const error = ref('')
 const success = ref('')
 const localDemoAvailable = ref(false)
 const overview = ref<AdminOverview | null>(null)
-const users = ref<AdminUser[]>([])
+const usersDirectory = useCursorDirectory<AdminUser>(cursor => api.adminListUsers(userListQuery(cursor)))
+const users = usersDirectory.items
 const userQuery = ref('')
 const userRole = ref('')
 const userStatus = ref('')
-const userNextCursor = ref<string | null>(null)
-const userLoadingMore = ref(false)
-const content = ref<AdminContent[]>([])
+const userNextCursor = usersDirectory.nextCursor
+const userLoadingMore = usersDirectory.loadingMore
+const contentDirectory = useCursorDirectory<AdminContent>(cursor => api.adminListContent(contentListQuery(cursor)))
+const content = contentDirectory.items
 const contentQuery = ref('')
 const contentType = ref('')
 const contentStatus = ref('')
-const contentNextCursor = ref<string | null>(null)
-const contentLoadingMore = ref(false)
+const contentNextCursor = contentDirectory.nextCursor
+const contentLoadingMore = contentDirectory.loadingMore
 const generations = ref<AdminGeneration[]>([])
 const generationQuery = ref('')
 const generationMode = ref('')
@@ -187,12 +190,13 @@ const appealType = ref('')
 const appealStatus = ref('')
 const appealNextCursor = ref<string | null>(null)
 const appealLoadingMore = ref(false)
-const mediaItems = ref<AdminMediaItem[]>([])
+const mediaDirectory = useCursorDirectory<AdminMediaItem>(cursor => api.adminListMedia(mediaListQuery(cursor)))
+const mediaItems = mediaDirectory.items
 const mediaQuery = ref('')
 const mediaKind = ref('')
 const mediaStatus = ref('')
-const mediaNextCursor = ref<string | null>(null)
-const mediaLoadingMore = ref(false)
+const mediaNextCursor = mediaDirectory.nextCursor
+const mediaLoadingMore = mediaDirectory.loadingMore
 const dataRightsItems = ref<DataRightsRequest[]>([])
 const legalHolds = ref<DataRightsLegalHold[]>([])
 const dataRightsNextCursor = ref<string | null>(null)
@@ -339,14 +343,7 @@ function userListQuery(cursor = '') {
 }
 
 async function loadUserDirectory(cursor = '') {
-  const page = await api.adminListUsers(userListQuery(cursor))
-  if (cursor) {
-    const known = new Set(users.value.map(item => item.id))
-    users.value = [...users.value, ...page.items.filter(item => !known.has(item.id))]
-  } else {
-    users.value = page.items
-  }
-  userNextCursor.value = page.nextCursor || null
+	await usersDirectory.load(cursor)
 }
 
 async function applyUserFilters() {
@@ -396,14 +393,7 @@ function contentListQuery(cursor = '') {
 }
 
 async function loadContentDirectory(cursor = '') {
-  const page = await api.adminListContent(contentListQuery(cursor))
-  if (cursor) {
-    const known = new Set(content.value.map(item => item.id))
-    content.value = [...content.value, ...page.items.filter(item => !known.has(item.id))]
-  } else {
-    content.value = page.items
-  }
-  contentNextCursor.value = page.nextCursor || null
+	await contentDirectory.load(cursor)
 }
 
 async function applyContentFilters() {
@@ -453,14 +443,7 @@ function mediaListQuery(cursor = '') {
 }
 
 async function loadMediaDirectory(cursor = '') {
-  const page = await api.adminListMedia(mediaListQuery(cursor))
-  if (cursor) {
-    const known = new Set(mediaItems.value.map(item => item.id))
-    mediaItems.value = [...mediaItems.value, ...page.items.filter(item => !known.has(item.id))]
-  } else {
-    mediaItems.value = page.items
-  }
-  mediaNextCursor.value = page.nextCursor || null
+	await mediaDirectory.load(cursor)
 }
 
 async function applyMediaFilters() {
