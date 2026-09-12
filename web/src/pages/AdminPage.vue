@@ -205,12 +205,14 @@ const mediaKind = ref('')
 const mediaStatus = ref('')
 const mediaNextCursor = mediaDirectory.nextCursor
 const mediaLoadingMore = mediaDirectory.loadingMore
-const dataRightsItems = ref<DataRightsRequest[]>([])
-const legalHolds = ref<DataRightsLegalHold[]>([])
-const dataRightsNextCursor = ref<string | null>(null)
-const legalHoldsNextCursor = ref<string | null>(null)
-const dataRightsLoadingMore = ref(false)
-const legalHoldsLoadingMore = ref(false)
+const dataRightsDirectory = useCursorDirectory<DataRightsRequest>(cursor => api.adminListDataRights({ limit: 20, ...(cursor ? { cursor } : {}) }))
+const dataRightsItems = dataRightsDirectory.items
+const legalHoldsDirectory = useCursorDirectory<DataRightsLegalHold>(cursor => api.adminListDataRightsHolds({ limit: 20, ...(cursor ? { cursor } : {}) }))
+const legalHolds = legalHoldsDirectory.items
+const dataRightsNextCursor = dataRightsDirectory.nextCursor
+const legalHoldsNextCursor = legalHoldsDirectory.nextCursor
+const dataRightsLoadingMore = dataRightsDirectory.loadingMore
+const legalHoldsLoadingMore = legalHoldsDirectory.loadingMore
 const supportDirectory = useCursorDirectory<SupportCase>(cursor => api.adminListSupportCases(supportListQuery(cursor)))
 const supportCases = supportDirectory.items
 const supportQuery = ref('')
@@ -1066,25 +1068,11 @@ async function loadEmailRecoveryDirectory(cursor = '') {
 }
 
 async function loadDataRightsDirectory(cursor = '') {
-  const page = await api.adminListDataRights({ limit: 20, ...(cursor ? { cursor } : {}) })
-  if (cursor) {
-    const known = new Set(dataRightsItems.value.map(item => item.id))
-    dataRightsItems.value = [...dataRightsItems.value, ...page.items.filter(item => !known.has(item.id))]
-  } else {
-    dataRightsItems.value = page.items
-  }
-  dataRightsNextCursor.value = page.nextCursor || null
+	await dataRightsDirectory.load(cursor)
 }
 
 async function loadLegalHoldsDirectory(cursor = '') {
-  const page = await api.adminListDataRightsHolds({ limit: 20, ...(cursor ? { cursor } : {}) })
-  if (cursor) {
-    const known = new Set(legalHolds.value.map(item => item.id))
-    legalHolds.value = [...legalHolds.value, ...page.items.filter(item => !known.has(item.id))]
-  } else {
-    legalHolds.value = page.items
-  }
-  legalHoldsNextCursor.value = page.nextCursor || null
+	await legalHoldsDirectory.load(cursor)
 }
 
 async function loadDataRightsDirectories() {
