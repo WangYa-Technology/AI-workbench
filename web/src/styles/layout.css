@@ -1224,7 +1224,14 @@
 .community-comment-field .command-button:hover { border-color: var(--text-secondary); background: var(--text-secondary); color: var(--canvas); }
 
 .task-market { padding-bottom: 24px; }
+.task-market .page-hero-header { min-height: 248px; border-radius: 12px; }
+.task-market .ui-page-hero { height: 248px; min-height: 248px; padding: 20px 24px 18px; }
+.task-market .page-hero-art { width: min(40%, 440px); opacity: .68; }
+.task-market .page-hero-stats article { min-height: 64px; padding: 8px 11px; border-radius: 10px; box-shadow: none; }
+.task-market .page-hero-stat-icon { width: 34px; height: 34px; }
+.task-market .page-hero-stats { margin-top: 12px; }
 .task-filters { --task-filter-control-height: var(--control-height-toolbar); min-height: 62px; display: grid; grid-template-columns: minmax(220px, 1fr) 142px 132px 142px 92px; gap: 8px; align-items: center; margin-bottom: 16px; padding: 8px; border: 1px solid var(--border); border-radius: var(--radius-surface); background: var(--surface-muted); }
+.task-market .task-filters { border-radius: 10px; background: color-mix(in srgb, var(--surface-muted) 72%, var(--surface)); }
 .task-filters label { position: relative; min-width: 0; height: var(--task-filter-control-height); display: flex; align-items: center; gap: 9px; padding: 0 12px; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface); color: var(--text-secondary); font-size: 12px; transition: border-color var(--duration-quick) var(--ease-smooth-out), background var(--duration-quick) var(--ease-smooth-out), box-shadow var(--duration-quick) var(--ease-smooth-out); }
 .task-filters label:hover { border-color: var(--border-strong); }
 .task-filters label:focus-within { border-color: color-mix(in srgb, var(--focus) 55%, var(--border-strong)); box-shadow: 0 0 0 2px color-mix(in srgb, var(--focus) 12%, transparent); }
@@ -1259,14 +1266,14 @@
 .task-layout-switcher button:hover { color: var(--text); }
 .task-layout-switcher button.active { background: var(--surface); color: var(--accent-readable); box-shadow: var(--shadow-xs); }
 .task-result-list { display: grid; grid-template-columns: 1fr; gap: 10px; }
-.task-row { --task-tone: #526778; position: relative; min-width: 0; min-height: 154px; display: grid; grid-template-columns: 176px minmax(0, 1fr) 196px; grid-template-areas: "media copy commercial"; gap: 18px; align-items: stretch; padding: 12px; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-surface); background: var(--surface); color: var(--text); text-decoration: none; box-shadow: 0 4px 18px rgb(20 33 61 / 4%); transition: border-color var(--duration-quick) var(--ease-smooth-out), box-shadow var(--duration-quick) var(--ease-smooth-out), transform var(--duration-quick) var(--ease-smooth-out); }
+.task-row { --task-tone: #526778; position: relative; min-width: 0; min-height: 154px; display: grid; grid-template-columns: 176px minmax(0, 1fr) 196px; grid-template-areas: "media copy commercial"; gap: 18px; align-items: stretch; padding: 12px; overflow: hidden; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); color: var(--text); text-decoration: none; box-shadow: 0 2px 10px rgb(20 33 61 / 3%); transition: border-color var(--duration-quick) var(--ease-smooth-out), box-shadow var(--duration-quick) var(--ease-smooth-out), transform var(--duration-quick) var(--ease-smooth-out); }
 .task-row[data-type='image'] { --task-tone: #4b5db9; }
 .task-row[data-type='video'] { --task-tone: #2664a9; }
 .task-row[data-type='audio'] { --task-tone: #6955c5; }
 .task-row[data-type='prompt'] { --task-tone: #a36528; }
 .task-row[data-type='workflow'] { --task-tone: #287c61; }
 .task-row[data-type='mixed'] { --task-tone: #536174; }
-.task-row:hover { border-color: color-mix(in srgb, var(--focus) 42%, var(--border)); box-shadow: 0 10px 28px rgb(20 33 61 / 8%); transform: translateY(-1px); }
+.task-row:hover { border-color: color-mix(in srgb, var(--focus) 34%, var(--border)); box-shadow: 0 6px 18px rgb(20 33 61 / 7%); transform: translateY(-1px); }
 .task-row:active { transform: translateY(0); }
 .task-row-media { position: relative; grid-area: media; min-width: 0; min-height: 128px; display: block; overflow: hidden; border-radius: var(--radius-control); background: var(--surface-muted); }
 .task-row-media img { width: 100%; height: 100%; display: block; object-fit: cover; transition: transform var(--duration-fast) var(--ease-smooth-out); }
@@ -1280,7 +1287,7 @@
 .task-row-byline { display: flex; flex-wrap: wrap; align-items: center; overflow: hidden; color: var(--text-tertiary); font-size: 10px; }
 .task-row-byline > span { display: inline-flex; align-items: center; }
 .task-row-byline > span + span::before { margin-inline: 7px; color: var(--border-strong); content: '/'; }
-.task-row-commercial { grid-area: commercial; min-width: 0; display: grid; align-content: center; gap: 10px; padding: 4px 0 4px 16px; border-left: 1px solid var(--border); }
+.task-row-commercial { grid-area: commercial; min-width: 0; display: grid; align-content: center; gap: 10px; padding: 4px 0 4px 16px; border-left: 1px solid color-mix(in srgb, var(--border) 72%, transparent); }
 .task-row-data { min-width: 0; display: grid; gap: 3px; }
 .task-row-data small { display: inline-flex; align-items: center; gap: 5px; color: var(--text-tertiary); font-size: 10px; }
 .task-row-data strong { overflow: hidden; color: var(--text); font-family: var(--font-mono); font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
@@ -1912,6 +1919,12 @@
   .publish-preview { position: static; min-height: 380px; }
   .publish-form { margin-inline: -16px; padding: 20px 16px; border-radius: 0; }
   .task-market { padding-top: 16px; }
+  .task-market .ui-page-hero { height: auto; min-height: 0; padding: 18px 16px; }
+  .task-market .page-hero-copy > p { min-height: 0; max-width: 100%; }
+  .task-market .page-hero-art { opacity: .18; }
+  .task-market .page-hero-stats { margin-block: 16px; }
+  .task-market .page-hero-stats article { padding: 8px 7px; }
+  .task-market .page-hero-actions { max-width: 100%; margin-top: 0; }
   .view-switcher-bar { min-height: 44px; margin-bottom: 8px; }
   .view-switcher { width: 100%; }
   .view-switcher button { min-width: 0; flex: 1 1 50%; padding-inline: 8px; }
