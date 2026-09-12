@@ -1240,10 +1240,10 @@
 .task-filters input { width: 100%; min-width: 0; height: 100%; border: 0; outline: 0; background: transparent; color: var(--text); font-size: 12px; }
 .task-filters input::placeholder { color: var(--text-tertiary); }
 .task-filters .task-filter-control { height: var(--task-filter-control-height); justify-content: center; cursor: pointer; padding: 0; border: 0; background: transparent; }
-.task-filters .task-filter-control .ui-select__trigger { height: 100%; }
+.task-filters .task-filter-control .ui-select__trigger { height: var(--task-filter-control-height); min-height: var(--task-filter-control-height); }
 .task-filters .task-filter-control:hover { border-color: transparent; background: transparent; }
 .task-filters .task-filter-control:focus-within { border-color: transparent; box-shadow: none; }
-.task-filter-submit { --ui-height: var(--task-filter-control-height); height: var(--task-filter-control-height); }
+.task-filter-submit { --ui-height: var(--task-filter-control-height); height: var(--task-filter-control-height); min-height: var(--task-filter-control-height); }
 .task-browser-layout { display: grid; grid-template-columns: 216px minmax(0, 1fr); gap: 18px; align-items: start; }
 .task-category-panel { position: sticky; top: 20px; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-surface); background: var(--surface); }
 .task-category-panel > h2 { margin: 0; padding: 16px 16px 10px; font-size: 13px; font-weight: 650; }
