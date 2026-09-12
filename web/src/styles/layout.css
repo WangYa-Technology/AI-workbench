@@ -1224,9 +1224,7 @@
 .community-comment-field .command-button:hover { border-color: var(--text-secondary); background: var(--text-secondary); color: var(--canvas); }
 
 .task-market { padding-bottom: 24px; }
-.task-market .page-hero-header { min-height: 216px; border-radius: 12px; }
-.task-market .ui-page-hero { height: 216px; min-height: 216px; padding: 16px 24px 14px; }
-.task-market .page-hero-art { width: min(34%, 360px); opacity: .48; }
+.task-market .page-hero-header { border-radius: var(--radius-workspace); }
 .task-filters { --task-filter-control-height: var(--control-height-toolbar); min-height: 62px; display: grid; grid-template-columns: minmax(220px, 1fr) 142px 132px 142px 92px; gap: 8px; align-items: center; margin-bottom: 16px; padding: 8px; border: 1px solid var(--border); border-radius: var(--radius-surface); background: var(--surface-muted); }
 .task-market .task-filters { border-radius: 10px; background: color-mix(in srgb, var(--surface-muted) 72%, var(--surface)); }
 .task-market .controls-with-switcher { border-color: color-mix(in srgb, var(--accent) 16%, var(--border)); }
