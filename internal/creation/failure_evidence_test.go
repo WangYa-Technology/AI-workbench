@@ -3,6 +3,7 @@ package creation_test
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -36,6 +37,8 @@ func TestFailureEvidenceCommitFailureAndConcurrentReplay(t *testing.T) {
 	}
 	if err := service.HandleJob(ctx, job); err == nil {
 		t.Fatal("commit fault was not returned")
+	} else if !strings.Contains(err.Error(), "injected commit failure") {
+		t.Fatalf("unexpected failure before deferred commit: %v", err)
 	}
 	assertCounts := func(want int) {
 		t.Helper()
