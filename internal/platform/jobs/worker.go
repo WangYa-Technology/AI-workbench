@@ -52,6 +52,16 @@ func (w *Worker) Run(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
+			waitDone := make(chan struct{})
+			go func() {
+				running.Wait()
+				close(waitDone)
+			}()
+			select {
+			case <-waitDone:
+			case <-time.After(w.lease):
+				w.logger.Warn("worker shutdown timed out", "running_jobs", w.concurrency)
+			}
 			return ctx.Err()
 		case <-ticker.C:
 			select {
