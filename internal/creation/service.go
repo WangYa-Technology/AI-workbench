@@ -862,7 +862,7 @@ func (s *Service) persistFailureEvidence(ctx context.Context, generationID uuid.
 	var ownerID uuid.UUID
 	var status string
 	var conversationID *uuid.UUID
-	if err := tx.QueryRow(ctx, `SELECT owner_id,status,conversation_id FROM generations WHERE id=$1`, generationID).Scan(&ownerID, &status, &conversationID); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT owner_id,status,conversation_id FROM generations WHERE id=$1 FOR UPDATE`, generationID).Scan(&ownerID, &status, &conversationID); err != nil {
 		return err
 	}
 	if status != "failed" {
