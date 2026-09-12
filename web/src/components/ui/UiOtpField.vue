@@ -12,4 +12,8 @@ function onKeydown(event: globalThis.KeyboardEvent, index: number) { if (event.k
 function onPaste(event: globalThis.ClipboardEvent) { event.preventDefault(); const raw = event.clipboardData?.getData('text') ?? ''; const value = (props.type === 'numeric' ? raw.replace(/\D/g, '') : raw).slice(0, props.length); chars.value = Array.from({ length: props.length }, (_, index) => value[index] ?? ''); commit(); focus(Math.min(value.length, props.length - 1)) }
 </script>
 
-<template><div ref="root" class="ui-otp-field" role="group" :aria-label="label" @paste="onPaste"><input v-for="(_, index) in chars" :key="index" :value="chars[index]" :inputmode="type === 'numeric' ? 'numeric' : 'text'" maxlength="1" autocomplete="one-time-code" :disabled="disabled" :aria-label="`${label} ${index + 1}`" @input="onInput($event, index)" @keydown="onKeydown($event, index)" /></div></template>
+<template>
+  <div ref="root" class="ui-otp-field" role="group" :aria-label="label" @paste="onPaste">
+    <input v-for="(_, index) in chars" :key="index" :value="chars[index]" :inputmode="type === 'numeric' ? 'numeric' : 'text'" maxlength="1" autocomplete="one-time-code" :disabled="disabled" :aria-label="`${label} ${index + 1}`" @input="onInput($event, index)" @keydown="onKeydown($event, index)" />
+  </div>
+</template>

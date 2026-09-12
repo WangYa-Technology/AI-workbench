@@ -11,4 +11,28 @@ watch(() => props.open, value => { globalThis.document.body.classList.toggle('ui
 onBeforeUnmount(() => globalThis.document.body.classList.remove('ui-dialog-open'))
 </script>
 
-<template><Teleport to="body"><Transition name="ui-dialog"><div v-if="open" class="ui-dialog-backdrop" @keydown="keydown"><section ref="dialog" class="ui-alert-dialog" role="alertdialog" aria-modal="true" :aria-labelledby="titleId"><header><h2 :id="titleId">{{ title }}</h2><p v-if="description">{{ description }}</p></header><div v-if="$slots.default" class="ui-alert-dialog__body"><slot></slot></div><footer><UiButton variant="secondary" :disabled="busy" @click="close(true)">{{ cancelLabel }}</UiButton><UiButton :variant="destructive ? 'destructive' : 'primary'" :loading="busy" @click="emit('confirm')">{{ confirmLabel }}</UiButton></footer></section></div></Transition></Teleport></template>
+<template>
+  <Teleport to="body">
+    <Transition name="ui-dialog">
+      <div v-if="open" class="ui-dialog-backdrop" @keydown="keydown">
+        <section ref="dialog" class="ui-alert-dialog" role="alertdialog" aria-modal="true" :aria-labelledby="titleId">
+          <header>
+            <h2 :id="titleId">
+              {{ title }}
+            </h2><p v-if="description">
+              {{ description }}
+            </p>
+          </header><div v-if="$slots.default" class="ui-alert-dialog__body">
+            <slot></slot>
+          </div><footer>
+            <UiButton variant="secondary" :disabled="busy" @click="close(true)">
+              {{ cancelLabel }}
+            </UiButton><UiButton :variant="destructive ? 'destructive' : 'primary'" :loading="busy" @click="emit('confirm')">
+              {{ confirmLabel }}
+            </UiButton>
+          </footer>
+        </section>
+      </div>
+    </Transition>
+  </Teleport>
+</template>

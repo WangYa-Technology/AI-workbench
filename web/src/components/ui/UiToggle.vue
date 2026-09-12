@@ -3,4 +3,8 @@ withDefaults(defineProps<{ modelValue?: boolean; disabled?: boolean; label?: str
 const emit = defineEmits<{ 'update:modelValue': [value: boolean] }>()
 </script>
 
-<template><button class="ui-toggle" type="button" :data-variant="variant" :data-size="size" :aria-pressed="modelValue" :aria-label="label || undefined" :disabled="disabled" @click="emit('update:modelValue', !modelValue)"><slot></slot></button></template>
+<template>
+  <button class="ui-toggle" type="button" :data-variant="variant" :data-size="size" :aria-pressed="modelValue" :aria-label="label || undefined" :disabled="disabled" @click="emit('update:modelValue', !modelValue)">
+    <slot></slot>
+  </button>
+</template>

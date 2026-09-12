@@ -385,7 +385,9 @@ onMounted(async () => {
     <header class="creation-header">
       <div class="creation-heading">
         <span class="creation-mark"><Sparkles :size="16" /></span>
-        <h1 class="creation-title">{{ t('create.studio.unifiedTitle') }}</h1>
+        <h1 class="creation-title">
+          {{ t('create.studio.unifiedTitle') }}
+        </h1>
         <span class="creation-heading-divider" aria-hidden="true">/</span>
         <span class="creation-current-mode"><component :is="modeIcon" :size="14" />{{ modeLabel }}</span>
       </div>
@@ -541,13 +543,19 @@ onMounted(async () => {
         <section v-if="modeMenuOpen" ref="modeMenu" class="creation-popover creation-tools-menu t-dropdown is-open" data-origin="bottom-left" role="menu" :aria-label="t('create.studio.chooseCreationType')">
           <div class="creation-menu-group">
             <UiButton class="creation-menu-item" variant="ghost" content-wrapper role="menuitem" @click="openAssetPicker('references')">
-              <template #start><FileText :size="18" /></template><strong>{{ t('create.studio.menuItems.file') }}</strong><small>{{ t('create.studio.referenceSummary') }}</small>
+              <template #start>
+                <FileText :size="18" />
+              </template><strong>{{ t('create.studio.menuItems.file') }}</strong><small>{{ t('create.studio.referenceSummary') }}</small>
             </UiButton>
             <UiButton class="creation-menu-item" variant="ghost" content-wrapper role="menuitem" @click="openAssetPicker('references')">
-              <template #start><Cloud :size="18" /></template><strong>{{ t('create.studio.menuItems.library') }}</strong><small>{{ t('create.studio.menuItems.referenceWindow') }}</small>
+              <template #start>
+                <Cloud :size="18" />
+              </template><strong>{{ t('create.studio.menuItems.library') }}</strong><small>{{ t('create.studio.menuItems.referenceWindow') }}</small>
             </UiButton>
             <UiButton class="creation-menu-item" variant="ghost" content-wrapper role="menuitem" @click="openAssetPicker('references')">
-              <template #start><Images :size="18" /></template><strong>{{ t('create.studio.menuItems.album') }}</strong><small>{{ t('create.studio.menuItems.reference') }}</small>
+              <template #start>
+                <Images :size="18" />
+              </template><strong>{{ t('create.studio.menuItems.album') }}</strong><small>{{ t('create.studio.menuItems.reference') }}</small>
             </UiButton>
           </div>
           <div class="creation-menu-divider"></div>
@@ -556,11 +564,17 @@ onMounted(async () => {
           </div>
           <div class="creation-menu-group">
             <UiButton v-for="item in modes" :key="item.id" class="creation-menu-item generation" variant="ghost" content-wrapper role="menuitem" :class="{ selected: activeMode === item.id, unavailable: !modeAvailable(item.id) }" :disabled="!modeAvailable(item.id)" :aria-disabled="!modeAvailable(item.id)" :title="!modeAvailable(item.id) ? t('create.studio.noModelAvailable') : undefined" @click="selectMode(item.id)">
-              <template #start><span class="creation-menu-icon"><component :is="item.icon" :size="18" /></span></template><strong>{{ item.menuLabel }}</strong><small>{{ t(`create.modeMeta.${item.id}.summary`) }}</small><template #end><Check v-if="activeMode === item.id" class="creation-menu-check" :size="16" /></template>
+              <template #start>
+                <span class="creation-menu-icon"><component :is="item.icon" :size="18" /></span>
+              </template><strong>{{ item.menuLabel }}</strong><small>{{ t(`create.modeMeta.${item.id}.summary`) }}</small><template #end>
+                <Check v-if="activeMode === item.id" class="creation-menu-check" :size="16" />
+              </template>
             </UiButton>
           </div>
           <UiButton class="creation-menu-item" variant="ghost" content-wrapper role="menuitem" @click="router.push('/market/demands')">
-            <template #start><FolderOpen :size="18" /></template><strong>{{ t('create.studio.menuItems.taskContext') }}</strong><small>{{ t('create.studio.menuItems.referenceWindow') }}</small>
+            <template #start>
+              <FolderOpen :size="18" />
+            </template><strong>{{ t('create.studio.menuItems.taskContext') }}</strong><small>{{ t('create.studio.menuItems.referenceWindow') }}</small>
           </UiButton>
         </section>
       </Transition>

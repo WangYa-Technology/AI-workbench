@@ -14,4 +14,20 @@ onMounted(() => globalThis.document.addEventListener('pointerdown', outside))
 onBeforeUnmount(() => globalThis.document.removeEventListener('pointerdown', outside))
 </script>
 
-<template><div ref="root" class="ui-menubar" role="menubar" :data-orientation="orientation" :aria-label="label"><div v-for="(menu, index) in menus" :key="menu.id" class="ui-menubar__menu"><button class="ui-menubar__trigger" type="button" role="menuitem" :data-id="menu.id" :aria-expanded="open === menu.id" :disabled="menu.disabled" @click="toggle(menu.id)" @keydown="onTriggerKeydown($event, index)">{{ menu.label }}</button><Transition name="ui-dropdown"><div v-if="open === menu.id" class="ui-menubar__content" role="menu"><template v-for="item in menu.items" :key="item.id"><div v-if="item.separator" class="ui-menu-separator" role="separator"></div><button v-else type="button" role="menuitem" :disabled="item.disabled" @click="choose(menu.id, item)"><span>{{ item.label }}</span><kbd v-if="item.shortcut">{{ item.shortcut }}</kbd></button></template></div></Transition></div></div></template>
+<template>
+  <div ref="root" class="ui-menubar" role="menubar" :data-orientation="orientation" :aria-label="label">
+    <div v-for="(menu, index) in menus" :key="menu.id" class="ui-menubar__menu">
+      <button class="ui-menubar__trigger" type="button" role="menuitem" :data-id="menu.id" :aria-expanded="open === menu.id" :disabled="menu.disabled" @click="toggle(menu.id)" @keydown="onTriggerKeydown($event, index)">
+        {{ menu.label }}
+      </button><Transition name="ui-dropdown">
+        <div v-if="open === menu.id" class="ui-menubar__content" role="menu">
+          <template v-for="item in menu.items" :key="item.id">
+            <div v-if="item.separator" class="ui-menu-separator" role="separator"></div><button v-else type="button" role="menuitem" :disabled="item.disabled" @click="choose(menu.id, item)">
+              <span>{{ item.label }}</span><kbd v-if="item.shortcut">{{ item.shortcut }}</kbd>
+            </button>
+          </template>
+        </div>
+      </Transition>
+    </div>
+  </div>
+</template>

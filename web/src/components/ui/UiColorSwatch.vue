@@ -3,4 +3,8 @@ withDefaults(defineProps<{ color: string; label?: string; selected?: boolean; di
 const emit = defineEmits<{ select: [color: string] }>()
 </script>
 
-<template><button class="ui-color-swatch" type="button" :data-size="size" :style="{ '--ui-swatch': color }" :aria-label="label || color" :aria-pressed="selected" :disabled="disabled" @click="emit('select', color)"><span aria-hidden="true"></span></button></template>
+<template>
+  <button class="ui-color-swatch" type="button" :data-size="size" :style="{ '--ui-swatch': color }" :aria-label="label || color" :aria-pressed="selected" :disabled="disabled" @click="emit('select', color)">
+    <span aria-hidden="true"></span>
+  </button>
+</template>

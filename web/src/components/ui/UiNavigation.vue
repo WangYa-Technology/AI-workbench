@@ -5,4 +5,8 @@ const emit = defineEmits<{ 'update:modelValue': [value: string]; navigate: [item
 function activate(event: globalThis.MouseEvent, item: NavigationItem) { if (item.disabled) { event.preventDefault(); return } emit('update:modelValue', item.value); emit('navigate', item) }
 </script>
 
-<template><nav class="ui-navigation" :data-orientation="orientation" :data-variant="variant" :aria-label="label"><a v-for="item in items" :key="item.value" :href="item.href || '#'" :aria-current="item.value === modelValue ? 'page' : undefined" :aria-disabled="item.disabled || undefined" @click="activate($event, item)">{{ item.label }}</a></nav></template>
+<template>
+  <nav class="ui-navigation" :data-orientation="orientation" :data-variant="variant" :aria-label="label">
+    <a v-for="item in items" :key="item.value" :href="item.href || '#'" :aria-current="item.value === modelValue ? 'page' : undefined" :aria-disabled="item.disabled || undefined" @click="activate($event, item)">{{ item.label }}</a>
+  </nav>
+</template>

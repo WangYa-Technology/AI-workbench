@@ -4,4 +4,10 @@ const props = withDefaults(defineProps<{ color?: string; size?: number; intensit
 const style = computed(() => ({ '--ui-glow-color': props.color, '--ui-glow-size': `${props.size}px`, '--ui-glow-opacity': String(props.intensity) } as CSSProperties))
 </script>
 
-<template><div class="ui-gradient-glow" :style="style"><span class="ui-gradient-glow__effect" aria-hidden="true"></span><div class="ui-gradient-glow__content"><slot></slot></div></div></template>
+<template>
+  <div class="ui-gradient-glow" :style="style">
+    <span class="ui-gradient-glow__effect" aria-hidden="true"></span><div class="ui-gradient-glow__content">
+      <slot></slot>
+    </div>
+  </div>
+</template>

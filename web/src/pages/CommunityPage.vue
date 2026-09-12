@@ -226,16 +226,24 @@ onMounted(async () => {
     >
       <template #actions>
         <UiButton v-if="session.user" class="command-button secondary" variant="secondary" :class="{ active: mineOnly }" :aria-pressed="mineOnly" @click="selectMyPosts">
-          <template #start><MessageSquareText :size="17" /></template>{{ t('community.myPosts') }}
+          <template #start>
+            <MessageSquareText :size="17" />
+          </template>{{ t('community.myPosts') }}
         </UiButton>
         <UiButton v-if="session.user" class="command-button primary" variant="primary" @click="openCreatePost">
-          <template #start><Plus :size="17" /></template>{{ t('community.publishPost') }}
+          <template #start>
+            <Plus :size="17" />
+          </template>{{ t('community.publishPost') }}
         </UiButton>
         <UiButton v-if="!session.user" as="RouterLink" class="command-button secondary" variant="secondary" :to="{ path: '/auth', query: { auth: 'login', returnTo: route.fullPath } }">
-          <template #start><LogIn :size="17" /></template>{{ t('account.signIn') }}
+          <template #start>
+            <LogIn :size="17" />
+          </template>{{ t('account.signIn') }}
         </UiButton>
         <UiButton v-if="!session.user" as="RouterLink" class="command-button primary" variant="primary" :to="{ path: '/auth', query: { auth: 'register', returnTo: route.fullPath } }">
-          <template #start><UserPlus :size="17" /></template>{{ t('account.createAccount') }}
+          <template #start>
+            <UserPlus :size="17" />
+          </template>{{ t('account.createAccount') }}
         </UiButton>
       </template>
     </PageHero>

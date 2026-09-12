@@ -4,4 +4,10 @@ const emit = defineEmits<{ submit: [event: globalThis.SubmitEvent]; invalid: [ev
 function submit(event: globalThis.SubmitEvent) { const form = event.currentTarget as globalThis.HTMLFormElement; if (!form.checkValidity()) { emit('invalid', event); return } emit('submit', event) }
 </script>
 
-<template><form class="ui-form" :novalidate="novalidate" @submit.prevent="submit"><fieldset :disabled="disabled"><slot></slot></fieldset></form></template>
+<template>
+  <form class="ui-form" :novalidate="novalidate" @submit.prevent="submit">
+    <fieldset :disabled="disabled">
+      <slot></slot>
+    </fieldset>
+  </form>
+</template>

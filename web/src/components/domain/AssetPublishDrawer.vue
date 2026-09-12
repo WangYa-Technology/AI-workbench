@@ -253,7 +253,9 @@ watch(() => [props.open, props.assetId] as const, ([open]) => {
             <legend>{{ t('publish.draftSection') }}</legend>
             <label for="asset-publish-draft">{{ t('publish.savedDrafts') }}</label>
             <UiSelect id="asset-publish-draft" v-model="draftId" @change="selectDraft">
-              <option value="">{{ t('publish.newDraft') }}</option>
+              <option value="">
+                {{ t('publish.newDraft') }}
+              </option>
               <option v-for="draft in assetDrafts" :key="draft.id" :value="draft.id">
                 {{ draft.title || draft.assetTitle }} · v{{ draft.version }}
               </option>
@@ -263,7 +265,9 @@ watch(() => [props.open, props.assetId] as const, ([open]) => {
                 {{ t('actions.loadMore') }}
               </UiButton>
               <UiButton v-if="activeDraft" size="sm" variant="ghost" :disabled="discarding" @click="discardDraft">
-                <template #start><Trash2 :size="15" /></template>{{ t('publish.discardDraft') }}
+                <template #start>
+                  <Trash2 :size="15" />
+                </template>{{ t('publish.discardDraft') }}
               </UiButton>
             </div>
           </fieldset>
@@ -284,25 +288,39 @@ watch(() => [props.open, props.assetId] as const, ([open]) => {
             <UiTextarea id="asset-publish-prompt" v-model="prompt" rows="4" maxlength="2000" />
             <label for="asset-publish-visibility">{{ t('publish.visibilityLabel') }}</label>
             <UiSelect id="asset-publish-visibility" v-model="promptVisibility">
-              <option value="public">{{ t('publish.visibility.public') }}</option>
-              <option value="partial">{{ t('publish.visibility.partial') }}</option>
-              <option value="private">{{ t('publish.visibility.private') }}</option>
+              <option value="public">
+                {{ t('publish.visibility.public') }}
+              </option>
+              <option value="partial">
+                {{ t('publish.visibility.partial') }}
+              </option>
+              <option value="private">
+                {{ t('publish.visibility.private') }}
+              </option>
             </UiSelect>
             <label for="asset-publish-disclosure">{{ t('publish.disclosureLabel') }}</label>
             <UiTextarea id="asset-publish-disclosure" v-model="disclosure" required minlength="10" rows="3" maxlength="500" />
           </fieldset>
 
-          <p v-if="error" class="form-error" role="alert">{{ error }}</p>
-          <p v-if="success" class="task-feedback success" role="status">{{ success }}</p>
+          <p v-if="error" class="form-error" role="alert">
+            {{ error }}
+          </p>
+          <p v-if="success" class="task-feedback success" role="status">
+            {{ success }}
+          </p>
         </template>
       </div>
 
       <footer class="asset-publish-drawer-footer">
         <UiButton variant="secondary" :disabled="loading || !canPublish" :loading="saving" @click="saveDraft">
-          <template #start><Save v-if="!saving" :size="16" /></template>{{ t('publish.saveDraft') }}
+          <template #start>
+            <Save v-if="!saving" :size="16" />
+          </template>{{ t('publish.saveDraft') }}
         </UiButton>
         <UiButton variant="primary" type="submit" :disabled="loading || saving || !canPublish" :loading="submitting">
-          <template #start><Send v-if="!submitting" :size="16" /></template>{{ submitting ? t('actions.publishing') : t('actions.publishWork') }}
+          <template #start>
+            <Send v-if="!submitting" :size="16" />
+          </template>{{ submitting ? t('actions.publishing') : t('actions.publishWork') }}
         </UiButton>
       </footer>
     </form>

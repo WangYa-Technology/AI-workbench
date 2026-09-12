@@ -16,4 +16,18 @@ onMounted(() => globalThis.document.addEventListener('pointerdown', close))
 onBeforeUnmount(() => globalThis.document.removeEventListener('pointerdown', close))
 </script>
 
-<template><div class="ui-context-menu" @contextmenu="show"><slot></slot><Teleport to="body"><Transition name="ui-dropdown"><div v-if="open" ref="menu" class="ui-context-menu__content" role="menu" :aria-label="label" tabindex="-1" :style="{ left: `${x}px`, top: `${y}px` }" @keydown="keydown"><template v-for="item in items" :key="item.id"><div v-if="item.separator" class="ui-menu-separator" role="separator"></div><button v-else type="button" role="menuitem" :data-danger="item.danger" :disabled="item.disabled" @click="select(item)"><span>{{ item.label }}</span><kbd v-if="item.shortcut">{{ item.shortcut }}</kbd></button></template></div></Transition></Teleport></div></template>
+<template>
+  <div class="ui-context-menu" @contextmenu="show">
+    <slot></slot><Teleport to="body">
+      <Transition name="ui-dropdown">
+        <div v-if="open" ref="menu" class="ui-context-menu__content" role="menu" :aria-label="label" tabindex="-1" :style="{ left: `${x}px`, top: `${y}px` }" @keydown="keydown">
+          <template v-for="item in items" :key="item.id">
+            <div v-if="item.separator" class="ui-menu-separator" role="separator"></div><button v-else type="button" role="menuitem" :data-danger="item.danger" :disabled="item.disabled" @click="select(item)">
+              <span>{{ item.label }}</span><kbd v-if="item.shortcut">{{ item.shortcut }}</kbd>
+            </button>
+          </template>
+        </div>
+      </Transition>
+    </Teleport>
+  </div>
+</template>

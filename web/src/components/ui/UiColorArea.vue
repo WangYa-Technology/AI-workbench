@@ -12,4 +12,8 @@ function pointer(event: globalThis.PointerEvent) { (event.currentTarget as globa
 function keydown(event: globalThis.KeyboardEvent) { const delta: Record<string, [number, number]> = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, 1], ArrowDown: [0, -1] }; const move = delta[event.key]; if (!move) return; event.preventDefault(); emit('update:modelValue', hslToHex({ h: activeHue.value, s: hsl.value.s + move[0], l: hsl.value.l + move[1] })) }
 </script>
 
-<template><div ref="area" class="ui-color-area" role="slider" tabindex="0" :aria-label="label" aria-valuemin="0" aria-valuemax="100" :aria-valuenow="hsl.s" :aria-disabled="disabled" :style="style" @pointerdown="pointer" @pointermove="($event.buttons ? pointer($event) : undefined)" @keydown="keydown"><span class="ui-color-area__thumb" aria-hidden="true"></span></div></template>
+<template>
+  <div ref="area" class="ui-color-area" role="slider" tabindex="0" :aria-label="label" aria-valuemin="0" aria-valuemax="100" :aria-valuenow="hsl.s" :aria-disabled="disabled" :style="style" @pointerdown="pointer" @pointermove="($event.buttons ? pointer($event) : undefined)" @keydown="keydown">
+    <span class="ui-color-area__thumb" aria-hidden="true"></span>
+  </div>
+</template>

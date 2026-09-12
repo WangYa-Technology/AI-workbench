@@ -22,4 +22,16 @@ onMounted(() => globalThis.document.addEventListener('pointerdown', outside))
 onBeforeUnmount(() => globalThis.document.removeEventListener('pointerdown', outside))
 </script>
 
-<template><div ref="root" class="ui-autocomplete"><Search :size="16" aria-hidden="true" /><input ref="input" class="ui-input" role="combobox" :value="query" :placeholder="placeholder" :disabled="disabled" autocomplete="off" :aria-expanded="open" :aria-controls="listboxId" :aria-activedescendant="open && filtered[active] ? `${listboxId}-${active}` : undefined" @focus="open = true" @input="onInput" @keydown="onKeydown" /><Transition name="ui-dropdown"><div v-if="open" :id="listboxId" class="ui-autocomplete__list" role="listbox"><button v-for="(option, index) in filtered" :id="`${listboxId}-${index}`" :key="option.value" type="button" role="option" :aria-selected="option.value === modelValue" :data-active="index === active" :disabled="option.disabled" @mousedown.prevent @click="choose(option)">{{ option.label }}</button><p v-if="!filtered.length">{{ noResultsText }}</p></div></Transition></div></template>
+<template>
+  <div ref="root" class="ui-autocomplete">
+    <Search :size="16" aria-hidden="true" /><input ref="input" class="ui-input" role="combobox" :value="query" :placeholder="placeholder" :disabled="disabled" autocomplete="off" :aria-expanded="open" :aria-controls="listboxId" :aria-activedescendant="open && filtered[active] ? `${listboxId}-${active}` : undefined" @focus="open = true" @input="onInput" @keydown="onKeydown" /><Transition name="ui-dropdown">
+      <div v-if="open" :id="listboxId" class="ui-autocomplete__list" role="listbox">
+        <button v-for="(option, index) in filtered" :id="`${listboxId}-${index}`" :key="option.value" type="button" role="option" :aria-selected="option.value === modelValue" :data-active="index === active" :disabled="option.disabled" @mousedown.prevent @click="choose(option)">
+          {{ option.label }}
+        </button><p v-if="!filtered.length">
+          {{ noResultsText }}
+        </p>
+      </div>
+    </Transition>
+  </div>
+</template>

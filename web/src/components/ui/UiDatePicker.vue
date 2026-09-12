@@ -16,4 +16,14 @@ onMounted(() => globalThis.document.addEventListener('pointerdown', outside))
 onBeforeUnmount(() => globalThis.document.removeEventListener('pointerdown', outside))
 </script>
 
-<template><div ref="root" class="ui-date-picker"><button class="ui-date-picker__trigger" type="button" :aria-expanded="isOpen" aria-haspopup="dialog" :disabled="disabled" @click="setOpen(!isOpen)"><CalendarDays :size="16" aria-hidden="true" /><span :data-placeholder="!modelValue">{{ display }}</span></button><Transition name="ui-dropdown"><div v-if="isOpen" class="ui-date-picker__popover"><UiCalendar :model-value="modelValue" :locale="locale" :min="min" :max="max" @update:model-value="select" /></div></Transition></div></template>
+<template>
+  <div ref="root" class="ui-date-picker">
+    <button class="ui-date-picker__trigger" type="button" :aria-expanded="isOpen" aria-haspopup="dialog" :disabled="disabled" @click="setOpen(!isOpen)">
+      <CalendarDays :size="16" aria-hidden="true" /><span :data-placeholder="!modelValue">{{ display }}</span>
+    </button><Transition name="ui-dropdown">
+      <div v-if="isOpen" class="ui-date-picker__popover">
+        <UiCalendar :model-value="modelValue" :locale="locale" :min="min" :max="max" @update:model-value="select" />
+      </div>
+    </Transition>
+  </div>
+</template>

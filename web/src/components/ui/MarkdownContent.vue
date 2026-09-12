@@ -30,6 +30,9 @@ const renderedHTML = computed(() => {
 </script>
 
 <template>
+  <!-- DOMPurify sanitizes rendered Markdown before insertion. -->
+  <!-- eslint-disable-next-line vue/no-v-html -->
   <span v-if="inline" v-bind="$attrs" class="markdown-content markdown-content--inline" v-html="renderedHTML"></span>
+  <!-- eslint-disable-next-line vue/no-v-html -->
   <div v-else v-bind="$attrs" class="markdown-content" v-html="renderedHTML"></div>
 </template>

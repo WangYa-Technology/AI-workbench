@@ -19,4 +19,40 @@ function toggle(row: T) { const next = new Set(selected.value); const value = ke
 function display(column: DataTableColumn<T>, row: T) { const value = row[column.key]; return column.format ? column.format(value, row) : String(value ?? '') }
 </script>
 
-<template><div class="ui-data-table"><div class="ui-table-wrap"><table class="ui-table"><caption v-if="caption">{{ caption }}</caption><thead><tr><th v-if="selectable" scope="col"><span class="sr-only">{{ selectLabel }}</span></th><th v-for="column in columns" :key="column.key" scope="col" :data-align="column.align"><button v-if="column.sortable" type="button" @click="sort(column)">{{ column.label }}<ArrowUp v-if="sortKey === column.key && sortDirection === 'asc'" :size="13" /><ArrowDown v-else-if="sortKey === column.key" :size="13" /><ChevronsUpDown v-else :size="13" /></button><template v-else>{{ column.label }}</template></th></tr></thead><tbody><tr v-for="row in visible" :key="String(key(row))" @click="emit('rowClick', row)"><td v-if="selectable"><input type="checkbox" :checked="selected.has(key(row))" :aria-label="selectRowLabel" @click.stop @change="toggle(row)" /></td><td v-for="column in columns" :key="column.key" :data-align="column.align"><slot :name="`cell-${column.key}`" :row="row" :value="row[column.key]">{{ display(column, row) }}</slot></td></tr><tr v-if="!visible.length"><td class="ui-data-table__empty" :colspan="columns.length + (selectable ? 1 : 0)">{{ emptyText }}</td></tr></tbody></table></div><UiPagination v-if="totalPages > 1" :page="page" :total-pages="totalPages" @update:page="page = $event" /></div></template>
+<template>
+  <div class="ui-data-table">
+    <div class="ui-table-wrap">
+      <table class="ui-table">
+        <caption v-if="caption">
+          {{ caption }}
+        </caption><thead>
+          <tr>
+            <th v-if="selectable" scope="col">
+              <span class="sr-only">{{ selectLabel }}</span>
+            </th><th v-for="column in columns" :key="column.key" scope="col" :data-align="column.align">
+              <button v-if="column.sortable" type="button" @click="sort(column)">
+                {{ column.label }}<ArrowUp v-if="sortKey === column.key && sortDirection === 'asc'" :size="13" /><ArrowDown v-else-if="sortKey === column.key" :size="13" /><ChevronsUpDown v-else :size="13" />
+              </button><template v-else>
+                {{ column.label }}
+              </template>
+            </th>
+          </tr>
+        </thead><tbody>
+          <tr v-for="row in visible" :key="String(key(row))" @click="emit('rowClick', row)">
+            <td v-if="selectable">
+              <input type="checkbox" :checked="selected.has(key(row))" :aria-label="selectRowLabel" @click.stop @change="toggle(row)" />
+            </td><td v-for="column in columns" :key="column.key" :data-align="column.align">
+              <slot :name="`cell-${column.key}`" :row="row" :value="row[column.key]">
+                {{ display(column, row) }}
+              </slot>
+            </td>
+          </tr><tr v-if="!visible.length">
+            <td class="ui-data-table__empty" :colspan="columns.length + (selectable ? 1 : 0)">
+              {{ emptyText }}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div><UiPagination v-if="totalPages > 1" :page="page" :total-pages="totalPages" @update:page="page = $event" />
+  </div>
+</template>

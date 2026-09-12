@@ -191,7 +191,9 @@ onMounted(() => void load())
     >
       <template #actions>
         <UiButton v-if="session.user" class="command-button primary" variant="primary" @click="startCreate">
-          <template #start><Plus :size="17" /></template>{{ t('support.newCase') }}
+          <template #start>
+            <Plus :size="17" />
+          </template>{{ t('support.newCase') }}
         </UiButton>
       </template>
     </PageHero>
@@ -217,7 +219,9 @@ onMounted(() => void load())
         <aside class="support-case-index">
           <div class="support-index-heading">
             <div><h2>{{ t('support.myCases') }}</h2><span>{{ t('support.caseCount', { count: cases.length }) }}</span></div>
-            <UiIconButton :label="t('support.newCase')" variant="ghost" size="sm" @click="startCreate()"><Plus :size="16" /></UiIconButton>
+            <UiIconButton :label="t('support.newCase')" variant="ghost" size="sm" @click="startCreate()">
+              <Plus :size="16" />
+            </UiIconButton>
           </div>
           <UiButton v-for="item in cases" :key="item.id" variant="ghost" type="button" :class="{ active: item.id === activeCase?.id }" @click="selectCase(item)">
             <span><strong>{{ item.subject }}</strong><small>{{ t(`support.categories.${item.category}`) }}</small></span>
@@ -270,7 +274,9 @@ onMounted(() => void load())
           </UiButton>
           <header class="support-case-header">
             <div><span>{{ t(`support.categories.${activeCase.category}`) }}</span><h2>{{ activeCase.subject }}</h2><p>{{ t('support.caseReference', { id: activeCase.id.slice(0, 8), version: activeCase.version }) }}</p></div>
-            <UiBadge :variant="statusVariant(activeCase.status)" dot>{{ t(`support.statuses.${activeCase.status}`) }}</UiBadge>
+            <UiBadge :variant="statusVariant(activeCase.status)" dot>
+              {{ t(`support.statuses.${activeCase.status}`) }}
+            </UiBadge>
           </header>
           <dl class="support-evidence">
             <div><dt>{{ t('support.opened') }}</dt><dd>{{ date(activeCase.createdAt) }}</dd></div>
@@ -322,7 +328,9 @@ onMounted(() => void load())
               <ArrowRight :size="16" />
             </UiButton>
           </div>
-          <div class="support-privacy-note"><ShieldCheck :size="18" /><span><strong>{{ t('support.privacyTitle') }}</strong><small>{{ t('support.privacySummary') }}</small></span></div>
+          <div class="support-privacy-note">
+            <ShieldCheck :size="18" /><span><strong>{{ t('support.privacyTitle') }}</strong><small>{{ t('support.privacySummary') }}</small></span>
+          </div>
         </section>
       </div>
     </template>

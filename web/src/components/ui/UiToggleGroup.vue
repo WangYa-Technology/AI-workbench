@@ -13,6 +13,8 @@ function selected(value: string) { return Array.isArray(props.modelValue) ? prop
 
 <template>
   <div class="ui-toggle-group" :data-attached="attached" :role="multiple ? 'group' : 'radiogroup'" :aria-label="label || undefined">
-    <button v-for="item in items" :key="item.value" class="ui-toggle" type="button" :role="multiple ? undefined : 'radio'" :aria-checked="multiple ? undefined : selected(item.value)" :aria-pressed="multiple ? selected(item.value) : undefined" :disabled="item.disabled" @click="select(item.value)">{{ item.label }}</button>
+    <button v-for="item in items" :key="item.value" class="ui-toggle" type="button" :role="multiple ? undefined : 'radio'" :aria-checked="multiple ? undefined : selected(item.value)" :aria-pressed="multiple ? selected(item.value) : undefined" :disabled="item.disabled" @click="select(item.value)">
+      {{ item.label }}
+    </button>
   </div>
 </template>

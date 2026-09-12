@@ -176,7 +176,9 @@ onMounted(async () => {
 
           <header class="auth-intro">
             <span class="status-label">{{ t('account.identityLabel') }}</span>
-            <h1 id="auth-visual-title">{{ t('account.authTitle') }}</h1>
+            <h1 id="auth-visual-title">
+              {{ t('account.authTitle') }}
+            </h1>
             <p>{{ t('account.authSummary') }}</p>
             <dl>
               <div><ShieldCheck :size="19" /><dt>{{ t('account.sessionProtection') }}</dt><dd>{{ t('account.sessionProtectionDetail') }}</dd></div>
@@ -193,68 +195,122 @@ onMounted(async () => {
         </header>
 
         <form v-if="authStep === 'email'" class="account-form" @submit.prevent="submitAuthEmail">
-          <p class="auth-form-summary">{{ t('account.unifiedAuthSummary') }}</p>
+          <p class="auth-form-summary">
+            {{ t('account.unifiedAuthSummary') }}
+          </p>
           <label>{{ t('account.email') }}<UiInput v-model="authEmail" type="email" autocomplete="email" required /></label>
-          <p v-if="error" class="form-error" role="alert">{{ error }}</p>
+          <p v-if="error" class="form-error" role="alert">
+            {{ error }}
+          </p>
           <UiButton class="command-button primary" variant="primary" type="submit" :loading="actionID === 'auth-email'">
-            <template #start><Mail v-if="actionID !== 'auth-email'" :size="17" /></template>{{ t('account.next') }}
+            <template #start>
+              <Mail v-if="actionID !== 'auth-email'" :size="17" />
+            </template>{{ t('account.next') }}
           </UiButton>
         </form>
 
         <form v-else-if="authStep === 'existing'" class="account-form" @submit.prevent="submitLogin">
           <label>{{ t('account.email') }}<UiInput v-model="loginForm.email" type="email" autocomplete="email" readonly /></label>
           <label>{{ t('account.password') }}<UiInput v-model="loginForm.password" type="password" autocomplete="current-password" required /></label>
-          <p v-if="error" class="form-error" role="alert">{{ error }}</p>
+          <p v-if="error" class="form-error" role="alert">
+            {{ error }}
+          </p>
           <UiButton class="command-button primary" variant="primary" type="submit" :loading="session.loading">
-            <template #start><Mail v-if="!session.loading" :size="17" /></template>{{ session.loading ? t('account.signingIn') : t('account.signIn') }}
+            <template #start>
+              <Mail v-if="!session.loading" :size="17" />
+            </template>{{ session.loading ? t('account.signingIn') : t('account.signIn') }}
           </UiButton>
-          <UiButton class="text-link" variant="ghost" size="sm" type="button" :loading="actionID === 'auth-code-login_code'" @click="sendAuthCode('login_code')">{{ t('account.useEmailCode') }}</UiButton>
-          <UiButton class="text-link" variant="ghost" size="sm" type="button" @click="authStep = 'reset'; resetRequestForm.email = authEmail; resetAuthError()">{{ t('account.forgotPassword') }}</UiButton>
-          <UiButton class="text-link" variant="ghost" size="sm" type="button" @click="authStep = 'email'; resetAuthError()">{{ t('account.useDifferentEmail') }}</UiButton>
+          <UiButton class="text-link" variant="ghost" size="sm" type="button" :loading="actionID === 'auth-code-login_code'" @click="sendAuthCode('login_code')">
+            {{ t('account.useEmailCode') }}
+          </UiButton>
+          <UiButton class="text-link" variant="ghost" size="sm" type="button" @click="authStep = 'reset'; resetRequestForm.email = authEmail; resetAuthError()">
+            {{ t('account.forgotPassword') }}
+          </UiButton>
+          <UiButton class="text-link" variant="ghost" size="sm" type="button" @click="authStep = 'email'; resetAuthError()">
+            {{ t('account.useDifferentEmail') }}
+          </UiButton>
         </form>
 
         <form v-else-if="authStep === 'existing-code'" class="account-form" @submit.prevent="submitLoginCode">
-          <p class="auth-form-summary">{{ t('account.codeSentSummary', { email: authEmail }) }}</p>
+          <p class="auth-form-summary">
+            {{ t('account.codeSentSummary', { email: authEmail }) }}
+          </p>
           <label>{{ t('account.verificationCode') }}<UiInput v-model="authCode" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" minlength="6" maxlength="6" required /></label>
-          <p v-if="error" class="form-error" role="alert">{{ error }}</p>
-          <p v-if="success" class="task-feedback success" role="status">{{ success }}</p>
+          <p v-if="error" class="form-error" role="alert">
+            {{ error }}
+          </p>
+          <p v-if="success" class="task-feedback success" role="status">
+            {{ success }}
+          </p>
           <UiButton class="command-button primary" variant="primary" type="submit" :loading="session.loading">
-            <template #start><MailCheck v-if="!session.loading" :size="17" /></template>{{ t('account.verifyAndSignIn') }}
+            <template #start>
+              <MailCheck v-if="!session.loading" :size="17" />
+            </template>{{ t('account.verifyAndSignIn') }}
           </UiButton>
-          <UiButton class="text-link" variant="ghost" size="sm" type="button" :loading="actionID === 'auth-code-login_code'" @click="sendAuthCode('login_code')">{{ t('account.resendCode') }}</UiButton>
-          <UiButton class="text-link" variant="ghost" size="sm" type="button" @click="authStep = 'existing'; resetAuthError()">{{ t('account.usePassword') }}</UiButton>
+          <UiButton class="text-link" variant="ghost" size="sm" type="button" :loading="actionID === 'auth-code-login_code'" @click="sendAuthCode('login_code')">
+            {{ t('account.resendCode') }}
+          </UiButton>
+          <UiButton class="text-link" variant="ghost" size="sm" type="button" @click="authStep = 'existing'; resetAuthError()">
+            {{ t('account.usePassword') }}
+          </UiButton>
         </form>
 
         <form v-else-if="authStep === 'registration'" class="account-form" @submit.prevent="submitRegistration">
-          <p class="auth-form-summary">{{ t('account.registrationCodeSummary', { email: registerForm.email }) }}</p>
+          <p class="auth-form-summary">
+            {{ t('account.registrationCodeSummary', { email: registerForm.email }) }}
+          </p>
           <label>{{ t('account.verificationCode') }}<UiInput v-model="authCode" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" minlength="6" maxlength="6" required /></label>
           <label>{{ t('account.handle') }}<UiInput v-model="registerForm.handle" pattern="[a-z0-9_]{3,30}" autocomplete="username" required /></label>
           <label>{{ t('account.password') }}<UiInput v-model="registerForm.password" type="password" autocomplete="new-password" minlength="10" maxlength="128" required /><small>{{ t('account.passwordHint') }}</small></label>
-          <p v-if="error" class="form-error" role="alert">{{ error }}</p>
+          <p v-if="error" class="form-error" role="alert">
+            {{ error }}
+          </p>
           <UiButton class="command-button primary" variant="primary" type="submit" :loading="session.loading">
-            <template #start><UserRound v-if="!session.loading" :size="17" /></template>{{ session.loading ? t('account.creating') : t('account.createAccount') }}
+            <template #start>
+              <UserRound v-if="!session.loading" :size="17" />
+            </template>{{ session.loading ? t('account.creating') : t('account.createAccount') }}
           </UiButton>
-          <UiButton class="text-link" variant="ghost" size="sm" type="button" :loading="actionID === 'auth-code-registration_code'" @click="sendAuthCode('registration_code')">{{ t('account.resendCode') }}</UiButton>
-          <UiButton class="text-link" variant="ghost" size="sm" type="button" @click="authStep = 'email'; authEmail = ''; authChallenge = null; resetAuthError()">{{ t('account.useDifferentEmail') }}</UiButton>
+          <UiButton class="text-link" variant="ghost" size="sm" type="button" :loading="actionID === 'auth-code-registration_code'" @click="sendAuthCode('registration_code')">
+            {{ t('account.resendCode') }}
+          </UiButton>
+          <UiButton class="text-link" variant="ghost" size="sm" type="button" @click="authStep = 'email'; authEmail = ''; authChallenge = null; resetAuthError()">
+            {{ t('account.useDifferentEmail') }}
+          </UiButton>
         </form>
 
         <form v-else class="account-form" @submit.prevent="requestReset">
-          <p class="auth-form-summary">{{ t('account.resetPasswordSummary') }}</p>
+          <p class="auth-form-summary">
+            {{ t('account.resetPasswordSummary') }}
+          </p>
           <label>{{ t('account.email') }}<UiInput v-model="resetRequestForm.email" type="email" autocomplete="email" required /></label>
-          <p v-if="success" class="task-feedback success" role="status">{{ success }}</p>
-          <p v-if="error" class="form-error" role="alert">{{ error }}</p>
+          <p v-if="success" class="task-feedback success" role="status">
+            {{ success }}
+          </p>
+          <p v-if="error" class="form-error" role="alert">
+            {{ error }}
+          </p>
           <UiButton class="command-button primary" variant="primary" type="submit" :loading="Boolean(actionID)">
-            <template #start><Send v-if="!actionID" :size="17" /></template>{{ t('account.sendResetLink') }}
+            <template #start>
+              <Send v-if="!actionID" :size="17" />
+            </template>{{ t('account.sendResetLink') }}
           </UiButton>
-          <UiButton class="text-link" variant="ghost" size="sm" type="button" @click="authStep = 'email'; resetAuthError()">{{ t('account.backToSignIn') }}</UiButton>
+          <UiButton class="text-link" variant="ghost" size="sm" type="button" @click="authStep = 'email'; resetAuthError()">
+            {{ t('account.backToSignIn') }}
+          </UiButton>
         </form>
 
         <section v-if="providers.length" class="oauth-boundary" aria-labelledby="oauth-heading">
-          <h2 id="oauth-heading">{{ t('account.otherMethods') }}</h2>
+          <h2 id="oauth-heading">
+            {{ t('account.otherMethods') }}
+          </h2>
           <UiButton v-for="provider in providers" :key="provider.provider" class="provider-row" variant="ghost" disabled :title="t('account.signInMethodsSummary')">
-            <template #start><Github v-if="provider.provider === 'github'" :size="19" /><Globe2 v-else :size="19" /></template>
+            <template #start>
+              <Github v-if="provider.provider === 'github'" :size="19" /><Globe2 v-else :size="19" />
+            </template>
             <span><strong>{{ provider.name }}</strong><small>{{ t('account.signInMethodsSummary') }}</small></span>
-            <template #end><span class="availability-label">{{ t('account.unavailable') }}</span></template>
+            <template #end>
+              <span class="availability-label">{{ t('account.unavailable') }}</span>
+            </template>
           </UiButton>
         </section>
 
@@ -263,10 +319,14 @@ onMounted(async () => {
           <p>{{ t('account.localDemoDetail') }}</p>
           <div>
             <UiButton class="command-button secondary" variant="secondary" :loading="actionID === 'demo-creator'" :disabled="Boolean(actionID)" @click="startDemo('creator')">
-              <template #start><UserRound v-if="actionID !== 'demo-creator'" :size="17" /></template>{{ t('account.demoCreator') }}
+              <template #start>
+                <UserRound v-if="actionID !== 'demo-creator'" :size="17" />
+              </template>{{ t('account.demoCreator') }}
             </UiButton>
             <UiButton class="command-button secondary" variant="secondary" :loading="actionID === 'demo-publisher'" :disabled="Boolean(actionID)" @click="startDemo('publisher')">
-              <template #start><UsersRound v-if="actionID !== 'demo-publisher'" :size="17" /></template>{{ t('account.demoPublisher') }}
+              <template #start>
+                <UsersRound v-if="actionID !== 'demo-publisher'" :size="17" />
+              </template>{{ t('account.demoPublisher') }}
             </UiButton>
           </div>
         </section>

@@ -7,4 +7,10 @@ const style = computed(() => ({ '--ui-pattern-size': `${props.cellSize || (props
 function move(event: globalThis.PointerEvent) { const rect = (event.currentTarget as globalThis.HTMLElement).getBoundingClientRect(); x.value = `${event.clientX - rect.left}px`; y.value = `${event.clientY - rect.top}px` }
 </script>
 
-<template><div class="ui-background-pattern" :data-variant="variant" :data-spotlight="spotlight" :data-persistent="persistent" :style="style" @pointermove="move"><span class="ui-background-pattern__texture" aria-hidden="true"></span><span v-if="spotlight" class="ui-background-pattern__spotlight" aria-hidden="true"></span><div class="ui-background-pattern__content"><slot></slot></div></div></template>
+<template>
+  <div class="ui-background-pattern" :data-variant="variant" :data-spotlight="spotlight" :data-persistent="persistent" :style="style" @pointermove="move">
+    <span class="ui-background-pattern__texture" aria-hidden="true"></span><span v-if="spotlight" class="ui-background-pattern__spotlight" aria-hidden="true"></span><div class="ui-background-pattern__content">
+      <slot></slot>
+    </div>
+  </div>
+</template>

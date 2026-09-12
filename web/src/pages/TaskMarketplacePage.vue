@@ -515,14 +515,30 @@ onBeforeUnmount(() => {
         <form class="task-filters" role="search" @submit.prevent="applyFilters">
           <label class="task-search"><span class="sr-only">{{ t('actions.search') }}</span><Search :size="17" /><UiInput v-model="search" type="search" :placeholder="t('tasks.searchPlaceholder')" /></label>
           <UiSelect v-model="deliverableType" class="task-filter-control" :aria-label="t('tasks.allTypes')" :align-item-with-trigger="false" @change="applyFilters">
-            <template #start><Filter :size="15" aria-hidden="true" /></template>
-            <option value="">{{ t('tasks.allTypes') }}</option><option v-for="item in types" :key="item" :value="item">{{ t(`tasks.types.${item}`) }}</option>
+            <template #start>
+              <Filter :size="15" aria-hidden="true" />
+            </template>
+            <option value="">
+              {{ t('tasks.allTypes') }}
+            </option><option v-for="item in types" :key="item" :value="item">
+              {{ t(`tasks.types.${item}`) }}
+            </option>
           </UiSelect>
           <UiSelect v-model="status" class="task-filter-control" :aria-label="t('tasks.allStatuses')" @change="applyFilters">
-            <option value="">{{ t('tasks.allStatuses') }}</option><option v-for="item in statuses" :key="item" :value="item">{{ t(`tasks.status.${item}`) }}</option>
+            <option value="">
+              {{ t('tasks.allStatuses') }}
+            </option><option v-for="item in statuses" :key="item" :value="item">
+              {{ t(`tasks.status.${item}`) }}
+            </option>
           </UiSelect>
           <UiSelect v-model="sort" class="task-filter-control" :aria-label="t('tasks.sortNewest')" @change="applyFilters">
-            <option value="newest">{{ t('tasks.sortNewest') }}</option><option value="deadline">{{ t('tasks.sortDeadline') }}</option><option value="budget_desc">{{ t('tasks.sortBudget') }}</option>
+            <option value="newest">
+              {{ t('tasks.sortNewest') }}
+            </option><option value="deadline">
+              {{ t('tasks.sortDeadline') }}
+            </option><option value="budget_desc">
+              {{ t('tasks.sortBudget') }}
+            </option>
           </UiSelect>
           <UiButton class="command-button primary task-filter-submit" variant="primary" type="submit">
             <template #start>

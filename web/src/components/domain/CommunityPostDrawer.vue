@@ -86,10 +86,14 @@ watch(() => props.open, (open) => {
             <small aria-hidden="true">{{ bodyLength }}/2000</small>
           </label>
           <UiTextarea id="community-post-body" v-model="body" required minlength="2" maxlength="2000" rows="12" :placeholder="t('community.postBodyPlaceholder')" />
-          <p class="community-post-field-hint">{{ t('community.postBodyHint') }}</p>
+          <p class="community-post-field-hint">
+            {{ t('community.postBodyHint') }}
+          </p>
         </fieldset>
 
-        <p v-if="error" class="form-error" role="alert">{{ error }}</p>
+        <p v-if="error" class="form-error" role="alert">
+          {{ error }}
+        </p>
       </div>
 
       <footer class="community-post-drawer-footer">
@@ -97,7 +101,9 @@ watch(() => props.open, (open) => {
           {{ t('actions.cancel') }}
         </UiButton>
         <UiButton variant="primary" type="submit" :disabled="!canSubmit" :loading="submitting">
-          <template #start><Send v-if="!submitting" :size="16" /></template>{{ submitting ? t('community.publishingPost') : t('community.publishPost') }}
+          <template #start>
+            <Send v-if="!submitting" :size="16" />
+          </template>{{ submitting ? t('community.publishingPost') : t('community.publishPost') }}
         </UiButton>
       </footer>
     </form>

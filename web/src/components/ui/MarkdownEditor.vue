@@ -69,8 +69,8 @@ function handleTabKeydown(event: globalThis.KeyboardEvent) {
     <div class="markdown-editor__header">
       <div class="markdown-editor__tabs" role="tablist" :aria-label="t('markdownEditor.modeLabel')" @keydown="handleTabKeydown">
         <button
-          ref="writeTab"
           :id="writeTabId"
+          ref="writeTab"
           type="button"
           role="tab"
           :aria-controls="panelId"
@@ -81,8 +81,8 @@ function handleTabKeydown(event: globalThis.KeyboardEvent) {
           {{ t('markdownEditor.write') }}
         </button>
         <button
-          ref="previewTab"
           :id="previewTabId"
+          ref="previewTab"
           type="button"
           role="tab"
           :aria-controls="panelId"
@@ -101,37 +101,57 @@ function handleTabKeydown(event: globalThis.KeyboardEvent) {
         :aria-label="t('markdownEditor.toolbarLabel')"
       >
         <UiTooltip :label="t('markdownEditor.heading')">
-          <md-header role="button" level="2" :aria-label="t('markdownEditor.heading')" :title="t('markdownEditor.heading')"><Heading2 :size="18" /></md-header>
+          <md-header role="button" level="2" :aria-label="t('markdownEditor.heading')" :title="t('markdownEditor.heading')">
+            <Heading2 :size="18" />
+          </md-header>
         </UiTooltip>
         <span class="markdown-editor__divider" aria-hidden="true"></span>
         <UiTooltip :label="t('markdownEditor.bold')">
-          <md-bold role="button" :aria-label="t('markdownEditor.bold')" :title="t('markdownEditor.bold')"><Bold :size="18" /></md-bold>
+          <md-bold role="button" :aria-label="t('markdownEditor.bold')" :title="t('markdownEditor.bold')">
+            <Bold :size="18" />
+          </md-bold>
         </UiTooltip>
         <UiTooltip :label="t('markdownEditor.italic')">
-          <md-italic role="button" :aria-label="t('markdownEditor.italic')" :title="t('markdownEditor.italic')"><Italic :size="18" /></md-italic>
+          <md-italic role="button" :aria-label="t('markdownEditor.italic')" :title="t('markdownEditor.italic')">
+            <Italic :size="18" />
+          </md-italic>
         </UiTooltip>
         <UiTooltip :label="t('markdownEditor.strikethrough')">
-          <md-strikethrough role="button" :aria-label="t('markdownEditor.strikethrough')" :title="t('markdownEditor.strikethrough')"><Strikethrough :size="18" /></md-strikethrough>
+          <md-strikethrough role="button" :aria-label="t('markdownEditor.strikethrough')" :title="t('markdownEditor.strikethrough')">
+            <Strikethrough :size="18" />
+          </md-strikethrough>
         </UiTooltip>
         <span class="markdown-editor__divider" aria-hidden="true"></span>
         <UiTooltip :label="t('markdownEditor.quote')">
-          <md-quote role="button" :aria-label="t('markdownEditor.quote')" :title="t('markdownEditor.quote')"><Quote :size="18" /></md-quote>
+          <md-quote role="button" :aria-label="t('markdownEditor.quote')" :title="t('markdownEditor.quote')">
+            <Quote :size="18" />
+          </md-quote>
         </UiTooltip>
         <UiTooltip :label="t('markdownEditor.code')">
-          <md-code role="button" :aria-label="t('markdownEditor.code')" :title="t('markdownEditor.code')"><Code2 :size="18" /></md-code>
+          <md-code role="button" :aria-label="t('markdownEditor.code')" :title="t('markdownEditor.code')">
+            <Code2 :size="18" />
+          </md-code>
         </UiTooltip>
         <UiTooltip :label="t('markdownEditor.link')">
-          <md-link role="button" :aria-label="t('markdownEditor.link')" :title="t('markdownEditor.link')"><Link :size="18" /></md-link>
+          <md-link role="button" :aria-label="t('markdownEditor.link')" :title="t('markdownEditor.link')">
+            <Link :size="18" />
+          </md-link>
         </UiTooltip>
         <span class="markdown-editor__divider" aria-hidden="true"></span>
         <UiTooltip :label="t('markdownEditor.unorderedList')">
-          <md-unordered-list role="button" :aria-label="t('markdownEditor.unorderedList')" :title="t('markdownEditor.unorderedList')"><List :size="18" /></md-unordered-list>
+          <md-unordered-list role="button" :aria-label="t('markdownEditor.unorderedList')" :title="t('markdownEditor.unorderedList')">
+            <List :size="18" />
+          </md-unordered-list>
         </UiTooltip>
         <UiTooltip :label="t('markdownEditor.orderedList')">
-          <md-ordered-list role="button" :aria-label="t('markdownEditor.orderedList')" :title="t('markdownEditor.orderedList')"><ListOrdered :size="18" /></md-ordered-list>
+          <md-ordered-list role="button" :aria-label="t('markdownEditor.orderedList')" :title="t('markdownEditor.orderedList')">
+            <ListOrdered :size="18" />
+          </md-ordered-list>
         </UiTooltip>
         <UiTooltip :label="t('markdownEditor.taskList')">
-          <md-task-list role="button" :aria-label="t('markdownEditor.taskList')" :title="t('markdownEditor.taskList')"><ListChecks :size="18" /></md-task-list>
+          <md-task-list role="button" :aria-label="t('markdownEditor.taskList')" :title="t('markdownEditor.taskList')">
+            <ListChecks :size="18" />
+          </md-task-list>
         </UiTooltip>
       </markdown-toolbar>
     </div>
@@ -151,7 +171,9 @@ function handleTabKeydown(event: globalThis.KeyboardEvent) {
       />
       <div v-else class="markdown-editor__preview">
         <MarkdownContent v-if="modelValue.trim()" :source="modelValue" />
-        <p v-else class="markdown-editor__empty">{{ t('markdownEditor.emptyPreview') }}</p>
+        <p v-else class="markdown-editor__empty">
+          {{ t('markdownEditor.emptyPreview') }}
+        </p>
       </div>
     </div>
 

@@ -39,8 +39,22 @@ function onDayKeydown(event: globalThis.KeyboardEvent, date: Date) {
 
 <template>
   <section ref="calendar" class="ui-calendar" :aria-label="label">
-    <header><button type="button" class="ui-icon-button" :aria-label="previousMonthLabel" @click="changeMonth(-1)"><ChevronLeft :size="16" /></button><strong aria-live="polite">{{ monthLabel }}</strong><button type="button" class="ui-icon-button" :aria-label="nextMonthLabel" @click="changeMonth(1)"><ChevronRight :size="16" /></button></header>
-    <div class="ui-calendar__weekdays" aria-hidden="true"><span v-for="day in weekdays" :key="day">{{ day }}</span></div>
-    <div class="ui-calendar__grid" role="grid"><div v-for="(week, weekIndex) in weeks" :key="weekIndex" role="row"><button v-for="item in week" :key="item.key" type="button" role="gridcell" :data-date="item.key" :data-outside="item.outside" :data-today="item.key === today" :aria-selected="item.key === modelValue" :disabled="item.disabled" :tabindex="item.key === modelValue || (!modelValue && item.key === today) ? 0 : -1" @click="selectDay(item.key, item.disabled)" @keydown="onDayKeydown($event, item.date)">{{ item.day }}</button></div></div>
+    <header>
+      <button type="button" class="ui-icon-button" :aria-label="previousMonthLabel" @click="changeMonth(-1)">
+        <ChevronLeft :size="16" />
+      </button><strong aria-live="polite">{{ monthLabel }}</strong><button type="button" class="ui-icon-button" :aria-label="nextMonthLabel" @click="changeMonth(1)">
+        <ChevronRight :size="16" />
+      </button>
+    </header>
+    <div class="ui-calendar__weekdays" aria-hidden="true">
+      <span v-for="day in weekdays" :key="day">{{ day }}</span>
+    </div>
+    <div class="ui-calendar__grid" role="grid">
+      <div v-for="(week, weekIndex) in weeks" :key="weekIndex" role="row">
+        <button v-for="item in week" :key="item.key" type="button" role="gridcell" :data-date="item.key" :data-outside="item.outside" :data-today="item.key === today" :aria-selected="item.key === modelValue" :disabled="item.disabled" :tabindex="item.key === modelValue || (!modelValue && item.key === today) ? 0 : -1" @click="selectDay(item.key, item.disabled)" @keydown="onDayKeydown($event, item.date)">
+          {{ item.day }}
+        </button>
+      </div>
+    </div>
   </section>
 </template>

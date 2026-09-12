@@ -522,7 +522,9 @@ onMounted(async () => {
       >
         <template #actions>
           <UiButton class="command-button secondary" variant="secondary" @click="signOut">
-            <template #start><LogOut :size="17" /></template>{{ t('account.signOut') }}
+            <template #start>
+              <LogOut :size="17" />
+            </template>{{ t('account.signOut') }}
           </UiButton>
         </template>
         <template #visual>
@@ -559,7 +561,9 @@ onMounted(async () => {
               <header>
                 <div><h3>{{ t('account.identityOverview') }}</h3><p>{{ t('account.identityOverviewSummary') }}</p></div>
                 <UiButton variant="secondary" @click="openProfileEditor">
-                  <template #start><Pencil :size="16" /></template>{{ t('account.editProfile') }}
+                  <template #start>
+                    <Pencil :size="16" />
+                  </template>{{ t('account.editProfile') }}
                 </UiButton>
               </header>
               <dl class="account-profile-data">
@@ -584,335 +588,337 @@ onMounted(async () => {
                 <div><dt>{{ t('account.status') }}</dt><dd>{{ t(`account.statusNames.${session.user.status}`) }}</dd></div>
               </dl>
               <ul class="account-permissions" :aria-label="t('account.permissions')">
-                <li v-for="permission in session.user.permissions" :key="permission"><CheckCircle2 :size="14" />{{ permission }}</li>
+                <li v-for="permission in session.user.permissions" :key="permission">
+                  <CheckCircle2 :size="14" />{{ permission }}
+                </li>
               </ul>
             </section>
           </div>
 
-      <div v-else-if="section === 'security'" class="account-security-grid">
-        <section class="account-settings-card">
-          <header class="account-settings-card-header">
-            <span class="account-settings-card-icon"><MailCheck :size="20" /></span>
-            <div><h3>{{ t('account.emailVerification') }}</h3><p>{{ t('account.emailVerificationSummary') }}</p></div>
-          </header>
-          <div class="account-settings-card-body connection-list">
-            <article>
-              <span class="account-setting-row-icon"><MailCheck :size="19" /></span>
-              <div><strong>{{ session.user.email }}</strong><span>{{ session.user.emailVerified ? t('account.verified') : t('account.unverified') }}</span></div>
-              <span v-if="session.user.emailVerified" class="availability-label available">{{ t('account.verified') }}</span>
-              <UiButton v-else class="command-button secondary" variant="secondary" :loading="actionID === 'email-verification'" :disabled="Boolean(actionID)" @click="requestVerification">
-                <template #start>
-                  <Send v-if="actionID !== 'email-verification'" :size="16" />
-                </template>{{ t('account.sendVerification') }}
-              </UiButton>
-            </article>
-            <article v-for="item in emailActions" :key="item.id">
-              <span class="account-setting-row-icon"><Mail :size="19" /></span>
-              <div><strong>{{ t(`account.emailActionKinds.${item.kind}`) }}</strong><span>{{ item.emailHint }} · {{ t(`account.emailActionStatuses.${item.status}`) }}</span><small>{{ t('account.emailActionEvidence', { attempts: item.attemptCount, date: date(item.expiresAt) }) }}</small></div>
-            </article>
-            <div v-if="emailActionNextCursor" class="account-evidence-pagination">
-              <UiButton class="command-button secondary" variant="secondary" :loading="emailActionsLoadingMore" @click="loadMoreEmailActions">
-                {{ t('actions.loadMore') }}
-              </UiButton>
-            </div>
-          </div>
-        </section>
-
-        <section class="account-settings-card">
-          <header class="account-settings-card-header account-settings-card-header--action">
-            <span class="account-settings-card-icon"><Laptop2 :size="20" /></span>
-            <div><h3>{{ t('account.activeSessions') }}</h3><p>{{ t('account.activeSessionsSummary') }}</p></div>
-            <UiButton variant="secondary" size="sm" type="button" :loading="actionID === 'others'" @click="revokeOthers">
-              {{ t('account.signOutOthers') }}
-            </UiButton>
-          </header>
-          <div class="account-settings-card-body session-list">
-            <div v-if="loadingEvidence" class="inline-empty">
-              {{ t('account.loadingSessions') }}
-            </div>
-            <article v-for="item in sessions" v-else :key="item.id" class="session-row">
-              <span class="session-icon"><Smartphone v-if="/iOS|Android/.test(item.clientLabel)" :size="19" /><Laptop2 v-else :size="19" /></span>
-              <div><strong>{{ item.clientLabel }}</strong><span>{{ item.current ? t('account.currentSession') : t(`account.sessionStatus.${item.status}`) }}</span><small>{{ t('account.lastActive', { date: date(item.lastSeenAt) }) }}<template v-if="item.networkHint"> · {{ t('account.networkHint', { hint: item.networkHint }) }}</template></small></div>
-              <UiButton class="command-button secondary" variant="secondary" type="button" :loading="actionID === item.id" :disabled="item.status !== 'active'" @click="revoke(item)">
-                {{ item.current ? t('account.signOut') : t('account.revoke') }}
-              </UiButton>
-            </article>
-            <div v-if="sessionNextCursor" class="account-evidence-pagination">
-              <UiButton class="command-button secondary" variant="secondary" :loading="sessionsLoadingMore" @click="loadMoreSessions">
-                {{ t('actions.loadMore') }}
-              </UiButton>
-            </div>
-          </div>
-        </section>
-      </div>
-
-      <div v-else-if="section === 'connections'" class="settings-layout">
-        <aside><span class="settings-aside-title">{{ t('account.signInMethods') }}</span><p>{{ t('account.signInMethodsSummary') }}</p></aside>
-        <section class="settings-panel connection-list">
-          <article><Mail :size="19" /><div><strong>{{ t('account.emailPassword') }}</strong><span>{{ session.user.email }}</span></div><span class="availability-label available">{{ t('account.active') }}</span></article>
-          <article v-for="provider in providers" :key="provider.provider">
-            <Github v-if="provider.provider === 'github'" :size="19" /><Globe2 v-else :size="19" /><div><strong>{{ provider.name }}</strong><span>{{ t('account.signInMethodsSummary') }}</span></div><span class="availability-label">{{ t('account.unavailable') }}</span>
-          </article>
-        </section>
-        <aside><span class="settings-aside-title">{{ t('account.notifications') }}</span><p>{{ t('account.notificationsSummary') }}</p></aside>
-        <section class="settings-panel connection-list">
-          <RouterLink class="settings-command" to="/notifications?view=preferences">
-            <span><strong>{{ t('account.manageNotifications') }}</strong><small>{{ t('account.manageNotificationsSummary') }}</small></span><RefreshCw :size="17" />
-          </RouterLink>
-        </section>
-      </div>
-
-      <div v-else-if="section === 'payouts'" class="settings-layout payout-layout">
-        <aside><span class="settings-aside-title">{{ t('account.payouts') }}</span><p>{{ t('account.payoutsSummary') }}</p></aside>
-        <section class="settings-panel payout-panel">
-          <div v-if="payoutLoading" class="inline-empty">
-            {{ t('account.checkingSession') }}
-          </div>
-          <template v-else-if="payoutStatus">
-            <div class="payout-heading">
-              <div>
-                <span class="status-label">{{ t('account.payoutStatus') }}</span><strong>{{ t(`account.payoutStatuses.${payoutStatus.status}`) }}</strong>
+          <div v-else-if="section === 'security'" class="account-security-grid">
+            <section class="account-settings-card">
+              <header class="account-settings-card-header">
+                <span class="account-settings-card-icon"><MailCheck :size="20" /></span>
+                <div><h3>{{ t('account.emailVerification') }}</h3><p>{{ t('account.emailVerificationSummary') }}</p></div>
+              </header>
+              <div class="account-settings-card-body connection-list">
+                <article>
+                  <span class="account-setting-row-icon"><MailCheck :size="19" /></span>
+                  <div><strong>{{ session.user.email }}</strong><span>{{ session.user.emailVerified ? t('account.verified') : t('account.unverified') }}</span></div>
+                  <span v-if="session.user.emailVerified" class="availability-label available">{{ t('account.verified') }}</span>
+                  <UiButton v-else class="command-button secondary" variant="secondary" :loading="actionID === 'email-verification'" :disabled="Boolean(actionID)" @click="requestVerification">
+                    <template #start>
+                      <Send v-if="actionID !== 'email-verification'" :size="16" />
+                    </template>{{ t('account.sendVerification') }}
+                  </UiButton>
+                </article>
+                <article v-for="item in emailActions" :key="item.id">
+                  <span class="account-setting-row-icon"><Mail :size="19" /></span>
+                  <div><strong>{{ t(`account.emailActionKinds.${item.kind}`) }}</strong><span>{{ item.emailHint }} · {{ t(`account.emailActionStatuses.${item.status}`) }}</span><small>{{ t('account.emailActionEvidence', { attempts: item.attemptCount, date: date(item.expiresAt) }) }}</small></div>
+                </article>
+                <div v-if="emailActionNextCursor" class="account-evidence-pagination">
+                  <UiButton class="command-button secondary" variant="secondary" :loading="emailActionsLoadingMore" @click="loadMoreEmailActions">
+                    {{ t('actions.loadMore') }}
+                  </UiButton>
+                </div>
               </div>
-              <span class="availability-label" :class="{ available: payoutStatus.status === 'verified' }">{{ payoutStatus.providerAvailable ? (payoutStatus.liveMode ? t('account.payoutLiveMode') : t('account.payoutTestMode')) : t('account.unavailable') }}</span>
-            </div>
-            <dl class="payout-evidence">
-              <div><dt>{{ t('account.payoutProvider') }}</dt><dd>{{ payoutStatus.provider }}</dd></div>
-              <div><dt>{{ t('account.payoutCapabilities') }}</dt><dd>{{ t('account.payoutCapabilitiesValue', { charges: payoutStatus.chargesEnabled ? t('account.payoutCapabilityEnabled') : t('account.payoutCapabilityPending'), payouts: payoutStatus.payoutsEnabled ? t('account.payoutCapabilityEnabled') : t('account.payoutCapabilityPending') }) }}</dd></div>
-              <div v-if="payoutStatus.destinationId">
-                <dt>{{ t('account.payoutAccount') }}</dt><dd><code>{{ payoutStatus.destinationId }}</code></dd>
+            </section>
+
+            <section class="account-settings-card">
+              <header class="account-settings-card-header account-settings-card-header--action">
+                <span class="account-settings-card-icon"><Laptop2 :size="20" /></span>
+                <div><h3>{{ t('account.activeSessions') }}</h3><p>{{ t('account.activeSessionsSummary') }}</p></div>
+                <UiButton variant="secondary" size="sm" type="button" :loading="actionID === 'others'" @click="revokeOthers">
+                  {{ t('account.signOutOthers') }}
+                </UiButton>
+              </header>
+              <div class="account-settings-card-body session-list">
+                <div v-if="loadingEvidence" class="inline-empty">
+                  {{ t('account.loadingSessions') }}
+                </div>
+                <article v-for="item in sessions" v-else :key="item.id" class="session-row">
+                  <span class="session-icon"><Smartphone v-if="/iOS|Android/.test(item.clientLabel)" :size="19" /><Laptop2 v-else :size="19" /></span>
+                  <div><strong>{{ item.clientLabel }}</strong><span>{{ item.current ? t('account.currentSession') : t(`account.sessionStatus.${item.status}`) }}</span><small>{{ t('account.lastActive', { date: date(item.lastSeenAt) }) }}<template v-if="item.networkHint"> · {{ t('account.networkHint', { hint: item.networkHint }) }}</template></small></div>
+                  <UiButton class="command-button secondary" variant="secondary" type="button" :loading="actionID === item.id" :disabled="item.status !== 'active'" @click="revoke(item)">
+                    {{ item.current ? t('account.signOut') : t('account.revoke') }}
+                  </UiButton>
+                </article>
+                <div v-if="sessionNextCursor" class="account-evidence-pagination">
+                  <UiButton class="command-button secondary" variant="secondary" :loading="sessionsLoadingMore" @click="loadMoreSessions">
+                    {{ t('actions.loadMore') }}
+                  </UiButton>
+                </div>
               </div>
-            </dl>
-            <UiButton v-if="payoutStatus.canStartOnboarding" class="command-button primary" variant="primary" :loading="actionID === 'payout-onboarding'" @click="beginPayoutOnboarding">
-              <template #start>
-                <Landmark v-if="actionID !== 'payout-onboarding'" :size="17" />
-              </template>{{ payoutStatus.status === 'not_started' ? t('account.payoutStart') : t('account.payoutResume') }}
-            </UiButton>
-            <p v-if="!payoutStatus.providerAvailable" class="retention-note">
-              {{ t('account.payoutUnavailable') }}
-            </p>
-            <p class="retention-note">
-              {{ t('account.payoutHostedBoundary') }}
-            </p>
-          </template>
-        </section>
-      </div>
-
-      <div v-else-if="section === 'developer'" class="settings-layout developer-layout">
-        <aside><span class="settings-aside-title">{{ t('account.developerAccess') }}</span><p>{{ t('account.developerAccessSummary') }}</p></aside>
-        <section class="settings-panel developer-control-evidence">
-          <div v-if="!developerAccess" class="inline-empty">
-            {{ t('account.developerLoading') }}
+            </section>
           </div>
-          <template v-else>
-            <div><span>{{ t('account.status') }}</span><strong>{{ developerAccess.control.enabled ? t('account.active') : t('account.unavailable') }}</strong></div>
-            <div><span>{{ t('account.developerLimits') }}</span><strong>{{ t('account.developerLimitValue', { accounts: developerAccess.control.maxServiceAccounts, keys: developerAccess.control.maxActiveKeys, days: developerAccess.control.defaultTtlDays }) }}</strong></div>
-            <p v-if="!developerAccess.control.enabled" class="retention-note">
-              {{ t('account.developerDisabled') }}
-            </p>
-          </template>
-        </section>
 
-        <aside><span class="settings-aside-title">{{ t('account.serviceAccounts') }}</span><p>{{ t('account.serviceAccountsSummary') }}</p></aside>
-        <section class="settings-panel developer-accounts">
-          <form class="account-form developer-create" @submit.prevent="createDeveloperAccount">
-            <label>{{ t('account.serviceAccountName') }}<UiInput v-model="developerForm.accountName" minlength="3" maxlength="80" required /></label>
-            <UiButton class="command-button primary" variant="primary" type="submit" :loading="actionID === 'developer-account-create'" :disabled="!developerAccess?.control.enabled">
-              <template #start>
-                <Plus v-if="actionID !== 'developer-account-create'" :size="17" />
-              </template>{{ t('account.createServiceAccount') }}
-            </UiButton>
-          </form>
-          <p v-if="developerAccess && !developerAccess.accounts.length" class="inline-empty">
-            {{ t('account.noServiceAccounts') }}
-          </p>
-          <article v-for="account in developerAccess?.accounts || []" :key="account.id" class="developer-account-row">
-            <header>
-              <div><strong>{{ account.name }}</strong><span>{{ t(`account.developerStatuses.${account.status}`) }} · v{{ account.version }}</span></div><UiButton v-if="account.status === 'active'" class="command-button secondary" variant="secondary" :loading="actionID === `developer-account-${account.id}`" :disabled="!developerForm.confirmed" @click="revokeDeveloperAccount(account)">
-                <template #start>
-                  <Trash2 v-if="actionID !== `developer-account-${account.id}`" :size="16" />
-                </template>{{ t('account.revoke') }}
-              </UiButton>
-            </header>
-            <div class="developer-key-controls">
-              <label>{{ t('account.keyTtl') }}<UiInput v-model.number="developerForm.ttlDays" type="number" min="1" max="365" /></label>
-              <label>{{ t('account.ipAllowlist') }}<UiInput v-model="developerForm.ipAllowlist" :placeholder="t('account.ipAllowlistPlaceholder')" /></label>
-              <UiButton class="command-button secondary" variant="secondary" :loading="actionID === `developer-issue-${account.id}`" :disabled="account.status !== 'active'" @click="issueDeveloperKey(account)">
-                <template #start>
-                  <KeyRound v-if="actionID !== `developer-issue-${account.id}`" :size="16" />
-                </template>{{ t('account.issueKey') }}
-              </UiButton>
-            </div>
-            <div v-for="key in account.keys" :key="key.id" class="developer-key-row">
-              <div><strong>{{ t('account.keyDisplay', { prefix: key.publicPrefix, hint: key.displayHint }) }}</strong><span>{{ t(`account.developerStatuses.${key.status}`) }} · {{ t('account.keyUses', { count: key.usageCount }) }}</span><small>{{ t('account.keyExpires', { date: date(key.expiresAt) }) }}<template v-if="key.lastUsedAt"> · {{ t('account.keyLastUsed', { date: date(key.lastUsedAt) }) }}</template></small></div>
-              <div v-if="key.status === 'active'">
-                <UiButton class="command-button secondary" variant="secondary" :loading="actionID === `developer-rotate-${key.id}`" :disabled="!developerForm.confirmed" @click="rotateDeveloperKey(account, key)">
+          <div v-else-if="section === 'connections'" class="settings-layout">
+            <aside><span class="settings-aside-title">{{ t('account.signInMethods') }}</span><p>{{ t('account.signInMethodsSummary') }}</p></aside>
+            <section class="settings-panel connection-list">
+              <article><Mail :size="19" /><div><strong>{{ t('account.emailPassword') }}</strong><span>{{ session.user.email }}</span></div><span class="availability-label available">{{ t('account.active') }}</span></article>
+              <article v-for="provider in providers" :key="provider.provider">
+                <Github v-if="provider.provider === 'github'" :size="19" /><Globe2 v-else :size="19" /><div><strong>{{ provider.name }}</strong><span>{{ t('account.signInMethodsSummary') }}</span></div><span class="availability-label">{{ t('account.unavailable') }}</span>
+              </article>
+            </section>
+            <aside><span class="settings-aside-title">{{ t('account.notifications') }}</span><p>{{ t('account.notificationsSummary') }}</p></aside>
+            <section class="settings-panel connection-list">
+              <RouterLink class="settings-command" to="/notifications?view=preferences">
+                <span><strong>{{ t('account.manageNotifications') }}</strong><small>{{ t('account.manageNotificationsSummary') }}</small></span><RefreshCw :size="17" />
+              </RouterLink>
+            </section>
+          </div>
+
+          <div v-else-if="section === 'payouts'" class="settings-layout payout-layout">
+            <aside><span class="settings-aside-title">{{ t('account.payouts') }}</span><p>{{ t('account.payoutsSummary') }}</p></aside>
+            <section class="settings-panel payout-panel">
+              <div v-if="payoutLoading" class="inline-empty">
+                {{ t('account.checkingSession') }}
+              </div>
+              <template v-else-if="payoutStatus">
+                <div class="payout-heading">
+                  <div>
+                    <span class="status-label">{{ t('account.payoutStatus') }}</span><strong>{{ t(`account.payoutStatuses.${payoutStatus.status}`) }}</strong>
+                  </div>
+                  <span class="availability-label" :class="{ available: payoutStatus.status === 'verified' }">{{ payoutStatus.providerAvailable ? (payoutStatus.liveMode ? t('account.payoutLiveMode') : t('account.payoutTestMode')) : t('account.unavailable') }}</span>
+                </div>
+                <dl class="payout-evidence">
+                  <div><dt>{{ t('account.payoutProvider') }}</dt><dd>{{ payoutStatus.provider }}</dd></div>
+                  <div><dt>{{ t('account.payoutCapabilities') }}</dt><dd>{{ t('account.payoutCapabilitiesValue', { charges: payoutStatus.chargesEnabled ? t('account.payoutCapabilityEnabled') : t('account.payoutCapabilityPending'), payouts: payoutStatus.payoutsEnabled ? t('account.payoutCapabilityEnabled') : t('account.payoutCapabilityPending') }) }}</dd></div>
+                  <div v-if="payoutStatus.destinationId">
+                    <dt>{{ t('account.payoutAccount') }}</dt><dd><code>{{ payoutStatus.destinationId }}</code></dd>
+                  </div>
+                </dl>
+                <UiButton v-if="payoutStatus.canStartOnboarding" class="command-button primary" variant="primary" :loading="actionID === 'payout-onboarding'" @click="beginPayoutOnboarding">
                   <template #start>
-                    <RefreshCw v-if="actionID !== `developer-rotate-${key.id}`" :size="15" />
-                  </template>{{ t('account.rotateKey') }}
-                </UiButton><UiButton class="command-button secondary" variant="secondary" :loading="actionID === `developer-revoke-${key.id}`" :disabled="!developerForm.confirmed" @click="revokeDeveloperKey(account, key)">
+                    <Landmark v-if="actionID !== 'payout-onboarding'" :size="17" />
+                  </template>{{ payoutStatus.status === 'not_started' ? t('account.payoutStart') : t('account.payoutResume') }}
+                </UiButton>
+                <p v-if="!payoutStatus.providerAvailable" class="retention-note">
+                  {{ t('account.payoutUnavailable') }}
+                </p>
+                <p class="retention-note">
+                  {{ t('account.payoutHostedBoundary') }}
+                </p>
+              </template>
+            </section>
+          </div>
+
+          <div v-else-if="section === 'developer'" class="settings-layout developer-layout">
+            <aside><span class="settings-aside-title">{{ t('account.developerAccess') }}</span><p>{{ t('account.developerAccessSummary') }}</p></aside>
+            <section class="settings-panel developer-control-evidence">
+              <div v-if="!developerAccess" class="inline-empty">
+                {{ t('account.developerLoading') }}
+              </div>
+              <template v-else>
+                <div><span>{{ t('account.status') }}</span><strong>{{ developerAccess.control.enabled ? t('account.active') : t('account.unavailable') }}</strong></div>
+                <div><span>{{ t('account.developerLimits') }}</span><strong>{{ t('account.developerLimitValue', { accounts: developerAccess.control.maxServiceAccounts, keys: developerAccess.control.maxActiveKeys, days: developerAccess.control.defaultTtlDays }) }}</strong></div>
+                <p v-if="!developerAccess.control.enabled" class="retention-note">
+                  {{ t('account.developerDisabled') }}
+                </p>
+              </template>
+            </section>
+
+            <aside><span class="settings-aside-title">{{ t('account.serviceAccounts') }}</span><p>{{ t('account.serviceAccountsSummary') }}</p></aside>
+            <section class="settings-panel developer-accounts">
+              <form class="account-form developer-create" @submit.prevent="createDeveloperAccount">
+                <label>{{ t('account.serviceAccountName') }}<UiInput v-model="developerForm.accountName" minlength="3" maxlength="80" required /></label>
+                <UiButton class="command-button primary" variant="primary" type="submit" :loading="actionID === 'developer-account-create'" :disabled="!developerAccess?.control.enabled">
                   <template #start>
-                    <Trash2 v-if="actionID !== `developer-revoke-${key.id}`" :size="15" />
-                  </template>{{ t('account.revoke') }}
+                    <Plus v-if="actionID !== 'developer-account-create'" :size="17" />
+                  </template>{{ t('account.createServiceAccount') }}
+                </UiButton>
+              </form>
+              <p v-if="developerAccess && !developerAccess.accounts.length" class="inline-empty">
+                {{ t('account.noServiceAccounts') }}
+              </p>
+              <article v-for="account in developerAccess?.accounts || []" :key="account.id" class="developer-account-row">
+                <header>
+                  <div><strong>{{ account.name }}</strong><span>{{ t(`account.developerStatuses.${account.status}`) }} · v{{ account.version }}</span></div><UiButton v-if="account.status === 'active'" class="command-button secondary" variant="secondary" :loading="actionID === `developer-account-${account.id}`" :disabled="!developerForm.confirmed" @click="revokeDeveloperAccount(account)">
+                    <template #start>
+                      <Trash2 v-if="actionID !== `developer-account-${account.id}`" :size="16" />
+                    </template>{{ t('account.revoke') }}
+                  </UiButton>
+                </header>
+                <div class="developer-key-controls">
+                  <label>{{ t('account.keyTtl') }}<UiInput v-model.number="developerForm.ttlDays" type="number" min="1" max="365" /></label>
+                  <label>{{ t('account.ipAllowlist') }}<UiInput v-model="developerForm.ipAllowlist" :placeholder="t('account.ipAllowlistPlaceholder')" /></label>
+                  <UiButton class="command-button secondary" variant="secondary" :loading="actionID === `developer-issue-${account.id}`" :disabled="account.status !== 'active'" @click="issueDeveloperKey(account)">
+                    <template #start>
+                      <KeyRound v-if="actionID !== `developer-issue-${account.id}`" :size="16" />
+                    </template>{{ t('account.issueKey') }}
+                  </UiButton>
+                </div>
+                <div v-for="key in account.keys" :key="key.id" class="developer-key-row">
+                  <div><strong>{{ t('account.keyDisplay', { prefix: key.publicPrefix, hint: key.displayHint }) }}</strong><span>{{ t(`account.developerStatuses.${key.status}`) }} · {{ t('account.keyUses', { count: key.usageCount }) }}</span><small>{{ t('account.keyExpires', { date: date(key.expiresAt) }) }}<template v-if="key.lastUsedAt"> · {{ t('account.keyLastUsed', { date: date(key.lastUsedAt) }) }}</template></small></div>
+                  <div v-if="key.status === 'active'">
+                    <UiButton class="command-button secondary" variant="secondary" :loading="actionID === `developer-rotate-${key.id}`" :disabled="!developerForm.confirmed" @click="rotateDeveloperKey(account, key)">
+                      <template #start>
+                        <RefreshCw v-if="actionID !== `developer-rotate-${key.id}`" :size="15" />
+                      </template>{{ t('account.rotateKey') }}
+                    </UiButton><UiButton class="command-button secondary" variant="secondary" :loading="actionID === `developer-revoke-${key.id}`" :disabled="!developerForm.confirmed" @click="revokeDeveloperKey(account, key)">
+                      <template #start>
+                        <Trash2 v-if="actionID !== `developer-revoke-${key.id}`" :size="15" />
+                      </template>{{ t('account.revoke') }}
+                    </UiButton>
+                  </div>
+                </div>
+              </article>
+              <div v-if="developerAccess?.accounts.some(account => account.status === 'active')" class="developer-danger-controls">
+                <label>{{ t('account.operationReason') }}<UiTextarea v-model="developerForm.reason" rows="2" minlength="10" maxlength="500" /></label>
+                <label class="rights-confirm"><UiCheckbox v-model="developerForm.confirmed" />{{ t('account.developerConfirm') }}</label>
+              </div>
+            </section>
+
+            <aside><span class="settings-aside-title">{{ t('account.oneTimeKey') }}</span><p>{{ t('account.oneTimeKeySummary') }}</p></aside>
+            <section class="settings-panel developer-secret">
+              <div v-if="revealedCredential">
+                <code>{{ revealedCredential.plaintextKey }}</code><UiButton class="command-button secondary" variant="secondary" @click="copyDeveloperKey">
+                  <template #start>
+                    <Copy :size="16" />
+                  </template>{{ t('account.copyKey') }}
                 </UiButton>
               </div>
-            </div>
-          </article>
-          <div v-if="developerAccess?.accounts.some(account => account.status === 'active')" class="developer-danger-controls">
-            <label>{{ t('account.operationReason') }}<UiTextarea v-model="developerForm.reason" rows="2" minlength="10" maxlength="500" /></label>
-            <label class="rights-confirm"><UiCheckbox v-model="developerForm.confirmed" />{{ t('account.developerConfirm') }}</label>
-          </div>
-        </section>
+              <p v-else class="inline-empty">
+                {{ t('account.noRevealedKey') }}
+              </p>
+            </section>
 
-        <aside><span class="settings-aside-title">{{ t('account.oneTimeKey') }}</span><p>{{ t('account.oneTimeKeySummary') }}</p></aside>
-        <section class="settings-panel developer-secret">
-          <div v-if="revealedCredential">
-            <code>{{ revealedCredential.plaintextKey }}</code><UiButton class="command-button secondary" variant="secondary" @click="copyDeveloperKey">
-              <template #start>
-                <Copy :size="16" />
-              </template>{{ t('account.copyKey') }}
-            </UiButton>
-          </div>
-          <p v-else class="inline-empty">
-            {{ t('account.noRevealedKey') }}
-          </p>
-        </section>
+            <aside><span class="settings-aside-title">{{ t('account.webhookEndpoints') }}</span><p>{{ t('account.webhookEndpointsSummary') }}</p></aside>
+            <section class="settings-panel webhook-endpoints">
+              <form class="account-form webhook-create" @submit.prevent="createDeveloperWebhook">
+                <div class="form-pair">
+                  <label>{{ t('account.webhookName') }}<UiInput v-model="webhookForm.name" minlength="3" maxlength="80" required /></label>
+                  <label>{{ t('account.webhookUrl') }}<UiInput v-model="webhookForm.url" type="url" maxlength="2048" :placeholder="t('account.webhookUrlPlaceholder')" required /></label>
+                </div>
+                <fieldset class="webhook-event-grid">
+                  <legend>{{ t('account.webhookEvents') }}</legend>
+                  <label v-for="eventType in webhookAccess?.eventTypes || []" :key="eventType"><UiCheckbox v-model="webhookForm.eventTypes" :value="eventType" />{{ webhookEventLabel(eventType) }}</label>
+                </fieldset>
+                <UiButton class="command-button primary" variant="primary" type="submit" :loading="actionID === 'webhook-create'" :disabled="!developerAccess?.control.enabled || !webhookForm.eventTypes.length">
+                  <template #start>
+                    <Plus v-if="actionID !== 'webhook-create'" :size="17" />
+                  </template>{{ t('account.createWebhook') }}
+                </UiButton>
+              </form>
+              <p v-if="webhookAccess && !webhookAccess.endpoints.length" class="inline-empty">
+                {{ t('account.noWebhooks') }}
+              </p>
+              <article v-for="endpoint in webhookAccess?.endpoints || []" :key="endpoint.id" class="webhook-endpoint-row">
+                <header>
+                  <div><strong>{{ endpoint.name }}</strong><span>{{ endpoint.url }}</span><small>{{ t(`account.developerStatuses.${endpoint.status}`) }} · {{ t('account.webhookSecretVersion', { version: endpoint.currentSecretVersion, hint: endpoint.secretHint }) }}</small></div>
+                  <div v-if="endpoint.status === 'active'" class="webhook-actions">
+                    <UiButton class="command-button secondary" variant="secondary" :loading="actionID === `webhook-test-${endpoint.id}`" @click="testDeveloperWebhook(endpoint)">
+                      <template #start>
+                        <Send v-if="actionID !== `webhook-test-${endpoint.id}`" :size="15" />
+                      </template>{{ t('account.sendWebhookTest') }}
+                    </UiButton>
+                    <UiButton class="command-button secondary" variant="secondary" :loading="actionID === `webhook-rotate-${endpoint.id}`" :disabled="!webhookForm.confirmed" @click="rotateDeveloperWebhook(endpoint)">
+                      <template #start>
+                        <RefreshCw v-if="actionID !== `webhook-rotate-${endpoint.id}`" :size="15" />
+                      </template>{{ t('account.rotateWebhookSecret') }}
+                    </UiButton>
+                    <UiButton class="command-button secondary" variant="secondary" :loading="actionID === `webhook-revoke-${endpoint.id}`" :disabled="!webhookForm.confirmed" @click="revokeDeveloperWebhook(endpoint)">
+                      <template #start>
+                        <Trash2 v-if="actionID !== `webhook-revoke-${endpoint.id}`" :size="15" />
+                      </template>{{ t('account.revoke') }}
+                    </UiButton>
+                  </div>
+                </header>
+                <div class="webhook-subscriptions">
+                  <span v-for="eventType in endpoint.eventTypes" :key="eventType">{{ webhookEventLabel(eventType) }}</span>
+                </div>
+                <div v-if="endpoint.deliveries.length" class="webhook-deliveries">
+                  <div v-for="delivery in endpoint.deliveries" :key="delivery.id" class="webhook-delivery-row">
+                    <div><Webhook :size="16" /><span><strong>{{ webhookEventLabel(delivery.eventType) }}</strong><small>{{ date(delivery.createdAt) }} · {{ t('account.webhookAttemptCount', { count: delivery.attemptCount }) }}</small></span></div>
+                    <span :data-status="delivery.status">{{ t(`account.webhookStatuses.${delivery.status}`) }}</span>
+                    <small v-if="delivery.lastStatusCode">{{ t('account.webhookHttpStatus', { code: delivery.lastStatusCode }) }}</small><small v-else-if="delivery.lastErrorCode">{{ delivery.lastErrorCode }}</small>
+                  </div>
+                  <div v-if="endpoint.deliveryNextCursor" class="webhook-delivery-pagination">
+                    <UiButton class="command-button secondary" variant="secondary" :loading="webhookDeliveriesLoading[endpoint.id]" @click="loadMoreWebhookDeliveries(endpoint)">
+                      {{ t('actions.loadMore') }}
+                    </UiButton>
+                  </div>
+                </div>
+                <p v-else class="inline-empty">
+                  {{ t('account.noWebhookDeliveries') }}
+                </p>
+              </article>
+              <div v-if="webhookAccess?.endpoints.some(endpoint => endpoint.status === 'active')" class="developer-danger-controls webhook-danger-controls">
+                <label>{{ t('account.operationReason') }}<UiTextarea v-model="webhookForm.reason" rows="2" minlength="10" maxlength="500" /></label>
+                <label class="rights-confirm"><UiCheckbox v-model="webhookForm.confirmed" />{{ t('account.webhookConfirm') }}</label>
+              </div>
+            </section>
 
-        <aside><span class="settings-aside-title">{{ t('account.webhookEndpoints') }}</span><p>{{ t('account.webhookEndpointsSummary') }}</p></aside>
-        <section class="settings-panel webhook-endpoints">
-          <form class="account-form webhook-create" @submit.prevent="createDeveloperWebhook">
-            <div class="form-pair">
-              <label>{{ t('account.webhookName') }}<UiInput v-model="webhookForm.name" minlength="3" maxlength="80" required /></label>
-              <label>{{ t('account.webhookUrl') }}<UiInput v-model="webhookForm.url" type="url" maxlength="2048" :placeholder="t('account.webhookUrlPlaceholder')" required /></label>
-            </div>
-            <fieldset class="webhook-event-grid">
-              <legend>{{ t('account.webhookEvents') }}</legend>
-              <label v-for="eventType in webhookAccess?.eventTypes || []" :key="eventType"><UiCheckbox v-model="webhookForm.eventTypes" :value="eventType" />{{ webhookEventLabel(eventType) }}</label>
-            </fieldset>
-            <UiButton class="command-button primary" variant="primary" type="submit" :loading="actionID === 'webhook-create'" :disabled="!developerAccess?.control.enabled || !webhookForm.eventTypes.length">
-              <template #start>
-                <Plus v-if="actionID !== 'webhook-create'" :size="17" />
-              </template>{{ t('account.createWebhook') }}
-            </UiButton>
-          </form>
-          <p v-if="webhookAccess && !webhookAccess.endpoints.length" class="inline-empty">
-            {{ t('account.noWebhooks') }}
-          </p>
-          <article v-for="endpoint in webhookAccess?.endpoints || []" :key="endpoint.id" class="webhook-endpoint-row">
-            <header>
-              <div><strong>{{ endpoint.name }}</strong><span>{{ endpoint.url }}</span><small>{{ t(`account.developerStatuses.${endpoint.status}`) }} · {{ t('account.webhookSecretVersion', { version: endpoint.currentSecretVersion, hint: endpoint.secretHint }) }}</small></div>
-              <div v-if="endpoint.status === 'active'" class="webhook-actions">
-                <UiButton class="command-button secondary" variant="secondary" :loading="actionID === `webhook-test-${endpoint.id}`" @click="testDeveloperWebhook(endpoint)">
+            <aside><span class="settings-aside-title">{{ t('account.oneTimeWebhookSecret') }}</span><p>{{ t('account.oneTimeWebhookSecretSummary') }}</p></aside>
+            <section class="settings-panel developer-secret">
+              <div v-if="revealedWebhookCredential">
+                <code>{{ revealedWebhookCredential.signingSecret }}</code><UiButton class="command-button secondary" variant="secondary" @click="copyWebhookSecret">
                   <template #start>
-                    <Send v-if="actionID !== `webhook-test-${endpoint.id}`" :size="15" />
-                  </template>{{ t('account.sendWebhookTest') }}
-                </UiButton>
-                <UiButton class="command-button secondary" variant="secondary" :loading="actionID === `webhook-rotate-${endpoint.id}`" :disabled="!webhookForm.confirmed" @click="rotateDeveloperWebhook(endpoint)">
-                  <template #start>
-                    <RefreshCw v-if="actionID !== `webhook-rotate-${endpoint.id}`" :size="15" />
-                  </template>{{ t('account.rotateWebhookSecret') }}
-                </UiButton>
-                <UiButton class="command-button secondary" variant="secondary" :loading="actionID === `webhook-revoke-${endpoint.id}`" :disabled="!webhookForm.confirmed" @click="revokeDeveloperWebhook(endpoint)">
-                  <template #start>
-                    <Trash2 v-if="actionID !== `webhook-revoke-${endpoint.id}`" :size="15" />
-                  </template>{{ t('account.revoke') }}
+                    <Copy :size="16" />
+                  </template>{{ t('account.copyWebhookSecret') }}
                 </UiButton>
               </div>
-            </header>
-            <div class="webhook-subscriptions">
-              <span v-for="eventType in endpoint.eventTypes" :key="eventType">{{ webhookEventLabel(eventType) }}</span>
-            </div>
-            <div v-if="endpoint.deliveries.length" class="webhook-deliveries">
-              <div v-for="delivery in endpoint.deliveries" :key="delivery.id" class="webhook-delivery-row">
-                <div><Webhook :size="16" /><span><strong>{{ webhookEventLabel(delivery.eventType) }}</strong><small>{{ date(delivery.createdAt) }} · {{ t('account.webhookAttemptCount', { count: delivery.attemptCount }) }}</small></span></div>
-                <span :data-status="delivery.status">{{ t(`account.webhookStatuses.${delivery.status}`) }}</span>
-                <small v-if="delivery.lastStatusCode">{{ t('account.webhookHttpStatus', { code: delivery.lastStatusCode }) }}</small><small v-else-if="delivery.lastErrorCode">{{ delivery.lastErrorCode }}</small>
-              </div>
-              <div v-if="endpoint.deliveryNextCursor" class="webhook-delivery-pagination">
-                <UiButton class="command-button secondary" variant="secondary" :loading="webhookDeliveriesLoading[endpoint.id]" @click="loadMoreWebhookDeliveries(endpoint)">
+              <p v-else class="inline-empty">
+                {{ t('account.noRevealedWebhookSecret') }}
+              </p>
+            </section>
+          </div>
+
+          <div v-else-if="section === 'privacy'" class="settings-layout data-rights-layout">
+            <aside><span class="settings-aside-title">{{ t('account.privacyRights') }}</span><p>{{ t('account.privacyRightsSummary') }}</p></aside>
+            <section class="settings-panel data-rights-actions">
+              <label>{{ t('account.confirmHandle') }}<UiInput v-model="rightsForm.identityConfirmation" autocomplete="off" :placeholder="session.user.handle" /></label>
+              <article>
+                <div><FileKey2 :size="19" /><span><strong>{{ t('account.exportData') }}</strong><small>{{ t('account.exportDataSummary') }}</small></span></div>
+                <UiButton class="command-button secondary" variant="secondary" :loading="actionID === 'rights-data_export'" :disabled="!rightsForm.identityConfirmation" @click="createDataRightsRequest('data_export')">
+                  <template #start>
+                    <Download v-if="actionID !== 'rights-data_export'" :size="17" />
+                  </template>{{ t('account.requestExport') }}
+                </UiButton>
+              </article>
+              <article class="danger-zone">
+                <div><Trash2 :size="19" /><span><strong>{{ t('account.deleteAccount') }}</strong><small>{{ t('account.deleteAccountSummary') }}</small></span></div>
+                <label class="rights-confirm"><UiCheckbox v-model="rightsForm.deletionConfirmed" />{{ t('account.deleteConfirmation') }}</label>
+                <UiButton class="command-button secondary" variant="secondary" :loading="actionID === 'rights-account_deletion'" :disabled="!rightsForm.identityConfirmation || !rightsForm.deletionConfirmed" @click="createDataRightsRequest('account_deletion')">
+                  <template #start>
+                    <Trash2 v-if="actionID !== 'rights-account_deletion'" :size="17" />
+                  </template>{{ t('account.scheduleDeletion') }}
+                </UiButton>
+              </article>
+              <p class="retention-note">
+                {{ t('account.retentionBoundary') }}
+              </p>
+            </section>
+
+            <aside><span class="settings-aside-title">{{ t('account.rightsHistory') }}</span><p>{{ t('account.rightsHistorySummary') }}</p></aside>
+            <section class="settings-panel data-rights-list">
+              <p v-if="!dataRightsRequests.length" class="inline-empty">
+                {{ t('account.noRightsRequests') }}
+              </p>
+              <article v-for="item in dataRightsRequests" v-else :key="item.id">
+                <div>
+                  <strong>{{ t(`account.rightsTypes.${item.requestType}`) }}</strong>
+                  <span>{{ t(`account.rightsStatuses.${item.status}`) }} · {{ date(item.createdAt) }}</span>
+                  <small v-if="item.export">{{ bytes(item.export.sizeBytes) }} · SHA-256 {{ item.export.checksumSha256.slice(0, 16) }}… · {{ t('account.expires', { date: date(item.export.expiresAt) }) }}</small>
+                  <small v-else-if="item.cancelUntil">{{ t('account.cancelUntil', { date: date(item.cancelUntil) }) }}</small>
+                  <small v-if="item.receipt">{{ t('account.receiptEvidence', { checksum: item.receipt.checksumSha256.slice(0, 16) }) }}</small>
+                </div>
+                <UiButton v-if="item.requestType === 'data_export' && item.status === 'ready' && item.export && !item.export.purgedAt" as="a" class="command-button secondary" variant="secondary" :href="exportURL(item)" download>
+                  <template #start>
+                    <Download :size="16" />
+                  </template>{{ t('account.downloadExport') }}
+                </UiButton>
+                <UiButton v-else-if="canCancel(item)" class="command-button secondary" variant="secondary" :loading="actionID === item.id" @click="cancelDataRightsRequest(item)">
+                  {{ t('account.cancelRequest') }}
+                </UiButton>
+              </article>
+              <div v-if="dataRightsNextCursor" class="account-evidence-pagination">
+                <UiButton class="command-button secondary" variant="secondary" :loading="dataRightsLoadingMore" @click="loadMoreDataRights">
                   {{ t('actions.loadMore') }}
                 </UiButton>
               </div>
-            </div>
-            <p v-else class="inline-empty">
-              {{ t('account.noWebhookDeliveries') }}
-            </p>
-          </article>
-          <div v-if="webhookAccess?.endpoints.some(endpoint => endpoint.status === 'active')" class="developer-danger-controls webhook-danger-controls">
-            <label>{{ t('account.operationReason') }}<UiTextarea v-model="webhookForm.reason" rows="2" minlength="10" maxlength="500" /></label>
-            <label class="rights-confirm"><UiCheckbox v-model="webhookForm.confirmed" />{{ t('account.webhookConfirm') }}</label>
+            </section>
           </div>
-        </section>
-
-        <aside><span class="settings-aside-title">{{ t('account.oneTimeWebhookSecret') }}</span><p>{{ t('account.oneTimeWebhookSecretSummary') }}</p></aside>
-        <section class="settings-panel developer-secret">
-          <div v-if="revealedWebhookCredential">
-            <code>{{ revealedWebhookCredential.signingSecret }}</code><UiButton class="command-button secondary" variant="secondary" @click="copyWebhookSecret">
-              <template #start>
-                <Copy :size="16" />
-              </template>{{ t('account.copyWebhookSecret') }}
-            </UiButton>
-          </div>
-          <p v-else class="inline-empty">
-            {{ t('account.noRevealedWebhookSecret') }}
-          </p>
-        </section>
-      </div>
-
-      <div v-else-if="section === 'privacy'" class="settings-layout data-rights-layout">
-        <aside><span class="settings-aside-title">{{ t('account.privacyRights') }}</span><p>{{ t('account.privacyRightsSummary') }}</p></aside>
-        <section class="settings-panel data-rights-actions">
-          <label>{{ t('account.confirmHandle') }}<UiInput v-model="rightsForm.identityConfirmation" autocomplete="off" :placeholder="session.user.handle" /></label>
-          <article>
-            <div><FileKey2 :size="19" /><span><strong>{{ t('account.exportData') }}</strong><small>{{ t('account.exportDataSummary') }}</small></span></div>
-            <UiButton class="command-button secondary" variant="secondary" :loading="actionID === 'rights-data_export'" :disabled="!rightsForm.identityConfirmation" @click="createDataRightsRequest('data_export')">
-              <template #start>
-                <Download v-if="actionID !== 'rights-data_export'" :size="17" />
-              </template>{{ t('account.requestExport') }}
-            </UiButton>
-          </article>
-          <article class="danger-zone">
-            <div><Trash2 :size="19" /><span><strong>{{ t('account.deleteAccount') }}</strong><small>{{ t('account.deleteAccountSummary') }}</small></span></div>
-            <label class="rights-confirm"><UiCheckbox v-model="rightsForm.deletionConfirmed" />{{ t('account.deleteConfirmation') }}</label>
-            <UiButton class="command-button secondary" variant="secondary" :loading="actionID === 'rights-account_deletion'" :disabled="!rightsForm.identityConfirmation || !rightsForm.deletionConfirmed" @click="createDataRightsRequest('account_deletion')">
-              <template #start>
-                <Trash2 v-if="actionID !== 'rights-account_deletion'" :size="17" />
-              </template>{{ t('account.scheduleDeletion') }}
-            </UiButton>
-          </article>
-          <p class="retention-note">
-            {{ t('account.retentionBoundary') }}
-          </p>
-        </section>
-
-        <aside><span class="settings-aside-title">{{ t('account.rightsHistory') }}</span><p>{{ t('account.rightsHistorySummary') }}</p></aside>
-        <section class="settings-panel data-rights-list">
-          <p v-if="!dataRightsRequests.length" class="inline-empty">
-            {{ t('account.noRightsRequests') }}
-          </p>
-          <article v-for="item in dataRightsRequests" v-else :key="item.id">
-            <div>
-              <strong>{{ t(`account.rightsTypes.${item.requestType}`) }}</strong>
-              <span>{{ t(`account.rightsStatuses.${item.status}`) }} · {{ date(item.createdAt) }}</span>
-              <small v-if="item.export">{{ bytes(item.export.sizeBytes) }} · SHA-256 {{ item.export.checksumSha256.slice(0, 16) }}… · {{ t('account.expires', { date: date(item.export.expiresAt) }) }}</small>
-              <small v-else-if="item.cancelUntil">{{ t('account.cancelUntil', { date: date(item.cancelUntil) }) }}</small>
-              <small v-if="item.receipt">{{ t('account.receiptEvidence', { checksum: item.receipt.checksumSha256.slice(0, 16) }) }}</small>
-            </div>
-            <UiButton v-if="item.requestType === 'data_export' && item.status === 'ready' && item.export && !item.export.purgedAt" as="a" class="command-button secondary" variant="secondary" :href="exportURL(item)" download>
-              <template #start>
-                <Download :size="16" />
-              </template>{{ t('account.downloadExport') }}
-            </UiButton>
-            <UiButton v-else-if="canCancel(item)" class="command-button secondary" variant="secondary" :loading="actionID === item.id" @click="cancelDataRightsRequest(item)">
-              {{ t('account.cancelRequest') }}
-            </UiButton>
-          </article>
-          <div v-if="dataRightsNextCursor" class="account-evidence-pagination">
-            <UiButton class="command-button secondary" variant="secondary" :loading="dataRightsLoadingMore" @click="loadMoreDataRights">
-              {{ t('actions.loadMore') }}
-            </UiButton>
-          </div>
-        </section>
-      </div>
         </div>
       </div>
 
@@ -920,7 +926,9 @@ onMounted(async () => {
         <form class="account-profile-drawer" @submit.prevent="saveProfile">
           <header>
             <div><span class="status-label">{{ t('account.accountLabel') }}</span><h2>{{ t('account.editProfile') }}</h2><p>{{ t('account.editProfileSummary') }}</p></div>
-            <UiIconButton variant="ghost" :label="t('actions.close')" @click="profileDrawerOpen = false"><X :size="19" /></UiIconButton>
+            <UiIconButton variant="ghost" :label="t('actions.close')" @click="profileDrawerOpen = false">
+              <X :size="19" />
+            </UiIconButton>
           </header>
           <div class="account-profile-drawer-body account-form">
             <label>{{ t('account.displayName') }}<UiInput v-model="profileForm.displayName" minlength="2" maxlength="80" required /></label>
@@ -936,8 +944,12 @@ onMounted(async () => {
             </div>
           </div>
           <footer>
-            <UiButton variant="secondary" @click="profileDrawerOpen = false">{{ t('actions.cancel') }}</UiButton>
-            <UiButton variant="primary" type="submit" :loading="session.loading">{{ t('account.saveProfile') }}</UiButton>
+            <UiButton variant="secondary" @click="profileDrawerOpen = false">
+              {{ t('actions.cancel') }}
+            </UiButton>
+            <UiButton variant="primary" type="submit" :loading="session.loading">
+              {{ t('account.saveProfile') }}
+            </UiButton>
           </footer>
         </form>
       </UiDrawer>
