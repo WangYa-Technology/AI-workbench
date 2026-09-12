@@ -32,6 +32,7 @@ import UiTable from '../components/ui/UiTable.vue'
 import UiTabs from '../components/ui/UiTabs.vue'
 import UiTextarea from '../components/ui/UiTextarea.vue'
 import AdminOverviewMetrics from '../components/admin/AdminOverviewMetrics.vue'
+import AdminContentDirectory from '../components/admin/AdminContentDirectory.vue'
 import AdminUserDirectory from '../components/admin/AdminUserDirectory.vue'
 
 type Tab = AdminTab
@@ -2166,32 +2167,7 @@ onMounted(() => void initialize())
             @open="openUser"
           />
 
-          <div v-else-if="activeTab === 'content'" class="admin-content-directory">
-            <form class="admin-user-filters" @submit.prevent="applyContentFilters">
-              <label>{{ t('admin.contentSearch') }}<UiInput v-model="contentQuery" type="search" maxlength="120" :placeholder="t('admin.contentSearchPlaceholder')" /></label>
-              <label>{{ t('admin.resourceType') }}<UiSelect v-model="contentType"><option value="">{{ t('admin.allContentTypes') }}</option><option value="work">{{ localizedLabel(resourceTypeKeys, 'work') }}</option></UiSelect></label>
-              <label>{{ t('admin.status') }}<UiSelect v-model="contentStatus"><option value="">{{ t('admin.allStatuses') }}</option><option v-for="status in ['draft','published','hidden','removed']" :key="status" :value="status">{{ t(`admin.states.${status}`) }}</option></UiSelect></label>
-              <UiButton class="command-button secondary" type="submit" variant="secondary">
-                <ListFilter :size="16" />{{ t('actions.applyFilters') }}
-              </UiButton>
-              <UiIconButton class="icon-button" type="button" :title="t('actions.clearFilters')" :label="t('actions.clearFilters')" @click="clearContentFilters">
-                <X :size="16" />
-              </UiIconButton>
-            </form>
-            <div class="admin-list">
-              <article v-for="item in content" :key="item.id">
-                <div><strong>{{ item.title }}</strong><span>@{{ item.authorHandle }} · {{ item.aiDisclosure }}</span></div><span>{{ localizedLabel(resourceTypeKeys, item.resourceType) }}</span><span :data-status="item.status">{{ t(`admin.states.${item.status}`) }}</span><small>{{ date(item.updatedAt) }}</small><UiButton class="command-button secondary" type="button" variant="secondary" @click="openContent(item)">
-                  <ShieldCheck :size="16" />{{ t('admin.review') }}
-                </UiButton>
-              </article>
-            </div>
-            <p v-if="!content.length" class="inline-empty">
-              {{ t('admin.noContent') }}
-            </p>
-            <UiButton v-if="contentNextCursor" class="command-button secondary admin-load-more" type="button" :disabled="contentLoadingMore" variant="secondary" @click="loadMoreContent">
-              <LoaderCircle v-if="contentLoadingMore" class="spin" :size="16" /><ListFilter v-else :size="16" />{{ t('actions.loadMore') }}
-            </UiButton>
-          </div>
+          <AdminContentDirectory v-else-if="activeTab === 'content'" :items="content" :query="contentQuery" :type="contentType" :status="contentStatus" :next-cursor="contentNextCursor" :loading-more="contentLoadingMore" :t="(key) => t(key)" :localized-label="localizedLabel" :resource-type-keys="resourceTypeKeys" :date="date" @update:query="contentQuery = $event" @update:type="contentType = $event" @update:status="contentStatus = $event" @apply="applyContentFilters" @clear="clearContentFilters" @more="loadMoreContent" @open="openContent" />
 
           <div v-else-if="activeTab === 'media'" class="admin-media-directory">
             <form class="admin-user-filters" @submit.prevent="applyMediaFilters">

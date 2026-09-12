@@ -34,9 +34,9 @@ const emit = defineEmits<{
 <template>
   <div class="admin-user-directory">
     <form class="admin-user-filters" @submit.prevent="emit('apply')">
-      <label>{{ t('admin.userSearch') }}<UiInput :model-value="query" type="search" maxlength="120" :placeholder="t('admin.userSearchPlaceholder')" @update:model-value="emit('update:query', $event)" /></label>
-      <label>{{ t('admin.role') }}<UiSelect :model-value="role" @update:model-value="emit('update:role', $event)"><option value="">{{ t('admin.allRoles') }}</option><option v-for="item in ['member','creator','publisher','moderator','admin']" :key="item" :value="item">{{ localizedLabel(roleKeys, item) }}</option></UiSelect></label>
-      <label>{{ t('admin.status') }}<UiSelect :model-value="status" @update:model-value="emit('update:status', $event)"><option value="">{{ t('admin.allStatuses') }}</option><option v-for="item in ['active','suspended','deleted']" :key="item" :value="item">{{ t(`admin.states.${item}`) }}</option></UiSelect></label>
+      <label>{{ t('admin.userSearch') }}<UiInput :model-value="query" type="search" maxlength="120" :placeholder="t('admin.userSearchPlaceholder')" @update:model-value="emit('update:query', String($event))" /></label>
+      <label>{{ t('admin.role') }}<UiSelect :model-value="role" @update:model-value="emit('update:role', String($event))"><option value="">{{ t('admin.allRoles') }}</option><option v-for="item in ['member','creator','publisher','moderator','admin']" :key="item" :value="item">{{ localizedLabel(roleKeys, item) }}</option></UiSelect></label>
+      <label>{{ t('admin.status') }}<UiSelect :model-value="status" @update:model-value="emit('update:status', String($event))"><option value="">{{ t('admin.allStatuses') }}</option><option v-for="item in ['active','suspended','deleted']" :key="item" :value="item">{{ t(`admin.states.${item}`) }}</option></UiSelect></label>
       <UiButton class="command-button secondary" variant="secondary" type="submit"><template #start><ListFilter :size="16" /></template>{{ t('actions.applyFilters') }}</UiButton>
       <UiIconButton class="icon-button" :label="t('actions.clearFilters')" @click="emit('clear')"><X :size="16" /></UiIconButton>
     </form>
