@@ -1082,11 +1082,12 @@
   .controls-with-switcher { min-width: 0; display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 12px; align-items: stretch; margin-bottom: 16px; padding-inline: 8px; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-surface); background: var(--surface-muted); box-shadow: none; }
   .controls-with-switcher:not(.has-switcher) { display: block; }
   .controls-with-switcher .view-switcher-bar { min-width: 0; min-height: 54px; align-items: center; margin: 0; }
-  .controls-with-switcher .view-switcher { gap: 3px; padding: 3px; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface-muted); }
+  .controls-with-switcher .view-switcher { gap: 3px; padding: 3px; border: 0; border-radius: var(--radius-control); background: transparent; }
   .controls-with-switcher .view-switcher .ui-tabs__tab { min-height: 36px; padding-inline: 12px; border-radius: 6px; }
   .controls-with-switcher .view-switcher .ui-tabs__indicator { inset: 3px auto 3px 0; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); box-shadow: var(--shadow-xs); }
   .controls-with-switcher .community-toolbar,
   .controls-with-switcher .task-filters { min-width: 0; min-height: 54px; margin-bottom: 0; padding-block: 6px; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+  .controls-with-switcher .task-filters { background: transparent; }
   .controls-with-switcher .community-toolbar { --community-toolbar-control-height: 40px; }
   .controls-with-switcher .community-toolbar { grid-template-columns: minmax(160px, 1fr) 136px auto; gap: 6px; }
   .controls-with-switcher .community-toolbar-actions { gap: 2px; }
