@@ -2,7 +2,7 @@ import { ref, type Ref } from 'vue'
 
 type Page<T> = { items: T[]; nextCursor?: string }
 
-export function useCursorDirectory<T extends { id: string }>(fetchPage: (cursor?: string) => Promise<Page<T>>) {
+export function useCursorDirectory<T>(fetchPage: (cursor?: string) => Promise<Page<T>>, identity: (item: T) => string = (item) => (item as { id: string }).id) {
   const items = ref<T[]>([]) as Ref<T[]>
   const nextCursor = ref<string | null>(null)
   const loadingMore = ref(false)
@@ -12,8 +12,8 @@ export function useCursorDirectory<T extends { id: string }>(fetchPage: (cursor?
     if (!cursor) {
       items.value = page.items
     } else {
-      const known = new Set(items.value.map(item => item.id))
-      items.value = [...items.value, ...page.items.filter(item => !known.has(item.id))]
+      const known = new Set(items.value.map(identity))
+      items.value = [...items.value, ...page.items.filter(item => !known.has(identity(item)))]
     }
     nextCursor.value = page.nextCursor || null
   }

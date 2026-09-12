@@ -110,22 +110,24 @@ const selectedPolicy = ref<keyof SiteConfiguration['policies']>('terms')
 const siteIconMode = ref<'url' | 'upload'>('url')
 const siteIconUploading = ref(false)
 const modelRouteMode = ref<'chat' | 'image' | 'video' | 'music'>('image')
-const finance = ref<AdminFinanceAccount[]>([])
+const financeDirectory = useCursorDirectory<AdminFinanceAccount>(cursor => api.adminListFinance(financeListQuery(cursor)), item => `${item.userId}-${item.currency}`)
+const finance = financeDirectory.items
 const subscriptionPlans = ref<SubscriptionPlan[]>([])
 const subscriptionPlanEditorOpen = ref(false)
 const subscriptionPlanForm = reactive<SubscriptionPlanInput & { id: string }>({ id: '', tierCode: '', name: '', description: '', priceCents: 0, currency: 'USD', includedPoints: 10000, billingPeriodDays: 30, sortOrder: 0, active: true, modelIds: [] })
 const financeQuery = ref('')
 const financeState = ref('')
-const financeNextCursor = ref<string | null>(null)
-const financeLoadingMore = ref(false)
-const paymentOperations = ref<AdminPaymentOperation[]>([])
+const financeNextCursor = financeDirectory.nextCursor
+const financeLoadingMore = financeDirectory.loadingMore
+const paymentDirectory = useCursorDirectory<AdminPaymentOperation>(cursor => api.adminListPayments(paymentListQuery(cursor)))
+const paymentOperations = paymentDirectory.items
 const paymentQuery = ref('')
 const paymentPurpose = ref('')
 const paymentStatus = ref('')
 const paymentMode = ref('')
 const paymentAttention = ref('needs_attention')
-const paymentNextCursor = ref<string | null>(null)
-const paymentLoadingMore = ref(false)
+const paymentNextCursor = paymentDirectory.nextCursor
+const paymentLoadingMore = paymentDirectory.loadingMore
 const paymentDestinations = ref<AdminPaymentDestination[]>([])
 const paymentProviderConfigs = ref<AdminPaymentProviderConfig[]>([])
 const paymentProviderEditorOpen = ref(false)
@@ -655,14 +657,7 @@ function financeListQuery(cursor = '') {
 }
 
 async function loadFinanceDirectory(cursor = '') {
-  const page = await api.adminListFinance(financeListQuery(cursor))
-  if (cursor) {
-    const known = new Set(finance.value.map(item => `${item.userId}-${item.currency}`))
-    finance.value = [...finance.value, ...page.items.filter(item => !known.has(`${item.userId}-${item.currency}`))]
-  } else {
-    finance.value = page.items
-  }
-  financeNextCursor.value = page.nextCursor || null
+	await financeDirectory.load(cursor)
 }
 
 async function applyFinanceFilters() {
@@ -706,14 +701,7 @@ function paymentPurposeLabel(purpose: string) {
 }
 
 async function loadPaymentOperations(cursor = '') {
-  const page = await api.adminListPayments(paymentListQuery(cursor))
-  if (cursor) {
-    const known = new Set(paymentOperations.value.map(item => item.id))
-    paymentOperations.value = [...paymentOperations.value, ...page.items.filter(item => !known.has(item.id))]
-  } else {
-    paymentOperations.value = page.items
-  }
-  paymentNextCursor.value = page.nextCursor || null
+	await paymentDirectory.load(cursor)
 }
 
 async function loadPaymentDestinations(cursor = '') {
