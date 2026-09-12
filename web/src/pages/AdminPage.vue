@@ -33,6 +33,7 @@ import UiTabs from '../components/ui/UiTabs.vue'
 import UiTextarea from '../components/ui/UiTextarea.vue'
 import AdminOverviewMetrics from '../components/admin/AdminOverviewMetrics.vue'
 import AdminContentDirectory from '../components/admin/AdminContentDirectory.vue'
+import AdminMediaDirectory from '../components/admin/AdminMediaDirectory.vue'
 import AdminUserDirectory from '../components/admin/AdminUserDirectory.vue'
 
 type Tab = AdminTab
@@ -2169,32 +2170,7 @@ onMounted(() => void initialize())
 
           <AdminContentDirectory v-else-if="activeTab === 'content'" :items="content" :query="contentQuery" :type="contentType" :status="contentStatus" :next-cursor="contentNextCursor" :loading-more="contentLoadingMore" :t="(key) => t(key)" :localized-label="localizedLabel" :resource-type-keys="resourceTypeKeys" :date="date" @update:query="contentQuery = $event" @update:type="contentType = $event" @update:status="contentStatus = $event" @apply="applyContentFilters" @clear="clearContentFilters" @more="loadMoreContent" @open="openContent" />
 
-          <div v-else-if="activeTab === 'media'" class="admin-media-directory">
-            <form class="admin-user-filters" @submit.prevent="applyMediaFilters">
-              <label>{{ t('admin.mediaSearch') }}<UiInput v-model="mediaQuery" type="search" maxlength="120" :placeholder="t('admin.mediaSearchPlaceholder')" /></label>
-              <label>{{ t('admin.mediaType') }}<UiSelect v-model="mediaKind"><option value="">{{ t('admin.allMediaTypes') }}</option><option v-for="kind in ['image','video','audio','document','prompt','workflow']" :key="kind" :value="kind">{{ localizedLabel(mediaKindKeys, kind) }}</option></UiSelect></label>
-              <label>{{ t('admin.scanDecision') }}<UiSelect v-model="mediaStatus"><option value="">{{ t('admin.allScanStatuses') }}</option><option v-for="status in ['pending','clean','review','rejected']" :key="status" :value="status">{{ t(`workspace.scanStatus.${status}`) }}</option></UiSelect></label>
-              <UiButton class="command-button secondary" type="submit" variant="secondary">
-                <ListFilter :size="16" />{{ t('actions.applyFilters') }}
-              </UiButton>
-              <UiIconButton class="icon-button" type="button" :title="t('actions.clearFilters')" :label="t('actions.clearFilters')" @click="clearMediaFilters">
-                <X :size="16" />
-              </UiIconButton>
-            </form>
-            <div class="admin-list media-admin-list">
-              <article v-for="item in mediaItems" :key="item.id">
-                <div><strong>{{ item.title }}</strong><span>@{{ item.ownerHandle }} · {{ item.uploadedFilename || item.mimeType }}</span><small>{{ item.scanReason || t('workspace.scanPendingDetail') }}</small></div><span>{{ localizedLabel(mediaKindKeys, item.kind) }}</span><span :data-status="item.scanStatus">{{ t(`workspace.scanStatus.${item.scanStatus}`) }}</span><small>{{ date(item.scannedAt || item.createdAt) }}</small><UiButton class="command-button secondary" type="button" variant="secondary" @click="openMedia(item)">
-                  <ShieldCheck :size="16" />{{ t('admin.review') }}
-                </UiButton>
-              </article>
-            </div>
-            <p v-if="!mediaItems.length" class="inline-empty">
-              {{ t('admin.noMedia') }}
-            </p>
-            <UiButton v-if="mediaNextCursor" class="command-button secondary admin-load-more" type="button" :disabled="mediaLoadingMore" variant="secondary" @click="loadMoreMedia">
-              <LoaderCircle v-if="mediaLoadingMore" class="spin" :size="16" /><ListFilter v-else :size="16" />{{ t('actions.loadMore') }}
-            </UiButton>
-          </div>
+          <AdminMediaDirectory v-else-if="activeTab === 'media'" :items="mediaItems" :query="mediaQuery" :kind="mediaKind" :status="mediaStatus" :next-cursor="mediaNextCursor" :loading-more="mediaLoadingMore" :t="(key) => t(key)" :localized-label="localizedLabel" :media-kind-keys="mediaKindKeys" :date="date" @update:query="mediaQuery = $event" @update:kind="mediaKind = $event" @update:status="mediaStatus = $event" @apply="applyMediaFilters" @clear="clearMediaFilters" @more="loadMoreMedia" @open="openMedia" />
 
           <div v-else-if="activeTab === 'governance'" class="admin-governance">
             <section>
