@@ -39,6 +39,14 @@ func TestMigrateEmptySchema(t *testing.T) {
 	if currentSettings != 1 || legacySettingsTables != 0 {
 		t.Fatalf("system settings migration mismatch: current=%d legacy_tables=%d", currentSettings, legacySettingsTables)
 	}
+	var auditLookupIndex int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT count(*) FROM pg_indexes WHERE schemaname=current_schema() AND indexname='audit_events_action_resource_idx'`).Scan(&auditLookupIndex); err != nil {
+		t.Fatal(err)
+	}
+	if auditLookupIndex != 1 {
+		t.Fatalf("audit evidence lookup index missing: %d", auditLookupIndex)
+	}
 
 	if err := database.Migrate(context.Background(), pool); err != nil {
 		t.Fatalf("second migration must be idempotent: %v", err)
