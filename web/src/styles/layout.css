@@ -1306,8 +1306,8 @@
 .task-publish-cta { min-height: 74px; display: grid; grid-template-columns: 42px minmax(0, 1fr) auto; align-items: center; gap: 12px; margin-top: 12px; padding: 12px 16px; border: 1px solid color-mix(in srgb, var(--focus) 22%, var(--border)); border-radius: var(--radius-surface); background: var(--accent-soft); }
 .task-publish-cta > span { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 50%; background: var(--surface); color: var(--accent-readable); }
 .task-publish-cta > div { min-width: 0; display: grid; gap: 2px; }
-.task-publish-cta strong { font-size: 12px; }
-.task-publish-cta p { margin: 0; color: var(--text-secondary); font-size: 10px; }
+.task-publish-cta strong { font-size: 14px; line-height: 1.35; }
+.task-publish-cta p { margin: 0; color: var(--text-secondary); font-size: 12px; line-height: 1.45; }
 .task-skeleton { position: relative; min-height: 460px; display: grid; grid-template-columns: 1fr; gap: 10px; align-content: start; padding-top: 46px; }
 .task-skeleton > span { height: 154px; display: block; border: 1px solid var(--border); border-radius: var(--radius-surface); background: var(--surface-muted); animation: community-pulse 1.2s ease-in-out infinite alternate; }
 .task-skeleton p { position: absolute; inset: 0; display: grid; place-items: center; color: var(--text-secondary); }
