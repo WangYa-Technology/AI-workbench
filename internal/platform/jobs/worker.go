@@ -4,17 +4,19 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"sync"
 	"time"
 )
 
 type Handler func(context.Context, Job) error
 
 type Worker struct {
-	repository *Repository
-	owner      string
-	logger     *slog.Logger
-	handlers   map[string]Handler
-	lease      time.Duration
+	repository  *Repository
+	owner       string
+	logger      *slog.Logger
+	handlers    map[string]Handler
+	lease       time.Duration
+	concurrency int
 }
 
 func NewWorker(repository *Repository, owner string, logger *slog.Logger) *Worker {
@@ -26,7 +28,16 @@ func NewWorkerWithLease(repository *Repository, owner string, logger *slog.Logge
 	if lease < 30*time.Millisecond || lease > 24*time.Hour {
 		lease = 30 * time.Second
 	}
-	return &Worker{repository: repository, owner: owner, logger: logger, handlers: map[string]Handler{}, lease: lease}
+	return &Worker{repository: repository, owner: owner, logger: logger, handlers: map[string]Handler{}, lease: lease, concurrency: 4}
+}
+
+// NewWorkerWithOptions configures bounded execution without changing lease semantics.
+func NewWorkerWithOptions(repository *Repository, owner string, logger *slog.Logger, lease time.Duration, concurrency int) *Worker {
+	w := NewWorkerWithLease(repository, owner, logger, lease)
+	if concurrency >= 1 && concurrency <= 128 {
+		w.concurrency = concurrency
+	}
+	return w
 }
 
 func (w *Worker) Handle(kind string, handler Handler) {
@@ -36,39 +47,53 @@ func (w *Worker) Handle(kind string, handler Handler) {
 func (w *Worker) Run(ctx context.Context) error {
 	ticker := time.NewTicker(750 * time.Millisecond)
 	defer ticker.Stop()
+	semaphore := make(chan struct{}, w.concurrency)
+	var running sync.WaitGroup
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
+			select {
+			case semaphore <- struct{}{}:
+			default:
+				continue
+			}
 			if err := w.repository.RecoverExpired(ctx); err != nil {
 				w.logger.Error("recover jobs", "error", err)
 			}
 			job, err := w.repository.Claim(ctx, w.owner, w.lease)
 			if errors.Is(err, ErrNoJob) {
+				<-semaphore
 				continue
 			}
 			if err != nil {
+				<-semaphore
 				w.logger.Error("claim job", "error", err)
 				continue
 			}
-			handler, exists := w.handlers[job.Kind]
-			if !exists {
-				err = codedError("handler_not_registered")
-			} else {
-				err = w.execute(ctx, job, handler)
-			}
-			if err != nil {
-				code := failureCode(err)
-				w.logger.Error("job failed", "job_id", job.ID, "kind", job.Kind, "error_code", code)
-				if failErr := w.repository.Fail(ctx, job, w.owner, err); failErr != nil {
-					w.logger.Error("record job failure", "job_id", job.ID, "kind", job.Kind, "error_code", failureCode(failErr))
+			running.Add(1)
+			go func(job Job) {
+				defer running.Done()
+				defer func() { <-semaphore }()
+				handler, exists := w.handlers[job.Kind]
+				var err error
+				if !exists {
+					err = codedError("handler_not_registered")
+				} else {
+					err = w.execute(ctx, job, handler)
 				}
-				continue
-			}
-			if err := w.repository.Complete(ctx, job, w.owner); err != nil {
-				w.logger.Error("complete job", "job_id", job.ID, "kind", job.Kind, "error_code", failureCode(err))
-			}
+				if err != nil {
+					w.logger.Error("job failed", "job_id", job.ID, "kind", job.Kind, "error_code", failureCode(err))
+					if failErr := w.repository.Fail(ctx, job, w.owner, err); failErr != nil {
+						w.logger.Error("record job failure", "job_id", job.ID, "kind", job.Kind, "error_code", failureCode(failErr))
+					}
+					return
+				}
+				if err := w.repository.Complete(ctx, job, w.owner); err != nil {
+					w.logger.Error("complete job", "job_id", job.ID, "kind", job.Kind, "error_code", failureCode(err))
+				}
+			}(job)
 		}
 	}
 }

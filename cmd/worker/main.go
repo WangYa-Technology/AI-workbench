@@ -17,6 +17,7 @@ import (
 	"github.com/hcai-chat/hcai-chat/internal/datarights"
 	"github.com/hcai-chat/hcai-chat/internal/emailactions"
 	"github.com/hcai-chat/hcai-chat/internal/notifications"
+	"github.com/hcai-chat/hcai-chat/internal/observability"
 	"github.com/hcai-chat/hcai-chat/internal/payments"
 	"github.com/hcai-chat/hcai-chat/internal/platform/config"
 	"github.com/hcai-chat/hcai-chat/internal/platform/database"
@@ -56,6 +57,23 @@ func main() {
 		costRuntime = nil
 	}
 	reconciliationService := reconciliation.NewService(pool, costRuntime, cfg.OpenAIReconciliationOverageThresholdMicros)
+	observabilityRepository := observability.NewRepository(pool)
+	go func() {
+		ticker := time.NewTicker(10 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				maintenanceCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+				if err := observabilityRepository.PurgeExpired(maintenanceCtx, 1000); err != nil {
+					logger.Warn("purge request observations", "error", err)
+				}
+				cancel()
+			}
+		}
+	}()
 	mediaStores := media.NewCatalogFromConfig(cfg)
 	mediaScanner := assets.NewScannerFromConfig(cfg)
 	creationService := creation.NewServiceWithMedia(pool, mediaStores, providerRuntimes)
@@ -87,6 +105,7 @@ func main() {
 		WaffoProductIDOnetime: cfg.WaffoProductIDOnetime, WaffoProductIDSubscription: cfg.WaffoProductIDSubscription,
 	}, paymentRuntimes)
 	worker.Handle(creation.JobKind, creationService.HandleJob)
+	worker.Handle(creation.FailureEvidenceJobKind, creationService.HandleJob)
 	worker.Handle(assets.ScanJobKind, assetService.HandleScanJob)
 	worker.Handle(datarights.ExportJobKind, dataRightsService.HandleExportJob)
 	worker.Handle(datarights.ExportExpiryJobKind, dataRightsService.HandleExportExpiryJob)

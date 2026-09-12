@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -50,6 +51,7 @@ func TestMiddlewareReplacesUnsafeRequestID(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
 	router := chi.NewRouter()
 	router.Use(httputil.Middleware(logger, "http://localhost:5173"))
+	router.Put("/api/v1/settings", func(http.ResponseWriter, *http.Request) {})
 	router.Get("/health", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	request := httptest.NewRequest(http.MethodGet, "/health", nil)
 	request.Header.Set("X-Request-ID", string(bytes.Repeat([]byte("a"), 129)))
@@ -57,5 +59,20 @@ func TestMiddlewareReplacesUnsafeRequestID(t *testing.T) {
 	router.ServeHTTP(response, request)
 	if _, err := uuid.Parse(response.Header().Get("X-Request-ID")); err != nil {
 		t.Fatalf("unsafe request ID was not replaced: %q", response.Header().Get("X-Request-ID"))
+	}
+}
+
+func TestMiddlewareAllowsPutInCorsPreflight(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
+	router := chi.NewRouter()
+	router.Use(httputil.Middleware(logger, "http://localhost:5173"))
+	router.Put("/api/v1/settings", func(http.ResponseWriter, *http.Request) {})
+	request := httptest.NewRequest(http.MethodOptions, "/api/v1/settings", nil)
+	request.Header.Set("Origin", "http://localhost:5173")
+	request.Header.Set("Access-Control-Request-Method", http.MethodPut)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusNoContent || !strings.Contains(response.Header().Get("Access-Control-Allow-Methods"), "PUT") {
+		t.Fatalf("PUT preflight was not allowed: status=%d methods=%q", response.Code, response.Header().Get("Access-Control-Allow-Methods"))
 	}
 }

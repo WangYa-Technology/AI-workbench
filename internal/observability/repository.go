@@ -22,13 +22,26 @@ func (r *Repository) RecordRequest(ctx context.Context, item httputil.RequestObs
 	if item.Route == "" || len(item.Route) > 240 {
 		item.Route = "unmatched"
 	}
-	_, err := r.pool.Exec(ctx, `WITH inserted AS (
-		INSERT INTO request_observations(request_id,method,route,status,duration_ms,response_bytes) VALUES($1,$2,$3,$4,$5,$6) RETURNING id
-	), purged AS (
-		DELETE FROM request_observations WHERE occurred_at < now()-interval '7 days' RETURNING id
-	) SELECT id FROM inserted`, item.RequestID, item.Method, item.Route, item.Status, item.Duration.Milliseconds(), item.ResponseBytes)
+	_, err := r.pool.Exec(ctx, `
+		INSERT INTO request_observations(request_id,method,route,status,duration_ms,response_bytes)
+		VALUES($1,$2,$3,$4,$5,$6)`, item.RequestID, item.Method, item.Route, item.Status, item.Duration.Milliseconds(), item.ResponseBytes)
 	if err != nil {
 		return fmt.Errorf("record request observation: %w", err)
+	}
+	return nil
+}
+
+// PurgeExpired removes a bounded batch so retention maintenance never runs in
+// the request path or takes an unbounded delete lock.
+func (r *Repository) PurgeExpired(ctx context.Context, batchSize int) error {
+	if batchSize < 1 || batchSize > 10000 {
+		batchSize = 1000
+	}
+	_, err := r.pool.Exec(ctx, `DELETE FROM request_observations WHERE id IN (
+		SELECT id FROM request_observations WHERE occurred_at < now()-interval '7 days' ORDER BY id LIMIT $1
+	)`, batchSize)
+	if err != nil {
+		return fmt.Errorf("purge request observations: %w", err)
 	}
 	return nil
 }

@@ -1,0 +1,1 @@
+-- Do not remove pgcrypto: it is a shared database prerequisite.

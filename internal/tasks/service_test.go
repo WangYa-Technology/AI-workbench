@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/hcai-chat/hcai-chat/internal/testutil"
 	"net/url"
 	"os"
 	"strings"
@@ -510,11 +511,11 @@ func taskTestPool(t *testing.T) (*pgxpool.Pool, func()) {
 	}
 	admin, err := pgxpool.New(ctx, baseURL)
 	if err != nil {
-		t.Skipf("PostgreSQL integration database unavailable: %v", err)
+		testutil.DatabaseUnavailable(t, err)
 	}
 	if err := admin.Ping(ctx); err != nil {
 		admin.Close()
-		t.Skipf("PostgreSQL integration database unavailable: %v", err)
+		testutil.DatabaseUnavailable(t, err)
 	}
 	schema := "test_tasks_" + uuid.NewString()[:8]
 	if _, err := admin.Exec(ctx, "CREATE SCHEMA "+pgx.Identifier{schema}.Sanitize()); err != nil {

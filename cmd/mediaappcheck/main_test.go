@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/hcai-chat/hcai-chat/internal/platform/config"
 	"github.com/hcai-chat/hcai-chat/internal/platform/database"
+	"github.com/hcai-chat/hcai-chat/internal/testutil"
 )
 
 func TestIsolatedSchema(t *testing.T) {
@@ -41,7 +42,7 @@ func TestRunAcceptanceApplicationContract(t *testing.T) {
 	defer cancel()
 	rootPool, err := database.Open(ctx, baseURL)
 	if err != nil {
-		t.Skipf("PostgreSQL unavailable: %v", err)
+		testutil.ExternalDatabaseUnavailable(t, err)
 	}
 	defer rootPool.Close()
 	schema := "media_app_test_" + strings.ReplaceAll(uuid.NewString(), "-", "")

@@ -792,6 +792,9 @@ func (s *Service) HandleJob(ctx context.Context, job jobs.Job) error {
 	if err := json.Unmarshal(job.Payload, &payload); err != nil || payload.GenerationID == uuid.Nil {
 		return fmt.Errorf("invalid generation payload")
 	}
+	if job.Kind == FailureEvidenceJobKind {
+		return s.persistFailureEvidence(ctx, payload.GenerationID)
+	}
 	err := s.process(ctx, payload.GenerationID)
 	if err == nil {
 		return nil
@@ -827,6 +830,13 @@ func (s *Service) HandleJob(ctx context.Context, job jobs.Job) error {
 		if releaseErr := billing.ReleaseGenerationTx(ctx, tx, payload.GenerationID, "provider failed after all attempts"); releaseErr != nil {
 			return fmt.Errorf("%w; release failed legacy generation credits: %v", err, releaseErr)
 		}
+		payloadJSON, marshalErr := json.Marshal(payload)
+		if marshalErr != nil {
+			return fmt.Errorf("%w; marshal failure evidence job: %v", err, marshalErr)
+		}
+		if _, enqueueErr := tx.Exec(ctx, `INSERT INTO jobs(kind,payload,max_attempts) VALUES($1,$2,5)`, FailureEvidenceJobKind, payloadJSON); enqueueErr != nil {
+			return fmt.Errorf("%w; enqueue failure evidence: %v", err, enqueueErr)
+		}
 	}
 	if commitErr := tx.Commit(ctx); commitErr != nil {
 		return fmt.Errorf("%w; commit failed generation: %v", err, commitErr)
@@ -836,30 +846,47 @@ func (s *Service) HandleJob(ctx context.Context, job jobs.Job) error {
 	// after that commit so a secondary evidence failure cannot roll the task
 	// back to a permanent 35% running state.
 	if status != "succeeded" && status != "cancelled" {
-		evidenceTx, evidenceErr := s.pool.Begin(ctx)
-		if evidenceErr == nil {
-			var conversationID *uuid.UUID
-			_ = evidenceTx.QueryRow(ctx, `SELECT conversation_id FROM generations WHERE id=$1`, payload.GenerationID).Scan(&conversationID)
-			targetPath := "/create/image"
-			if conversationID != nil {
-				targetPath += "?conversationId=" + conversationID.String() + "&generationId=" + payload.GenerationID.String()
-			} else {
-				targetPath += "?generationId=" + payload.GenerationID.String()
-			}
-			if auditErr := writeAudit(ctx, evidenceTx, ownerID, "generation.failed", payload.GenerationID, "worker", map[string]any{"errorCode": "provider_failed", "charged": false}); auditErr == nil {
-				if notifyErr := notifications.CreateTx(ctx, evidenceTx, notifications.CreateInput{
-					UserID: ownerID, Kind: "generation.failed", Title: "Generation failed",
-					Body:       "The generation could not be completed. Reserved points were released.",
-					TargetPath: targetPath, ResourceType: "generation", ResourceID: &payload.GenerationID,
-					SourceKey: "generation:" + payload.GenerationID.String() + ":failed",
-				}); notifyErr == nil {
-					_ = evidenceTx.Commit(ctx)
-				}
-			}
-			_ = evidenceTx.Rollback(ctx)
-		}
+		_ = s.persistFailureEvidence(ctx, payload.GenerationID)
 	}
 	return err
+}
+
+const FailureEvidenceJobKind = "creation.failure_evidence"
+
+func (s *Service) persistFailureEvidence(ctx context.Context, generationID uuid.UUID) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var ownerID uuid.UUID
+	var status string
+	var conversationID *uuid.UUID
+	if err := tx.QueryRow(ctx, `SELECT owner_id,status,conversation_id FROM generations WHERE id=$1`, generationID).Scan(&ownerID, &status, &conversationID); err != nil {
+		return err
+	}
+	if status != "failed" {
+		return tx.Commit(ctx)
+	}
+	var exists bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM audit_events WHERE action='generation.failed' AND resource_id=$1)`, generationID).Scan(&exists); err != nil {
+		return err
+	}
+	if !exists {
+		if err := writeAudit(ctx, tx, ownerID, "generation.failed", generationID, "worker", map[string]any{"errorCode": "provider_failed", "charged": false}); err != nil {
+			return err
+		}
+	}
+	targetPath := "/create/image"
+	if conversationID != nil {
+		targetPath += "?conversationId=" + conversationID.String() + "&generationId=" + generationID.String()
+	} else {
+		targetPath += "?generationId=" + generationID.String()
+	}
+	if err := notifications.CreateTx(ctx, tx, notifications.CreateInput{UserID: ownerID, Kind: "generation.failed", Title: "Generation failed", Body: "The generation could not be completed. Reserved points were released.", TargetPath: targetPath, ResourceType: "generation", ResourceID: &generationID, SourceKey: "generation:" + generationID.String() + ":failed"}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *Service) process(ctx context.Context, generationID uuid.UUID) error {

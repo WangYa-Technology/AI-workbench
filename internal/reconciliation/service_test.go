@@ -3,6 +3,7 @@ package reconciliation_test
 import (
 	"context"
 	"errors"
+	"github.com/hcai-chat/hcai-chat/internal/testutil"
 	"net/url"
 	"os"
 	"testing"
@@ -124,11 +125,11 @@ func reconciliationTestPool(t *testing.T) (*pgxpool.Pool, func()) {
 	}
 	root, err := pgxpool.New(ctx, baseURL)
 	if err != nil {
-		t.Skipf("PostgreSQL integration database unavailable: %v", err)
+		testutil.DatabaseUnavailable(t, err)
 	}
 	if err := root.Ping(ctx); err != nil {
 		root.Close()
-		t.Skipf("PostgreSQL integration database unavailable: %v", err)
+		testutil.DatabaseUnavailable(t, err)
 	}
 	schema := "test_reconciliation_" + uuid.NewString()[:8]
 	if _, err := root.Exec(ctx, "CREATE SCHEMA "+pgx.Identifier{schema}.Sanitize()); err != nil {

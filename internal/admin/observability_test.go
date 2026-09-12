@@ -26,6 +26,9 @@ func TestOperationalDiagnosticsReportDurableSignals(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	if err := recorder.PurgeExpired(ctx, 100); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := pool.Exec(ctx, `INSERT INTO jobs(kind,payload,status,attempts,max_attempts,available_at) VALUES('diagnostics.test','{}','queued',1,5,now()-interval '2 minutes')`); err != nil {
 		t.Fatal(err)
 	}
