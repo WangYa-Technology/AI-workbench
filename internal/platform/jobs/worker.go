@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -17,6 +18,7 @@ type Worker struct {
 	handlers    map[string]Handler
 	lease       time.Duration
 	concurrency int
+	active      atomic.Int64
 }
 
 func NewWorker(repository *Repository, owner string, logger *slog.Logger) *Worker {
@@ -60,7 +62,7 @@ func (w *Worker) Run(ctx context.Context) error {
 			select {
 			case <-waitDone:
 			case <-time.After(w.lease):
-				w.logger.Warn("worker shutdown timed out", "running_jobs", w.concurrency)
+				w.logger.Warn("worker shutdown timed out", "running_jobs", w.active.Load())
 			}
 			return ctx.Err()
 		case <-ticker.C:
@@ -83,9 +85,11 @@ func (w *Worker) Run(ctx context.Context) error {
 				continue
 			}
 			running.Add(1)
+			w.active.Add(1)
 			go func(job Job) {
 				defer running.Done()
 				defer func() { <-semaphore }()
+				defer w.active.Add(-1)
 				handler, exists := w.handlers[job.Kind]
 				var err error
 				if !exists {
