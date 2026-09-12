@@ -50,6 +50,7 @@ var KnownKinds = []string{
 	"marketplace.order_refunded",
 	"marketplace.refund_failed",
 	"generation.completed",
+	"generation.failed",
 	"billing.wallet_topup_completed",
 	"billing.subscription_completed",
 	"security.webhook_replayed",
