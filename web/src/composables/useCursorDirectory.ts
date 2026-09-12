@@ -2,6 +2,11 @@ import { ref, type Ref } from 'vue'
 
 type Page<T> = { items: T[]; nextCursor?: string }
 
+export function mergeUniqueBy<T>(current: T[], incoming: T[], identity: (item: T) => string): T[] {
+  const known = new Set(current.map(identity))
+  return [...current, ...incoming.filter(item => !known.has(identity(item)))]
+}
+
 export function useCursorDirectory<T>(fetchPage: (cursor?: string) => Promise<Page<T>>, identity: (item: T) => string = (item) => (item as { id: string }).id) {
   const items = ref<T[]>([]) as Ref<T[]>
   const nextCursor = ref<string | null>(null)
@@ -12,8 +17,7 @@ export function useCursorDirectory<T>(fetchPage: (cursor?: string) => Promise<Pa
     if (!cursor) {
       items.value = page.items
     } else {
-      const known = new Set(items.value.map(identity))
-      items.value = [...items.value, ...page.items.filter(item => !known.has(identity(item)))]
+      items.value = mergeUniqueBy(items.value, page.items, identity)
     }
     nextCursor.value = page.nextCursor || null
   }

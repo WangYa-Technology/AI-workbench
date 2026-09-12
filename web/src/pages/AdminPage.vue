@@ -17,6 +17,7 @@ import { cloneSiteConfiguration, sitePolicyKeys } from '../lib/siteConfiguration
 import { useSessionStore } from '../stores/session'
 import { useSiteConfigStore } from '../stores/siteConfig'
 import { useCursorDirectory } from '../composables/useCursorDirectory'
+import { mergeUniqueBy } from '../composables/useCursorDirectory'
 import UiButton from '../components/ui/UiButton.vue'
 import UiCheckbox from '../components/ui/UiCheckbox.vue'
 import UiDrawer from '../components/ui/UiDrawer.vue'
@@ -1549,13 +1550,12 @@ async function loadMoreModelRoutes() {
   try {
     const page = await api.adminGetModelRoutes({ mode, cursor, limit: 20 })
     if (!modelRoutePolicy.value) return
-    const known = new Set((modelRoutePolicy.value.history[mode] || []).map(item => item.id))
     const nextCursors = { ...(modelRoutePolicy.value.nextCursors || {}) }
     if (page.nextCursors?.[mode]) nextCursors[mode] = page.nextCursors[mode]
     else delete nextCursors[mode]
     modelRoutePolicy.value = {
       routes: page.routes,
-      history: { ...modelRoutePolicy.value.history, [mode]: [...(modelRoutePolicy.value.history[mode] || []), ...(page.history[mode] || []).filter(item => !known.has(item.id))] },
+      history: { ...modelRoutePolicy.value.history, [mode]: mergeUniqueBy(modelRoutePolicy.value.history[mode] || [], page.history[mode] || [], item => item.id) },
       nextCursors,
     }
   } catch (reason) {
@@ -1704,8 +1704,7 @@ async function submitRiskRulePolicy() {
 async function loadRiskRuleHistory(cursor = '') {
   const page = await api.adminGetRiskRules({ cursor: cursor || undefined, limit: 20 })
   if (cursor && riskRulePolicy.value) {
-    const known = new Set(riskRulePolicy.value.history.map(item => item.id))
-    riskRulePolicy.value = { ...page, history: [...riskRulePolicy.value.history, ...page.history.filter(item => !known.has(item.id))] }
+    riskRulePolicy.value = { ...page, history: mergeUniqueBy(riskRulePolicy.value.history, page.history, item => item.id) }
   } else {
     riskRulePolicy.value = page
   }
@@ -1741,8 +1740,7 @@ async function submitRankingPolicy() {
 async function loadRankingHistory(cursor = '') {
   const page = await api.adminGetRankingPolicy({ cursor: cursor || undefined, limit: 20 })
   if (cursor && rankingPolicy.value) {
-    const known = new Set(rankingPolicy.value.history.map(item => item.id))
-    rankingPolicy.value = { ...page, history: [...rankingPolicy.value.history, ...page.history.filter(item => !known.has(item.id))] }
+    rankingPolicy.value = { ...page, history: mergeUniqueBy(rankingPolicy.value.history, page.history, item => item.id) }
   } else {
     rankingPolicy.value = page
   }
@@ -1764,12 +1762,10 @@ async function loadDiscoveryHistories(kind: 'all' | 'index' | 'evaluation' = 'al
     evaluationCursor: kind === 'evaluation' && cursor ? cursor : undefined,
   })
   if (kind === 'index' && cursor) {
-    const known = new Set(discoveryOperations.value.indexRuns.map(item => item.id))
-    discoveryOperations.value = { ...discoveryOperations.value, indexRuns: [...discoveryOperations.value.indexRuns, ...page.indexRuns.filter(item => !known.has(item.id))] }
+    discoveryOperations.value = { ...discoveryOperations.value, indexRuns: mergeUniqueBy(discoveryOperations.value.indexRuns, page.indexRuns, item => item.id) }
     indexRunNextCursor.value = page.indexNextCursor || null
   } else if (kind === 'evaluation' && cursor) {
-    const known = new Set(discoveryOperations.value.evaluations.map(item => item.id))
-    discoveryOperations.value = { ...discoveryOperations.value, evaluations: [...discoveryOperations.value.evaluations, ...page.evaluations.filter(item => !known.has(item.id))] }
+    discoveryOperations.value = { ...discoveryOperations.value, evaluations: mergeUniqueBy(discoveryOperations.value.evaluations, page.evaluations, item => item.id) }
     evaluationNextCursor.value = page.evaluationNextCursor || null
   } else {
     discoveryOperations.value = page
