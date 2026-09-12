@@ -60,3 +60,41 @@ func TestWorkerHeartbeatsLongHandlerWithoutDuplicateClaim(t *testing.T) {
 		t.Fatal("worker did not stop after cancellation")
 	}
 }
+
+func TestWorkerDrainsRunningHandlerBeforeReturning(t *testing.T) {
+	pool, cleanup := testPool(t)
+	defer cleanup()
+	repository := jobs.NewRepository(pool)
+	if _, err := repository.Enqueue(context.Background(), "test.drain", map[string]bool{"durable": true}); err != nil {
+		t.Fatal(err)
+	}
+	worker := jobs.NewWorkerWithOptions(repository, "drain-worker", slog.New(slog.NewJSONHandler(io.Discard, nil)), time.Second, 1)
+	released := make(chan struct{})
+	finished := make(chan struct{})
+	worker.Handle("test.drain", func(ctx context.Context, _ jobs.Job) error {
+		<-released
+		close(finished)
+		return nil
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- worker.Run(ctx) }()
+	time.Sleep(900 * time.Millisecond)
+	cancel()
+	select {
+	case <-done:
+		t.Fatal("worker returned before running handler drained")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(released)
+	select {
+	case <-finished:
+	case <-time.After(time.Second):
+		t.Fatal("handler did not finish")
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("worker did not return after handler finished")
+	}
+}
