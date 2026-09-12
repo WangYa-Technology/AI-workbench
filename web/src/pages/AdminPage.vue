@@ -173,16 +173,18 @@ const rankingActivationMode = ref<'candidate' | 'immediate'>('candidate')
 const rolloutForm = reactive({ percent: 25 })
 const operationalDiagnostics = ref<AdminOperationalDiagnostics | null>(null)
 const developerAdminAccess = ref<DeveloperAccess | null>(null)
-const webhookDeadLetters = ref<DeveloperWebhookDelivery[]>([])
+const webhookDirectory = useCursorDirectory<DeveloperWebhookDelivery>(cursor => api.adminListWebhookDeadLetters(webhookRecoveryListQuery(cursor)))
+const webhookDeadLetters = webhookDirectory.items
 const webhookQuery = ref('')
 const webhookEventType = ref('')
-const webhookNextCursor = ref<string | null>(null)
-const webhookLoadingMore = ref(false)
-const emailActionDeadLetters = ref<IdentityEmailAction[]>([])
+const webhookNextCursor = webhookDirectory.nextCursor
+const webhookLoadingMore = webhookDirectory.loadingMore
+const emailDirectory = useCursorDirectory<IdentityEmailAction>(cursor => api.adminListEmailActionDeadLetters(emailRecoveryListQuery(cursor)))
+const emailActionDeadLetters = emailDirectory.items
 const emailQuery = ref('')
 const emailKind = ref('')
-const emailNextCursor = ref<string | null>(null)
-const emailLoadingMore = ref(false)
+const emailNextCursor = emailDirectory.nextCursor
+const emailLoadingMore = emailDirectory.loadingMore
 const governanceReports = ref<AdminGovernanceReport[]>([])
 const governanceAppeals = ref<AdminGovernanceAppeal[]>([])
 const reportQuery = ref('')
@@ -1056,25 +1058,11 @@ function emailRecoveryListQuery(cursor = '') {
 }
 
 async function loadWebhookRecoveryDirectory(cursor = '') {
-  const page = await api.adminListWebhookDeadLetters(webhookRecoveryListQuery(cursor))
-  if (cursor) {
-    const known = new Set(webhookDeadLetters.value.map(item => item.id))
-    webhookDeadLetters.value = [...webhookDeadLetters.value, ...page.items.filter(item => !known.has(item.id))]
-  } else {
-    webhookDeadLetters.value = page.items
-  }
-  webhookNextCursor.value = page.nextCursor || null
+	await webhookDirectory.load(cursor)
 }
 
 async function loadEmailRecoveryDirectory(cursor = '') {
-  const page = await api.adminListEmailActionDeadLetters(emailRecoveryListQuery(cursor))
-  if (cursor) {
-    const known = new Set(emailActionDeadLetters.value.map(item => item.id))
-    emailActionDeadLetters.value = [...emailActionDeadLetters.value, ...page.items.filter(item => !known.has(item.id))]
-  } else {
-    emailActionDeadLetters.value = page.items
-  }
-  emailNextCursor.value = page.nextCursor || null
+	await emailDirectory.load(cursor)
 }
 
 async function loadDataRightsDirectory(cursor = '') {
