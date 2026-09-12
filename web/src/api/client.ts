@@ -55,6 +55,7 @@ export type TaskDeliveryCreate = components['schemas']['TaskDeliveryCreate']
 export type TaskReview = components['schemas']['TaskReview']
 export type TaskCheckoutRequest = components['schemas']['TaskCheckoutRequest']
 export type TaskPaymentCheckout = components['schemas']['TaskPaymentCheckout']
+export type TaskType = { code: string; nameZh: string; nameEn: string; icon: string; sortOrder: number }
 export type Product = components['schemas']['Product']
 export type PaymentCheckout = components['schemas']['PaymentCheckout']
 export type Order = components['schemas']['Order']
@@ -479,6 +480,7 @@ export const api = {
     })
     return request<{ items: TaskSummary[] }>(`/tasks${params.size ? `?${params}` : ''}`)
   },
+  listTaskTypes: () => request<{ items: TaskType[] }>('/task-types'),
   getTask: (id: string) => request<TaskDetail>(`/tasks/${encodeURIComponent(id)}`),
   checkoutTask: (id: string, input: TaskCheckoutRequest, idempotencyKey: string) => request<TaskPaymentCheckout>(`/tasks/${encodeURIComponent(id)}/checkout`, {
     method: 'POST', headers: { 'Idempotency-Key': idempotencyKey }, body: JSON.stringify(input),
@@ -531,6 +533,10 @@ export const api = {
   adminListPaymentProviderConfigs: () => request<{ items: AdminPaymentProviderConfig[] }>('/admin/payment-providers'),
   adminUpdatePaymentProviderConfig: (provider: string, input: AdminPaymentProviderConfigUpdate) => request<AdminPaymentProviderConfig>(`/admin/payment-providers/${encodeURIComponent(provider)}`, { method: 'PUT', body: JSON.stringify(input) }),
   adminListProviders: () => request<{ items: AdminProvider[] }>('/admin/providers'),
+  adminListTaskTypes: () => request<{ items: TaskType[] }>('/task-types'),
+  adminCreateTaskType: (input: Omit<TaskType, 'version'>) => request<TaskType>('/admin/task-types', { method: 'POST', body: JSON.stringify(input) }),
+  adminUpdateTaskType: (code: string, input: Omit<TaskType, 'code' | 'version'>) => request<TaskType>(`/admin/task-types/${encodeURIComponent(code)}`, { method: 'PATCH', body: JSON.stringify(input) }),
+  adminDeleteTaskType: (code: string, replacement = '') => request<{ deleted: boolean }>(`/admin/task-types/${encodeURIComponent(code)}`, { method: 'DELETE', body: JSON.stringify({ replacement }) }),
   adminUpdateProvider: (id: string, input: AdminProviderUpdate) => request<AdminProvider>(`/admin/providers/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(input) }),
   adminListProviderConfigs: () => request<{ items: AdminProviderConfig[] }>('/admin/provider-configs'),
   adminCreateProviderConfig: (input: AdminProviderConfigCreate) => request<AdminProviderConfig>('/admin/provider-configs', { method: 'POST', body: JSON.stringify(input) }),

@@ -17,7 +17,7 @@ import {
   type LucideIcon,
 } from 'lucide-vue-next'
 
-export type AdminTab = 'overview' | 'users' | 'content' | 'media' | 'governance' | 'support' | 'generations' | 'tasks' | 'providers' | 'models' | 'settings' | 'developer' | 'finance' | 'risk' | 'riskRules' | 'ranking' | 'dataRights' | 'diagnostics'
+export type AdminTab = 'overview' | 'users' | 'content' | 'media' | 'governance' | 'support' | 'generations' | 'tasks' | 'taskTypes' | 'providers' | 'models' | 'settings' | 'developer' | 'finance' | 'risk' | 'riskRules' | 'ranking' | 'dataRights' | 'diagnostics'
 
 export type AdminNavigationItem = {
   tab: AdminTab
@@ -34,6 +34,7 @@ export const adminNavigationItems: AdminNavigationItem[] = [
   { tab: 'governance', permission: 'admin:governance', icon: ShieldAlert },
   { tab: 'support', permission: 'admin:support', icon: Headphones },
   { tab: 'tasks', permission: 'admin:tasks', icon: BriefcaseBusiness },
+  { tab: 'taskTypes', permission: 'admin:tasks', icon: ListFilter },
   { tab: 'providers', permission: 'admin:providers', icon: SlidersHorizontal },
   { tab: 'models', permission: 'admin:models', icon: WandSparkles },
   { tab: 'settings', permission: 'admin:settings', icon: Settings2 },

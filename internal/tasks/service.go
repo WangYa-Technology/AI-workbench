@@ -305,7 +305,11 @@ func (s *Service) Create(ctx context.Context, actorID uuid.UUID, input CreateInp
 	input.ClientTimezone = strings.TrimSpace(input.ClientTimezone)
 	input.RightsTerms = strings.TrimSpace(input.RightsTerms)
 	input.AIDisclosureRequirement = strings.TrimSpace(input.AIDisclosureRequirement)
-	if len(input.Title) < 5 || len(input.Summary) < 10 || len(input.Brief) < 30 || input.BudgetCents <= 0 || input.Currency != "USD" || !input.Deadline.After(time.Now()) || len(input.Deliverables) == 0 || len(input.AcceptanceRules) == 0 || input.RightsTerms == "" || input.AIDisclosureRequirement == "" || !validDeliverable(input.DeliverableType) {
+	var validType int
+	if err := s.pool.QueryRow(ctx, `SELECT 1 FROM task_types WHERE code=$1`, input.DeliverableType).Scan(&validType); err != nil {
+		return Detail{}, ErrInvalid
+	}
+	if len(input.Title) < 5 || len(input.Summary) < 10 || len(input.Brief) < 30 || input.BudgetCents <= 0 || input.Currency != "USD" || !input.Deadline.After(time.Now()) || len(input.Deliverables) == 0 || len(input.AcceptanceRules) == 0 || input.RightsTerms == "" || input.AIDisclosureRequirement == "" {
 		return Detail{}, ErrInvalid
 	}
 	if input.ClientTimezone == "" {

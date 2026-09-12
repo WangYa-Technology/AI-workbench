@@ -29,6 +29,7 @@ import (
 	"github.com/hcai-chat/hcai-chat/internal/reconciliation"
 	"github.com/hcai-chat/hcai-chat/internal/support"
 	"github.com/hcai-chat/hcai-chat/internal/tasks"
+	"github.com/hcai-chat/hcai-chat/internal/tasktypes"
 	"github.com/hcai-chat/hcai-chat/internal/webhooks"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"log/slog"
@@ -62,6 +63,7 @@ type Server struct {
 	authChallenges *authchallenges.Service
 	payments       *payments.Service
 	reconciliation *reconciliation.Service
+	taskTypes      *tasktypes.Service
 }
 
 func New(cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger) http.Handler {
@@ -98,6 +100,7 @@ func New(cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger) http.Handle
 		authChallenges: authchallenges.NewService(pool, cfg.EmailActionKey, cfg.EmailDeliveryMode, cfg.MediaRoot),
 		payments:       payments.NewServiceFromConfig(pool, cfg),
 		reconciliation: reconciliation.NewService(pool, costRuntime, cfg.OpenAIReconciliationOverageThresholdMicros),
+		taskTypes:      tasktypes.NewService(pool),
 	}
 	router := chi.NewRouter()
 	router.Use(httputil.Middleware(logger, cfg.WebOrigin, server.observability.RecordRequest, server.metrics.RecordRequest))
@@ -210,6 +213,7 @@ func New(cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger) http.Handle
 		api.Get("/community/reports/mine", server.listMyCommunityReports)
 		api.Post("/community/reports/{reportID}/appeals", server.createCommunityAppeal)
 		api.Get("/tasks", server.listTasks)
+		api.Get("/task-types", server.listTaskTypes)
 		api.Post("/tasks", server.createTask)
 		api.Get("/tasks/{taskID}", server.getTask)
 		api.Post("/tasks/{taskID}/checkout", server.checkoutTask)
@@ -230,6 +234,9 @@ func New(cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger) http.Handle
 		api.Get("/admin/generations", server.adminListGenerations)
 		api.Post("/admin/generations/{generationID}/cancel", server.adminCancelGeneration)
 		api.Get("/admin/tasks", server.adminListTasks)
+		api.Post("/admin/task-types", server.adminCreateTaskType)
+		api.Patch("/admin/task-types/{code}", server.adminUpdateTaskType)
+		api.Delete("/admin/task-types/{code}", server.adminDeleteTaskType)
 		api.Post("/admin/tasks/{taskID}/resolve", server.adminResolveTaskDispute)
 		api.Get("/admin/providers", server.adminListProviders)
 		api.Patch("/admin/providers/{providerID}", server.adminUpdateProvider)

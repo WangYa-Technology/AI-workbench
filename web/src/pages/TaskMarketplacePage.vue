@@ -9,7 +9,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } 
 import { useI18n } from 'vue-i18n'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import {
-  api, messageFrom, type Asset, type TaskCreate, type TaskDetail, type TaskSummary,
+  api, messageFrom, type Asset, type TaskCreate, type TaskDetail, type TaskSummary, type TaskType,
 } from '../api/client'
 import { formatCurrency, formatDateTime } from '../lib/format'
 import { openCheckoutWindow } from '../lib/checkout'
@@ -98,12 +98,13 @@ const draft = reactive({
   deliverables: '', acceptanceRules: '', rightsTerms: '', aiDisclosureRequirement: '', allowDirectAccept: false,
 })
 
-const types = ['image', 'video', 'audio', 'prompt', 'workflow', 'mixed']
+const taskTypes = ref<TaskType[]>([])
+const types = computed(() => taskTypes.value.map((item) => item.code))
 const statuses = ['open', 'assigned', 'submitted', 'revision', 'accepted', 'disputed', 'cancelled']
 const openTaskCount = computed(() => catalogTasks.value.filter((item) => item.status === 'open').length)
 const totalTaskReward = computed(() => catalogTasks.value.reduce((total, item) => total + item.budgetCents, 0))
 const totalProposalCount = computed(() => catalogTasks.value.reduce((total, item) => total + item.proposalCount, 0))
-const taskTypeCounts = computed(() => Object.fromEntries(types.map((type) => [
+const taskTypeCounts = computed(() => Object.fromEntries(types.value.map((type) => [
   type,
   catalogTasks.value.filter((item) => item.deliverableType === type).length,
 ])))
@@ -144,13 +145,18 @@ function taskThumbnail(kind: string) {
   if (kind === 'image') return '/tasks/task-image.webp'
   return '/tasks/task-hero-transparent.webp'
 }
+function taskTypeLabel(code: string) {
+  const item = taskTypes.value.find((type) => type.code === code)
+  return locale.value.startsWith('zh') ? (item?.nameZh || code) : (item?.nameEn || code)
+}
 
 async function load() {
   loading.value = true
   error.value = ''
   success.value = ''
   try {
-    const [, runtime] = await Promise.all([session.ensure(), api.meta()])
+    const [, runtime, configuredTypes] = await Promise.all([session.ensure(), api.meta(), api.listTaskTypes()])
+    taskTypes.value = configuredTypes.items
     taskPaymentEnabled.value = runtime.taskPaymentProvider.enabled
     paymentLiveMode.value = runtime.taskPaymentProvider.liveMode
     if (taskID.value) {
@@ -521,7 +527,7 @@ onBeforeUnmount(() => {
             <option value="">
               {{ t('tasks.allTypes') }}
             </option><option v-for="item in types" :key="item" :value="item">
-              {{ t(`tasks.types.${item}`) }}
+              {{ taskTypeLabel(item) }}
             </option>
           </UiSelect>
           <UiSelect v-model="status" class="task-filter-control" :aria-label="t('tasks.allStatuses')" @change="applyFilters">
@@ -566,7 +572,7 @@ onBeforeUnmount(() => {
               <BriefcaseBusiness :size="17" /><span>{{ t('tasks.allTasks') }}</span><small>{{ catalogTasks.length }}</small>
             </UiButton>
             <UiButton v-for="type in types" :key="type" variant="ghost" type="button" :class="{ active: deliverableType === type }" @click="selectTaskType(type)">
-              <component :is="taskTypeIcon(type)" :size="17" /><span>{{ t(`tasks.types.${type}`) }}</span><small>{{ taskTypeCounts[type] || 0 }}</small>
+              <component :is="taskTypeIcon(type)" :size="17" /><span>{{ taskTypeLabel(type) }}</span><small>{{ taskTypeCounts[type] || 0 }}</small>
             </UiButton>
           </nav>
           <section class="task-creator-program">
@@ -597,7 +603,7 @@ onBeforeUnmount(() => {
             <RouterLink v-for="item in tasks" :key="item.id" class="task-row" :class="{ 'is-direct': item.allowDirectAccept && item.status === 'open' }" :data-type="item.deliverableType" :to="`/market/demands/${item.id}`">
               <span class="task-row-media"><img :src="taskThumbnail(item.deliverableType)" :alt="item.title" /><span v-if="item.deliverableType === 'video'" class="task-media-play"><Play :size="18" fill="currentColor" /></span></span>
               <span class="task-row-copy">
-                <span class="task-row-heading"><span class="task-type-badge"><component :is="taskTypeIcon(item.deliverableType)" :size="13" />{{ t(`tasks.types.${item.deliverableType}`) }}</span><span class="task-status" :data-status="item.status">{{ t(`tasks.status.${item.status}`) }}</span></span>
+                <span class="task-row-heading"><span class="task-type-badge"><component :is="taskTypeIcon(item.deliverableType)" :size="13" />{{ taskTypeLabel(item.deliverableType) }}</span><span class="task-status" :data-status="item.status">{{ t(`tasks.status.${item.status}`) }}</span></span>
                 <strong>{{ item.title }}</strong><small>{{ item.summary }}</small>
                 <span class="task-row-byline"><span>@{{ item.client.handle }}</span><span>{{ item.proposalCount }} {{ t('tasks.proposalCount') }}</span><span v-if="item.allowDirectAccept && item.status === 'open'">{{ t('tasks.direct') }}</span></span>
               </span>
@@ -890,7 +896,7 @@ onBeforeUnmount(() => {
           </fieldset>
           <fieldset class="task-form-section">
             <legend>{{ t('tasks.scheduleSection') }}</legend><div class="form-pair">
-              <label>{{ t('tasks.typeLabel') }}<UiSelect v-model="draft.deliverableType"><option v-for="item in types" :key="item" :value="item">{{ t(`tasks.types.${item}`) }}</option></UiSelect></label><label>{{ t('tasks.budgetLabel') }}<UiInput v-model="draft.budget" type="number" min="1" step="1" required /></label>
+              <label>{{ t('tasks.typeLabel') }}<UiSelect v-model="draft.deliverableType"><option v-for="item in types" :key="item" :value="item">{{ taskTypeLabel(item) }}</option></UiSelect></label><label>{{ t('tasks.budgetLabel') }}<UiInput v-model="draft.budget" type="number" min="1" step="1" required /></label>
             </div><div class="form-pair">
               <label>{{ t('tasks.deadlineLabel') }}<UiInput v-model="draft.deadline" type="datetime-local" :min="minimumDeadline" required /></label><label>{{ t('tasks.timezoneLabel') }}<UiSelect v-model="draft.timezone" :aria-label="t('tasks.timezoneLabel')" required><option v-for="item in timezoneOptions" :key="item" :value="item">{{ item }}</option></UiSelect>
               </label>
