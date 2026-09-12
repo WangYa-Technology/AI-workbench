@@ -1243,6 +1243,7 @@
 .task-filters .task-filter-control .ui-select__trigger { height: var(--task-filter-control-height); min-height: var(--task-filter-control-height); }
 .task-filters .task-filter-control:hover { border-color: transparent; background: transparent; }
 .task-filters .task-filter-control:focus-within { border-color: transparent; box-shadow: none; }
+.task-filters .task-filter-control.ui-select-root--open .ui-select__trigger { border-color: var(--border); box-shadow: none; }
 .task-filter-submit { --ui-height: var(--task-filter-control-height); height: var(--task-filter-control-height); min-height: var(--task-filter-control-height); }
 .task-browser-layout { display: grid; grid-template-columns: 216px minmax(0, 1fr); gap: 18px; align-items: start; }
 .task-category-panel { position: sticky; top: 20px; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-surface); background: var(--surface); }
