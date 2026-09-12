@@ -384,6 +384,8 @@ Run Go unit and PostgreSQL integration tests plus frontend unit tests:
 make test
 ```
 
+`make test` requires the PostgreSQL integration database and fails if it is unavailable. Set `TEST_DATABASE_URL` to an isolated database. `make test-integration` runs the same suite uncached and requires `TEST_DATABASE_URL` explicitly.
+
 Run static checks and the production build:
 
 ```bash

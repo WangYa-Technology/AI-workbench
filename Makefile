@@ -1,4 +1,4 @@
-.PHONY: bootstrap dev dev-demo api worker web waffo-connector db-up db-down migrate seed test e2e lint build production-config-check media-staging-check media-application-staging-check provider-staging-check creative-provider-staging-check container-build database-backup database-restore metrics-check recovery-drill payment-drill billing-drill provider-drill
+.PHONY: bootstrap dev dev-demo api worker web waffo-connector db-up db-down migrate seed test test-integration e2e lint build production-config-check media-staging-check media-application-staging-check provider-staging-check creative-provider-staging-check container-build database-backup database-restore metrics-check recovery-drill payment-drill billing-drill provider-drill
 
 bootstrap:
 	go mod download
@@ -36,8 +36,12 @@ dev-demo:
 	HCAI_SEED_DEMO=1 ./scripts/dev.sh
 
 test:
-	go test ./...
+	HCAI_REQUIRE_INTEGRATION_TESTS=1 go test ./...
 	npm --prefix web run test
+
+test-integration:
+	@test -n "$(TEST_DATABASE_URL)" || (echo "TEST_DATABASE_URL is required for integration tests." >&2; exit 1)
+	HCAI_REQUIRE_INTEGRATION_TESTS=1 go test -count=1 ./...
 
 e2e:
 	npm --prefix web run test:e2e
