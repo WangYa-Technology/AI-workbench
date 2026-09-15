@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { rememberContentList } from '../lib/contentPresentation'
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -46,3 +47,4 @@ export const router = createRouter({
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
 })
+router.afterEach(to => rememberContentList(to.path, to.fullPath))

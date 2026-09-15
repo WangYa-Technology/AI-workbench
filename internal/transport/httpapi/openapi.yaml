@@ -824,6 +824,9 @@ paths:
       tags: [Discovery]
       operationId: listWorks
       parameters:
+        - { name: q, in: query, schema: { type: string }, description: Search published work metadata }
+        - { name: kind, in: query, schema: { type: string, enum: [image, video, audio, document] } }
+        - { name: promptVisibility, in: query, schema: { type: string, enum: [public, partial, purchased, private] } }
         - name: limit
           in: query
           schema:
@@ -835,7 +838,7 @@ paths:
           in: query
           schema:
             type: string
-            format: date-time
+            description: Opaque publication time and work ID cursor; legacy timestamp cursors remain accepted
       responses:
         '200':
           description: Published works ordered by publication time
@@ -1361,7 +1364,9 @@ paths:
               schema:
                 type: object
                 required: [items]
-                properties: { items: { type: array, items: { $ref: '#/components/schemas/Product' } } }
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/Product' } }
+                  categoryCounts: { type: object, additionalProperties: { type: integer, minimum: 0 } }
   /products/{productId}:
     get:
       tags: [Marketplace]
@@ -1542,6 +1547,8 @@ paths:
       tags: [Community]
       operationId: listCommunityPosts
       parameters:
+        - { name: sort, in: query, schema: { type: string, enum: [latest, discussed], default: latest } }
+        - { name: q, in: query, schema: { type: string } }
         - { name: category, in: query, schema: { type: string } }
         - { name: cursor, in: query, schema: { type: string }, description: Opaque stable reverse-chronological Community feed cursor }
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
@@ -3437,13 +3444,16 @@ components:
       type: object
       required: [items, nextCursor]
       properties:
+        categoryCounts:
+          type: object
+          description: Counts across all pages matching search and prompt visibility, independent of selected media kind and cursor.
+          additionalProperties: { type: integer, minimum: 0 }
         items:
           type: array
           items:
             $ref: '#/components/schemas/Work'
         nextCursor:
           type: [string, 'null']
-          format: date-time
     SearchResult:
       type: object
       required: [type, id, title, summary, path, rank, rankSignals]
@@ -4224,6 +4234,7 @@ components:
       additionalProperties: false
       required: [items]
       properties:
+        categoryCounts: { type: object, additionalProperties: { type: integer, minimum: 0 } }
         items: { type: array, items: { $ref: '#/components/schemas/CommunityPost' } }
         nextCursor: { type: string }
     CommunityComment:
@@ -4338,8 +4349,10 @@ components:
       properties:
         id: { type: string, format: uuid }
         assetId: { type: string, format: uuid }
+        creator: { $ref: '#/components/schemas/Author' }
         assetTitle: { type: string }
         mediaUrl: { type: string }
+        mediaKind: { type: string, enum: [image, video, audio, document] }
         note: { type: string }
         status: { type: string, enum: [submitted, revision, accepted, disputed] }
         version: { type: integer }

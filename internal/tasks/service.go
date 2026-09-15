@@ -64,10 +64,12 @@ type Proposal struct {
 }
 
 type Delivery struct {
+	Creator    Person     `json:"creator"`
 	ID         uuid.UUID  `json:"id"`
 	AssetID    uuid.UUID  `json:"assetId"`
 	AssetTitle string     `json:"assetTitle"`
 	MediaURL   string     `json:"mediaUrl"`
+	MediaKind  string     `json:"mediaKind"`
 	Note       string     `json:"note"`
 	Status     string     `json:"status"`
 	Version    int        `json:"version"`
@@ -941,7 +943,7 @@ func (s *Service) listProposals(ctx context.Context, demandID, actorID, clientID
 }
 
 func (s *Service) listDeliveries(ctx context.Context, demandID uuid.UUID) ([]Delivery, error) {
-	rows, err := s.pool.Query(ctx, `SELECT d.id,d.asset_id,a.title,a.media_url,d.note,d.status,d.version,d.review_note,d.created_at,d.reviewed_at,d.accepted_at FROM deliveries d JOIN assets a ON a.id=d.asset_id WHERE d.demand_id=$1 ORDER BY d.version DESC`, demandID)
+	rows, err := s.pool.Query(ctx, `SELECT u.id,u.handle,u.display_name,d.id,d.asset_id,a.title,a.media_url,a.kind,d.note,d.status,d.version,d.review_note,d.created_at,d.reviewed_at,d.accepted_at FROM deliveries d JOIN assets a ON a.id=d.asset_id JOIN users u ON u.id=d.creator_id WHERE d.demand_id=$1 ORDER BY d.version DESC`, demandID)
 	if err != nil {
 		return nil, err
 	}
@@ -949,7 +951,7 @@ func (s *Service) listDeliveries(ctx context.Context, demandID uuid.UUID) ([]Del
 	items := make([]Delivery, 0)
 	for rows.Next() {
 		var d Delivery
-		if err = rows.Scan(&d.ID, &d.AssetID, &d.AssetTitle, &d.MediaURL, &d.Note, &d.Status, &d.Version, &d.ReviewNote, &d.CreatedAt, &d.ReviewedAt, &d.AcceptedAt); err != nil {
+		if err = rows.Scan(&d.Creator.ID, &d.Creator.Handle, &d.Creator.DisplayName, &d.ID, &d.AssetID, &d.AssetTitle, &d.MediaURL, &d.MediaKind, &d.Note, &d.Status, &d.Version, &d.ReviewNote, &d.CreatedAt, &d.ReviewedAt, &d.AcceptedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, d)

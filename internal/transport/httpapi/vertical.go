@@ -68,8 +68,19 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) listWorks(w http.ResponseWriter, r *http.Request) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	filter := discovery.WorkFilter{Query: r.URL.Query().Get("q"), Kind: r.URL.Query().Get("kind"), PromptVisibility: r.URL.Query().Get("promptVisibility")}
 	var before *time.Time
 	if cursor := strings.TrimSpace(r.URL.Query().Get("cursor")); cursor != "" {
+		parts := strings.SplitN(cursor, "|", 2)
+		if len(parts) == 2 {
+			id, err := uuid.Parse(parts[1])
+			if err != nil {
+				httputil.WriteError(w, r, 400, "invalid_cursor", "The pagination cursor is invalid.", false)
+				return
+			}
+			filter.BeforeID = &id
+		}
+		cursor = parts[0]
 		parsed, err := time.Parse(time.RFC3339Nano, cursor)
 		if err != nil {
 			httputil.WriteError(w, r, http.StatusBadRequest, "invalid_cursor", "The pagination cursor is invalid.", false)
@@ -77,7 +88,7 @@ func (s *Server) listWorks(w http.ResponseWriter, r *http.Request) {
 		}
 		before = &parsed
 	}
-	page, err := s.discovery.List(r.Context(), limit, before)
+	page, err := s.discovery.List(r.Context(), limit, before, filter)
 	if err != nil {
 		s.internalError(w, r, "list works", err)
 		return
@@ -1045,7 +1056,7 @@ func writeContentDraft(w http.ResponseWriter, r *http.Request, s *Server, item c
 }
 
 func (s *Server) listPosts(w http.ResponseWriter, r *http.Request) {
-	input := community.PostListInput{Cursor: r.URL.Query().Get("cursor"), Category: r.URL.Query().Get("category")}
+	input := community.PostListInput{Sort: r.URL.Query().Get("sort"), Cursor: r.URL.Query().Get("cursor"), Category: r.URL.Query().Get("category"), Query: r.URL.Query().Get("q")}
 	viewerID := s.optionalViewer(r)
 	if raw := strings.TrimSpace(r.URL.Query().Get("mine")); raw != "" {
 		mine, err := strconv.ParseBool(raw)

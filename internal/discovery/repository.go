@@ -43,8 +43,9 @@ type Work struct {
 }
 
 type Page struct {
-	Items      []Work  `json:"items"`
-	NextCursor *string `json:"nextCursor"`
+	Items          []Work         `json:"items"`
+	NextCursor     *string        `json:"nextCursor"`
+	CategoryCounts map[string]int `json:"categoryCounts"`
 }
 
 type SearchFilter struct {
@@ -134,7 +135,16 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 	return &Repository{pool: pool}
 }
 
-func (r *Repository) List(ctx context.Context, limit int, before *time.Time) (Page, error) {
+type WorkFilter struct {
+	Query, Kind, PromptVisibility string
+	BeforeID                      *uuid.UUID
+}
+
+func (r *Repository) List(ctx context.Context, limit int, before *time.Time, filters ...WorkFilter) (Page, error) {
+	var filter WorkFilter
+	if len(filters) > 0 {
+		filter = filters[0]
+	}
 	if limit < 1 || limit > 24 {
 		limit = 12
 	}
@@ -145,9 +155,13 @@ func (r *Repository) List(ctx context.Context, limit int, before *time.Time) (Pa
 		FROM works w
 		JOIN assets a ON a.id=w.asset_id
 		JOIN users u ON u.id=w.author_id
-		WHERE w.status='published' AND a.scan_status='clean' AND ($1::timestamptz IS NULL OR w.published_at < $1)
+		WHERE w.status='published' AND a.scan_status='clean'
+		AND ($1::timestamptz IS NULL OR w.published_at < $1 OR ($6::uuid IS NOT NULL AND w.published_at=$1 AND w.id<$6))
+		AND ($3='' OR concat_ws(' ',w.title,w.summary,u.display_name,u.handle,w.model_name,a.license_code) ILIKE '%'||$3||'%')
+		AND ($4='' OR a.kind=$4)
+		AND ($5='' OR w.prompt_visibility=$5)
 		ORDER BY w.published_at DESC,w.id DESC
-		LIMIT $2`, before, limit+1)
+		LIMIT $2`, before, limit+1, strings.TrimSpace(filter.Query), filter.Kind, filter.PromptVisibility, filter.BeforeID)
 	if err != nil {
 		return Page{}, fmt.Errorf("list works: %w", err)
 	}
@@ -169,9 +183,36 @@ func (r *Repository) List(ctx context.Context, limit int, before *time.Time) (Pa
 	if len(items) > limit {
 		items = items[:limit]
 		cursor := items[len(items)-1].PublishedAt.UTC().Format(time.RFC3339Nano)
+		if len(filters) > 0 {
+			cursor += "|" + items[len(items)-1].ID.String()
+		}
 		next = &cursor
 	}
-	return Page{Items: items, NextCursor: next}, nil
+	rows.Close()
+	counts := map[string]int{}
+	countRows, err := r.pool.Query(ctx, `
+		SELECT a.kind, count(*) FROM works w
+		JOIN assets a ON a.id=w.asset_id JOIN users u ON u.id=w.author_id
+		WHERE w.status='published' AND a.scan_status='clean'
+		AND ($1='' OR concat_ws(' ',w.title,w.summary,u.display_name,u.handle,w.model_name,a.license_code) ILIKE '%'||$1||'%')
+		AND ($2='' OR w.prompt_visibility=$2)
+		GROUP BY a.kind`, strings.TrimSpace(filter.Query), filter.PromptVisibility)
+	if err != nil {
+		return Page{}, fmt.Errorf("count work categories: %w", err)
+	}
+	defer countRows.Close()
+	for countRows.Next() {
+		var kind string
+		var count int
+		if err := countRows.Scan(&kind, &count); err != nil {
+			return Page{}, err
+		}
+		counts[kind] = count
+	}
+	if err := countRows.Err(); err != nil {
+		return Page{}, err
+	}
+	return Page{Items: items, NextCursor: next, CategoryCounts: counts}, nil
 }
 
 func (r *Repository) Get(ctx context.Context, id uuid.UUID) (Work, error) {

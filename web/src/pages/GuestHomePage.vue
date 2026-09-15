@@ -150,7 +150,7 @@ onBeforeUnmount(() => {
       </div>
     </header>
 
-    <main class="home-content">
+    <div class="home-content">
       <section class="home-hero">
         <div class="hero-main home-width">
           <div class="hero-copy">
@@ -331,7 +331,7 @@ onBeforeUnmount(() => {
           </nav>
         </div>
       </section>
-    </main>
+    </div>
 
     <footer class="home-footer">
       <RouterLink class="home-brand" to="/">

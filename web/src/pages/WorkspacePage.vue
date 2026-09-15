@@ -7,6 +7,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { api, messageFrom, type Asset, type BillingStatement, type Generation, type Meta, type Order, type PointOverview, type SavedWork, type TaskSummary } from '../api/client'
+import { contentListReturn, creationPath, licenseLabel } from '../lib/contentPresentation'
 import { formatCurrency, formatDateTime } from '../lib/format'
 import { openCheckoutWindow } from '../lib/checkout'
 import { useSessionStore } from '../stores/session'
@@ -482,7 +483,12 @@ async function clearGenerationFilters() {
   await router.push('/create/image')
 }
 
+let workspaceLoadVersion = 0
 async function load() {
+  const version = ++workspaceLoadVersion
+  const id = assetID.value
+  const currentSection = section.value
+  if (selectedAsset.value?.id !== id) selectedAsset.value = null
 	if (paymentConfirmationTimer !== undefined) {
 		globalThis.clearTimeout(paymentConfirmationTimer)
 		paymentConfirmationTimer = undefined
@@ -492,37 +498,46 @@ async function load() {
   success.value = ''
   try {
     const user = await session.ensure()
+    if (version !== workspaceLoadVersion) return
     if (!user) {
       if (session.error) throw new Error(session.error)
       return
     }
-    if (assetID.value) {
-      selectedAsset.value = await api.getAsset(assetID.value)
+    if (id) {
+      const item = await api.getAsset(id)
+      if (version !== workspaceLoadVersion) return
+      selectedAsset.value = item
       versionTitle.value = selectedAsset.value.title
       versionOpen.value = false
       return
     }
-    if (section.value === 'assets') {
+    if (currentSection === 'assets') {
       const [assetResponse, savedResponse] = await Promise.all([api.listAssets(), api.listSavedWorks()])
+      if (version !== workspaceLoadVersion) return
       assets.value = assetResponse.items
       assetNextCursor.value = assetResponse.nextCursor || null
       savedWorks.value = savedResponse.items
       savedWorkNextCursor.value = savedResponse.nextCursor || null
-    } else if (section.value === 'generations') {
+    } else if (currentSection === 'generations') {
       await loadGenerationList()
-    } else if (section.value === 'purchases') {
+    } else if (currentSection === 'purchases') {
       const page = await api.listAssets()
+      if (version !== workspaceLoadVersion) return
       assets.value = page.items
       assetNextCursor.value = page.nextCursor || null
-    } else if (section.value === 'orders') {
+    } else if (currentSection === 'orders') {
   const page = await api.listOrders({ limit: 20 })
+  if (version !== workspaceLoadVersion) return
   orders.value = page.items
   orderNextCursor.value = page.nextCursor || null
-    } else if (section.value === 'tasks') {
-      tasks.value = (await api.listTasks({ mine: true })).items
-    } else if (section.value === 'billing') {
+    } else if (currentSection === 'tasks') {
+      const page = await api.listTasks({ mine: true })
+      if (version !== workspaceLoadVersion) return
+      tasks.value = page.items
+    } else if (currentSection === 'billing') {
       syncBillingFilters()
       const [, pointOverview, runtime] = await Promise.all([loadBillingStatement(), api.pointOverview(), api.meta()])
+      if (version !== workspaceLoadVersion) return
       points.value = pointOverview
       paymentProvider.value = runtime.paymentProvider
       if (route.query.payment === 'success') {
@@ -532,11 +547,11 @@ async function load() {
       }
       if (route.query.payment === 'cancelled') success.value = t('workspace.paymentCancelled')
     }
-    selectedAsset.value = null
+    if (version === workspaceLoadVersion) selectedAsset.value = null
   } catch (reason) {
-    error.value = messageFrom(reason)
+    if (version === workspaceLoadVersion) error.value = messageFrom(reason)
   } finally {
-    loading.value = false
+    if (version === workspaceLoadVersion) loading.value = false
   }
 }
 
@@ -804,6 +819,7 @@ async function pollUpload(id: string) {
 watch(() => route.fullPath, () => void load())
 onMounted(() => void load())
 onBeforeUnmount(() => {
+  workspaceLoadVersion++
   if (paymentConfirmationTimer !== undefined) globalThis.clearTimeout(paymentConfirmationTimer)
 })
 </script>
@@ -818,8 +834,8 @@ onBeforeUnmount(() => {
     />
 
     <template v-else-if="assetID">
-      <RouterLink class="text-link asset-back" to="/workspace/assets">
-        <ArrowLeft :size="17" />{{ t('workspace.assetBack') }}
+      <RouterLink class="text-link asset-back" :to="contentListReturn('/workspace/assets')">
+        <ArrowLeft :size="17" />{{ t(contentListReturn('/workspace/assets').startsWith('/workspace/purchases') ? 'content.backPurchases' : 'workspace.assetBack') }}
       </RouterLink>
       <div v-if="loading" class="page-state" aria-live="polite">
         {{ t('status.loadingAssets') }}
@@ -832,6 +848,21 @@ onBeforeUnmount(() => {
         </UiButton>
       </div>
       <div v-else class="asset-detail-layout">
+        <header class="asset-content-heading">
+          <h1>{{ selectedAsset.title }}</h1>
+          <div class="asset-content-actions">
+            <UiButton v-if="selectedAsset.provenance?.purchase?.orderStatus === 'fulfilled' && selectedAsset.scanStatus === 'clean'" as="RouterLink" class="command-button primary" variant="primary" :to="{ path: creationPath(selectedAsset.kind), query: { sourceAssetId: selectedAsset.id } }">
+              <template #start>
+                <WandSparkles :size="16" />
+              </template>{{ t('actions.useInCreate') }}
+            </UiButton>
+            <UiButton v-if="selectedAsset.sourceType !== 'purchase' && selectedAsset.scanStatus === 'clean'" class="command-button primary" variant="primary" @click="openPublish(selectedAsset.id)">
+              <template #start>
+                <Upload :size="16" />
+              </template>{{ t('actions.publishAsset') }}
+            </UiButton>
+          </div>
+        </header>
         <div class="asset-detail-main">
           <section ref="assetMediaElement" class="asset-detail-media-panel">
             <div class="asset-detail-media-toolbar">
@@ -870,14 +901,7 @@ onBeforeUnmount(() => {
             <div v-if="selectedAsset.provenance.generation.sourceAsset" class="source-lineage asset-source-lineage">
               <span>{{ t('workspace.sourceAsset') }}</span><RouterLink :to="`/workspace/assets/${selectedAsset.provenance.generation.sourceAsset.id}`">
                 {{ selectedAsset.provenance.generation.sourceAsset.title }}<ArrowRight :size="15" />
-              </RouterLink><small>{{ selectedAsset.provenance.generation.sourceAsset.purchase?.licenseName || selectedAsset.provenance.generation.sourceAsset.licenseCode }}</small>
-            </div>
-            <div v-if="selectedAsset.sourceType !== 'purchase' && selectedAsset.scanStatus === 'clean'" class="asset-detail-card-actions">
-              <UiButton class="command-button primary" variant="primary" @click="openPublish(selectedAsset.id)">
-                <template #start>
-                  <Upload :size="16" />
-                </template>{{ t('actions.publishAsset') }}
-              </UiButton>
+              </RouterLink><small>{{ selectedAsset.provenance.generation.sourceAsset.purchase?.licenseName || licenseLabel(selectedAsset.provenance.generation.sourceAsset.licenseCode) }}</small>
             </div>
           </UiCard>
 
@@ -891,11 +915,6 @@ onBeforeUnmount(() => {
             </p>
             <small class="asset-detail-muted">{{ orderPaymentModeLabel({ paymentMode: selectedAsset.provenance.purchase.paymentMode, realCharge: selectedAsset.provenance.purchase.realCharge } as Order) }} · {{ t(`marketplace.orderStatus.${selectedAsset.provenance.purchase.orderStatus}`) }}</small>
             <div class="asset-detail-card-actions">
-              <UiButton v-if="selectedAsset.provenance.purchase.orderStatus === 'fulfilled'" as="RouterLink" class="command-button primary" variant="primary" :to="`/create/image?sourceAssetId=${selectedAsset.id}`">
-                <template #start>
-                  <WandSparkles :size="16" />
-                </template>{{ t('actions.useInCreate') }}
-              </UiButton>
               <UiButton v-if="selectedAsset.provenance.purchase.orderStatus === 'fulfilled'" as="a" class="command-button secondary" variant="secondary" :href="selectedAsset.mediaUrl" :download="selectedAsset.title">
                 <template #start>
                   <Download :size="16" />
@@ -918,20 +937,13 @@ onBeforeUnmount(() => {
               {{ selectedAsset.scanReason || t('workspace.scanPendingDetail') }}
             </p>
           </UiCard>
-
-          <UiButton v-if="!selectedAsset.provenance?.generation && selectedAsset.sourceType !== 'purchase' && selectedAsset.scanStatus === 'clean'" class="command-button secondary" variant="secondary" @click="openPublish(selectedAsset.id)">
-            <template #start>
-              <Upload :size="16" />
-            </template>{{ t('actions.publishAsset') }}
-          </UiButton>
         </div>
 
         <aside class="asset-inspector">
           <UiCard class="asset-detail-card asset-provenance-card">
             <span class="asset-provenance-heading"><ShieldCheck :size="17" /><span class="status-label">{{ t('workspace.provenance') }}</span></span>
-            <h1>{{ selectedAsset.title }}</h1>
             <dl class="asset-facts">
-              <div><dt>{{ t('marketplace.license') }}</dt><dd>{{ selectedAsset.licenseCode }}</dd></div><div><dt>{{ t('workspace.sourceAsset') }}</dt><dd>{{ t(`workspace.sourceTypes.${selectedAsset.sourceType}`) }}</dd></div><div><dt>{{ t('workspace.assetVersion') }}</dt><dd>v{{ selectedAsset.versionNumber }}</dd></div><div><dt>{{ t('workspace.granted') }}</dt><dd>{{ date(selectedAsset.createdAt) }}</dd></div>
+              <div><dt>{{ t('marketplace.license') }}</dt><dd>{{ licenseLabel(selectedAsset.licenseCode) }}</dd></div><div><dt>{{ t('workspace.sourceAsset') }}</dt><dd>{{ t(`workspace.sourceTypes.${selectedAsset.sourceType}`) }}</dd></div><div><dt>{{ t('workspace.assetVersion') }}</dt><dd>v{{ selectedAsset.versionNumber }}</dd></div><div><dt>{{ t('workspace.granted') }}</dt><dd>{{ date(selectedAsset.createdAt) }}</dd></div>
             </dl>
           </UiCard>
 
@@ -1152,7 +1164,7 @@ onBeforeUnmount(() => {
                     <div class="task-row-heading">
                       <span class="task-type-badge asset-type-badge"><Bookmark :size="13" />{{ t('workspace.referenceOnly') }}</span>
                     </div>
-                    <strong>{{ item.title }}</strong><small>{{ item.licenseCode }}</small>
+                    <strong>{{ item.title }}</strong><small>{{ licenseLabel(item.licenseCode) }}</small>
                     <div class="task-row-byline">
                       <span>@{{ item.authorHandle }}</span><span>{{ date(item.savedAt) }}</span>
                     </div>
@@ -1177,20 +1189,19 @@ onBeforeUnmount(() => {
                   <RouterLink class="task-row-media asset-row-media" :to="`/workspace/assets/${asset.id}`">
                     <AssetMedia v-if="asset.scanStatus === 'clean'" :src="asset.mediaUrl" :kind="asset.kind" :alt="asset.title" :width="asset.width || 800" :height="asset.height || 800" :controls="false" />
                     <span v-else class="asset-row-scan-state"><ShieldCheck :size="24" /><strong>{{ t(`workspace.scanStatus.${asset.scanStatus}`) }}</strong></span>
-                    <span v-if="asset.scanStatus === 'clean'" class="asset-row-scan"><ShieldCheck :size="15" />{{ t(`workspace.scanStatus.${asset.scanStatus}`) }}</span>
                   </RouterLink>
                   <div class="task-row-copy">
                     <div class="task-row-heading">
                       <span class="task-type-badge asset-type-badge"><Boxes :size="13" />{{ t(`workspace.sourceTypes.${asset.sourceType}`) }}</span><span class="task-status" :data-status="asset.scanStatus">{{ t(`workspace.scanStatus.${asset.scanStatus}`) }}</span>
                     </div>
-                    <strong>{{ asset.title }}</strong><small>{{ asset.licenseCode }}</small>
+                    <strong>{{ asset.title }}</strong>
                     <div class="task-row-byline">
-                      <span>{{ t(`workspace.sourceTypes.${asset.sourceType}`) }}</span><span>{{ date(asset.createdAt) }}</span><span>{{ asset.kind }}</span>
+                      <span>{{ date(asset.createdAt) }}</span><span>{{ t(`create.modes.${asset.kind === 'audio' ? 'music' : asset.kind === 'document' ? 'chat' : asset.kind}`) }}</span>
                     </div>
                   </div>
                   <div class="task-row-commercial">
                     <span class="task-row-data"><small>{{ t('workspace.assetVersion') }}</small><strong>v{{ asset.versionNumber }}</strong></span>
-                    <span class="task-row-data"><small>{{ t('marketplace.license') }}</small><strong>{{ asset.licenseCode }}</strong></span>
+                    <span class="task-row-data"><small>{{ t('marketplace.license') }}</small><strong>{{ licenseLabel(asset.licenseCode) }}</strong></span>
                     <div class="asset-row-action-stack">
                       <UiButton as="RouterLink" class="command-button primary task-row-action" variant="primary" :to="`/workspace/assets/${asset.id}`">
                         {{ t('actions.viewDetails') }}<template #end>
@@ -1200,7 +1211,7 @@ onBeforeUnmount(() => {
                       <UiIconButton v-if="asset.sourceType !== 'purchase' && asset.scanStatus === 'clean'" class="icon-button asset-publish-action" :label="t('actions.publishAsset')" @click="openPublish(asset.id)">
                         <Upload :size="16" />
                       </UiIconButton>
-                      <UiIconButton v-if="asset.sourceType === 'purchase'" as="RouterLink" class="icon-button" :to="`/create/image?sourceAssetId=${asset.id}`" :label="t('actions.useInCreate')">
+                      <UiIconButton v-if="asset.sourceType === 'purchase' && asset.scanStatus === 'clean' && asset.provenance?.purchase?.orderStatus === 'fulfilled'" as="RouterLink" class="icon-button" :to="{ path: creationPath(asset.kind), query: { sourceAssetId: asset.id } }" :label="t('actions.useInCreate')">
                         <WandSparkles :size="16" />
                       </UiIconButton>
                     </div>
@@ -1215,10 +1226,7 @@ onBeforeUnmount(() => {
                 <UiButton v-if="assetView === 'saved'" as="RouterLink" class="command-button secondary" variant="secondary" to="/community">
                   {{ t('workspace.browseCommunity') }}<ArrowRight :size="16" />
                 </UiButton>
-                <UiButton v-else-if="section === 'purchases'" as="RouterLink" class="command-button secondary" variant="secondary" to="/market">
-                  {{ t('workspace.browseMarket') }}<ArrowRight :size="16" />
-                </UiButton>
-                <UiButton v-else as="RouterLink" class="command-button secondary" variant="secondary" to="/create/image">
+                <UiButton v-else-if="section !== 'purchases'" as="RouterLink" class="command-button secondary" variant="secondary" to="/create/image">
                   {{ t('actions.startCreating') }}<ArrowRight :size="16" />
                 </UiButton>
               </div>
@@ -1363,7 +1371,7 @@ onBeforeUnmount(() => {
               <section class="order-license-panel">
                 <h3><ShieldCheck :size="17" />{{ t('workspace.licenseSnapshot') }}</h3>
                 <p>{{ order.licenseTerms }}</p>
-                <small><FileCheck2 :size="14" />{{ order.licenseCode }} · v{{ order.licenseVersion }}</small>
+                <small><FileCheck2 :size="14" />{{ licenseLabel(order.licenseCode) }} · v{{ order.licenseVersion }}</small>
               </section>
               <section class="order-history-panel">
                 <h3><ReceiptText :size="17" />{{ t('workspace.eventHistory') }}</h3>
@@ -1387,9 +1395,7 @@ onBeforeUnmount(() => {
             </form>
           </article>
           <div v-if="!orders.length" class="task-market-state task-market-empty">
-            <span><ReceiptText :size="24" /></span><strong>{{ t('workspace.noOrdersTitle') }}</strong><p>{{ t('workspace.noOrders') }}</p><UiButton as="RouterLink" class="command-button secondary" variant="secondary" to="/market">
-              {{ t('workspace.browseMarket') }}<ArrowRight :size="16" />
-            </UiButton>
+            <span><ReceiptText :size="24" /></span><strong>{{ t('workspace.noOrdersTitle') }}</strong><p>{{ t('workspace.noOrders') }}</p>
           </div>
           <UiButton v-if="orderNextCursor" class="command-button secondary generation-load-more" variant="secondary" :loading="ordersLoadingMore" @click="loadMoreOrders">
             {{ t('actions.loadMore') }}
@@ -1493,9 +1499,7 @@ onBeforeUnmount(() => {
                     <Coins :size="16" />{{ t('workspace.topUpWallet') }}
                   </UiButton>
                 </form>
-                <p v-else class="billing-provider-note">
-                  <ShieldCheck :size="15" />{{ t('workspace.externalPaymentUnavailable') }}
-                </p>
+
                 <UiButton as="RouterLink" class="command-button secondary billing-support-link" variant="secondary" to="/support">
                   {{ t('workspace.contactSupportForCredits') }}<ArrowRight :size="16" />
                 </UiButton>
@@ -1512,9 +1516,7 @@ onBeforeUnmount(() => {
                   </h2><p>{{ t('workspace.subscriptionSummary') }}</p>
                 </div><ShieldCheck :size="21" />
               </header>
-              <p v-if="!paymentProvider?.enabled" class="billing-provider-note">
-                <Ban :size="15" />{{ t('workspace.externalPaymentUnavailable') }}
-              </p>
+
               <div v-if="points.currentSubscription" class="billing-current-plan">
                 <span class="plan-mark">{{ t('workspace.planMark') }}</span>
                 <div><strong>{{ points.currentSubscription.planName }}</strong><small>{{ t('workspace.planRenewsOn', { date: date(points.currentSubscription.currentPeriodEnd) }) }}</small></div>
@@ -1613,9 +1615,7 @@ onBeforeUnmount(() => {
             <span class="workspace-task-card-action">{{ taskNextAction(item) }}<ArrowRight :size="16" /></span>
           </RouterLink>
           <div v-if="!tasks.length" class="task-market-state task-market-empty">
-            <span><ClipboardList :size="24" /></span><strong>{{ t('workspace.noTasksTitle') }}</strong><p>{{ t('workspace.noTasks') }}</p><UiButton as="RouterLink" class="command-button secondary" variant="secondary" to="/market/demands">
-              {{ t('workspace.browseTasks') }}<ArrowRight :size="16" />
-            </UiButton>
+            <span><ClipboardList :size="24" /></span><strong>{{ t('workspace.noTasksTitle') }}</strong><p>{{ t('workspace.noTasks') }}</p>
           </div>
         </div>
       </div>

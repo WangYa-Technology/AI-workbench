@@ -1,6 +1,8 @@
 import { errorMessages } from './errors'
 
 export default {
+  taskCreationUnavailable: '只有已接单且正在制作或返修的任务才能关联创作。',
+  content: { backPurchases: '返回已购内容', expandPrompt: '展开完整提示词', collapsePrompt: '收起提示词', pendingWork: '待处理', loadedPosts: '已加载讨论', loadedReplies: '当前讨论回复', loadedLikes: '当前讨论点赞', loadedProducts: '已加载资源', loadedCreators: '当前创作者', loadedTypes: '当前资源类型', copyFailed: '复制失败，请选择提示词文字手动复制。', preview: '查看完整作品', copy: '复制提示词', copied: '已复制', details: '来源与授权详情', taskSource: '关联任务', budget: '任务预算', funded: '已确认资助', taskSummary: '任务概况', discussion: '参与讨论', more: '更多操作', licenses: { demo: '演示作品，仅供参考', owned: '自有创作资产', personal: '个人使用授权', commercial: '商业使用授权', review: '查看详细授权条款' } },
   brand: 'HCAI CHAT', brandMark: 'HC',
   accessibility: { skipToContent: '跳到主要内容', primaryNavigation: '主导航', mobileNavigation: '移动端导航', pageChanged: '页面已切换' },
   markdownEditor: {
@@ -111,6 +113,8 @@ export default {
     footer: '将创作工具、社区、制作需求与授权资产放在同一个地方。',
   },
   discover: {
+    libraryTitle: '灵感库', librarySummary: '发现创作者的作品，了解提示词与创作方法，为下一次创作找到灵感。', demoLicense: '演示作品，仅供参考', reviewLicense: '使用前请查看作品授权',
+    loadedWorks: '已加载作品', loadedCreators: '当前创作者', filtersLabel: '作品筛选', searchLabel: '搜索作品', searchPlaceholder: '搜索作品、创作者或模型', mediaType: '媒体类型', allMedia: '全部类型', promptFilter: '提示词可见性', allPrompts: '全部提示词', promptStates: { public: '公开提示词', partial: '部分公开', private: '私密提示词', purchased: '购买后可见' }, workCount: '{count} 件作品', resultsSummary: '最新发布的作品，探索创作方法与灵感', clearFilters: '清除筛选', layout: '作品展示方式', listView: '列表视图', gridView: '网格视图', exploreMore: '继续探索',
     eyebrow: '创作者网络', title: '创作、分享并授权 AI 作品。', summary: 'HCAI 把创作、社区和有报酬的需求放在同一个工作空间。',
     statsLabel: '灵感库动态', publishedWorks: '已发布作品', activeCreators: '活跃创作者', modelsInUse: '使用中的模型',
     heroAlt: '暖红光线穿过棱角分明的展馆建筑', trending: '趋势作品', trendingSummary: '第一条纵向链路完成后，这里将展示真实创作信号。',
@@ -124,7 +128,7 @@ export default {
     },
   },
   search: {
-    label: '全站发现', title: '搜索创作网络', summary: '通过服务端统一排序，查找公开作品、创作者、授权资源和开放制作需求。',
+    label: '全站发现', title: '搜索创作网络', summary: '搜索作品、创作者、资源和开放任务。',
     placeholder: '搜索标题、创作者、提示词、资源或需求', filterLabel: '搜索结果类型', all: '全部结果', loading: '正在搜索公开内容…',
     startTitle: '带着上下文搜索', startSummary: '请输入至少两个字符。私有草稿、不可用媒体、已关闭需求和已删除账户不会出现在结果中。',
     resultCount: '{count} 条公开结果', rankingNote: '按匹配精度、字段相关性和发布时间排序。', policyVersion: '排序策略 v{version} · {name}', stagedCandidate: '分阶段候选', rankSignals: '排序依据',
@@ -224,6 +228,8 @@ export default {
     events: { created: '任务已发布', proposal_submitted: '提案已提交', funding_requested: '已请求安全资助', funding_confirmed: '资助已确认', funding_failed: '资助失败', funding_refund_requested: '已请求资助退款', funding_refunded: '资助已退款', funding_refund_failed: '资助退款需要审核', directly_accepted: '创作者已直接接单', proposal_accepted: '提案已接受', delivery_submitted: '交付已提交', revision_requested: '已要求返修', delivery_accepted: '交付已验收', payout_transferred: '创作者收款已转账', dispute_opened: '争议已发起', task_cancelled: '任务已取消' },
   },
   marketplace: {
+    productPrice: '产品价格',
+    browseSummary: '发现可用于创作的资源与授权', clearFilters: '清除筛选', layout: '产品展示方式', listView: '列表视图', gridView: '网格视图', viewProduct: '查看详情',
     title: '数字产品市场', summary: '购买提示词、工作流、素材和作品授权；结账前即可查看权利范围与来源证据。', statsLabel: '市场活跃数据', listedProducts: '在售产品', activeCreators: '活跃创作者', licenseTypes: '授权类型',
     localTest: '历史本地测试结账记录', myOrders: '我的订单', searchPlaceholder: '搜索产品、创作者或用途', allTypes: '全部类型',
     sortNewest: '最新发布', sortLow: '价格从低到高', sortHigh: '价格从高到低', loading: '正在加载数字产品…', loadingProduct: '正在加载产品证据…',
@@ -241,6 +247,7 @@ export default {
 	orderEvents: { test_pending: '已接受授权并开始结账', test_paid: '已记录本地测试付款', payment_pending: '已创建安全结账', payment_paid: '已收到签名支付确认', payment_failed: 'Provider 支付失败', fulfilled: '已授予权益与资产', refund_requested: '已申请退款', test_refunded: '已撤销权益并记录本地测试退款', refunded: '已收到签名退款确认', cancelled: '订单已取消' },
   },
   community: {
+    discussionCount: '{count} 条讨论', discussionsSummary: '交流创作经验，参与社区讨论', myDiscussionsSummary: '查看你发布的讨论与收到的反馈',
     title: '社区', summary: '提出问题、交换实用反馈，讨论 AI 创作背后的作品、方法与经验。', networkLabel: '创作者网络', statsLabel: '社区活跃数据', discussionsLabel: '讨论', latestDiscussions: '最新讨论', mostDiscussed: '讨论最多', sortLabel: '讨论排序', filtersLabel: '社区筛选与操作', searchLabel: '搜索讨论', searchPlaceholder: '搜索主题或内容', typeLabel: '内容类型', allTypes: '全部类型', communityActions: '社区操作', resultCount: '结果：{count}', myPostResultCount: '我的帖子：{count}', clearFilters: '清除筛选', openDiscussion: '打开讨论', noFilteredResults: '没有匹配的讨论', noFilteredResultsSummary: '调整搜索词或内容类型后再试。', topicColumn: '主题', repliesColumn: '回复', likesColumn: '点赞', updatedColumn: '发起时间', aiTopic: 'AI 创作', workTopic: '作品', discussionType: '讨论', attachedWork: '查看关联作品', myPosts: '我的帖子', allPosts: '全部帖子', publishPost: '发布帖子', publishingPost: '正在发布', discussionLabel: '社区讨论', publishPostSummary: '分享问题、方法或经验，与社区展开具体讨论。', postGuidanceTitle: '让问题便于回应', postGuidance: '使用清楚的标题，并在正文中补充背景、已经尝试的方法和希望获得的反馈。', postDetails: '帖子内容', postTitle: '标题', postTitlePlaceholder: '用一句话概括你想讨论的内容', postBody: '正文', postBodyPlaceholder: '补充背景、过程和希望社区回应的问题…', postBodyHint: '发布后可以在帖子详情中继续回复、点赞和收藏。', postPublished: '帖子已发布。', noMyPosts: '你还没有发布帖子', noMyPostsSummary: '发布第一个问题、方法或经验，与社区开始交流。', emptyTitle: '从第一场讨论开始', empty: '社区还没有帖子。', emptySummary: '发布一个问题、方法或经验，开启第一场交流。', emptyActionsLabel: '社区下一步',
     follow: '关注', following: '已关注', like: '点赞', bookmark: '收藏', comments: '评论', report: '举报', addComment: '发表评论', backToCommunity: '返回社区', loadingPost: '正在加载讨论…', postActions: '讨论操作', relatedWork: '关联作品', loadingComments: '正在加载评论…', noComments: '还没有评论。', commentPlaceholder: '添加有建设性的评论',
     myCases: '我的举报与申诉', governanceLabel: '治理记录', loadingCases: '正在加载治理记录…', noCases: '暂无举报或申诉记录。', reportPost: '举报此帖子', reportCategory: '举报类别', reportDetails: '请说明审核人员需要了解的情况',
@@ -250,12 +257,12 @@ export default {
   },
   workspace: {
     title: '你的工作空间', summary: '资产、生成记录和任务始终保留来源与状态。', workbenchLabel: '工作台', itemCount: '{count} 项', sectionsLabel: '工作空间栏目', assetViewsLabel: '资产视图', ownedAssets: '自有资产', savedWorks: '收藏作品', assets: '资产', generations: '生成记录', purchases: '已购内容', orders: '订单', tasks: '任务', billing: '额度与计费',
-	assetsSummary: '集中查看自有媒体、来源证据、扫描状态和复用权限。', savedSummary: '保存已发布的社区作品作为灵感参考，同时避免把收藏误认为所有权。', generationsSummary: '跟踪队列任务、Provider 证据、成本、进度和生成资产。', purchasesSummary: '复用仍由有效权益覆盖的授权产品。', ordersSummary: '检查结账模式、授权快照、退款和不可变事件记录。', tasksSummary: '在不丢失上下文的情况下继续需求、交付、审核和争议。', billingSummary: '查看可用余额、进行中的预留以及不可变扣费和收入流水。',
+	assetsSummary: '集中查看自有媒体、来源证据、扫描状态和复用权限。', savedSummary: '保存已发布的社区作品作为灵感参考，同时避免把收藏误认为所有权。', generationsSummary: '跟踪队列任务、Provider 证据、成本、进度和生成资产。', purchasesSummary: '复用仍由有效权益覆盖的授权产品。', ordersSummary: '查看订单、授权和退款进度。', tasksSummary: '在不丢失上下文的情况下继续需求、交付、审核和争议。', billingSummary: '查看可用余额、进行中的预留以及不可变扣费和收入流水。',
     browseMarket: '浏览资源市场', browseTasks: '浏览任务广场', model: '模型', created: '创建时间', cost: '成本', openAsset: '打开生成资产',
     taskRecords: '任务记录', activeTaskWork: '进行中', completedTasks: '已完成', taskWorkflow: '任务工作流', tasksOverviewTitle: '让每个需求持续推进', tasksOverviewSummary: '在一个安静的工作区里跟踪需求、参与者、报酬、截止时间和下一步操作。', openBriefs: '开放需求', taskRewardTotal: '总报酬', taskRoleCommissioner: '你是委托方', taskRoleCreator: '你是创作者', taskRoleParticipant: '你正在参与', taskAssignee: '已分配给',
     generationModeFilter: '模式', generationStatusFilter: '状态', allModes: '全部模式', allStatuses: '全部状态', dateFrom: '开始日期（UTC）', dateTo: '结束日期（UTC）', generationId: '生成 ID', retryOf: '重试来源', providerUsageReported: 'Provider 返回的用量：输入 {input} Token（缓存 {cached}），输出 {output} Token（推理 {reasoning}），合计 {total}。', providerUsageNotReported: '该 Provider 未返回本次生成的 Token 用量。', providerUsageBoundary: '用量仅作为运行证据，不是 Provider 最终账单或实际金额。',
     noAssetsTitle: '资产库已经准备好', noSavedTitle: '还没有收藏作品', noSaved: '在社区收藏已发布作品后，它会作为参考显示在这里。', browseCommunity: '浏览社区', removeSaved: '移除收藏', savedRemoved: '已移除收藏作品。', referenceOnly: '仅供参考', savedRightsTitle: '收藏不等于获得授权', savedRightsSummary: '收藏作品仍归创作者所有，不授予下载、商业使用或衍生创作权；复用前请查看作品授权或 Marketplace 商品。', selectGenerations: '已选择 {count} 项', selectGeneration: '选择生成记录：{prompt}', favoriteGeneration: '收藏生成记录', unfavoriteGeneration: '取消收藏生成记录', favoriteSelected: '收藏所选', unfavoriteSelected: '取消收藏', cancelSelected: '取消所选任务', generationFavorited: '生成记录已收藏。', generationUnfavorited: '已取消收藏生成记录。', generationBatchComplete: '已更新 {count} 条生成记录。', generationBatchPartial: '已更新 {succeeded} 条，{failed} 条未能更新。', noGenerationsTitle: '队列中暂无任务', noPurchasesTitle: '暂无授权购买', noOrdersTitle: '暂无订单证据', noTasksTitle: '暂无进行中的任务',
-	noAssets: '完成一次生成即可创建首个自有资产。', noGenerations: '开始图片创作后将生成首条持久化记录。', noPurchases: '购买的授权产品会连同使用权限显示在这里。', noOrders: '结账和退款证据会集中显示在这里。', noTasks: '你发布、提案或接受的需求会显示在这里。',
+	noAssets: '完成一次生成即可创建首个自有资产。', noGenerations: '开始创作后，可在这里查看生成进度和结果。', noPurchases: '购买的授权产品会连同使用权限显示在这里。', noOrders: '结账和退款证据会集中显示在这里。', noTasks: '你发布、提案或接受的需求会显示在这里。',
     assetBack: '返回资产', provenance: '来源证明', purchasedFrom: '购买来源', sourceAsset: '来源资产', generatedWith: '生成信息', orderEvidence: '订单证据', licenseSnapshot: '授权快照',
     assetUsage: 'HCAI 使用关系', assetUsageSummary: '查看这个资产版本族在后续工作流中的使用记录。', noAssetUsage: '这个资产版本族尚未用于其他工作流。', assetUsageVersion: '资产 v{version}', usageKinds: { generation: '创作来源', work: '已发布或草稿作品', product: '市场商品', delivery: '任务交付' }, usageStatuses: { queued: '排队中', running: '运行中', succeeded: '已成功', failed: '失败', cancelled: '已取消', draft: '草稿', published: '已发布', hidden: '已隐藏', removed: '已移除', active: '已上架', paused: '已暂停', submitted: '已提交', revision: '需要修改', accepted: '已验收', disputed: '争议中' },
 	granted: '授权时间', localTestMode: '历史本地测试结账', stripeMode: 'Stripe 结账', stripeTestMode: 'Stripe 测试结账', stripeLiveMode: 'Stripe 正式结账', waffoTestMode: 'Waffo 测试结账', waffoLiveMode: 'Waffo 正式结账', epayMode: 'Epay 结账', refundReason: '退款原因', refundPlaceholder: '说明这个产品为何不适合原定用途。', requestRefund: '申请历史本地测试退款', requestProviderRefund: '申请支付网关退款',
@@ -276,12 +283,12 @@ export default {
     accountLabel: '个人账户', signOut: '退出登录', settingsSections: '账户设置栏目', accountNavigation: '账户设置', profile: '个人资料', security: '安全', signInMethods: '登录方式', payouts: '创作者收款', profileSummary: '确保公开身份和地区格式准确。',
     identityOverview: '身份概览', identityOverviewSummary: '用于向其他用户和 HCAI 工作流程确认你身份的账户信息。', regionalPreferences: '语言与地区', regionalPreferencesSummary: '设置界面语言以及本地日期和时间的显示方式。', editProfile: '编辑资料', editProfileSummary: '更新公开显示名称和地区偏好。用户名和邮箱需要通过独立验证流程修改。',
     handleStable: '当前检查点中公开用户名保持不变。', emailStable: '修改邮箱需要独立的验证流程。', saveProfile: '保存资料', profileSaved: '个人资料和地区偏好已保存。', access: '角色与权限',
-    accessSummary: '权限来自持久化角色目录，且不会取代资源所有权检查。', role: '角色', status: '账户状态', permissions: '账户权限', roleNames: { member: '成员', creator: '创作者', publisher: '委托方', moderator: '审核员', admin: '管理员' }, statusNames: { active: '正常', suspended: '已暂停', deleted: '已删除' }, activeSessions: '活跃会话', activeSessionsSummary: '查看设备名称、最近活动和保护隐私的网络提示。',
+    accessSummary: '查看当前角色和可使用的账户功能。', role: '角色', status: '账户状态', permissions: '账户权限', roleNames: { member: '成员', creator: '创作者', publisher: '委托方', moderator: '审核员', admin: '管理员' }, statusNames: { active: '正常', suspended: '已暂停', deleted: '已删除' }, activeSessions: '活跃会话', activeSessionsSummary: '查看设备名称、最近活动和保护隐私的网络提示。',
     signOutOthers: '退出其他会话', loadingSessions: '正在加载会话证据…', currentSession: '当前会话', lastActive: '最近活动 {date}', networkHint: '网络提示 {hint}', revoke: '撤销', sessionRevoked: '会话已撤销。',
     forgotPassword: '忘记密码？', resetPassword: '重置密码', resetPasswordSummary: '输入邮箱；响应不会泄露该账户是否存在。', sendResetLink: '发送重置链接', resetRequestAccepted: '如果该邮箱属于活跃账户，重置邮件已进入队列。', backToSignIn: '返回登录',
     emailVerification: '邮箱验证', emailVerificationSummary: '确认邮箱归属后，才能安全地将其用于账户恢复。', verified: '已验证', unverified: '未验证', sendVerification: '发送验证邮件', verificationQueued: '新的验证邮件已排队，旧链接已失效。', emailActionEvidence: '已投递 {attempts} 次 · 到期时间 {date}',
     emailActionKinds: { verify_email: '邮箱验证', password_reset: '密码重置' }, emailActionStatuses: { queued: '已排队', delivered: '已送达', consumed: '已完成', expired: '已过期', cancelled: '已取消', dead_letter: '投递失败' },
-    otherSessionsRevoked: '已撤销其他 {count} 个会话。', sessionStatus: { active: '活跃会话', revoked: '已撤销', expired: '已过期' }, signInMethodsSummary: '外部 Provider 在凭据配置和预发布验证完成前保持禁用。',
+    otherSessionsRevoked: '已撤销其他 {count} 个会话。', sessionStatus: { active: '活跃会话', revoked: '已撤销', expired: '已过期' }, signInMethodsSummary: '查看可用的登录方式；未开放的方式暂不可用。',
     emailPassword: '邮箱与密码', notifications: '通知', notificationsSummary: '选择哪些工作流事件进入站内收件箱。', manageNotifications: '管理通知偏好', manageNotificationsSummary: '管理任务、生成和市场事件类别。',
     payoutsSummary: '通过 Stripe 托管页面连接收款账户，身份证件、银行卡和税务资料不会经过 HCAI。', payoutStatus: '收款状态', payoutProvider: '服务商', payoutMode: '服务商模式', payoutTestMode: 'Stripe 测试模式', payoutLiveMode: 'Stripe 线上模式', payoutAccount: '已连接账户', payoutCapabilities: '账户能力', payoutCapabilitiesValue: '收款 {charges} · 提现 {payouts}', payoutCapabilityEnabled: '已启用', payoutCapabilityPending: '待开通', payoutStart: '开始 Stripe 入驻', payoutResume: '继续 Stripe 入驻', payoutOpening: '正在打开 Stripe…', payoutUnavailable: '当前环境未启用 Stripe Connect。本地测试交易仍可使用，不会绑定银行账户或发生真实提现。', payoutHostedBoundary: '整个入驻流程由 Stripe 托管。HCAI 仅保存账户标识和签名 Webhook 提供的最小能力与状态证据。', payoutReturned: '已从 Stripe 返回 HCAI；签名 Provider 证据到达后，下方状态会自动更新。', payoutStatuses: { not_started: '尚未开始', pending_onboarding: '需要完成入驻', pending_verification: '等待审核', verified: '可以收款', restricted: '需要处理', disabled: '已被运营停用' },
     developerAccess: '开发者访问', developerAccessSummary: '创建权限受限的机器身份，无需共享密码或浏览器会话。', developerLoading: '正在加载开发者访问证据…', developerLimits: '凭据限制', developerLimitValue: '最多 {accounts} 个服务账户 · 每个 {keys} 个活跃密钥 · 默认 {days} 天有效期', developerDisabled: '管理员启用开发者访问后才能创建新凭据。',
@@ -291,7 +298,7 @@ export default {
     webhookEndpoints: '签名 Webhook', webhookEndpointsSummary: '通过持久 HMAC-SHA256 outbox 投递选中的账户事件，并保留有界重试和死信证据。', webhookName: '端点名称', webhookUrl: '端点 URL', webhookUrlPlaceholder: 'https://example.com/hcai-events', webhookEvents: '订阅事件', createWebhook: '创建 Webhook', noWebhooks: '暂无 Webhook 端点。', webhookCreated: 'Webhook 端点已创建，请立即保存一次性签名密钥。', sendWebhookTest: '发送测试', webhookTestQueued: '签名测试投递已排队。', rotateWebhookSecret: '轮换密钥', webhookSecretRotated: 'Webhook 签名密钥已轮换，已排队的投递仍保留其原密钥修订。', webhookRevoked: 'Webhook 端点已撤销，待处理投递已取消。', webhookConfirm: '我确认此次密钥轮换或端点撤销，并了解受影响的接收方可能无法继续验证投递。', webhookSecretVersion: '密钥 v{version} · ••••{hint}', webhookAttemptCount: '已尝试 {count} 次', noWebhookDeliveries: '暂无投递证据。', oneTimeWebhookSecret: '一次性签名密钥', oneTimeWebhookSecretSummary: '密钥仅在创建或轮换端点后返回一次；HCAI 保存 AES-256-GCM 密文，投递证据不会暴露密钥。', copyWebhookSecret: '复制密钥', noRevealedWebhookSecret: '创建或轮换 Webhook 端点后，签名密钥会在这里显示一次。', webhookSecretCopied: 'Webhook 签名密钥已复制。',
     webhookEventTypes: { developer_webhook_test: 'Webhook 测试', generation_completed: '生成完成', work_published: '作品发布', marketplace_order_fulfilled: '订单履约', marketplace_order_refunded: '订单退款' },
     webhookStatuses: { queued: '已排队', delivering: '投递中', retry_scheduled: '等待重试', succeeded: '已送达', dead_letter: '死信', cancelled: '已取消' }, webhookHttpStatus: 'HTTP {code}',
-    privacyRights: '隐私与数据', privacyRightsSummary: '通过可审计的请求生命周期导出账户数据或安排账户删除。', confirmHandle: '输入完整用户名确认身份', exportData: '导出账户数据', exportDataSummary: '由持久化 Worker 生成私有 JSON 包；最大 5 MiB，附带 SHA-256 校验，七天后失效。', requestExport: '申请导出', exportRequested: '数据导出已申请，Worker 正在生成私有文件。',
+    privacyRights: '隐私与数据', privacyRightsSummary: '导出你的账户数据，或申请删除账户。', confirmHandle: '输入完整用户名确认身份', exportData: '导出账户数据', exportDataSummary: '将账户数据导出为私有 JSON 文件（最大 5 MiB），下载链接七天内有效。', requestExport: '申请导出', exportRequested: '导出申请已收到，正在准备你的文件。',
     deleteAccount: '删除账户', deleteAccountSummary: '账户将在 30 天撤回期后删除；届时访问、身份、私有媒体和内容会被撤销或匿名化，仅保留最低限度的交易、审计和安全证据。', deleteConfirmation: '我了解撤回期结束后删除不可逆。', scheduleDeletion: '安排删除', deletionScheduled: '账户删除已安排，并保留 30 天撤回期。',
     retentionBoundary: '生产备份到期清除和外部 AI Provider 删除需要经过验证的生产集成；本地流程会如实记录该边界，不会声称已完成外部擦除。', rightsHistory: '请求记录', rightsHistorySummary: '查看持久状态、导出校验、到期时间、撤回期限和删除回执。', noRightsRequests: '暂无数据权利请求。', downloadExport: '下载 JSON', cancelRequest: '取消请求', rightsCancelled: '数据权利请求已取消。', expires: '到期时间 {date}', cancelUntil: '可在 {date} 前撤回', receiptEvidence: '删除回执 SHA-256 {checksum}…',
     rightsTypes: { data_export: '数据导出', account_deletion: '账户删除' }, rightsStatuses: { queued: '排队中', ready: '可下载', scheduled: '已安排', processing: '处理中', blocked: '被法律保留阻止', completed: '已完成', cancelled: '已取消', failed: '失败' },
@@ -303,10 +310,11 @@ export default {
     activityLabel: '工作流动态', title: '通知', summary: '跟进需要处理的决策，同时保留关联任务、资产或订单的完整入口。', markAllRead: '全部标为已读', signInTitle: '登录后查看通知', signInSummary: '通知收件箱仅属于当前账户，不会暴露其他用户的资源。',
     views: '通知视图', inbox: '收件箱', preferences: '偏好设置', enabledCategories: '已启用类别', readState: '阅读状态', type: '通知类型', all: '全部', unread: '未读', read: '已读', allTypes: '全部类型', unreadCount: '{count} 条未读',
     loading: '正在加载通知…', emptyTitle: '目前没有需要处理的内容。', emptySummary: '新的任务、生成和市场决策会显示在这里。', emptyFilteredTitle: '没有符合当前筛选条件的通知。', emptyFilteredSummary: '清除当前筛选条件即可返回完整收件箱。', emptyActionsLabel: '通知后续操作', emptyCreateAction: '开始创作', emptyTaskAction: '浏览任务', markRead: '标为已读', open: '打开关联工作流',
-    preferencesSummary: '站内通知是持久化核心通道。关闭类别后将不再创建新的收件箱项目，已有证据会继续保留。',
+    preferencesSummary: '选择你希望收到的通知。关闭类别不会删除已有通知。',
     deliveryEvidence: '最近投递记录', deliveryEvidenceSummary: '确认工作流通知已进入收件箱，或因你最新的偏好设置而被抑制。', noDeliveryEvidence: '暂无通知投递记录。', deliveryAttempts: '尝试次数：{count}',
     deliveryStatuses: { queued: '排队中', delivered: '已投递', suppressed: '已抑制' }, deliveryErrors: { preference_disabled: '已关闭该类通知' }, categories: { account: '账户', asset: '资产', task: '任务', marketplace: '市场', generation: '生成', community: '社区', support: '支持', security: '安全' },
     kinds: {
+      billing: { wallet_topup_completed: '钱包充值已到账', subscription_completed: '订阅已生效' },
       account: { data_rights: '数据权利更新' },
       asset: { scan_completed: '资产扫描已完成' },
       task: {
@@ -316,6 +324,7 @@ export default {
 	  marketplace: { order_fulfilled: '订单已交付', order_refunded: '订单已退款', refund_failed: '退款未完成' }, generation: { completed: '生成已完成', failed: '生成失败，已释放预留积分' }, community: { comment: '新评论', follow: '新关注', moderation: '治理决定' }, security: { webhook_replayed: 'Webhook 投递已回放', email_delivery_retried: '身份邮件投递已重试' }, support: { case_updated: '支持工单更新' },
     },
     kindDescriptions: {
+      billing: { wallet_topup_completed: '查看充值金额与钱包余额。', subscription_completed: '查看当前套餐、有效期和可用积分。' },
       account: { data_rights: '私有导出包或账户删除请求的状态发生变化。' },
       asset: { scan_completed: '上传资产完成了确定性扫描或管理员复核。' },
       task: {

@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 
-test('saves branding, footer, and policy content from Overview', async ({ page }) => {
+test('saves branding, footer, and policy content from Settings', async ({ page }) => {
   const runID = Date.now().toString(36)
   const originalResponse = await page.request.get('/api/v1/site-config')
   expect(originalResponse.ok()).toBeTruthy()
@@ -8,7 +8,7 @@ test('saves branding, footer, and policy content from Overview', async ({ page }
 
   await page.request.post('/api/v1/auth/demo', { data: { actor: 'admin' } })
   try {
-    await page.goto('/admin?tab=overview')
+    await page.goto('/admin?tab=settings')
 		const workspace = page.locator('.site-configuration-workspace')
 		await expect(workspace.getByRole('heading', { name: 'Brand, policies, and footer' })).toBeVisible()
 		await expect(workspace.locator('.site-configuration-heading > span')).toHaveCount(0)
@@ -56,7 +56,7 @@ test('previews Markdown and renders sanitized policy and footer copy', async ({ 
 
   await page.request.post('/api/v1/auth/demo', { data: { actor: 'admin' } })
   try {
-    await page.goto('/admin?tab=overview')
+    await page.goto('/admin?tab=settings')
     const workspace = page.locator('.site-configuration-workspace')
     await workspace.getByRole('tab', { name: 'Policies' }).click()
     await workspace.getByRole('button', { name: /Terms of Service/ }).click()

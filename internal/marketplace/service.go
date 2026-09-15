@@ -186,6 +186,26 @@ func (s *Service) ListProducts(ctx context.Context, viewerID uuid.UUID, filter L
 	return items, rows.Err()
 }
 
+func (s *Service) CategoryCounts(ctx context.Context, filter ListFilter) (map[string]int, error) {
+	rows, err := s.pool.Query(ctx, `SELECT p.category,count(*) FROM products p JOIN users u ON u.id=p.seller_id AND u.status='active' JOIN assets a ON a.id=p.asset_id AND a.scan_status='clean' JOIN licenses l ON l.code=p.license_code AND l.status='active'
+		WHERE p.status='active' AND ($1='' OR lower(p.title||' '||p.description||' '||u.display_name) LIKE '%'||$1||'%')
+		AND ($2='' OR p.product_type=$2) AND ($3='' OR p.license_code=$3) GROUP BY p.category`, strings.ToLower(strings.TrimSpace(filter.Query)), strings.ToLower(strings.TrimSpace(filter.ProductType)), strings.TrimSpace(filter.LicenseCode))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	counts := map[string]int{}
+	for rows.Next() {
+		var category string
+		var count int
+		if err := rows.Scan(&category, &count); err != nil {
+			return nil, err
+		}
+		counts[category] = count
+	}
+	return counts, rows.Err()
+}
+
 func (s *Service) GetProduct(ctx context.Context, viewerID, productID uuid.UUID) (Product, error) {
 	item, err := scanProduct(s.pool.QueryRow(ctx, productSelect+` WHERE p.id=$2 AND p.status='active'`, viewerID, productID))
 	if errors.Is(err, pgx.ErrNoRows) {

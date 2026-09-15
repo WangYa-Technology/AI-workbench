@@ -13,7 +13,9 @@ import UiSelect from '../components/ui/UiSelect.vue'
 import UiSwitch from '../components/ui/UiSwitch.vue'
 import PageHero from '../components/ui/PageHero.vue'
 
-const { t, locale } = useI18n()
+const { t, te, locale } = useI18n()
+const notificationKind = (kind: string) => te(`notifications.kinds.${kind}`) ? t(`notifications.kinds.${kind}`) : t('notifications.type')
+const notificationDescription = (kind: string) => te(`notifications.kindDescriptions.${kind}`) ? t(`notifications.kindDescriptions.${kind}`) : ''
 const route = useRoute()
 const router = useRouter()
 const session = useSessionStore()
@@ -172,12 +174,12 @@ onBeforeUnmount(() => notificationTabsObserver?.disconnect())
           <span class="notification-view-pill t-tabs-pill" :style="notificationTabIndicatorStyle" aria-hidden="true"></span>
           <RouterLink to="/notifications" class="t-tab" data-notification-view="inbox" :aria-current="view === 'inbox' ? 'page' : undefined" :aria-label="t('notifications.inbox')" :class="{ active: view === 'inbox' }">
             <Inbox :size="18" />
-            <span><strong>{{ t('notifications.inbox') }}</strong><small>{{ t('notifications.summary') }}</small></span>
+            <span><strong>{{ t('notifications.inbox') }}</strong></span>
             <em v-if="notifications.unreadCount">{{ notifications.unreadCount }}</em>
           </RouterLink>
           <RouterLink to="/notifications?view=preferences" class="t-tab" data-notification-view="preferences" :aria-current="view === 'preferences' ? 'page' : undefined" :aria-label="t('notifications.preferences')" :class="{ active: view === 'preferences' }">
             <Settings2 :size="18" />
-            <span><strong>{{ t('notifications.preferences') }}</strong><small>{{ t('notifications.preferencesSummary') }}</small></span>
+            <span><strong>{{ t('notifications.preferences') }}</strong></span>
           </RouterLink>
         </nav>
       </aside>
@@ -190,7 +192,7 @@ onBeforeUnmount(() => notificationTabsObserver?.disconnect())
         <template v-if="view === 'inbox'">
           <div class="notification-filters">
             <label><span>{{ t('notifications.readState') }}</span><UiSelect :model-value="readState" @update:model-value="router.push({ path: '/notifications', query: { ...route.query, readState: $event, view: undefined } })"><option value="all">{{ t('notifications.all') }}</option><option value="unread">{{ t('notifications.unread') }}</option><option value="read">{{ t('notifications.read') }}</option></UiSelect></label>
-            <label><span>{{ t('notifications.type') }}</span><UiSelect :model-value="kind" @update:model-value="router.push({ path: '/notifications', query: { ...route.query, kind: $event || undefined, view: undefined } })"><option value="">{{ t('notifications.allTypes') }}</option><option v-for="item in preferences" :key="item.kind" :value="item.kind">{{ t(`notifications.kinds.${item.kind}`) }}</option></UiSelect></label>
+            <label><span>{{ t('notifications.type') }}</span><UiSelect :model-value="kind" @update:model-value="router.push({ path: '/notifications', query: { ...route.query, kind: $event || undefined, view: undefined } })"><option value="">{{ t('notifications.allTypes') }}</option><option v-for="item in preferences" :key="item.kind" :value="item.kind">{{ notificationKind(item.kind) }}</option></UiSelect></label>
             <span>{{ t('notifications.unreadCount', { count: notifications.unreadCount }) }}</span>
           </div>
 
@@ -250,8 +252,8 @@ onBeforeUnmount(() => notificationTabsObserver?.disconnect())
           </p>
           <section class="notification-preference-panel preference-list" :aria-label="t('notifications.preferences')">
             <article v-for="item in preferences" :key="item.kind">
-              <span><strong>{{ t(`notifications.kinds.${item.kind}`) }}</strong><small>{{ t(`notifications.kindDescriptions.${item.kind}`) }}</small></span>
-              <UiSwitch :model-value="item.inAppEnabled" :label="t(`notifications.kinds.${item.kind}`)" :disabled="savingKind === item.kind" @update:model-value="toggle(item)" />
+              <span><strong>{{ notificationKind(item.kind) }}</strong><small>{{ notificationDescription(item.kind) }}</small></span>
+              <UiSwitch :model-value="item.inAppEnabled" :label="notificationKind(item.kind)" :disabled="savingKind === item.kind" @update:model-value="toggle(item)" />
             </article>
           </section>
 
@@ -262,7 +264,7 @@ onBeforeUnmount(() => notificationTabsObserver?.disconnect())
             </p>
             <article v-for="item in deliveries" v-else :key="item.id" :data-delivery-id="item.id">
               <component :is="item.status === 'delivered' ? Check : item.status === 'suppressed' ? Ban : Clock3" :size="17" aria-hidden="true" />
-              <span><strong>{{ t(`notifications.kinds.${item.kind}`) }}</strong><small>{{ t(`notifications.deliveryStatuses.${item.status}`) }} · {{ t('notifications.deliveryAttempts', { count: item.attempts }) }}<template v-if="item.errorCode"> · {{ t(`notifications.deliveryErrors.${item.errorCode}`) }}</template></small></span>
+              <span><strong>{{ notificationKind(item.kind) }}</strong><small>{{ t(`notifications.deliveryStatuses.${item.status}`) }} · {{ t('notifications.deliveryAttempts', { count: item.attempts }) }}<template v-if="item.errorCode"> · {{ t(`notifications.deliveryErrors.${item.errorCode}`) }}</template></small></span>
               <time :datetime="item.completedAt || item.createdAt">{{ date(item.completedAt || item.createdAt) }}</time>
             </article>
             <UiButton v-if="deliveryNextCursor" class="command-button secondary delivery-evidence-load-more" variant="secondary" :loading="deliveryLoadingMore" @click="loadMoreDeliveries">

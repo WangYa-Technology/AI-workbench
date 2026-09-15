@@ -29,22 +29,26 @@ function readTypes() {
   return raw.split(',').filter((type) => supportedTypes.includes(type as typeof supportedTypes[number]))
 }
 
+let loadVersion = 0
 async function load() {
+  const version = ++loadVersion
   draft.value = query.value
   selectedTypes.value = readTypes()
   if (query.value.length < 2) {
     result.value = null
+    loading.value = false
     error.value = ''
     return
   }
   loading.value = true
   error.value = ''
   try {
-    result.value = await api.search({ q: query.value, types: selectedTypes.value, page: page.value, limit: 12 })
+    const resultPage = await api.search({ q: query.value, types: selectedTypes.value, page: page.value, limit: 12 })
+    if (version === loadVersion) result.value = resultPage
   } catch (reason) {
-    error.value = messageFrom(reason)
+    if (version === loadVersion) error.value = messageFrom(reason)
   } finally {
-    loading.value = false
+    if (version === loadVersion) loading.value = false
   }
 }
 
@@ -114,7 +118,6 @@ watch(() => route.fullPath, () => void load(), { immediate: true })
     <template v-else-if="result">
       <div class="search-results-meta">
         <strong>{{ t('search.resultCount', { count: result.total }) }}</strong>
-        <span>{{ t('search.policyVersion', { version: result.policyVersion, name: result.policyName }) }}<template v-if="result.policyVariant === 'candidate'"> · {{ t('search.stagedCandidate') }}</template></span>
       </div>
       <div v-if="result.items.length" class="search-results">
         <RouterLink v-for="item in result.items" :key="`${item.type}:${item.id}`" class="search-result" :to="item.path">

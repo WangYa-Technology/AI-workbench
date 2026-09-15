@@ -1128,9 +1128,8 @@ async function load() {
     if (!user || !user.permissions.includes('admin:access')) return
     const tab = activeTab.value
     if (tab === 'overview') {
-      const [overviewResult] = await Promise.all([api.adminOverview(), loadSystemSettings()])
+      const overviewResult = await api.adminOverview()
       overview.value = overviewResult
-      resetSystemSettingForm()
     }
     if (tab === 'users') {
       syncUserFilters()
@@ -2079,72 +2078,15 @@ onMounted(() => void initialize())
           </div>
 
           <div v-else-if="activeTab === 'overview' && overview" class="admin-overview">
+            <nav class="admin-priority-links" :aria-label="t('content.pendingWork')">
+              <RouterLink v-if="tabs.includes('risk')" :to="{ path: '/admin', query: { tab: 'risk', riskStatus: 'open' } }">
+                <span>{{ t('admin.tabs.risk') }}</span><strong>{{ overview.risks.byStatus.open || 0 }}</strong><small>{{ t('content.pendingWork') }}</small>
+              </RouterLink>
+              <RouterLink v-if="tabs.includes('tasks')" :to="{ path: '/admin', query: { tab: 'tasks', taskStatus: 'disputed', taskDisputeStatus: 'open' } }">
+                <span>{{ t('admin.taskOperationsQueue') }}</span><strong>{{ overview.tasks.byStatus.disputed || 0 }}</strong><small>{{ t('content.pendingWork') }}</small>
+              </RouterLink>
+            </nav>
             <AdminOverviewMetrics :overview="overview" :label="(key) => key === 'overview' ? t('admin.tabs.overview') : t(`admin.${key}`)" :status-label="overviewStatusLabel" />
-
-            <section v-if="systemSettings" class="site-configuration-workspace">
-              <header class="site-configuration-heading">
-                <div><span>{{ t('admin.siteConfigurationLabel') }}</span><h2>{{ t('admin.siteConfigurationTitle') }}</h2><p>{{ t('admin.siteConfigurationSummary') }}</p></div>
-              </header>
-              <UiTabs v-model="siteConfigurationSection" class="site-configuration-tabs" :items="siteConfigurationSections" :label="t('admin.siteConfigurationTitle')" />
-
-              <form class="site-configuration-form" @submit.prevent="submitSiteConfiguration">
-                <div v-if="siteConfigurationSection === 'general'" class="site-general-layout">
-                  <div class="site-general-fields">
-                    <label>{{ t('admin.siteName') }}<UiInput v-model.trim="siteConfigurationForm.siteName" minlength="2" maxlength="80" required /></label>
-                    <label>{{ t('admin.serverUrl') }}<UiInput v-model.trim="siteConfigurationForm.serverUrl" type="url" maxlength="2048" :placeholder="t('admin.serverUrlPlaceholder')" required /></label>
-                    <fieldset class="site-icon-fieldset">
-                      <legend>{{ t('admin.siteIcon') }}</legend>
-                      <UiTabs v-model="siteIconMode" :items="iconSourceItems" :label="t('admin.siteIconSource')" />
-                      <label v-if="siteIconMode === 'url'">{{ t('admin.siteIconUrl') }}<UiInput v-model.trim="siteConfigurationForm.siteIconUrl" maxlength="2048" :placeholder="t('admin.siteIconUrlPlaceholder')" required /></label>
-                      <label v-else>{{ t('admin.siteIconFile') }}<UiFileInput accept="image/jpeg,image/png" :disabled="siteIconUploading" @change="uploadSiteIcon" /><small>{{ siteIconUploading ? t('admin.siteIconUploading') : t('admin.siteIconUploadHint') }}</small></label>
-                    </fieldset>
-                    <div class="site-footer-fields">
-                      <div class="site-markdown-field">
-                        <span class="site-markdown-label">{{ t('admin.footerTextEnglish') }}</span>
-                        <MarkdownEditor v-model="siteConfigurationForm.footerText.enUS" rows="3" :maxlength="1000" :aria-label="t('admin.footerTextEnglish')" />
-                      </div>
-                      <div class="site-markdown-field">
-                        <span class="site-markdown-label">{{ t('admin.footerTextChinese') }}</span>
-                        <MarkdownEditor v-model="siteConfigurationForm.footerText.zhCN" rows="3" :maxlength="1000" :aria-label="t('admin.footerTextChinese')" />
-                      </div>
-                    </div>
-                  </div>
-                  <aside class="site-brand-preview" :aria-label="t('admin.sitePreview')">
-                    <span>{{ t('admin.sitePreview') }}</span>
-                    <div><img :src="siteConfigurationForm.siteIconUrl" alt="" /><strong>{{ siteConfigurationForm.siteName || t('brand') }}</strong></div>
-                    <dl><div><dt>{{ t('admin.serverUrl') }}</dt><dd>{{ siteConfigurationForm.serverUrl || '—' }}</dd></div><div><dt>{{ t('admin.footerContent') }}</dt><dd><MarkdownContent :source="locale === 'zh-CN' ? siteConfigurationForm.footerText.zhCN : siteConfigurationForm.footerText.enUS" inline /></dd></div></dl>
-                  </aside>
-                </div>
-
-                <div v-else class="site-policy-layout">
-                  <nav :aria-label="t('admin.sitePolicies')">
-                    <UiButton v-for="key in sitePolicyKeys" :key="key" type="button" variant="ghost" :class="{ active: selectedPolicy === key }" @click="selectedPolicy = key">
-                      <span>{{ t(`legal.topics.${key}.title`) }}</span><small>{{ t(`legal.topics.${key}.summary`) }}</small>
-                    </UiButton>
-                  </nav>
-                  <section class="site-policy-editor">
-                    <header><div><span>{{ t('admin.sitePolicyEditor') }}</span><h3>{{ t(`legal.topics.${selectedPolicy}.title`) }}</h3></div><FileCheck2 :size="18" /></header>
-                    <div class="site-markdown-field">
-                      <span class="site-markdown-label">{{ t('admin.policyContentEnglish') }}</span>
-                      <MarkdownEditor v-model="siteConfigurationForm.policies[selectedPolicy].enUS" rows="10" :maxlength="50000" :aria-label="t('admin.policyContentEnglish')" />
-                    </div>
-                    <div class="site-markdown-field">
-                      <span class="site-markdown-label">{{ t('admin.policyContentChinese') }}</span>
-                      <MarkdownEditor v-model="siteConfigurationForm.policies[selectedPolicy].zhCN" rows="10" :maxlength="50000" :aria-label="t('admin.policyContentChinese')" />
-                    </div>
-                  </section>
-                </div>
-
-                <footer class="site-configuration-actions">
-                  <p><ShieldCheck :size="15" />{{ t('admin.siteConfigurationSaveNote') }}</p>
-                  <UiButton type="submit" variant="primary" :loading="actionLoading" :disabled="siteIconUploading">
-                    <template #start>
-                      <Save v-if="!actionLoading" :size="16" />
-                    </template>{{ t('admin.saveSiteConfiguration') }}
-                  </UiButton>
-                </footer>
-              </form>
-            </section>
           </div>
 
           <AdminUserDirectory
@@ -2626,6 +2568,70 @@ onMounted(() => void initialize())
           </div>
 
           <div v-else-if="activeTab === 'settings' && systemSettings" class="admin-governance system-settings-admin">
+            <section v-if="systemSettings" class="site-configuration-workspace">
+              <header class="site-configuration-heading">
+                <div><span>{{ t('admin.siteConfigurationLabel') }}</span><h2>{{ t('admin.siteConfigurationTitle') }}</h2><p>{{ t('admin.siteConfigurationSummary') }}</p></div>
+              </header>
+              <UiTabs v-model="siteConfigurationSection" class="site-configuration-tabs" :items="siteConfigurationSections" :label="t('admin.siteConfigurationTitle')" />
+
+              <form class="site-configuration-form" @submit.prevent="submitSiteConfiguration">
+                <div v-if="siteConfigurationSection === 'general'" class="site-general-layout">
+                  <div class="site-general-fields">
+                    <label>{{ t('admin.siteName') }}<UiInput v-model.trim="siteConfigurationForm.siteName" minlength="2" maxlength="80" required /></label>
+                    <label>{{ t('admin.serverUrl') }}<UiInput v-model.trim="siteConfigurationForm.serverUrl" type="url" maxlength="2048" :placeholder="t('admin.serverUrlPlaceholder')" required /></label>
+                    <fieldset class="site-icon-fieldset">
+                      <legend>{{ t('admin.siteIcon') }}</legend>
+                      <UiTabs v-model="siteIconMode" :items="iconSourceItems" :label="t('admin.siteIconSource')" />
+                      <label v-if="siteIconMode === 'url'">{{ t('admin.siteIconUrl') }}<UiInput v-model.trim="siteConfigurationForm.siteIconUrl" maxlength="2048" :placeholder="t('admin.siteIconUrlPlaceholder')" required /></label>
+                      <label v-else>{{ t('admin.siteIconFile') }}<UiFileInput accept="image/jpeg,image/png" :disabled="siteIconUploading" @change="uploadSiteIcon" /><small>{{ siteIconUploading ? t('admin.siteIconUploading') : t('admin.siteIconUploadHint') }}</small></label>
+                    </fieldset>
+                    <div class="site-footer-fields">
+                      <div class="site-markdown-field">
+                        <span class="site-markdown-label">{{ t('admin.footerTextEnglish') }}</span>
+                        <MarkdownEditor v-model="siteConfigurationForm.footerText.enUS" rows="3" :maxlength="1000" :aria-label="t('admin.footerTextEnglish')" />
+                      </div>
+                      <div class="site-markdown-field">
+                        <span class="site-markdown-label">{{ t('admin.footerTextChinese') }}</span>
+                        <MarkdownEditor v-model="siteConfigurationForm.footerText.zhCN" rows="3" :maxlength="1000" :aria-label="t('admin.footerTextChinese')" />
+                      </div>
+                    </div>
+                  </div>
+                  <aside class="site-brand-preview" :aria-label="t('admin.sitePreview')">
+                    <span>{{ t('admin.sitePreview') }}</span>
+                    <div><img :src="siteConfigurationForm.siteIconUrl" alt="" /><strong>{{ siteConfigurationForm.siteName || t('brand') }}</strong></div>
+                    <dl><div><dt>{{ t('admin.serverUrl') }}</dt><dd>{{ siteConfigurationForm.serverUrl || '—' }}</dd></div><div><dt>{{ t('admin.footerContent') }}</dt><dd><MarkdownContent :source="locale === 'zh-CN' ? siteConfigurationForm.footerText.zhCN : siteConfigurationForm.footerText.enUS" inline /></dd></div></dl>
+                  </aside>
+                </div>
+
+                <div v-else class="site-policy-layout">
+                  <nav :aria-label="t('admin.sitePolicies')">
+                    <UiButton v-for="key in sitePolicyKeys" :key="key" type="button" variant="ghost" :class="{ active: selectedPolicy === key }" @click="selectedPolicy = key">
+                      <span>{{ t(`legal.topics.${key}.title`) }}</span><small>{{ t(`legal.topics.${key}.summary`) }}</small>
+                    </UiButton>
+                  </nav>
+                  <section class="site-policy-editor">
+                    <header><div><span>{{ t('admin.sitePolicyEditor') }}</span><h3>{{ t(`legal.topics.${selectedPolicy}.title`) }}</h3></div><FileCheck2 :size="18" /></header>
+                    <div class="site-markdown-field">
+                      <span class="site-markdown-label">{{ t('admin.policyContentEnglish') }}</span>
+                      <MarkdownEditor v-model="siteConfigurationForm.policies[selectedPolicy].enUS" rows="10" :maxlength="50000" :aria-label="t('admin.policyContentEnglish')" />
+                    </div>
+                    <div class="site-markdown-field">
+                      <span class="site-markdown-label">{{ t('admin.policyContentChinese') }}</span>
+                      <MarkdownEditor v-model="siteConfigurationForm.policies[selectedPolicy].zhCN" rows="10" :maxlength="50000" :aria-label="t('admin.policyContentChinese')" />
+                    </div>
+                  </section>
+                </div>
+
+                <footer class="site-configuration-actions">
+                  <p><ShieldCheck :size="15" />{{ t('admin.siteConfigurationSaveNote') }}</p>
+                  <UiButton type="submit" variant="primary" :loading="actionLoading" :disabled="siteIconUploading">
+                    <template #start>
+                      <Save v-if="!actionLoading" :size="16" />
+                    </template>{{ t('admin.saveSiteConfiguration') }}
+                  </UiButton>
+                </footer>
+              </form>
+            </section>
             <section>
               <header><div><h2>{{ t('admin.systemSettingsTitle') }}</h2><p>{{ t('admin.systemSettingsSummary') }}</p></div></header>
               <form class="admin-command-panel ranking-policy-form" @submit.prevent="submitSystemSettings">

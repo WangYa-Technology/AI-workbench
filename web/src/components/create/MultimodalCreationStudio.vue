@@ -39,6 +39,10 @@ const restored = drafts.restore(props.mode)
 const activeMode = ref<CreationMode>(props.mode)
 const routeStarter = () => String(route.query.starter || '').trim()
 const prompt = ref(routeStarter() || restored?.prompt || '')
+const sourceWork = ref<{ id: string; title: string } | null>(null)
+const sourceWorkLoading = ref(false)
+const sourceTask = ref<{ id: string; title: string } | null>(null)
+const sourceTaskLoading = ref(false)
 const view = ref<CreationDraftView>('guide')
 const settings = ref<CreationOutputSettings>(restored?.settings || defaultSettings(props.mode))
 const generations = ref<Generation[]>([])
@@ -100,7 +104,7 @@ const referenceKinds = computed(() => capabilityComplete.value ? activeCapabilit
 const referenceAccept = computed(() => ({ chat: 'text/plain,.txt,.md', image: 'image/jpeg,image/png', video: 'image/jpeg,image/png', music: 'audio/wav,audio/x-wav,audio/wave,audio/mpeg' }[activeMode.value]))
 const running = computed(() => generations.value.some(item => ['queued', 'running'].includes(item.status)))
 const currentConversation = computed(() => conversations.value.find(item => item.id === currentConversationId.value) || null)
-const canSubmit = computed(() => prompt.value.trim().length >= 3 && Boolean(session.user) && capabilitiesLoaded.value && !submitting.value && !capabilityUnavailable.value && (!maskAsset.value || sourceAssets.value.length > 0))
+const canSubmit = computed(() => prompt.value.trim().length >= 3 && Boolean(session.user) && capabilitiesLoaded.value && !submitting.value && !sourceWorkLoading.value && !sourceTaskLoading.value && (!route.query.taskId || Boolean(sourceTask.value)) && !capabilityUnavailable.value && (!maskAsset.value || sourceAssets.value.length > 0))
 const generationLabel = computed(() => activeMode.value === 'chat' ? t('create.studio.continueChat') : t('actions.generateMode', { mode: modeLabel.value }))
 
 function defaultSettings(mode: CreationMode): CreationOutputSettings {
@@ -285,7 +289,7 @@ async function uploadReference(event: globalThis.Event) {
 }
 
 async function submit() {
-  if (!canSubmit.value) return
+  if (!canSubmit.value || sourceWorkLoading.value || sourceTaskLoading.value) return
   submitting.value = true
   error.value = ''
   feedback.value = ''
@@ -303,6 +307,8 @@ async function submit() {
       modelId: selectedModelId.value || null,
       parameters: generationParameters(),
       sourceAssetId: sourceAssets.value[0]?.id || null,
+      sourceWorkId: sourceWork.value?.id || null,
+      sourceTaskId: sourceTask.value?.id || null,
       sourceAssetIds: sourceAssets.value.map(asset => asset.id),
       maskAssetId: maskAsset.value?.id || null,
       parentGenerationId: activeMode.value === 'chat' ? generations.value.filter(item => item.mode === 'chat' && item.status === 'succeeded').at(-1)?.id || null : null,
@@ -363,6 +369,44 @@ watch(() => route.query.starter, value => {
   const starter = String(value || '').trim()
   if (starter) prompt.value = starter
 })
+watch(() => route.query.taskId, async (value, _previous, onCleanup) => {
+  let stale = false
+  onCleanup(() => { stale = true })
+  sourceTask.value = null
+  sourceTaskLoading.value = Boolean(value)
+  if (!value) return
+  const originalPrompt = prompt.value
+  try {
+    await session.ensure()
+    const task = await api.getTask(String(value))
+    if (stale) return
+    if (task.viewerRole !== 'assignee' || !['assigned', 'revision'].includes(task.status)) {
+      error.value = t('taskCreationUnavailable')
+      return
+    }
+    sourceTask.value = { id: task.id, title: task.title }
+    if (prompt.value === originalPrompt) prompt.value = `${task.title}\n${task.brief}\n${task.deliverables.join('\n')}`.slice(0, 1800)
+  } catch (reason) { if (!stale) error.value = messageFrom(reason) }
+  finally { if (!stale) sourceTaskLoading.value = false }
+}, { immediate: true })
+watch(() => route.query.sourceWorkId, async (value, _previous, onCleanup) => {
+  let stale = false
+  onCleanup(() => { stale = true })
+  sourceWork.value = null
+  sourceWorkLoading.value = Boolean(value)
+  if (!value) return
+  const originalPrompt = prompt.value
+  try {
+    const work = await api.getWork(String(value))
+    if (stale) return
+    sourceWork.value = { id: work.id, title: work.title }
+    if (work.prompt && prompt.value === originalPrompt) prompt.value = work.prompt
+  } catch (reason) {
+    if (!stale) error.value = messageFrom(reason)
+  } finally {
+    if (!stale) sourceWorkLoading.value = false
+  }
+}, { immediate: true })
 watch(activeCapability, capability => {
   selectedModelId.value = capability?.models?.find(item => item.available)?.id || ''
   if (!capability) return
@@ -500,6 +544,12 @@ onMounted(async () => {
     </div>
 
     <form class="creation-composer" @submit.prevent="submit">
+      <div v-if="route.query.taskId" class="creation-context">
+        <span class="creation-context-chip"><span>{{ t('content.taskSource') }}</span><strong>{{ sourceTaskLoading ? t('tasks.loading') : sourceTask?.title || t('taskCreationUnavailable') }}</strong><UiIconButton size="sm" :label="t('actions.close')" @click="router.replace({ query: { ...route.query, taskId: undefined } })"><X :size="13" /></UiIconButton></span>
+      </div>
+      <div v-if="sourceWork" class="creation-context">
+        <span class="creation-context-chip"><Sparkles :size="13" /><span>{{ t('create.remixing') }}</span><strong>{{ sourceWork.title }}</strong><UiIconButton size="sm" :label="t('actions.close')" @click="router.replace({ query: { ...route.query, sourceWorkId: undefined } })"><X :size="13" /></UiIconButton></span>
+      </div>
       <div v-if="sourceAssets.length || maskAsset" class="creation-context">
         <span v-for="asset in sourceAssets" :key="asset.id" class="creation-context-chip"><Paperclip :size="13" /><strong>{{ asset.title }}</strong><UiIconButton size="sm" :label="t('actions.close')" @click="removeSourceAsset(asset.id)"><X :size="13" /></UiIconButton></span>
         <span v-if="maskAsset" class="creation-context-chip mask"><ImageIcon :size="13" /><strong>{{ maskAsset.title }}</strong><UiIconButton size="sm" :label="t('actions.close')" @click="maskAsset = null"><X :size="13" /></UiIconButton></span>
@@ -639,6 +689,9 @@ onMounted(async () => {
           <AlertCircle :size="15" />{{ selectedGeneration.errorMessage }}
         </p>
         <footer>
+          <UiButton v-if="selectedGeneration.status === 'succeeded' && selectedGeneration.outputAssetId" as="RouterLink" variant="primary" size="sm" :to="{ path: '/publish', query: { assetId: selectedGeneration.outputAssetId, prompt: selectedGeneration.prompt } }">
+            {{ t('actions.publishWork') }}
+          </UiButton>
           <UiButton variant="secondary" size="sm" @click="toggleFavorite(selectedGeneration)">
             <template #start>
               <MotionFavoriteIcon :active="selectedGeneration.isFavorite" kind="bookmark" :size="15" />

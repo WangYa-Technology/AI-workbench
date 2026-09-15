@@ -1,0 +1,46 @@
+/* Shared reading density for content and account pages. */
+.notification-copy.ui-button { white-space: normal; }
+.notification-copy > * { min-width: 0; overflow-wrap: anywhere; }
+.notification-copy p { font-size: 13px; }
+.notification-copy > span { font-size: 12px; }
+.admin-priority-links { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 12px; margin-bottom: 20px; }
+.admin-priority-links a { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 16px; padding: 16px; border: 1px solid var(--border); border-radius: var(--radius-control); color: var(--text); background: var(--surface); }
+.admin-priority-links a:hover { background: var(--surface-muted); }
+.admin-priority-links strong { grid-column: 2; grid-row: 1 / 3; align-self: center; font-size: 24px; }
+.admin-priority-links small { color: var(--text-secondary); font-size: 12px; }
+.admin-overview-grid.overview-metrics-grid article { min-height: 116px; box-shadow: none; border-color: var(--border); }
+.overview-metrics-grid article > strong { font-size: 28px; }
+.overview-metrics-grid .admin-metric-breakdown small,
+.overview-metrics-grid .admin-metric-breakdown small b { font-size: 12px; }
+.asset-content-heading { grid-column: 1 / -1; min-width: 0; }
+.asset-content-heading h1 { margin: 0; font-size: clamp(24px, 2.4vw, 32px); line-height: 1.3; overflow-wrap: anywhere; }
+.asset-content-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+.asset-prompt-block p { max-height: 280px; overflow: auto; overflow-wrap: anywhere; }
+.asset-detail-layout { gap: 24px; }
+.asset-detail-media-panel .asset-renderer { max-height: 60dvh; }
+.asset-detail-media-panel .asset-renderer img,
+.asset-detail-media-panel .asset-renderer video { max-height: 60dvh; object-fit: contain; }
+.creator-header { min-height: 140px; }
+.creator-section { margin-top: 28px; }
+.creator-section > header { min-height: 44px; }
+.creator-section > header h2 { font-size: 22px; }
+.creator-evidence, .creator-work-grid span,
+.creator-product-list span, .creator-product-list small { font-size: 12px; line-height: 1.5; }
+.creator-work-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr)); gap: 16px; }
+.creator-work-grid > a { border: 1px solid var(--border); border-radius: var(--radius-control); overflow: hidden; }
+.creator-work-grid > a > div { padding: 12px; }
+.creator-product-list h3 { overflow-wrap: anywhere; }
+.billing-dashboard-panel { box-shadow: none; }
+.billing-plan-copy small { white-space: normal; overflow: visible; line-height: 1.5; }
+.billing-plan-list .command-button { min-height: 36px; }
+.billing-panel-heading p, .billing-ledger-heading p,
+.billing-account-heading p { font-size: 13px; line-height: 1.6; }
+.billing-account-stats article span, .billing-account-stats article small,
+.billing-ledger-heading > span { font-size: 12px; }
+@media (max-width: 640px) {
+  .creator-product-list > a { grid-template-columns: 80px minmax(0, 1fr); gap: 12px; }
+  .creator-product-list .asset-renderer { width: 80px; height: 80px; }
+  .creator-product-list > a > strong { grid-column: 2; }
+  .creator-product-list > a > svg { display: none; }
+  .asset-detail-layout { grid-template-columns: minmax(0, 1fr); gap: 18px; }
+}

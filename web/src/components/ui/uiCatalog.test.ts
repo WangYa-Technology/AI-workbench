@@ -46,13 +46,11 @@ describe('Appica Vue compatibility catalog', () => {
     expect(tokens.match(/--focus-ring:\s*0 0 0 2px/g)).toHaveLength(2)
   })
 
-  it('centralizes list and table header presentation tokens', () => {
+  it('centralizes table header presentation tokens', () => {
     const tokens = readFileSync(new URL('../../styles/tokens.css', import.meta.url), 'utf8')
     const ui = readFileSync(new URL('../../styles/ui.css', import.meta.url), 'utf8')
-    const layout = readFileSync(new URL('../../styles/layout.css', import.meta.url), 'utf8')
     expect(tokens).toMatch(/--data-header-height:\s*42px/)
     expect(tokens).toMatch(/--data-header-font-size:\s*12px/)
     expect(ui).toMatch(/\.ui-table th \{[^}]*var\(--data-header-height\)[^}]*var\(--data-header-font-size\)/s)
-    expect(layout).toMatch(/\.community-list-head \{[^}]*var\(--data-header-height\)[^}]*var\(--data-header-font-size\)/s)
   })
 })

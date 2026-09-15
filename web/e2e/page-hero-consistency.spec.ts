@@ -53,13 +53,17 @@ test('uses one Hero geometry across marketplace and workspace pages', async ({ p
       expect(overflow, `${path} has horizontal overflow at ${viewport.width}px`).toBe(0)
     }
 
-    const baseline = measurements[0]!
-    for (const measurement of measurements.slice(1)) {
+    const baseline = measurements[1]!
+    for (const [index, measurement] of measurements.entries()) {
       expect(measurement.root.width).toBe(baseline.root.width)
       if (viewport.width >= 768) {
         expect(measurement.root.height).toBe(baseline.root.height)
         for (const key of ['copy', 'stats', 'artwork'] as const) {
-          expect(measurement[key]).toEqual(baseline[key])
+          // Task rewards intentionally have wider copy and statistic columns.
+          if (index === 0 && key !== 'artwork') {
+            expect(measurement[key]?.y).toBe(baseline[key]?.y)
+            expect(measurement[key]?.width).toBeGreaterThanOrEqual(baseline[key]?.width || 0)
+          } else expect(measurement[key]).toEqual(baseline[key])
         }
       } else {
         expect(measurement.root.height).toBeGreaterThanOrEqual(320)

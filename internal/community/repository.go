@@ -109,6 +109,8 @@ type Post struct {
 }
 
 type PostListInput struct {
+	Sort     string
+	Query    string
 	Category string
 	Cursor   string
 	Limit    int
@@ -116,11 +118,15 @@ type PostListInput struct {
 }
 
 type PostPage struct {
-	Items      []Post  `json:"items"`
-	NextCursor *string `json:"nextCursor,omitempty"`
+	CategoryCounts map[string]int `json:"categoryCounts"`
+	Items          []Post         `json:"items"`
+	NextCursor     *string        `json:"nextCursor,omitempty"`
 }
 
 type postCursor struct {
+	Sort        string    `json:"sort,omitempty"`
+	Replies     int       `json:"replies,omitempty"`
+	Likes       int       `json:"likes,omitempty"`
 	PublishedAt time.Time `json:"publishedAt"`
 	ID          uuid.UUID `json:"id"`
 }
@@ -532,12 +538,19 @@ func (r *Repository) GetPostForViewer(ctx context.Context, viewerID, postID uuid
 }
 
 func (r *Repository) ListPageForViewer(ctx context.Context, viewerID uuid.UUID, input PostListInput) (PostPage, error) {
+	if input.Sort == "" {
+		input.Sort = "latest"
+	}
+	if input.Sort != "latest" && input.Sort != "discussed" {
+		return PostPage{}, ErrInvalidPostFilter
+	}
 	if input.Limit == 0 {
 		input.Limit = 20
 	}
 	if input.Limit < 1 || input.Limit > 50 {
 		return PostPage{}, ErrInvalidPostFilter
 	}
+	var replies, likes int
 	var cursorTime *time.Time
 	var cursorID *uuid.UUID
 	if input.Cursor != "" {
@@ -545,12 +558,19 @@ func (r *Repository) ListPageForViewer(ctx context.Context, viewerID uuid.UUID, 
 		if err != nil {
 			return PostPage{}, err
 		}
+		if cursor.Sort == "" {
+			cursor.Sort = "latest"
+		}
+		if cursor.Sort != input.Sort || cursor.Replies < 0 || cursor.Likes < 0 {
+			return PostPage{}, ErrInvalidPostFilter
+		}
+		replies, likes = cursor.Replies, cursor.Likes
 		cursorTime, cursorID = &cursor.PublishedAt, &cursor.ID
 	}
 	rows, err := r.pool.Query(ctx, `
 		SELECT p.id,p.category,COALESCE(p.title,w.title,'Community post'),p.body,p.published_at,w.id,w.title,a.media_url,a.kind,w.ai_disclosure,u.id,u.handle,u.display_name,
-		       (SELECT count(*) FROM comments c WHERE c.post_id=p.id AND c.status='published'),
-		       (SELECT count(*) FROM post_reactions pr WHERE pr.post_id=p.id AND pr.kind='like'),
+		       rc.count,
+		       lc.count,
 		       (SELECT count(*) FROM post_reactions pr WHERE pr.post_id=p.id AND pr.kind='bookmark'),
 		       EXISTS(SELECT 1 FROM post_reactions pr WHERE pr.post_id=p.id AND pr.user_id=$1 AND pr.kind='like'),
 		       EXISTS(SELECT 1 FROM post_reactions pr WHERE pr.post_id=p.id AND pr.user_id=$1 AND pr.kind='bookmark'),
@@ -559,12 +579,17 @@ func (r *Repository) ListPageForViewer(ctx context.Context, viewerID uuid.UUID, 
 		LEFT JOIN works w ON w.id=p.work_id
 		LEFT JOIN assets a ON a.id=w.asset_id
 		JOIN users u ON u.id=p.author_id
+        CROSS JOIN LATERAL (SELECT count(*) AS count FROM comments c WHERE c.post_id=p.id AND c.status='published') rc
+        CROSS JOIN LATERAL (SELECT count(*) AS count FROM post_reactions pr WHERE pr.post_id=p.id AND pr.kind='like') lc
 			WHERE p.status='published'
 			  AND (p.work_id IS NULL OR (w.status='published' AND a.scan_status='clean'))
 			  AND ($5::boolean = false OR p.author_id=$1)
 			  AND ($6='' OR p.category=$6)
-			  AND ($2::timestamptz IS NULL OR (p.published_at,p.id)<($2,$3::uuid))
-			ORDER BY p.published_at DESC,p.id DESC LIMIT $4`, viewerID, cursorTime, cursorID, input.Limit+1, input.Mine, input.Category)
+			  AND ($7='' OR concat_ws(' ',p.title,w.title,p.body,u.display_name,u.handle) ILIKE '%'||$7||'%')
+			  AND ($2::timestamptz IS NULL OR
+             ($8='latest' AND (p.published_at,p.id)<($2,$3::uuid)) OR
+             ($8='discussed' AND (rc.count,lc.count,p.published_at,p.id)<($9::bigint,$10::bigint,$2,$3::uuid)))
+			ORDER BY CASE WHEN $8='discussed' THEN rc.count END DESC, CASE WHEN $8='discussed' THEN lc.count END DESC, p.published_at DESC,p.id DESC LIMIT $4`, viewerID, cursorTime, cursorID, input.Limit+1, input.Mine, input.Category, strings.TrimSpace(input.Query), input.Sort, replies, likes)
 	if err != nil {
 		return PostPage{}, fmt.Errorf("list posts: %w", err)
 	}
@@ -583,9 +608,31 @@ func (r *Repository) ListPageForViewer(ctx context.Context, viewerID uuid.UUID, 
 		return PostPage{}, err
 	}
 	page := PostPage{Items: items}
+	rows.Close()
+	counts, err := r.pool.Query(ctx, `SELECT p.category,count(*) FROM posts p
+		LEFT JOIN works w ON w.id=p.work_id LEFT JOIN assets a ON a.id=w.asset_id JOIN users u ON u.id=p.author_id
+		WHERE p.status='published' AND (p.work_id IS NULL OR (w.status='published' AND a.scan_status='clean'))
+		AND ($2::boolean=false OR p.author_id=$1)
+		AND ($3='' OR concat_ws(' ',p.title,w.title,p.body,u.display_name,u.handle) ILIKE '%'||$3||'%') GROUP BY p.category`, viewerID, input.Mine, strings.TrimSpace(input.Query))
+	if err != nil {
+		return PostPage{}, err
+	}
+	defer counts.Close()
+	page.CategoryCounts = map[string]int{}
+	for counts.Next() {
+		var category string
+		var count int
+		if err := counts.Scan(&category, &count); err != nil {
+			return PostPage{}, err
+		}
+		page.CategoryCounts[category] = count
+	}
+	if err := counts.Err(); err != nil {
+		return PostPage{}, err
+	}
 	if len(page.Items) > input.Limit {
 		page.Items = page.Items[:input.Limit]
-		cursor := encodePostCursor(page.Items[len(page.Items)-1])
+		cursor := encodePostCursor(page.Items[len(page.Items)-1], input.Sort)
 		page.NextCursor = &cursor
 	}
 	return page, nil
@@ -612,8 +659,8 @@ func decodeDraftCursor(value string) (draftCursor, error) {
 	return cursor, nil
 }
 
-func encodePostCursor(item Post) string {
-	body, _ := json.Marshal(postCursor{PublishedAt: item.PublishedAt, ID: item.ID})
+func encodePostCursor(item Post, sort string) string {
+	body, _ := json.Marshal(postCursor{PublishedAt: item.PublishedAt, ID: item.ID, Sort: sort, Replies: item.CommentCount, Likes: item.LikeCount})
 	return base64.RawURLEncoding.EncodeToString(body)
 }
 

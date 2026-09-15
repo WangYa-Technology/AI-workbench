@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { Clock3, Eye, Heart, LayoutGrid, LoaderCircle, LogIn, MessageCircle, MessageSquareText, MoreHorizontal, Plus, RefreshCw, Search, ShieldCheck, Sparkles, UserPlus, X } from 'lucide-vue-next'
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { Clock3, Eye, Heart, LayoutGrid, LoaderCircle, LogIn, MessageCircle, MessageSquareText, MoreHorizontal, Plus, Search, ShieldCheck, Sparkles, UserPlus, X } from 'lucide-vue-next'
+import { computed, onMounted, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { onClickOutside } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { api, messageFrom, type CommunityPost, type CommunityReport } from '../api/client'
@@ -31,25 +32,43 @@ const loading = ref(true)
 const actionLoading = ref('')
 const error = ref('')
 const feedback = ref('')
-const sortMode = ref<'latest' | 'discussed'>('latest')
+const sortMode = computed(() => route.query.sort === 'discussed' ? 'discussed' : 'latest')
+function selectSort(value: string) { void router.push({ query: { ...route.query, q: search.value.trim() || undefined, sort: value === 'discussed' ? value : undefined } }) }
 const sortTabs = computed(() => [
   { value: 'latest', label: t('community.latestDiscussions'), icon: Clock3 },
   { value: 'discussed', label: t('community.mostDiscussed'), icon: MessageCircle },
 ])
-const search = ref('')
+const search = ref(String(route.query.q || ''))
+const categoryCounts = ref<Record<string, number>>()
+let searchTimer: ReturnType<typeof globalThis.setTimeout>
+watch(search, value => { globalThis.clearTimeout(searchTimer); searchTimer = globalThis.setTimeout(() => { void router.replace({ query: { ...route.query, q: value.trim() || undefined } }) }, 250) })
+onBeforeUnmount(() => globalThis.clearTimeout(searchTimer))
 const categories = ref<TaskType[]>([])
 const category = ref(String(route.query.category || ''))
 const categoryName = (code?: string) => { const item = categories.value.find(i => i.code === code); return item ? (locale.value.startsWith('zh') ? item.nameZh : item.nameEn) : code || '' }
-async function selectCategory(value: string) { await router.push({ query: { ...route.query, category: value || undefined } }) }
-watch(() => [route.query.category, route.query.view], () => { category.value = String(route.query.category || ''); mineOnly.value = route.query.view === 'mine' && Boolean(session.user); postNextCursor.value = null; void load() })
+async function selectCategory(value: string) { await router.push({ query: { ...route.query, q: search.value.trim() || undefined, category: value || undefined } }) }
+watch(() => [route.query.category, route.query.view, route.query.q, route.query.sort], () => { category.value = String(route.query.category || ''); search.value = String(route.query.q || ''); mineOnly.value = route.query.view === 'mine' && Boolean(session.user); postNextCursor.value = null; void load() })
 const mineOnly = ref(false)
 const createOpen = ref(false)
 const showCases = ref(false)
+const toolsOpen = ref(false)
+const toolsRoot = ref<globalThis.HTMLElement | null>(null)
+const toolsTrigger = ref<InstanceType<typeof UiIconButton> | null>(null)
+onClickOutside(toolsRoot, () => { toolsOpen.value = false })
+function closeTools() {
+  toolsOpen.value = false
+  const root = toolsTrigger.value?.$el as globalThis.HTMLElement | undefined
+  root?.focus()
+}
+async function openCasesFromTools() {
+  closeTools()
+  await toggleCases()
+}
 const appealForm = reactive({ reportId: '', reason: '' })
 const communityHeroStats = computed(() => [
-  { value: posts.value.length, label: t('community.discussionsLabel'), icon: LayoutGrid, tone: 'blue' as const },
-  { value: totalReplyCount.value, label: t('community.repliesColumn'), icon: MessageCircle, tone: 'violet' as const },
-  { value: totalLikeCount.value, label: t('community.likesColumn'), icon: Heart, tone: 'green' as const },
+  { value: posts.value.length, label: t('content.loadedPosts'), icon: LayoutGrid, tone: 'blue' as const },
+  { value: totalReplyCount.value, label: t('content.loadedReplies'), icon: MessageCircle, tone: 'violet' as const },
+  { value: totalLikeCount.value, label: t('content.loadedLikes'), icon: Heart, tone: 'green' as const },
 ])
 
 function formatPublishedAt(value: string) {
@@ -84,38 +103,30 @@ function formatActivity(value: string) {
   return new Intl.RelativeTimeFormat(locale.value, { numeric: 'auto' }).format(minutes, 'minute')
 }
 
-const displayedPosts = computed(() => {
-  const query = search.value.trim().toLocaleLowerCase(locale.value)
-  const items = posts.value.filter((post) => {
-    const matchesSearch = !query || [post.title, post.workTitle, post.body, post.authorName, post.authorHandle]
-      .some(value => value?.toLocaleLowerCase(locale.value).includes(query))
-    return matchesSearch
-  })
-  if (sortMode.value === 'discussed') {
-    return [...items].sort((left, right) => right.commentCount - left.commentCount || right.likeCount - left.likeCount || right.publishedAt.localeCompare(left.publishedAt))
-  }
-  return [...items].sort((left, right) => right.publishedAt.localeCompare(left.publishedAt))
-})
+const displayedPosts = computed(() => posts.value)
 
 const hasActiveFilters = computed(() => Boolean(search.value.trim()) || Boolean(category.value))
 const totalReplyCount = computed(() => posts.value.reduce((total, post) => total + post.commentCount, 0))
 const totalLikeCount = computed(() => posts.value.reduce((total, post) => total + post.likeCount, 0))
 
 function clearFilters() {
+  globalThis.clearTimeout(searchTimer)
   search.value = ''
-  void selectCategory('')
+  void router.replace({ query: { ...route.query, q: undefined, category: undefined } })
 }
 
 let loadVersion = 0
 async function load() {
   const version = ++loadVersion
   loading.value = true
+  postLoadingMore.value = false
   error.value = ''
   try {
-    const [directory, page] = await Promise.all([api.listTaskTypes('community'), api.listCommunityPosts({ category: category.value, limit: 20, ...(mineOnly.value ? { mine: true } : {}) })])
+    const [directory, page] = await Promise.all([api.listTaskTypes('community'), api.listCommunityPosts({ sort: sortMode.value, q: String(route.query.q || ''), category: category.value, limit: 20, ...(mineOnly.value ? { mine: true } : {}) })])
     if (version !== loadVersion) return
     categories.value = directory.items
     posts.value = page.items
+    categoryCounts.value = page.categoryCounts
     postNextCursor.value = page.nextCursor || null
   } catch (reason) {
     if (version === loadVersion) error.value = messageFrom(reason)
@@ -130,15 +141,15 @@ async function loadMorePosts() {
   const version = loadVersion
   feedback.value = ''
   try {
-    const page = await api.listCommunityPosts({ category: category.value, limit: 20, cursor: postNextCursor.value, ...(mineOnly.value ? { mine: true } : {}) })
+    const page = await api.listCommunityPosts({ sort: sortMode.value, q: String(route.query.q || ''), category: category.value, limit: 20, cursor: postNextCursor.value, ...(mineOnly.value ? { mine: true } : {}) })
     if (version !== loadVersion) return
     const known = new Set(posts.value.map(item => item.id))
     posts.value = [...posts.value, ...page.items.filter(item => !known.has(item.id))]
     postNextCursor.value = page.nextCursor || null
   } catch (reason) {
-    feedback.value = messageFrom(reason)
+    if (version === loadVersion) feedback.value = messageFrom(reason)
   } finally {
-    postLoadingMore.value = false
+    if (version === loadVersion) postLoadingMore.value = false
   }
 }
 
@@ -257,26 +268,10 @@ onMounted(async () => {
         </UiButton>
       </template>
     </PageHero>
-    <div v-if="loading" class="community-skeleton" aria-live="polite">
-      <span class="sr-only">{{ t('status.loadingCommunity') }}</span>
-      <article v-for="index in 5" :key="index">
-        <span class="community-skeleton-media"></span>
-        <span class="community-skeleton-line short"></span>
-        <span class="community-skeleton-line"></span>
-        <span class="community-skeleton-line medium"></span>
-      </article>
-    </div>
-    <div v-else-if="error" class="page-state" role="alert">
-      <p>{{ error }}</p><UiButton class="command-button secondary" variant="secondary" @click="load">
-        <template #start>
-          <RefreshCw :size="17" :stroke-width="1.75" />
-        </template>{{ t('actions.retry') }}
-      </UiButton>
-    </div>
-    <div v-else :class="{ 'has-category-sidebar': categories.length > 0 }">
+    <div :class="{ 'has-category-sidebar': categories.length > 0 }">
       <div class="controls-with-switcher community-controls-row has-switcher">
         <div class="view-switcher-bar">
-          <UiTabs class="view-switcher" :model-value="sortMode" :items="sortTabs" :label="t('community.sortLabel')" @update:model-value="sortMode = $event as 'latest' | 'discussed'" />
+          <UiTabs class="view-switcher" :model-value="sortMode" :items="sortTabs" :label="t('community.sortLabel')" @update:model-value="selectSort(String($event))" />
         </div>
         <section class="community-toolbar" :aria-label="t('community.filtersLabel')">
           <label class="community-search-control">
@@ -292,20 +287,27 @@ onMounted(async () => {
               {{ categoryName(item.code) }}
             </option>
           </UiSelect>
-          <nav class="community-toolbar-actions" :aria-label="t('community.communityActions')">
-            <UiButton variant="ghost" :class="{ active: showCases }" :aria-pressed="showCases" @click="toggleCases">
-              <template #start>
-                <ShieldCheck :size="17" :stroke-width="1.75" aria-hidden="true" />
-              </template>
-              {{ t('community.myCases') }}
-            </UiButton>
-            <UiButton as="RouterLink" variant="ghost" to="/discover">
-              <template #start>
-                <Eye :size="17" :stroke-width="1.75" aria-hidden="true" />
-              </template>
-              {{ t('actions.browseWorks') }}
-            </UiButton>
-          </nav>
+          <div ref="toolsRoot" class="community-tools" @keydown.esc.stop.prevent="closeTools" @focusout="(event) => { if (!toolsRoot?.contains(event.relatedTarget as Node)) toolsOpen = false }">
+            <UiIconButton ref="toolsTrigger" variant="outline" class="ui-select__trigger" :label="t('community.communityActions')" :aria-expanded="toolsOpen" aria-controls="community-tools-panel" @click="toolsOpen = !toolsOpen">
+              <MoreHorizontal :size="19" aria-hidden="true" />
+            </UiIconButton>
+            <Transition name="ui-select-menu">
+              <nav v-if="toolsOpen" id="community-tools-panel" class="community-tools-panel ui-menu-surface" :aria-label="t('community.communityActions')">
+                <UiButton variant="ghost" :class="{ active: showCases }" :aria-pressed="showCases" @click="openCasesFromTools">
+                  <template #start>
+                    <ShieldCheck :size="17" :stroke-width="1.75" aria-hidden="true" />
+                  </template>
+                  {{ t('community.myCases') }}
+                </UiButton>
+                <UiButton as="RouterLink" variant="ghost" to="/discover" @click="toolsOpen = false">
+                  <template #start>
+                    <Eye :size="17" :stroke-width="1.75" aria-hidden="true" />
+                  </template>
+                  {{ t('actions.browseWorks') }}
+                </UiButton>
+              </nav>
+            </Transition>
+          </div>
         </section>
       </div>
       <p v-if="feedback" class="task-feedback" :class="[t('community.reportSubmitted'), t('community.appealSubmitted'), t('community.postPublished')].includes(feedback) ? 'success' : 'error'" role="status">
@@ -346,20 +348,21 @@ onMounted(async () => {
           </div>
         </form>
       </section>
-      <CategoryBrowser :items="categories" :model-value="category" @update:model-value="selectCategory">
-        <div v-if="posts.length" class="community-topics">
+      <CategoryBrowser :items="categories" :model-value="category" :counts="categoryCounts" @update:model-value="selectCategory">
+        <div v-if="loading" class="page-state" aria-live="polite">
+          <LoaderCircle class="spin" :size="20" />{{ t('status.loadingCommunity') }}
+        </div>
+        <div v-else-if="error" class="page-state" role="alert">
+          <p>{{ error }}</p><UiButton variant="secondary" @click="load">
+            {{ t('actions.retry') }}
+          </UiButton>
+        </div>
+        <div v-else-if="posts.length" class="community-topics">
           <div class="community-results-meta">
-            <span>{{ mineOnly ? t('community.myPostResultCount', { count: displayedPosts.length }) : t('community.resultCount', { count: displayedPosts.length }) }}</span>
-            <UiButton v-if="hasActiveFilters" variant="ghost" type="button" @click="clearFilters">
+            <div><strong>{{ t('community.discussionCount', { count: displayedPosts.length }) }}</strong><span>{{ t(mineOnly ? 'community.myDiscussionsSummary' : 'community.discussionsSummary') }}</span></div>
+            <UiButton v-if="hasActiveFilters" class="text-link" variant="ghost" size="sm" type="button" @click="clearFilters">
               {{ t('community.clearFilters') }}
             </UiButton>
-          </div>
-          <div class="community-list-head" aria-hidden="true">
-            <span>{{ t('community.topicColumn') }}</span>
-            <span>{{ t('community.repliesColumn') }}</span>
-            <span>{{ t('community.likesColumn') }}</span>
-            <span>{{ t('community.updatedColumn') }}</span>
-            <span></span>
           </div>
           <div v-if="displayedPosts.length" class="community-feed">
             <article v-for="post in displayedPosts" :key="post.id" class="community-post-row" :data-post-id="post.id">
@@ -440,3 +443,21 @@ onMounted(async () => {
   </section>
   <CommunityPostDrawer v-model:open="createOpen" @created="handlePostCreated" />
 </template>
+
+<style scoped>
+.community-controls-row.controls-with-switcher { overflow: visible; }
+.community-tools { position: relative; justify-self: end; }
+.community-tools > .ui-icon-button { width: var(--community-toolbar-control-height); height: var(--community-toolbar-control-height); min-height: var(--community-toolbar-control-height); justify-content: center; padding: 0; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface); color: var(--text-secondary); }
+.community-tools > .ui-icon-button:hover:not(:disabled) { border-color: var(--border-strong); background: var(--surface); transform: none; }
+.community-tools-panel { position: absolute; top: calc(100% + 8px); right: 0; width: max-content; min-width: 200px; max-width: calc(100vw - 48px); transform-origin: top right; }
+.community-tools-panel .ui-button { justify-content: flex-start; gap: 10px; width: 100%; height: auto; min-height: 36px; padding: 8px 12px; border: 0; border-radius: 8px; color: var(--text); font-size: 13px; font-weight: 500; line-height: 20px; box-shadow: none; }
+.community-tools-panel .ui-button:hover { background: var(--surface-muted); transform: none; }
+.community-tools-panel .ui-button :deep(svg) { color: var(--text-secondary); }
+@media (max-width: 1080px) {
+  .community-controls-row .community-toolbar { grid-template-columns: minmax(0, 1fr) 150px 40px; }
+}
+@media (max-width: 560px) {
+  .community-controls-row .community-toolbar { grid-template-columns: minmax(0, 1fr) 40px; }
+  .community-search-control { grid-column: 1 / -1; }
+}
+</style>

@@ -12,6 +12,8 @@ import {
   api, messageFrom, type Asset, type TaskCreate, type TaskDetail, type TaskSummary, type TaskType,
 } from '../api/client'
 import { formatCurrency, formatDateTime } from '../lib/format'
+import { contentListReturn, creationPath } from '../lib/contentPresentation'
+import AssetMedia from '../components/domain/AssetMedia.vue'
 import { openCheckoutWindow } from '../lib/checkout'
 import { useSessionStore } from '../stores/session'
 import PageHero from '../components/ui/PageHero.vue'
@@ -150,46 +152,50 @@ function taskTypeLabel(code: string) {
   return locale.value.startsWith('zh') ? (item?.nameZh || code) : (item?.nameEn || code)
 }
 
+let loadVersion = 0
 async function load() {
+  const version = ++loadVersion
+  const id = taskID.value
+  if (detail.value?.id !== id) detail.value = null
+  const criteria = { q: search.value, type: deliverableType.value, status: status.value, sort: sort.value, mine: view.value === 'mine' }
   loading.value = true
   error.value = ''
   success.value = ''
   try {
     const [, runtime, configuredTypes] = await Promise.all([session.ensure(), api.meta(), api.listTaskTypes()])
+    if (version !== loadVersion) return
     taskTypes.value = configuredTypes.items
     taskPaymentEnabled.value = runtime.taskPaymentProvider.enabled
     paymentLiveMode.value = runtime.taskPaymentProvider.liveMode
-    if (taskID.value) {
-      detail.value = await api.getTask(taskID.value)
+    if (id) {
+      const task = await api.getTask(id)
+      if (version !== loadVersion) return
+      detail.value = task
       if (detail.value.viewerRole === 'assignee') {
         const response = await api.listAssets()
+        if (version !== loadVersion) return
         assets.value = response.items.filter((item) => item.scanStatus === 'clean')
         if (!delivery.assetId && assets.value.length) delivery.assetId = assets.value[0].id
       }
       applyPaymentReturnState()
     } else {
       const [response, catalog] = await Promise.all([
+        api.listTasks(criteria),
         api.listTasks({
-          q: search.value,
-          type: deliverableType.value,
-          status: status.value,
-          sort: sort.value,
-          mine: view.value === 'mine',
-        }),
-        api.listTasks({
-          status: view.value === 'mine' ? '' : 'open',
+          status: criteria.mine ? '' : 'open',
           sort: 'newest',
-          mine: view.value === 'mine',
+          mine: criteria.mine,
         }),
       ])
+      if (version !== loadVersion) return
       tasks.value = response.items
       catalogTasks.value = catalog.items
       detail.value = null
     }
   } catch (reason) {
-    error.value = messageFrom(reason)
+    if (version === loadVersion) error.value = messageFrom(reason)
   } finally {
-    loading.value = false
+    if (version === loadVersion) loading.value = false
   }
 }
 
@@ -319,24 +325,28 @@ async function clearFilters() {
 }
 
 async function mutate(action: () => Promise<TaskDetail>, message: string) {
+  const version = loadVersion
   actionLoading.value = true
   error.value = ''
   success.value = ''
   try {
-    detail.value = await action()
+    const result = await action()
+    if (version !== loadVersion) return
+    detail.value = result
     success.value = message
     proposalOpen.value = false
     disputeOpen.value = false
     cancelOpen.value = false
     if (detail.value.viewerRole === 'assignee') {
       const response = await api.listAssets()
+      if (version !== loadVersion) return
       assets.value = response.items.filter((item) => item.scanStatus === 'clean')
       if (!delivery.assetId && assets.value.length) delivery.assetId = assets.value[0].id
     }
   } catch (reason) {
-    error.value = messageFrom(reason)
+    if (version === loadVersion) error.value = messageFrom(reason)
   } finally {
-    actionLoading.value = false
+    if (version === loadVersion) actionLoading.value = false
   }
 }
 
@@ -472,6 +482,7 @@ onMounted(() => {
   void load()
 })
 onBeforeUnmount(() => {
+  loadVersion++
   globalThis.window.removeEventListener('keydown', handleWindowKeydown)
   if (fundingPollTimer !== undefined) globalThis.window.clearTimeout(fundingPollTimer)
 })
@@ -554,17 +565,7 @@ onBeforeUnmount(() => {
         </form>
       </div>
 
-      <div v-if="loading" class="task-skeleton" aria-live="polite">
-        <span v-for="item in 4" :key="item"></span><p>{{ t('tasks.loading') }}</p>
-      </div>
-      <div v-else-if="error" class="task-market-state task-market-error" role="alert">
-        <span><AlertTriangle :size="20" /></span><strong>{{ t('tasks.unavailable') }}</strong><p>{{ error }}</p><UiButton class="command-button secondary" variant="secondary" @click="load">
-          <template #start>
-            <RefreshCw :size="17" />
-          </template>{{ t('actions.retry') }}
-        </UiButton>
-      </div>
-      <div v-else class="task-browser-layout">
+      <div class="task-browser-layout">
         <aside class="task-category-panel" :aria-label="t('tasks.categories')">
           <h2>{{ t('tasks.categories') }}</h2>
           <nav>
@@ -582,87 +583,94 @@ onBeforeUnmount(() => {
           </section>
         </aside>
 
-        <div class="task-results">
-          <div class="task-results-meta">
-            <div><strong>{{ tasks.length }} {{ t('tasks.results') }}</strong><span>{{ t(view === 'mine' ? 'tasks.myActivitySummary' : 'tasks.availableWorkSummary') }}</span></div>
-            <div class="task-results-actions">
-              <UiButton v-if="search || deliverableType || status !== (view === 'mine' ? '' : 'open') || sort !== 'newest'" class="text-link" variant="ghost" size="sm" @click="clearFilters">
-                {{ t('tasks.clearFilters') }}
-              </UiButton>
-              <div class="task-layout-switcher" :aria-label="t('tasks.layout')">
-                <UiIconButton size="sm" class="icon-button" variant="ghost" :class="{ active: layoutMode === 'list' }" :label="t('tasks.listView')" @click="layoutMode = 'list'">
-                  <List :size="17" />
-                </UiIconButton>
-                <UiIconButton size="sm" class="icon-button" variant="ghost" :class="{ active: layoutMode === 'grid' }" :label="t('tasks.gridView')" @click="layoutMode = 'grid'">
-                  <Grid2X2 :size="16" />
-                </UiIconButton>
-              </div>
-            </div>
+        <div class="task-results" :aria-busy="loading">
+          <div v-if="loading" class="task-skeleton" aria-live="polite">
+            <span v-for="item in 4" :key="item"></span><p>{{ t('tasks.loading') }}</p>
           </div>
-          <div class="task-result-list" :class="{ 'is-grid': layoutMode === 'grid' }">
-            <RouterLink v-for="item in tasks" :key="item.id" class="task-row" :class="{ 'is-direct': item.allowDirectAccept && item.status === 'open' }" :data-type="item.deliverableType" :to="`/market/demands/${item.id}`">
-              <span class="task-row-media"><img :src="taskThumbnail(item.deliverableType)" :alt="item.title" /><span v-if="item.deliverableType === 'video'" class="task-media-play"><Play :size="18" fill="currentColor" /></span></span>
-              <span class="task-row-copy">
-                <span class="task-row-heading"><span class="task-type-badge"><component :is="taskTypeIcon(item.deliverableType)" :size="13" />{{ taskTypeLabel(item.deliverableType) }}</span><span class="task-status" :data-status="item.status">{{ t(`tasks.status.${item.status}`) }}</span></span>
-                <strong>{{ item.title }}</strong><small>{{ item.summary }}</small>
-                <span class="task-row-byline"><span>@{{ item.client.handle }}</span><span>{{ item.proposalCount }} {{ t('tasks.proposalCount') }}</span><span v-if="item.allowDirectAccept && item.status === 'open'">{{ t('tasks.direct') }}</span></span>
-              </span>
-              <span class="task-row-commercial">
-                <span class="task-row-data"><small>{{ t('tasks.providerReward') }}</small><strong>{{ money(item.budgetCents, item.currency) }}</strong></span>
-                <span class="task-row-data"><small><Clock3 :size="13" />{{ t('tasks.deadline') }}</small><strong>{{ date(item.deadline, item.clientTimezone) }}</strong></span>
-                <span class="command-button primary task-row-action">{{ t('tasks.reviewBrief') }}<ChevronRight :size="16" /></span>
-              </span>
-            </RouterLink>
-            <div v-if="!tasks.length" class="task-market-state task-market-empty">
-              <span><component :is="view === 'mine' ? BriefcaseBusiness : Search" :size="20" /></span><strong>{{ t(view === 'mine' ? 'tasks.noMyActivity' : 'tasks.noResults') }}</strong><UiButton v-if="view === 'available'" class="text-link" variant="ghost" size="sm" @click="clearFilters">
-                {{ t('tasks.clearFilters') }}
-              </UiButton>
-              <p>{{ t(view === 'mine' ? 'tasks.noMyActivitySummary' : 'tasks.emptySummary') }}</p>
-              <div class="task-empty-actions">
-                <UiButton v-if="view === 'mine'" class="command-button secondary" variant="secondary" @click="selectView('available')">
-                  <template #start>
-                    <Search :size="17" />
-                  </template>{{ t('tasks.browseTasks') }}
-                </UiButton>
-                <UiButton v-else as="RouterLink" class="command-button secondary" variant="secondary" to="/create/image">
-                  <template #start>
-                    <WandSparkles :size="17" />
-                  </template>{{ t('tasks.createInstead') }}
-                </UiButton>
-                <UiButton v-if="canPublishBrief && view !== 'mine'" class="command-button primary" variant="primary" @click="createOpen = true">
-                  <template #start>
-                    <Plus :size="17" />
-                  </template>{{ t('tasks.publishBrief') }}
-                </UiButton>
-              </div>
-            </div>
-          </div>
-          <section v-if="canPublishBrief" class="task-publish-cta">
-            <span><Sparkles :size="20" /></span><div><strong>{{ t('tasks.publishIdea') }}</strong><p>{{ t('tasks.publishIdeaSummary') }}</p></div><UiButton class="command-button primary" variant="primary" @click="createOpen = true">
+          <div v-else-if="error" class="task-market-state task-market-error" role="alert">
+            <span><AlertTriangle :size="20" /></span><strong>{{ t('tasks.unavailable') }}</strong><p>{{ error }}</p><UiButton class="command-button secondary" variant="secondary" @click="load">
               <template #start>
-                <Plus :size="17" />
-              </template>{{ t('tasks.publishBrief') }}
+                <RefreshCw :size="17" />
+              </template>{{ t('actions.retry') }}
             </UiButton>
-          </section>
+          </div>
+          <template v-else>
+            <div class="task-results-meta">
+              <div><strong>{{ tasks.length }} {{ t('tasks.results') }}</strong><span>{{ t(view === 'mine' ? 'tasks.myActivitySummary' : 'tasks.availableWorkSummary') }}</span></div>
+              <div class="task-results-actions">
+                <UiButton v-if="search || deliverableType || status !== (view === 'mine' ? '' : 'open') || sort !== 'newest'" class="text-link" variant="ghost" size="sm" @click="clearFilters">
+                  {{ t('tasks.clearFilters') }}
+                </UiButton>
+                <div class="task-layout-switcher" :aria-label="t('tasks.layout')">
+                  <UiIconButton size="sm" class="icon-button" variant="ghost" :class="{ active: layoutMode === 'list' }" :label="t('tasks.listView')" @click="layoutMode = 'list'">
+                    <List :size="17" />
+                  </UiIconButton>
+                  <UiIconButton size="sm" class="icon-button" variant="ghost" :class="{ active: layoutMode === 'grid' }" :label="t('tasks.gridView')" @click="layoutMode = 'grid'">
+                    <Grid2X2 :size="16" />
+                  </UiIconButton>
+                </div>
+              </div>
+            </div>
+            <div class="task-result-list" :class="{ 'is-grid': layoutMode === 'grid' }">
+              <RouterLink v-for="item in tasks" :key="item.id" class="task-row" :class="{ 'is-direct': item.allowDirectAccept && item.status === 'open' }" :data-type="item.deliverableType" :to="`/market/demands/${item.id}`">
+                <span class="task-row-media"><img :src="taskThumbnail(item.deliverableType)" :alt="item.title" /><span v-if="item.deliverableType === 'video'" class="task-media-play"><Play :size="18" fill="currentColor" /></span></span>
+                <span class="task-row-copy">
+                  <span class="task-row-heading"><span class="task-type-badge"><component :is="taskTypeIcon(item.deliverableType)" :size="13" />{{ taskTypeLabel(item.deliverableType) }}</span><span class="task-status" :data-status="item.status">{{ t(`tasks.status.${item.status}`) }}</span></span>
+                  <strong>{{ item.title }}</strong><small>{{ item.summary }}</small>
+                  <span class="task-row-byline"><span>@{{ item.client.handle }}</span><span>{{ item.proposalCount }} {{ t('tasks.proposalCount') }}</span><span v-if="item.allowDirectAccept && item.status === 'open'">{{ t('tasks.direct') }}</span></span>
+                </span>
+                <span class="task-row-commercial">
+                  <span class="task-row-data"><small>{{ t('content.budget') }}</small><strong>{{ money(item.budgetCents, item.currency) }}</strong></span>
+                  <span class="task-row-data"><small><Clock3 :size="13" />{{ t('tasks.deadline') }}</small><strong>{{ date(item.deadline, item.clientTimezone) }}</strong></span>
+                  <span class="command-button primary task-row-action">{{ t('tasks.reviewBrief') }}<ChevronRight :size="16" /></span>
+                </span>
+              </RouterLink>
+              <div v-if="!tasks.length" class="task-market-state task-market-empty">
+                <span><component :is="view === 'mine' ? BriefcaseBusiness : Search" :size="20" /></span><strong>{{ t(view === 'mine' ? 'tasks.noMyActivity' : 'tasks.noResults') }}</strong><UiButton v-if="view === 'available'" class="text-link" variant="ghost" size="sm" @click="clearFilters">
+                  {{ t('tasks.clearFilters') }}
+                </UiButton>
+                <p>{{ t(view === 'mine' ? 'tasks.noMyActivitySummary' : 'tasks.emptySummary') }}</p>
+                <div class="task-empty-actions">
+                  <UiButton v-if="view === 'mine'" class="command-button secondary" variant="secondary" @click="selectView('available')">
+                    <template #start>
+                      <Search :size="17" />
+                    </template>{{ t('tasks.browseTasks') }}
+                  </UiButton>
+                  <UiButton v-else as="RouterLink" class="command-button secondary" variant="secondary" to="/create/image">
+                    <template #start>
+                      <WandSparkles :size="17" />
+                    </template>{{ t('tasks.createInstead') }}
+                  </UiButton>
+                  <UiButton v-if="canPublishBrief && view !== 'mine'" class="command-button primary" variant="primary" @click="createOpen = true">
+                    <template #start>
+                      <Plus :size="17" />
+                    </template>{{ t('tasks.publishBrief') }}
+                  </UiButton>
+                </div>
+              </div>
+            </div>
+            <section v-if="canPublishBrief" class="task-publish-cta">
+              <span><Sparkles :size="20" /></span><div><strong>{{ t('tasks.publishIdea') }}</strong><p>{{ t('tasks.publishIdeaSummary') }}</p></div><UiButton class="command-button primary" variant="primary" @click="createOpen = true">
+                <template #start>
+                  <Plus :size="17" />
+                </template>{{ t('tasks.publishBrief') }}
+              </UiButton>
+            </section>
+          </template>
         </div>
       </div>
     </template>
 
     <template v-else>
       <div class="task-detail-toolbar">
-        <RouterLink class="text-link task-back" to="/market/demands">
+        <RouterLink class="text-link task-back" :to="contentListReturn('/market/demands')">
           <ArrowLeft :size="17" />{{ t('tasks.back') }}
         </RouterLink>
         <div v-if="detail" class="task-detail-toolbar-actions">
-          <UiButton as="RouterLink" class="command-button primary" variant="primary" :to="`/create/image?taskId=${detail.id}`">
+          <UiButton v-if="canDeliver" as="RouterLink" class="command-button primary" variant="primary" :to="{ path: creationPath(detail.deliverableType), query: { taskId: detail.id } }">
             <template #start>
               <WandSparkles :size="17" />
             </template>{{ t('tasks.startCreating') }}
-          </UiButton>
-          <UiButton as="RouterLink" class="command-button secondary" variant="secondary" to="/market/demands">
-            <template #start>
-              <BriefcaseBusiness :size="17" />
-            </template>{{ t('tasks.findTasks') }}
           </UiButton>
         </div>
       </div>
@@ -682,7 +690,79 @@ onBeforeUnmount(() => {
             <div class="task-brief-signals">
               <span class="task-status" :data-status="detail.status">{{ t(`tasks.status.${detail.status}`) }}</span><span v-if="taskPaymentEnabled && detail.allowDirectAccept && detail.status === 'open' && (directFundingConfirmed || detail.viewerRole === 'client')" class="task-direct-signal"><BriefcaseBusiness :size="14" />{{ t(!directFundingConfirmed ? 'tasks.directFundingRequired' : 'tasks.direct') }}</span>
             </div><h1>{{ detail.title }}</h1><p>{{ detail.summary }}</p>
+            <dl class="task-key-facts">
+              <div><dt>{{ t('content.budget') }}</dt><dd>{{ money(detail.budgetCents, detail.currency) }}</dd></div>
+              <div><dt>{{ t('tasks.deadline') }}</dt><dd>{{ date(detail.deadline, detail.clientTimezone) }}</dd></div>
+              <div><dt>{{ t('tasks.categories') }}</dt><dd>{{ taskTypeLabel(detail.deliverableType) }}</dd></div>
+            </dl>
+            <a class="command-button secondary task-summary-action" :href="canPropose || canDeliver || canReview || canDispute || canCancel ? '#task-participation' : '#task-actions'">{{ taskActionLabel }}<ChevronRight :size="16" /></a>
           </header>
+          <section v-if="canPropose || canDeliver || canReview || canDispute || canCancel" id="task-participation" class="task-participation">
+            <h2>{{ taskActionLabel }}</h2>
+            <UiButton v-if="canPropose && !proposalOpen" class="command-button primary wide" variant="primary" @click="showProposalForm">
+              <template #start>
+                <Plus :size="17" />
+              </template>{{ t('tasks.submitProposal') }}
+            </UiButton>
+            <form v-if="proposalOpen" class="task-action-form" @submit.prevent="submitProposal">
+              <label>{{ t('tasks.proposalApproach') }}<UiTextarea v-model="proposal.approach" rows="5" minlength="20" required /></label><label>{{ t('tasks.proposalDeliverables') }}<UiTextarea v-model="proposal.deliverables" rows="3" minlength="10" required /></label><div class="form-pair">
+                <label>{{ t('tasks.proposedAmount') }}<UiInput v-model="proposal.amount" type="number" min="1" step="1" required /></label><label>{{ t('tasks.timelineDays') }}<UiInput v-model="proposal.timelineDays" type="number" min="1" required /></label>
+              </div><UiButton class="command-button primary wide" variant="primary" type="submit" :loading="actionLoading">
+                {{ t('tasks.submitProposal') }}
+              </UiButton>
+            </form>
+
+            <template v-if="canDeliver">
+              <UiButton as="RouterLink" class="command-button primary wide" variant="primary" :to="{ path: creationPath(detail.deliverableType), query: { taskId: detail.id } }">
+                <template #start>
+                  <WandSparkles :size="17" />
+                </template>{{ t('tasks.createForTask') }}
+              </UiButton><form class="task-action-form" @submit.prevent="submitDelivery">
+                <label>{{ t('tasks.asset') }}<UiSelect v-model="delivery.assetId" required><option v-for="asset in assets" :key="asset.id" :value="asset.id">{{ asset.title }}</option></UiSelect></label><label>{{ t('tasks.deliveryNote') }}<UiTextarea v-model="delivery.note" rows="4" minlength="5" required /></label><UiButton class="command-button secondary wide" variant="secondary" type="submit" :loading="actionLoading" :disabled="!assets.length">
+                  <template #start>
+                    <FileCheck2 v-if="!actionLoading" :size="17" />
+                  </template>{{ t('tasks.submitDelivery') }}
+                </UiButton>
+              </form><p v-if="!assets.length" class="task-inline-help">
+                {{ t('tasks.noDeliveryAssets') }}
+              </p>
+            </template>
+
+            <form v-if="canReview" class="task-action-form" @submit.prevent>
+              <label>{{ t('tasks.reviewNote') }}<UiTextarea v-model="reviewNote" rows="4" /></label><UiButton class="command-button primary wide" variant="primary" :loading="actionLoading" @click="review('accept')">
+                <template #start>
+                  <Check v-if="!actionLoading" :size="17" />
+                </template>{{ t('tasks.acceptDelivery') }}
+              </UiButton><UiButton class="command-button secondary wide" variant="secondary" :loading="actionLoading" @click="review('request_revision')">
+                <template #start>
+                  <RefreshCw v-if="!actionLoading" :size="17" />
+                </template>{{ t('tasks.requestRevision') }}
+              </UiButton>
+            </form>
+
+            <UiButton v-if="canDispute && !disputeOpen" class="text-link danger-link" variant="ghost" size="sm" @click="disputeOpen = true">
+              {{ t('tasks.openDispute') }}
+            </UiButton>
+            <form v-if="disputeOpen" class="task-action-form" @submit.prevent="openDispute">
+              <label>{{ t('tasks.disputeReason') }}<UiTextarea v-model="disputeReason" rows="4" minlength="20" required /></label><UiButton class="command-button secondary wide" variant="secondary" type="submit" :loading="actionLoading">
+                {{ t('tasks.openDispute') }}
+              </UiButton>
+            </form>
+            <UiButton v-if="canCancel && !cancelOpen" class="text-link danger-link" variant="ghost" size="sm" @click="cancelOpen = true">
+              {{ t('tasks.cancelTask') }}
+            </UiButton>
+            <form v-if="cancelOpen" class="task-action-form" @submit.prevent="cancelTask">
+              <p class="task-form-warning">
+                <AlertTriangle :size="16" />{{ t('tasks.cancelWarning') }}
+              </p><label>{{ t('tasks.cancelReason') }}<UiTextarea v-model="cancelReason" rows="3" minlength="10" required /></label><div class="task-confirm-actions">
+                <UiButton class="command-button secondary" variant="secondary" type="button" @click="cancelOpen = false">
+                  {{ t('tasks.keepTask') }}
+                </UiButton><UiButton class="command-button destructive" variant="destructive" type="submit" :loading="actionLoading">
+                  {{ t('tasks.confirmCancel') }}
+                </UiButton>
+              </div>
+            </form>
+          </section>
           <section class="task-brief-overview">
             <div class="task-section-heading">
               <FileCheck2 :size="19" /><h2>{{ t('tasks.brief') }}</h2>
@@ -716,7 +796,7 @@ onBeforeUnmount(() => {
 
           <section v-if="detail.proposals.length" class="task-proposals">
             <h2>{{ detail.viewerRole === 'client' ? t('tasks.proposals') : t('tasks.yourProposal') }}</h2><article v-for="item in detail.proposals" :key="item.id">
-              <div><strong>{{ item.creator.displayName }}</strong><span>@{{ item.creator.handle }}</span></div><p>{{ item.approach }}</p><p>{{ item.deliverables }}</p><dl><div><dt>{{ t('tasks.providerReward') }}</dt><dd>{{ money(item.amountCents) }}</dd></div><div><dt>{{ t('tasks.timelineDays') }}</dt><dd>{{ item.timelineDays }}</dd></div></dl><div v-if="item.status === 'submitted' && detail.status === 'open' && detail.viewerRole === 'client'" class="task-proposal-actions">
+              <div><strong>{{ item.creator.displayName }}</strong><span>@{{ item.creator.handle }}</span></div><p>{{ item.approach }}</p><p>{{ item.deliverables }}</p><dl><div><dt>{{ t('tasks.proposedAmount') }}</dt><dd>{{ money(item.amountCents) }}</dd></div><div><dt>{{ t('tasks.timelineDays') }}</dt><dd>{{ item.timelineDays }}</dd></div></dl><div v-if="item.status === 'submitted' && detail.status === 'open' && detail.viewerRole === 'client'" class="task-proposal-actions">
                 <UiButton v-if="canFundProposal(item.id)" class="command-button secondary" variant="secondary" :loading="actionLoading" @click="fundTask(item.id)">
                   <template #start>
                     <CircleDollarSign v-if="!actionLoading" :size="17" />
@@ -730,10 +810,10 @@ onBeforeUnmount(() => {
 
           <section v-if="detail.deliveries.length" class="task-deliveries">
             <h2>{{ t('tasks.submitDelivery') }}</h2><article v-for="item in detail.deliveries" :key="item.id">
-              <img :src="item.mediaUrl" :alt="item.assetTitle" width="320" height="240" /><div>
+              <AssetMedia :src="item.mediaUrl" :kind="item.mediaKind || 'document'" :alt="item.assetTitle" :width="320" :height="240" /><div>
                 <span>{{ item.assetTitle }} / v{{ item.version }}</span><strong>{{ item.note }}</strong><p v-if="item.reviewNote">
                   {{ item.reviewNote }}
-                </p><small>{{ date(item.createdAt) }}</small>
+                </p><small><template v-if="item.creator">{{ item.creator.displayName }} · </template>{{ date(item.createdAt) }}</small>
               </div><span class="task-status" :data-status="item.status">{{ t(`tasks.deliveryStatus.${item.status}`) }}</span>
             </article>
           </section>
@@ -755,8 +835,7 @@ onBeforeUnmount(() => {
 
         <aside id="task-actions" class="task-action-rail">
           <div class="task-reward">
-            <div><span>{{ t('tasks.providerReward') }}</span><strong>{{ money(detail.budgetCents, detail.currency) }}</strong></div>
-            <img src="/tasks/task-reward.webp" alt="" aria-hidden="true" />
+            <div><span>{{ t('content.budget') }}</span><strong>{{ money(detail.budgetCents, detail.currency) }}</strong></div>
             <p><ShieldCheck :size="16" /><span>{{ taskPaymentEnabled ? t(paymentLiveMode ? 'tasks.providerLive' : 'tasks.providerTest') : t('tasks.paymentUnavailable') }}</span></p>
           </div>
           <dl class="task-facts">
@@ -783,9 +862,6 @@ onBeforeUnmount(() => {
           <div v-if="error" class="task-feedback error" role="alert">
             <AlertTriangle :size="17" />{{ error }}
           </div>
-          <p v-if="!taskPaymentEnabled && detail.status === 'open'" class="task-payment-note">
-            <ShieldCheck :size="17" /><span>{{ t('tasks.paymentUnavailable') }}</span>
-          </p>
 
           <div v-if="detail.funding" class="task-settlement task-funding">
             <CircleDollarSign :size="19" /><div><strong>{{ t(`tasks.fundingStatus.${detail.funding.status}`) }}</strong><span>{{ money(detail.funding.amountCents, detail.funding.currency) }} / {{ t(detail.funding.liveMode ? 'tasks.providerLiveMode' : 'tasks.providerTestMode') }}</span></div>
@@ -802,72 +878,9 @@ onBeforeUnmount(() => {
               <BriefcaseBusiness v-if="!actionLoading" :size="17" />
             </template>{{ t('tasks.acceptTask') }}
           </UiButton>
-          <UiButton v-if="canPropose && !proposalOpen" class="command-button primary wide" variant="primary" @click="showProposalForm">
-            <template #start>
-              <Plus :size="17" />
-            </template>{{ t('tasks.submitProposal') }}
-          </UiButton>
-          <form v-if="proposalOpen" class="task-action-form" @submit.prevent="submitProposal">
-            <label>{{ t('tasks.proposalApproach') }}<UiTextarea v-model="proposal.approach" rows="5" minlength="20" required /></label><label>{{ t('tasks.proposalDeliverables') }}<UiTextarea v-model="proposal.deliverables" rows="3" minlength="10" required /></label><div class="form-pair">
-              <label>{{ t('tasks.proposedAmount') }}<UiInput v-model="proposal.amount" type="number" min="1" step="1" required /></label><label>{{ t('tasks.timelineDays') }}<UiInput v-model="proposal.timelineDays" type="number" min="1" required /></label>
-            </div><UiButton class="command-button primary wide" variant="primary" type="submit" :loading="actionLoading">
-              {{ t('tasks.submitProposal') }}
-            </UiButton>
-          </form>
-
-          <template v-if="canDeliver">
-            <UiButton as="RouterLink" class="command-button primary wide" variant="primary" :to="`/create/image?taskId=${detail.id}`">
-              <template #start>
-                <WandSparkles :size="17" />
-              </template>{{ t('tasks.createForTask') }}
-            </UiButton><form class="task-action-form" @submit.prevent="submitDelivery">
-              <label>{{ t('tasks.asset') }}<UiSelect v-model="delivery.assetId" required><option v-for="asset in assets" :key="asset.id" :value="asset.id">{{ asset.title }}</option></UiSelect></label><label>{{ t('tasks.deliveryNote') }}<UiTextarea v-model="delivery.note" rows="4" minlength="5" required /></label><UiButton class="command-button secondary wide" variant="secondary" type="submit" :loading="actionLoading" :disabled="!assets.length">
-                <template #start>
-                  <FileCheck2 v-if="!actionLoading" :size="17" />
-                </template>{{ t('tasks.submitDelivery') }}
-              </UiButton>
-            </form><p v-if="!assets.length" class="task-inline-help">
-              {{ t('tasks.noDeliveryAssets') }}
-            </p>
-          </template>
-
-          <form v-if="canReview" class="task-action-form" @submit.prevent>
-            <label>{{ t('tasks.reviewNote') }}<UiTextarea v-model="reviewNote" rows="4" /></label><UiButton class="command-button primary wide" variant="primary" :loading="actionLoading" @click="review('accept')">
-              <template #start>
-                <Check v-if="!actionLoading" :size="17" />
-              </template>{{ t('tasks.acceptDelivery') }}
-            </UiButton><UiButton class="command-button secondary wide" variant="secondary" :loading="actionLoading" @click="review('request_revision')">
-              <template #start>
-                <RefreshCw v-if="!actionLoading" :size="17" />
-              </template>{{ t('tasks.requestRevision') }}
-            </UiButton>
-          </form>
-
-          <UiButton v-if="canDispute && !disputeOpen" class="text-link danger-link" variant="ghost" size="sm" @click="disputeOpen = true">
-            {{ t('tasks.openDispute') }}
-          </UiButton>
-          <form v-if="disputeOpen" class="task-action-form" @submit.prevent="openDispute">
-            <label>{{ t('tasks.disputeReason') }}<UiTextarea v-model="disputeReason" rows="4" minlength="20" required /></label><UiButton class="command-button secondary wide" variant="secondary" type="submit" :loading="actionLoading">
-              {{ t('tasks.openDispute') }}
-            </UiButton>
-          </form>
-          <UiButton v-if="canCancel && !cancelOpen" class="text-link danger-link" variant="ghost" size="sm" @click="cancelOpen = true">
-            {{ t('tasks.cancelTask') }}
-          </UiButton>
-          <form v-if="cancelOpen" class="task-action-form" @submit.prevent="cancelTask">
-            <p class="task-form-warning">
-              <AlertTriangle :size="16" />{{ t('tasks.cancelWarning') }}
-            </p><label>{{ t('tasks.cancelReason') }}<UiTextarea v-model="cancelReason" rows="3" minlength="10" required /></label><div class="task-confirm-actions">
-              <UiButton class="command-button secondary" variant="secondary" type="button" @click="cancelOpen = false">
-                {{ t('tasks.keepTask') }}
-              </UiButton><UiButton class="command-button destructive" variant="destructive" type="submit" :loading="actionLoading">
-                {{ t('tasks.confirmCancel') }}
-              </UiButton>
-            </div>
-          </form>
           <div v-if="detail.settlement" class="task-settlement">
             <CircleDollarSign :size="19" /><div><strong>{{ t('tasks.settlement') }}</strong><span>{{ money(detail.settlement.amountCents, detail.settlement.currency) }} / {{ t(`tasks.settlementMode.${detail.settlement.mode}`) }}</span></div>
-          </div><p v-else class="task-payment-note">
+          </div><p v-else-if="taskPaymentEnabled" class="task-payment-note">
             <ShieldCheck :size="17" /><span>{{ t(taskPaymentEnabled ? 'tasks.providerUnsettled' : 'tasks.paymentUnavailable') }}</span>
           </p>
 
@@ -916,3 +929,27 @@ onBeforeUnmount(() => {
     </div>
   </section>
 </template>
+
+<style scoped>
+.task-detail-layout { grid-template-columns: minmax(0, 1fr) 320px; gap: 24px; }
+.task-brief-header h1 { font-size: clamp(25px, 2.6vw, 34px); line-height: 1.25; }
+.task-brief-header > p { font-size: 14px; line-height: 1.7; }
+.task-brief-overview, .task-trust-block { padding-block: 20px; }
+.task-key-facts { display: flex; flex-wrap: wrap; gap: 16px 24px; margin: 20px 0; padding: 16px 0; border-block: 1px solid var(--border); }
+.task-key-facts dt { font-size: 12px; color: var(--text-secondary); }
+.task-key-facts dd { margin: 6px 0 0; font-size: 14px; font-weight: 600; }
+.task-participation { padding: 20px 0; border-bottom: 1px solid var(--border); display: grid; gap: 14px; scroll-margin-top: 20px; }
+.task-participation h2 { margin: 0; font-size: 18px; }
+.task-participation .task-action-form { padding: 16px; border: 1px solid var(--border); border-radius: var(--radius-control); }
+.task-reward > div { min-width: 0; width: 100%; }
+.task-action-rail { min-height: 0; max-height: none; overflow: visible; position: static; padding: 18px; gap: 14px; box-shadow: none; background: var(--surface); }
+.task-action-rail .task-reward { grid-template-columns: minmax(0, 1fr); grid-template-areas: "copy" "note"; }
+.task-action-rail .task-reward strong { font-size: 26px; }
+.task-rule-grid { gap: 12px; }
+.task-rule-card { background: var(--surface); }
+.task-deliveries .asset-renderer { width: 100%; height: 140px; overflow: hidden; }
+.task-deliveries :deep(img), .task-deliveries :deep(video) { width: 100%; height: 100%; object-fit: contain; }
+.task-mobile-action { display: none; }
+@media(max-width: 1100px) { .task-detail-layout { grid-template-columns: minmax(0, 1fr); } }
+@media(max-width: 600px) { .task-rule-grid { grid-template-columns: 1fr; } .task-key-facts { gap: 14px; } .task-key-facts > div { flex: 1 1 130px; } }
+</style>

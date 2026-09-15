@@ -353,6 +353,11 @@ export const api = {
   getSupportCase: (id: string) => request<SupportCase>(`/support/cases/${encodeURIComponent(id)}`),
   replySupportCase: (id: string, input: SupportReply) => request<SupportCase>(`/support/cases/${encodeURIComponent(id)}/messages`, { method: 'POST', body: JSON.stringify(input) }),
   listWorks: (cursor?: string) => request<WorkPage>(`/works${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`),
+  browseWorks: (query: { q?: string; kind?: string; promptVisibility?: string; cursor?: string } = {}) => {
+    const params = new URLSearchParams()
+    Object.entries(query).forEach(([key, value]) => { if (value) params.set(key, value) })
+    return request<WorkPage>(`/works${params.size ? `?${params}` : ''}`)
+  },
   getWork: (id: string) => request<Work>(`/works/${encodeURIComponent(id)}`),
   search: (query: { q: string; types?: string[]; page?: number; limit?: number }) => {
     const params = new URLSearchParams({ q: query.q })
@@ -426,6 +431,8 @@ export const api = {
     if (query.limit) params.set('limit', String(query.limit))
     if (query.mine !== undefined) params.set('mine', String(query.mine))
     if (query.category) params.set('category', query.category)
+    if (query.sort) params.set('sort', query.sort)
+    if (query.q) params.set('q', query.q)
     return request<CommunityPostPage>(`/community/posts${params.size ? `?${params}` : ''}`)
   },
   createCommunityPost: (input: CommunityPostCreate) => request<CommunityPost>('/community/posts', {
@@ -462,7 +469,7 @@ export const api = {
     Object.entries(query).forEach(([key, value]) => {
       if (value) params.set(key, value)
     })
-    return request<{ items: Product[] }>(`/products${params.size ? `?${params}` : ''}`)
+    return request<{ items: Product[]; categoryCounts?: Record<string, number> }>(`/products${params.size ? `?${params}` : ''}`)
   },
   getProduct: (id: string) => request<Product>(`/products/${encodeURIComponent(id)}`),
   adminAssignCategory: (scope: string, id: string, category: string) => request<{ updated: boolean }>(`/admin/content-category/${encodeURIComponent(id)}?scope=${encodeURIComponent(scope)}`, { method: 'PATCH', body: JSON.stringify({ category }) }),

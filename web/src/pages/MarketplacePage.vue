@@ -1,17 +1,19 @@
 <script setup lang="ts">
 import {
-  ArrowLeft, ArrowRight, BadgeCheck, Check, ChevronRight, CircleDollarSign,
-  Filter, Layers3, LoaderCircle, LogIn, PackageCheck, RefreshCw, Search, ShieldCheck, ShoppingBag,
-  UserPlus, Users,
+  ArrowLeft, BadgeCheck, Check, ChevronRight, CircleDollarSign,
+  Filter, Grid2X2, List, Layers3, LoaderCircle, LogIn, PackageCheck, RefreshCw, Search, ShieldCheck, ShoppingBag,
+  UserPlus, Users, X, Info,
 } from 'lucide-vue-next'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { api, messageFrom, type Product } from '../api/client'
 import { formatCurrency } from '../lib/format'
+import { contentListReturn } from '../lib/contentPresentation'
 import { openCheckoutWindow } from '../lib/checkout'
 import { useSessionStore } from '../stores/session'
 import CategoryBrowser from '../components/domain/CategoryBrowser.vue'
+import AssetMedia from '../components/domain/AssetMedia.vue'
 import type { TaskType } from '../api/client'
 import PageHero from '../components/ui/PageHero.vue'
 import UiButton from '../components/ui/UiButton.vue'
@@ -25,6 +27,7 @@ const route = useRoute()
 const router = useRouter()
 const session = useSessionStore()
 const products = ref<Product[]>([])
+const categoryCounts = ref<Record<string, number>>()
 const detail = ref<Product | null>(null)
 const loading = ref(true)
 const purchasing = ref(false)
@@ -34,6 +37,12 @@ const paymentEnabled = ref(false)
 const paymentLiveMode = ref(false)
 const search = ref(String(route.query.q || ''))
 const sort = ref(String(route.query.sort || 'newest'))
+const layoutMode = ref<'list' | 'grid'>('list')
+const hasFilters = computed(() => Boolean(search.value.trim() || category.value || sort.value !== 'newest'))
+async function clearFilters() {
+  search.value = ''; category.value = ''; sort.value = 'newest'
+  await applyFilters()
+}
 
 const productID = computed(() => String(route.params.id || ''))
 const isDetail = computed(() => Boolean(productID.value))
@@ -48,9 +57,9 @@ const marketStats = computed(() => ({
   types: new Set(products.value.map(item => item.productType)).size,
 }))
 const marketplaceHeroStats = computed(() => [
-  { value: marketStats.value.products, label: t('marketplace.listedProducts'), icon: ShoppingBag, tone: 'blue' as const },
-  { value: marketStats.value.creators, label: t('marketplace.activeCreators'), icon: Users, tone: 'violet' as const },
-  { value: marketStats.value.types, label: t('marketplace.licenseTypes'), icon: Layers3, tone: 'green' as const },
+  { value: marketStats.value.products, label: t('content.loadedProducts'), icon: ShoppingBag, tone: 'blue' as const },
+  { value: marketStats.value.creators, label: t('content.loadedCreators'), icon: Users, tone: 'violet' as const },
+  { value: marketStats.value.types, label: t('content.loadedTypes'), icon: Layers3, tone: 'green' as const },
 ])
 
 function money(cents: number, currency = 'USD') {
@@ -78,6 +87,7 @@ async function load() {
       const response = await api.listProducts(filters)
       if (version !== loadVersion) return
       products.value = response.items
+      categoryCounts.value = response.categoryCounts
       detail.value = null
     }
   } catch (reason) {
@@ -182,12 +192,14 @@ onMounted(() => void load())
             {{ t('marketplace.sortHigh') }}
           </option>
         </UiSelect>
-        <UiIconButton class="icon-button" :label="t('actions.search')" type="submit">
-          <ArrowRight :size="17" />
-        </UiIconButton>
+        <UiButton class="market-search-submit" variant="primary" type="submit">
+          <template #start>
+            <Search :size="17" />
+          </template>{{ t('actions.search') }}
+        </UiButton>
       </form>
 
-      <CategoryBrowser :items="types" :model-value="category" @update:model-value="selectCategory">
+      <CategoryBrowser :items="types" :model-value="category" :counts="categoryCounts" @update:model-value="selectCategory">
         <div v-if="loading" class="page-state" aria-live="polite">
           <LoaderCircle class="spin" :size="20" />{{ t('marketplace.loading') }}
         </div>
@@ -200,21 +212,44 @@ onMounted(() => void load())
         </div>
         <div v-else-if="!products.length" class="page-state">
           <p>{{ t('marketplace.noResults') }}</p>
+          <UiButton v-if="hasFilters" variant="secondary" @click="clearFilters">
+            {{ t('marketplace.clearFilters') }}
+          </UiButton>
         </div>
         <template v-else>
-          <div class="market-results-meta">
-            <strong>{{ products.length }} {{ t('marketplace.results') }}</strong>
+          <div class="task-results-meta market-results-summary">
+            <div><strong>{{ products.length }} {{ t('marketplace.results') }}</strong><span>{{ t('marketplace.browseSummary') }}</span></div>
+            <div class="task-results-actions">
+              <UiButton v-if="hasFilters" class="text-link" variant="ghost" size="sm" @click="clearFilters">
+                {{ t('marketplace.clearFilters') }}
+              </UiButton>
+              <div class="task-layout-switcher" :aria-label="t('marketplace.layout')">
+                <UiIconButton size="sm" class="icon-button" variant="ghost" :class="{ active: layoutMode === 'list' }" :aria-pressed="layoutMode === 'list'" :label="t('marketplace.listView')" @click="layoutMode = 'list'">
+                  <List :size="17" />
+                </UiIconButton>
+                <UiIconButton size="sm" class="icon-button" variant="ghost" :class="{ active: layoutMode === 'grid' }" :aria-pressed="layoutMode === 'grid'" :label="t('marketplace.gridView')" @click="layoutMode = 'grid'">
+                  <Grid2X2 :size="16" />
+                </UiIconButton>
+              </div>
+            </div>
           </div>
-          <div class="product-grid">
+          <div class="market-catalog" :class="{ 'is-grid': layoutMode === 'grid' }">
             <RouterLink v-for="item in products" :key="item.id" class="product-card" :to="`/market/assets/${item.id}`">
               <div class="product-media">
-                <img :src="item.mediaUrl" :alt="item.title" :width="item.width || 1200" :height="item.height || 900" /><span>{{ categoryName(item.category) }}</span><strong v-if="item.ownedAssetId"><BadgeCheck :size="15" />{{ t('marketplace.owned') }}</strong>
+                <img :src="item.mediaUrl" :alt="item.title" :width="item.width || 1200" :height="item.height || 900" loading="lazy" />
               </div>
               <div class="product-card-copy">
-                <div><span>@{{ item.seller.handle }}</span><span>{{ item.license.name }}</span></div>
+                <div class="market-product-tags">
+                  <span>{{ categoryName(item.category) }}</span><span v-if="item.ownedAssetId" class="market-owned"><BadgeCheck :size="13" />{{ t('marketplace.owned') }}</span>
+                </div>
                 <h2>{{ item.title }}</h2>
                 <p>{{ item.description }}</p>
-                <footer><strong>{{ money(item.priceCents, item.currency) }}</strong><ChevronRight :size="17" /></footer>
+                <div class="market-product-meta">
+                  <span>@{{ item.seller.handle }}</span><span>{{ item.license.name }}</span>
+                </div>
+              </div>
+              <div class="market-product-offer">
+                <span>{{ t('marketplace.productPrice') }}</span><strong>{{ money(item.priceCents, item.currency) }}</strong><small><ShieldCheck :size="14" />{{ t(item.license.allowsCommercial ? 'marketplace.commercialYes' : 'marketplace.commercialNo') }}</small><span class="market-product-action">{{ t('marketplace.viewProduct') }}<ChevronRight :size="16" /></span>
               </div>
             </RouterLink>
           </div>
@@ -223,7 +258,7 @@ onMounted(() => void load())
     </template>
 
     <template v-else>
-      <RouterLink class="text-link market-back" to="/market">
+      <RouterLink class="text-link market-back" :to="contentListReturn('/market')">
         <ArrowLeft :size="17" />{{ t('marketplace.back') }}
       </RouterLink>
       <div v-if="loading" class="page-state" aria-live="polite">
@@ -237,12 +272,16 @@ onMounted(() => void load())
         </UiButton>
       </div>
       <div v-else-if="detail" class="product-detail-layout">
-        <main class="product-detail-main">
+        <header class="product-detail-heading">
+          <span>{{ categoryName(detail.category) }}</span><h1>{{ detail.title }}</h1><p>{{ detail.description }}</p>
+        </header>
+        <div class="product-detail-main">
           <div class="product-detail-media">
-            <img :src="detail.mediaUrl" :alt="detail.title" :width="detail.width || 1600" :height="detail.height || 1200" /><span>{{ t('status.demo') }}</span>
+            <AssetMedia :src="detail.mediaUrl" :kind="detail.mediaKind" :alt="detail.title" :width="detail.width || 1600" :height="detail.height || 1200" />
+            <a v-if="detail.mediaUrl" :href="detail.mediaUrl" target="_blank" rel="noopener noreferrer" class="product-full-preview">{{ t('content.preview') }}</a>
           </div>
           <section class="product-description">
-            <span>{{ categoryName(detail.category) }}</span><h1>{{ detail.title }}</h1><p>{{ detail.description }}</p><div class="product-seller">
+            <div class="product-seller">
               <BadgeCheck :size="18" /><span>{{ t('marketplace.soldBy') }}</span><RouterLink :to="`/creators/${detail.seller.handle}`">
                 <strong>{{ detail.seller.displayName }}</strong><small>@{{ detail.seller.handle }}</small>
               </RouterLink>
@@ -261,13 +300,13 @@ onMounted(() => void load())
           <section class="license-panel">
             <header><div><span>{{ t('marketplace.licenseVersion', { version: detail.license.version }) }}</span><h2>{{ detail.license.name }}</h2><p>{{ detail.license.summary }}</p></div><ShieldCheck :size="26" /></header>
             <div class="license-rights">
-              <span><Check :size="16" />{{ detail.license.allowsCommercial ? t('marketplace.commercialYes') : t('marketplace.commercialNo') }}</span><span><Check :size="16" />{{ detail.license.allowsDerivatives ? t('marketplace.derivativesYes') : t('marketplace.derivativesNo') }}</span><span><Check :size="16" />{{ detail.license.attributionRequired ? t('marketplace.attributionYes') : t('marketplace.attributionNo') }}</span><span><Check :size="16" />{{ detail.license.allowsRedistribution ? t('marketplace.redistributionYes') : t('marketplace.redistributionNo') }}</span>
+              <span><component :is="detail.license.allowsCommercial ? Check : X" :size="16" />{{ detail.license.allowsCommercial ? t('marketplace.commercialYes') : t('marketplace.commercialNo') }}</span><span><component :is="detail.license.allowsDerivatives ? Check : X" :size="16" />{{ detail.license.allowsDerivatives ? t('marketplace.derivativesYes') : t('marketplace.derivativesNo') }}</span><span><Info :size="16" />{{ detail.license.attributionRequired ? t('marketplace.attributionYes') : t('marketplace.attributionNo') }}</span><span><component :is="detail.license.allowsRedistribution ? Check : X" :size="16" />{{ detail.license.allowsRedistribution ? t('marketplace.redistributionYes') : t('marketplace.redistributionNo') }}</span>
             </div>
             <p class="license-terms">
               {{ detail.license.terms }}
             </p>
           </section>
-        </main>
+        </div>
 
         <aside class="product-purchase-rail">
           <span>{{ t('marketplace.providerPrice') }}</span><strong>{{ money(detail.priceCents, detail.currency) }}</strong><p>{{ paymentEnabled ? t(paymentLiveMode ? 'marketplace.liveCharge' : 'marketplace.testCharge') : t('marketplace.paymentUnavailable') }}</p>
@@ -301,12 +340,67 @@ onMounted(() => void load())
             <UiButton class="command-button primary wide" variant="primary" type="submit" :loading="purchasing" :disabled="!paymentEnabled || !accepted">
               <template #start>
                 <CircleDollarSign v-if="!purchasing" :size="17" />
-              </template>{{ purchasing ? t('marketplace.openingCheckout') : paymentEnabled ? t('marketplace.openCheckout') : t('marketplace.paymentUnavailable') }}
+              </template>{{ purchasing ? t('marketplace.openingCheckout') : t('marketplace.openCheckout') }}
             </UiButton>
           </form>
-          <small>{{ t(paymentEnabled ? 'marketplace.providerCheckoutEvidence' : 'marketplace.paymentUnavailable') }}</small>
+          <small v-if="paymentEnabled">{{ t('marketplace.providerCheckoutEvidence') }}</small>
         </aside>
       </div>
     </template>
   </section>
 </template>
+
+<style scoped>
+.market-page .market-filters { --control-height-toolbar: 40px; min-height: 54px; padding: 6px 8px; grid-template-columns: minmax(160px, 1fr) 150px 150px 84px; }
+.market-page.has-category-sidebar .market-filters { grid-template-columns: minmax(160px, 1fr) 150px 150px 84px; }
+.market-search-submit { height: 40px; padding-inline: 12px; }
+.market-catalog { display: grid; gap: 12px; }
+.market-catalog .product-card { display: grid; grid-template-columns: 160px minmax(0, 1fr) 180px; grid-template-rows: auto; align-items: stretch; gap: 16px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-surface); background: var(--surface); transition: border-color var(--duration-quick) var(--ease-smooth-out); }
+.market-catalog .product-card:hover { border-color: var(--border-strong); }
+.market-catalog .product-media { aspect-ratio: auto; min-height: 138px; }
+.market-catalog .product-media img { position: absolute; inset: 0; transform: none; }
+.market-catalog .product-card-copy { display: flex; flex-direction: column; justify-content: center; align-items: stretch; gap: 8px; padding: 4px 0; }
+.market-catalog .product-card-copy h2 { min-height: 0; margin: 0; font-size: 15px; line-height: 1.45; overflow-wrap: anywhere; }
+.market-catalog .product-card-copy p { min-height: 0; margin: 0; font-size: 12px; line-height: 1.6; }
+.market-catalog .market-product-tags { justify-content: flex-start; align-items: center; gap: 6px; }
+.market-product-tags > span { display: inline-flex; align-items: center; gap: 4px; padding: 4px 7px; border-radius: 6px; background: var(--accent-soft); color: var(--accent-readable); font-size: 10px; font-weight: 600; }
+.market-catalog .market-product-meta { justify-content: flex-start; flex-wrap: wrap; gap: 6px 12px; font-size: 11px; line-height: 1.5; }
+.market-product-offer { min-width: 0; display: flex; flex-direction: column; gap: 6px; padding: 4px 0 4px 16px; border-left: 1px solid var(--border); }
+.market-product-offer > span:first-child { color: var(--text-secondary); font-size: 11px; }
+.market-product-offer > strong { font-family: var(--font-mono); font-size: 16px; color: var(--text); }
+.market-product-offer small { display: flex; align-items: center; gap: 5px; color: var(--text-secondary); font-size: 11px; }
+.market-product-action { display: flex; justify-content: center; align-items: center; gap: 8px; min-height: 34px; margin-top: auto; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface-muted); color: var(--text); font-size: 12px; font-weight: 600; }
+.market-catalog.is-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr)); align-items: stretch; }
+.market-catalog.is-grid .product-card { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 1fr auto; gap: 12px; }
+.market-catalog.is-grid .product-media { aspect-ratio: 16 / 10; min-height: 0; }
+.market-catalog.is-grid .product-card-copy { justify-content: flex-start; }
+.market-catalog.is-grid .market-product-meta { margin-top: auto; }
+.market-catalog.is-grid .market-product-offer { padding: 12px 0 0; border-left: 0; border-top: 1px solid var(--border); }
+.market-catalog.is-grid .market-product-action { margin-top: 6px; }
+@media (min-width: 1321px) { .market-page.has-category-sidebar .market-filters { grid-template-columns: minmax(0, 1fr) 150px 84px; } }
+@media (max-width: 760px) {
+  .market-page .market-filters, .market-page.has-category-sidebar .market-filters { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 84px; }
+  .market-filters .market-search { grid-column: 1 / -1; }
+  .market-catalog:not(.is-grid) .product-card { grid-template-columns: 100px minmax(0, 1fr); gap: 12px; }
+  .market-catalog:not(.is-grid) .market-product-offer { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr) auto; border-left: 0; border-top: 1px solid var(--border); padding: 10px 0 0; }
+  .market-catalog:not(.is-grid) .market-product-offer > span:first-child { display: none; }
+  .market-catalog:not(.is-grid) .market-product-offer small { grid-column: 1; }
+  .market-catalog:not(.is-grid) .market-product-action { grid-column: 2; grid-row: 1 / 3; align-self: center; padding-inline: 12px; margin: 0; }
+  .market-results-summary { flex-wrap: wrap; }
+}
+</style>
+
+<style scoped>
+.product-detail-layout { grid-template-columns: minmax(0, 1fr) 320px; gap: 24px; }
+.product-detail-heading { grid-column: 1 / -1; }
+.product-detail-heading h1 { margin: 8px 0; font-size: clamp(24px, 2.5vw, 32px); line-height: 1.3; overflow-wrap: anywhere; }
+.product-detail-heading > span { color: var(--accent-readable); font-size: 12px; }
+.product-detail-heading > p { margin: 0; max-width: 76ch; color: var(--text-secondary); font-size: 14px; line-height: 1.7; }
+.product-detail-media { height: min(55dvh, 520px); aspect-ratio: auto; }
+.product-detail-media :deep(.asset-renderer) { width: 100%; height: 100%; }
+.product-detail-media :deep(img), .product-detail-media :deep(video) { width: 100%; height: 100%; object-fit: contain; }
+.product-full-preview { position: absolute; bottom: 12px; right: 12px; padding: 10px; border-radius: var(--radius-control); color: white; background: rgb(0 0 0 / 72%); font-size: 13px; }
+.product-purchase-rail { margin-inline: 0; min-width: 0; padding: 18px; border: 1px solid var(--border); border-radius: var(--radius-surface); background: var(--surface); }
+.product-seller a { display: inline-flex; flex-wrap: wrap; gap: 6px; }
+@media(max-width: 1000px) { .product-detail-layout { grid-template-columns: minmax(0, 1fr); } .product-purchase-rail { grid-row: 2; position: static; } }
+</style>

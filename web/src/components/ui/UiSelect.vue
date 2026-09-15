@@ -162,8 +162,14 @@ function onTriggerClick() {
 function onTriggerKeydown(event: globalThis.KeyboardEvent) {
   if (isDisabled.value) return
   if (event.key === 'Escape') {
+    if (!open.value) return
     event.preventDefault()
+    event.stopPropagation()
     close()
+    return
+  }
+  if (event.key === 'Tab' && open.value) {
+    open.value = false
     return
   }
   if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {

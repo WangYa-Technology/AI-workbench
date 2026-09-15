@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ArrowLeft, ArrowRight, Flag, LoaderCircle, MessageCircle, RefreshCw, Sparkles, UserPlus, X } from 'lucide-vue-next'
-import { reactive, ref, watch } from 'vue'
+import { ArrowLeft, ArrowRight, Flag, LoaderCircle, MessageCircle, MoreHorizontal, RefreshCw, Sparkles, UserPlus, X } from 'lucide-vue-next'
+import { onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { api, messageFrom, type CommunityComment, type CommunityPost, type CommunityReport, type TaskType } from '../api/client'
@@ -11,6 +11,9 @@ import UiButton from '../components/ui/UiButton.vue'
 import UiIconButton from '../components/ui/UiIconButton.vue'
 import UiSelect from '../components/ui/UiSelect.vue'
 import UiTextarea from '../components/ui/UiTextarea.vue'
+import UiDropdownMenu from '../components/ui/UiDropdownMenu.vue'
+import MarkdownContent from '../components/ui/MarkdownContent.vue'
+import { contentListReturn, creationPath } from '../lib/contentPresentation'
 
 const { locale, t } = useI18n()
 const route = useRoute()
@@ -27,6 +30,7 @@ const commentLoadingMore = ref(false)
 const actionLoading = ref('')
 const error = ref('')
 const feedback = ref('')
+const commentError = ref('')
 const reportForm = reactive({ open: false, category: 'misleading' as CommunityReport['category'], details: '' })
 
 function formatPublishedAt(value: string) {
@@ -53,56 +57,68 @@ async function requireAccount() {
   return false
 }
 
+let loadVersion = 0
+onBeforeUnmount(() => { loadVersion++ })
 async function load() {
+  const version = ++loadVersion
+  const postId = String(route.params.id)
+  commentLoadingMore.value = false
   loading.value = true
   error.value = ''
   feedback.value = ''
+  actionLoading.value = ''
   reportForm.open = false
+  commentError.value = ''
   try {
     await session.ensure()
-    const postId = String(route.params.id)
+    if (version !== loadVersion) return
     const [postItem, commentPage, directory] = await Promise.all([
       api.getCommunityPost(postId),
       api.listCommunityComments(postId, { limit: 20 }),
       api.listTaskTypes('community'),
     ])
+    if (version !== loadVersion) return
     post.value = postItem
     categories.value = directory.items
     comments.value = commentPage.items
     commentNextCursor.value = commentPage.nextCursor || null
   } catch (reason) {
-    error.value = messageFrom(reason)
+    if (version === loadVersion) error.value = messageFrom(reason)
   } finally {
-    loading.value = false
+    if (version === loadVersion) loading.value = false
   }
 }
 
 async function react(kind: 'like' | 'bookmark') {
   if (!post.value || !await requireAccount()) return
+  const version = loadVersion
   actionLoading.value = kind
   feedback.value = ''
   try {
     const active = kind === 'like' ? !post.value.viewerLiked : !post.value.viewerBookmarked
     const state = await api.setCommunityReaction(post.value.id, kind, active)
+    if (version !== loadVersion) return
     post.value = { ...post.value, ...state }
   } catch (reason) {
-    feedback.value = messageFrom(reason)
+    if (version === loadVersion) feedback.value = messageFrom(reason)
   } finally {
-    actionLoading.value = ''
+    if (version === loadVersion) actionLoading.value = ''
   }
 }
 
 async function follow() {
   if (!post.value || !await requireAccount()) return
+  const version = loadVersion
   actionLoading.value = 'follow'
   feedback.value = ''
   try {
     const state = await api.setCommunityFollow(post.value.authorId, !post.value.viewerFollowing)
+    if (version !== loadVersion) return
     post.value = { ...post.value, viewerFollowing: state.following }
   } catch (reason) {
-    feedback.value = messageFrom(reason)
+    if (version === loadVersion) feedback.value = messageFrom(reason)
   } finally {
-    actionLoading.value = ''
+    if (version === loadVersion) actionLoading.value = ''
   }
 }
 
@@ -110,32 +126,37 @@ async function addComment() {
   if (!post.value || !await requireAccount()) return
   const body = commentDraft.value.trim()
   if (!body) return
+  const version = loadVersion
   actionLoading.value = 'comment'
-  feedback.value = ''
+  commentError.value = ''
   try {
     const item = await api.createCommunityComment(post.value.id, body)
+    if (version !== loadVersion) return
     comments.value = [...comments.value, item]
     post.value = { ...post.value, commentCount: post.value.commentCount + 1 }
     commentDraft.value = ''
   } catch (reason) {
-    feedback.value = messageFrom(reason)
+    if (version === loadVersion) commentError.value = messageFrom(reason)
   } finally {
-    actionLoading.value = ''
+    if (version === loadVersion) actionLoading.value = ''
   }
 }
 
 async function loadMoreComments() {
   if (!post.value || !commentNextCursor.value || commentLoadingMore.value) return
+  const version = loadVersion
   commentLoadingMore.value = true
+  commentError.value = ''
   try {
     const page = await api.listCommunityComments(post.value.id, { limit: 20, cursor: commentNextCursor.value })
+    if (version !== loadVersion) return
     const known = new Set(comments.value.map(item => item.id))
     comments.value = [...comments.value, ...page.items.filter(item => !known.has(item.id))]
     commentNextCursor.value = page.nextCursor || null
   } catch (reason) {
-    feedback.value = messageFrom(reason)
+    if (version === loadVersion) commentError.value = messageFrom(reason)
   } finally {
-    commentLoadingMore.value = false
+    if (version === loadVersion) commentLoadingMore.value = false
   }
 }
 
@@ -146,25 +167,37 @@ async function openReport() {
 
 async function submitReport() {
   if (!post.value) return
+  const version = loadVersion
   actionLoading.value = 'report'
   feedback.value = ''
   try {
     await api.reportCommunityPost(post.value.id, { category: reportForm.category, details: reportForm.details })
+    if (version !== loadVersion) return
     reportForm.open = false
     feedback.value = t('community.reportSubmitted')
   } catch (reason) {
-    feedback.value = messageFrom(reason)
+    if (version === loadVersion) feedback.value = messageFrom(reason)
   } finally {
-    actionLoading.value = ''
+    if (version === loadVersion) actionLoading.value = ''
   }
 }
 
-watch(() => route.params.id, () => void load(), { immediate: true })
+watch(() => route.params.id, () => {
+  try { commentDraft.value = globalThis.sessionStorage.getItem(`community-draft:${route.params.id}`) || '' } catch { commentDraft.value = '' }
+  void load()
+}, { immediate: true })
+watch(commentDraft, value => {
+  try {
+    const key = `community-draft:${route.params.id}`
+    if (value) globalThis.sessionStorage.setItem(key, value)
+    else globalThis.sessionStorage.removeItem(key)
+  } catch { /* Storage may be disabled; editing remains available. */ }
+})
 </script>
 
 <template>
   <section class="community-post-page content-width">
-    <RouterLink class="text-link community-post-back" to="/community">
+    <RouterLink class="text-link community-post-back" :to="contentListReturn('/community')">
       <ArrowLeft :size="15" :stroke-width="1.75" />{{ t('community.backToCommunity') }}
     </RouterLink>
 
@@ -194,12 +227,13 @@ watch(() => route.params.id, () => void load(), { immediate: true })
               <span>{{ categoryName(post.category) }} · {{ formatMediaKind(post.mediaKind) }}</span>
             </div>
             <time :datetime="post.publishedAt">{{ formatPublishedAt(post.publishedAt) }}</time>
+            <UiButton v-if="session.user?.id !== post.authorId" variant="secondary" type="button" :loading="actionLoading === 'follow'" @click="follow">
+              <UserPlus :size="16" />{{ post.viewerFollowing ? t('community.following') : t('community.follow') }}
+            </UiButton>
           </header>
 
           <h1>{{ post.title }}</h1>
-          <p class="community-post-body">
-            {{ post.body }}
-          </p>
+          <MarkdownContent class="community-post-body" :source="post.body" />
 
           <div class="community-post-actions" :aria-label="t('community.postActions')">
             <UiButton variant="ghost" type="button" :class="{ active: post.viewerLiked }" :disabled="actionLoading === 'like'" :loading="actionLoading === 'like'" @click="react('like')">
@@ -208,12 +242,15 @@ watch(() => route.params.id, () => void load(), { immediate: true })
             <UiButton variant="ghost" type="button" :class="{ active: post.viewerBookmarked }" :disabled="actionLoading === 'bookmark'" :loading="actionLoading === 'bookmark'" @click="react('bookmark')">
               <MotionFavoriteIcon :active="post.viewerBookmarked" kind="bookmark" :size="16" />{{ t('community.bookmark') }} <span>{{ post.bookmarkCount }}</span>
             </UiButton>
-            <UiButton v-if="session.user?.id !== post.authorId" variant="ghost" type="button" :disabled="actionLoading === 'follow'" :loading="actionLoading === 'follow'" @click="follow">
-              <UserPlus :size="16" />{{ post.viewerFollowing ? t('community.following') : t('community.follow') }}
-            </UiButton>
-            <UiButton v-if="session.user?.id !== post.authorId" variant="ghost" type="button" @click="openReport">
-              <Flag :size="16" />{{ t('community.report') }}
-            </UiButton>
+            <a class="text-link" href="#post-comments"><MessageCircle :size="16" />{{ t('community.comments') }} {{ post.commentCount }}</a>
+            <UiDropdownMenu v-if="session.user?.id !== post.authorId" class="post-more" :label="t('content.more')">
+              <template #trigger>
+                <MoreHorizontal :size="18" />
+              </template>
+              <UiButton role="menuitem" variant="ghost" type="button" @click="openReport">
+                <Flag :size="16" />{{ t('community.report') }}
+              </UiButton>
+            </UiDropdownMenu>
           </div>
 
           <p v-if="feedback" class="task-feedback" :class="feedback === t('community.reportSubmitted') ? 'success' : 'error'" role="status">
@@ -249,13 +286,16 @@ watch(() => route.params.id, () => void load(), { immediate: true })
           <RouterLink class="text-link" :to="`/works/${post.workId}`">
             {{ t('community.attachedWork') }}<ArrowRight :size="14" :stroke-width="1.75" />
           </RouterLink>
-          <RouterLink class="text-link" :to="`/create/image?sourceWorkId=${post.workId}`">
+          <RouterLink class="text-link" :to="{ path: creationPath(post.mediaKind), query: { sourceWorkId: post.workId } }">
             <Sparkles :size="14" :stroke-width="1.75" />{{ t('actions.useInCreate') }}
           </RouterLink>
         </nav>
       </aside>
 
-      <section class="community-comments" :aria-label="t('community.comments')">
+      <section id="post-comments" class="community-comments" :aria-label="t('community.comments')">
+        <p v-if="commentError" class="task-feedback error" role="alert">
+          {{ commentError }}
+        </p>
         <header>
           <h2>{{ t('community.comments') }}</h2>
           <span>{{ post.commentCount }}</span>
@@ -284,7 +324,7 @@ watch(() => route.params.id, () => void load(), { immediate: true })
         </UiButton>
 
         <form class="community-comment-composer" @submit.prevent="addComment">
-          <label for="community-comment">{{ t('community.addComment') }}</label>
+          <label for="community-comment">{{ t('content.discussion') }}</label>
           <div class="community-comment-field">
             <UiTextarea id="community-comment" v-model="commentDraft" name="body" rows="3" minlength="2" maxlength="1000" required :placeholder="t('community.commentPlaceholder')" />
             <div>
@@ -300,3 +340,30 @@ watch(() => route.params.id, () => void load(), { immediate: true })
     </div>
   </section>
 </template>
+
+<style scoped>
+.community-post-layout { grid-template-columns: minmax(0, 740px) minmax(220px, 280px); gap: 0 24px; justify-content: center; }
+.community-post-layout.is-standalone { grid-template-columns: minmax(0, 800px); }
+.community-post-author { grid-template-columns: 36px minmax(0, 1fr) auto auto; }
+.community-post-author > div { flex-wrap: wrap; }
+.community-post-author > div > a { flex-wrap: wrap; max-width: 100%; overflow-wrap: anywhere; }
+.community-post-author strong, .community-post-author small { min-width: 0; max-width: 100%; }
+.community-post-author strong { font-size: 13px; }
+.community-post-author small, .community-post-author span, .community-post-author time { font-size: 12px; }
+.community-post-article h1 { font-size: clamp(25px, 2.4vw, 32px); line-height: 1.35; overflow-wrap: anywhere; }
+.community-post-body { max-width: none; color: var(--text); font-size: 15px; line-height: 1.8; white-space: normal; overflow-wrap: anywhere; }
+.community-post-body :deep(pre) { max-width: 100%; overflow-x: auto; }
+.community-post-actions button, .community-post-actions > a { min-height: 38px; font-size: 13px; }
+.post-more { position: relative; margin-left: auto; }
+.post-more :deep(.ui-dropdown-menu__content) { left: auto; right: 0; }
+.community-post-context { padding: 14px; border: 1px solid var(--border); border-radius: var(--radius-surface); background: var(--surface); }
+.community-post-context p, .community-post-context > div > span, .community-post-context-actions .text-link { font-size: 12px; }
+.community-post-context h2 { white-space: normal; }
+.community-comment-list article p { font-size: 14px; line-height: 1.7; }
+.community-comment-list article strong, .community-comment-list article small, .community-comment-list article time, .community-comments-empty { font-size: 12px; }
+.community-comment-composer label { font-size: 13px; }
+.community-comment-composer .command-button { min-height: 38px; font-size: 13px; background: var(--accent); color: white; border-color: transparent; }
+.community-comments { scroll-margin-top: 24px; }
+@media(max-width: 1000px) { .community-post-layout { grid-template-columns: minmax(0, 1fr); grid-template-areas: 'post' 'context' 'comments'; gap: 20px; } .community-post-context { position: static; } }
+@media(max-width: 600px) { .community-post-author { grid-template-columns: 36px minmax(0, 1fr) auto; } .community-post-author time { grid-column: 2; grid-row: 2; } .community-post-author > button { grid-column: 3; grid-row: 1 / 3; } }
+</style>

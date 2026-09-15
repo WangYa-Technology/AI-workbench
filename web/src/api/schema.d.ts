@@ -3374,8 +3374,11 @@ export interface components {
             author: components["schemas"]["Author"];
         };
         WorkPage: {
+            /** @description Counts across all pages matching search and prompt visibility, independent of selected media kind and cursor. */
+            categoryCounts?: {
+                [key: string]: number;
+            };
             items: components["schemas"]["Work"][];
-            /** Format: date-time */
             nextCursor: string | null;
         };
         SearchResult: {
@@ -3986,6 +3989,9 @@ export interface components {
             body: string;
         };
         CommunityPostPage: {
+            categoryCounts?: {
+                [key: string]: number;
+            };
             items: components["schemas"]["CommunityPost"][];
             nextCursor?: string;
         };
@@ -4117,8 +4123,11 @@ export interface components {
             id: string;
             /** Format: uuid */
             assetId: string;
+            creator?: components["schemas"]["Author"];
             assetTitle: string;
             mediaUrl: string;
+            /** @enum {string} */
+            mediaKind?: "image" | "video" | "audio" | "document";
             note: string;
             /** @enum {string} */
             status: "submitted" | "revision" | "accepted" | "disputed";
@@ -7183,6 +7192,10 @@ export interface operations {
     listWorks: {
         parameters: {
             query?: {
+                /** @description Search published work metadata */
+                q?: string;
+                kind?: "image" | "video" | "audio" | "document";
+                promptVisibility?: "public" | "partial" | "purchased" | "private";
                 limit?: number;
                 cursor?: string;
             };
@@ -7971,6 +7984,9 @@ export interface operations {
                 content: {
                     "application/json": {
                         items: components["schemas"]["Product"][];
+                        categoryCounts?: {
+                            [key: string]: number;
+                        };
                     };
                 };
             };
@@ -8315,6 +8331,8 @@ export interface operations {
     listCommunityPosts: {
         parameters: {
             query?: {
+                sort?: "latest" | "discussed";
+                q?: string;
                 category?: string;
                 /** @description Opaque stable reverse-chronological Community feed cursor */
                 cursor?: string;

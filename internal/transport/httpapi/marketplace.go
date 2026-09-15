@@ -23,7 +23,12 @@ func (s *Server) listProducts(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, "list marketplace products", err)
 		return
 	}
-	httputil.JSON(w, http.StatusOK, map[string]any{"items": items})
+	counts, err := s.marketplace.CategoryCounts(r.Context(), marketplace.ListFilter{Query: r.URL.Query().Get("q"), ProductType: r.URL.Query().Get("type"), LicenseCode: r.URL.Query().Get("license")})
+	if err != nil {
+		s.internalError(w, r, "count product categories", err)
+		return
+	}
+	httputil.JSON(w, http.StatusOK, map[string]any{"items": items, "categoryCounts": counts})
 }
 
 func (s *Server) getProduct(w http.ResponseWriter, r *http.Request) {

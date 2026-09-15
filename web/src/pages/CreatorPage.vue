@@ -4,6 +4,7 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink, useRoute } from 'vue-router'
 import { api, messageFrom, type CreatorProfile } from '../api/client'
+import { licenseLabel } from '../lib/contentPresentation'
 import AssetMedia from '../components/domain/AssetMedia.vue'
 import { formatCurrency } from '../lib/format'
 import { useSessionStore } from '../stores/session'
@@ -19,34 +20,43 @@ const error = ref('')
 const actionError = ref('')
 const isSelf = computed(() => session.user?.id === profile.value?.id)
 
+let loadVersion = 0
 async function load() {
+  const version = ++loadVersion
+  const handle = String(route.params.handle)
+  actionLoading.value = false
+  actionError.value = ''
   loading.value = true
   error.value = ''
   try {
     await session.ensure()
-    profile.value = await api.getCreator(String(route.params.handle))
+    if (version !== loadVersion) return
+    const item = await api.getCreator(handle)
+    if (version === loadVersion) profile.value = item
   } catch (reason) {
-    error.value = messageFrom(reason)
+    if (version === loadVersion) error.value = messageFrom(reason)
   } finally {
-    loading.value = false
+    if (version === loadVersion) loading.value = false
   }
 }
 
 async function toggleFollow() {
   if (!profile.value || !session.user) return
+  const version = loadVersion
   actionLoading.value = true
   actionError.value = ''
   try {
     const state = await api.setCommunityFollow(profile.value.id, !profile.value.viewerFollowing)
+    if (version !== loadVersion) return
     profile.value = {
       ...profile.value,
       viewerFollowing: state.following,
       followerCount: Math.max(0, profile.value.followerCount + (state.following ? 1 : -1)),
     }
   } catch (reason) {
-    actionError.value = messageFrom(reason)
+    if (version === loadVersion) actionError.value = messageFrom(reason)
   } finally {
-    actionLoading.value = false
+    if (version === loadVersion) actionLoading.value = false
   }
 }
 
@@ -106,13 +116,6 @@ watch(() => route.params.handle, () => void load(), { immediate: true })
         </p>
       </header>
 
-      <section v-if="profile.works.length" class="creator-showcase content-width" :aria-label="t('creator.featuredWork')">
-        <RouterLink v-for="work in profile.works.slice(0, 3)" :key="work.id" :to="`/works/${work.id}`">
-          <AssetMedia :src="work.mediaUrl" :kind="work.mediaKind" :alt="work.title" :width="work.width || 1200" :height="work.height || 900" :controls="false" :eager="work === profile.works[0]" />
-          <span><strong>{{ work.title }}</strong><small>{{ work.modelName }}</small></span>
-        </RouterLink>
-      </section>
-
       <section class="creator-section content-width">
         <header><div><span class="status-label">{{ t('creator.portfolioLabel') }}</span><h2>{{ t('creator.publishedWorks') }}</h2></div><span>{{ profile.works.length }}</span></header>
         <div v-if="profile.works.length" class="creator-work-grid">
@@ -131,7 +134,7 @@ watch(() => route.params.handle, () => void load(), { immediate: true })
         <div class="creator-product-list">
           <RouterLink v-for="product in profile.products" :key="product.id" :to="`/market/assets/${product.id}`">
             <AssetMedia :src="product.mediaUrl" :kind="product.mediaKind" :alt="product.title" :width="320" :height="240" :controls="false" />
-            <div><span>{{ t(`marketplace.types.${product.productType}`) }} · {{ product.licenseCode }}</span><h3>{{ product.title }}</h3><p>{{ product.description }}</p><small><BadgeCheck :size="14" />{{ product.aiDisclosure }}</small></div>
+            <div><span>{{ t(`marketplace.types.${product.productType}`) }} · {{ licenseLabel(product.licenseCode) }}</span><h3>{{ product.title }}</h3><p>{{ product.description }}</p><small><BadgeCheck :size="14" />{{ product.aiDisclosure }}</small></div>
             <strong>{{ money(product.priceCents, product.currency) }}</strong><ArrowRight :size="18" />
           </RouterLink>
         </div>
