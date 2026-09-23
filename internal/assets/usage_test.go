@@ -27,8 +27,8 @@ func TestOwnedAssetUsageGraphAcrossVersions(t *testing.T) {
 	rootID, versionID := uuid.New(), uuid.New()
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,scan_status,source_type,license_code,family_id,version_number,supersedes_asset_id)
-		VALUES($1,$2,'image','Usage root','/media/usage-root.jpg','image/jpeg','clean','demo','hcai-personal-v1',$1,1,NULL),
-		      ($3,$2,'image','Usage revision','/media/usage-v2.jpg','image/jpeg','clean','demo','hcai-personal-v1',$1,2,$1)`, rootID, ownerID, versionID); err != nil {
+		VALUES($1,$2,'image','Usage root','/media/usage-root.jpg','image/jpeg','clean','delivery','hcai-personal-v1',$1,1,NULL),
+		      ($3,$2,'image','Usage revision','/media/usage-v2.jpg','image/jpeg','clean','delivery','hcai-personal-v1',$1,2,$1)`, rootID, ownerID, versionID); err != nil {
 		t.Fatal(err)
 	}
 	generationID, workID, productID, demandID, deliveryID := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()

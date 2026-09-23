@@ -1,10 +1,11 @@
+import { fixtureCredentials } from './helpers/identity'
 import { expect, test } from '@playwright/test'
 
 for (const scope of ['community', 'marketplace']) {
   test(`${scope}: administrator category lifecycle and responsive filtering`, async ({ page }) => {
     const code = `e2e_${scope}_${Date.now().toString(36)}`
     const title = `Category ${code}`
-    expect((await page.request.post('/api/v1/auth/demo', { data: { actor: 'admin' } })).ok()).toBeTruthy()
+    expect((await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('admin') })).ok()).toBeTruthy()
     await page.goto(`/admin?tab=${scope === 'community' ? 'communityCategories' : 'marketplaceCategories'}`)
     const manager = page.locator('.category-manager')
     await expect(manager).toBeVisible()
@@ -24,12 +25,12 @@ for (const scope of ['community', 'marketplace']) {
     await page.goto(path)
     await expect(page.locator('.category-sidebar')).toBeVisible()
     await expect(page.locator('.category-filter')).toBeHidden()
-    await page.locator('.category-sidebar').getByRole('button', { name: `${title} renamed`, exact: true }).click()
+    await page.locator('.category-sidebar').getByRole('button', { name: new RegExp(`^${title} renamed(?: 0)?$`) }).click()
     await expect(page).toHaveURL(new RegExp(`category=${code}`))
     const response = await page.request.get(`/api/v1/${scope === 'community' ? 'community/posts' : 'products'}?category=${code}`)
     expect((await response.json()).items).toEqual([])
     await page.reload()
-    await expect(page.locator('.category-sidebar .active')).toHaveText(`${title} renamed`)
+    await expect(page.locator('.category-sidebar .active')).toHaveText(new RegExp(`^${title} renamed(?:\\s*0)?$`))
     for (const width of [1308, 390]) {
       await page.setViewportSize({ width, height: 901 })
       await expect(page.locator('.category-sidebar')).toBeHidden()
@@ -46,7 +47,7 @@ for (const scope of ['community', 'marketplace']) {
 }
 
 test('market content can be assigned and transferred before deleting its category', async ({ page }) => {
-  await page.request.post('/api/v1/auth/demo', { data: { actor: 'admin' } })
+  await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('admin') })
   const product = (await (await page.request.get('/api/v1/products')).json()).items[0]
   const code = `assign_${Date.now().toString(36)}`
   expect((await page.request.post('/api/v1/admin/task-types?scope=marketplace', { data: { code, nameZh: '测试', nameEn: code, icon: 'mixed', sortOrder: 1 } })).ok()).toBeTruthy()

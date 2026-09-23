@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"regexp"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/hcai-chat/hcai-chat/internal/platform/media"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -22,7 +24,9 @@ import (
 var safeStatusPattern = regexp.MustCompile(`^[a-z0-9_]{2,80}$`)
 var safeProviderIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{6,255}$`)
 
-var waffoWebhookClient = &http.Client{Timeout: 15 * time.Second}
+var waffoWebhookClient = &http.Client{Timeout: 15 * time.Second,
+	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+}
 
 var supportedStripeEvents = map[string]bool{
 	"checkout.session.completed":               true,
@@ -33,9 +37,13 @@ var supportedStripeEvents = map[string]bool{
 	"refund.updated":                           true,
 	"transfer.created":                         true,
 	"account.updated":                          true,
+	"charge.dispute.created":                   true,
+	"charge.dispute.updated":                   true,
+	"charge.dispute.closed":                    true,
 }
 
 type ServiceConfig struct {
+	MediaStores                *media.Catalog
 	Enabled                    bool
 	Provider                   string
 	LiveMode                   bool
@@ -52,10 +60,16 @@ type ServiceConfig struct {
 }
 
 type Service struct {
-	pool     *pgxpool.Pool
-	config   ServiceConfig
-	verifier StripeWebhookVerifier
-	runtimes *RuntimeCatalog
+	refundReconciliation         paymentReconciliationScan
+	checkoutReconciliation       paymentReconciliationScan
+	settlementReconciliation     paymentReconciliationScan
+	sellerFundingReconciliation  paymentReconciliationScan
+	sellerBankReconciliation     paymentReconciliationScan
+	sellerReversalReconciliation paymentReconciliationScan
+	pool                         *pgxpool.Pool
+	config                       ServiceConfig
+	verifier                     StripeWebhookVerifier
+	runtimes                     *RuntimeCatalog
 }
 
 type Receipt struct {
@@ -72,6 +86,8 @@ type stripeEventEnvelope struct {
 	APIVersion string          `json:"api_version"`
 	Created    int64           `json:"created"`
 	LiveMode   bool            `json:"livemode"`
+	Account    string          `json:"account"`
+	Context    string          `json:"context"`
 	Type       string          `json:"type"`
 	Data       stripeEventData `json:"data"`
 }
@@ -104,55 +120,67 @@ type stripeEventData struct {
 }
 
 type stripeEventObject struct {
-	ID               string            `json:"id"`
-	Object           string            `json:"object"`
-	Status           string            `json:"status"`
-	PaymentStatus    string            `json:"payment_status"`
-	AmountTotal      *int64            `json:"amount_total"`
-	Amount           *int64            `json:"amount"`
-	AmountReceived   *int64            `json:"amount_received"`
-	Currency         string            `json:"currency"`
-	PaymentIntent    string            `json:"payment_intent"`
-	Charge           string            `json:"charge"`
-	LatestCharge     string            `json:"latest_charge"`
-	Destination      string            `json:"destination"`
-	Metadata         map[string]string `json:"metadata"`
-	ChargesEnabled   *bool             `json:"charges_enabled"`
-	PayoutsEnabled   *bool             `json:"payouts_enabled"`
-	DetailsSubmitted *bool             `json:"details_submitted"`
-	Requirements     struct {
-		CurrentlyDue        []string `json:"currently_due"`
-		PastDue             []string `json:"past_due"`
-		PendingVerification []string `json:"pending_verification"`
-		DisabledReason      string   `json:"disabled_reason"`
-	} `json:"requirements"`
+	ID                string                        `json:"id"`
+	Object            string                        `json:"object"`
+	Status            string                        `json:"status"`
+	PaymentStatus     string                        `json:"payment_status"`
+	AmountTotal       *int64                        `json:"amount_total"`
+	Amount            *int64                        `json:"amount"`
+	AmountReceived    *int64                        `json:"amount_received"`
+	Currency          string                        `json:"currency"`
+	PaymentIntent     string                        `json:"payment_intent"`
+	Charge            string                        `json:"charge"`
+	LatestCharge      string                        `json:"latest_charge"`
+	Destination       string                        `json:"destination"`
+	Metadata          map[string]string             `json:"metadata"`
+	ChargesEnabled    *bool                         `json:"charges_enabled"`
+	PayoutsEnabled    *bool                         `json:"payouts_enabled"`
+	DetailsSubmitted  *bool                         `json:"details_submitted"`
+	Requirements      *stripeAccountRequirements    `json:"requirements"`
+	Reason            string                        `json:"reason"`
+	NetworkReasonCode string                        `json:"network_reason_code"`
+	EvidenceDetails   *stripeDisputeEvidenceDetails `json:"evidence_details"`
+}
+
+type stripeDisputeEvidenceDetails struct {
+	DueBy *int64 `json:"due_by"`
 }
 
 type minimizedProviderEvent struct {
-	ProviderEventID         string
-	EventType               string
-	APIVersion              string
-	LiveMode                bool
-	OccurredAt              time.Time
-	PayloadSHA256           string
-	ObjectID                string
-	ObjectType              string
-	PaymentID               *uuid.UUID
-	ResourceID              *uuid.UUID
-	Purpose                 *string
-	AmountCents             *int64
-	Currency                *string
-	PaymentStatus           *string
-	ProviderPaymentID       *string
-	ProviderChargeID        *string
-	ProviderTransferID      *string
-	DestinationID           *string
-	DestinationUserID       *uuid.UUID
-	AccountChargesEnabled   *bool
-	AccountPayoutsEnabled   *bool
-	AccountDetailsSubmitted *bool
-	AccountRequirementsDue  *bool
-	Supported               bool
+	StripeVerificationVersion string
+	WaffoStoreID              string
+	WaffoOrderExternalID      string
+	WaffoBuyerIdentity        string
+	WaffoVerificationVersion  string
+	ProviderEventID           string
+	EventType                 string
+	APIVersion                string
+	LiveMode                  bool
+	OccurredAt                time.Time
+	PayloadSHA256             string
+	ObjectID                  string
+	ObjectType                string
+	PaymentID                 *uuid.UUID
+	ResourceID                *uuid.UUID
+	Purpose                   *string
+	AmountCents               *int64
+	Currency                  *string
+	PaymentStatus             *string
+	ProviderPaymentID         *string
+	ProviderChargeID          *string
+	ProviderTransferID        *string
+	RefundOperationID         *uuid.UUID
+	DestinationID             *string
+	DestinationUserID         *uuid.UUID
+	AccountChargesEnabled     *bool
+	AccountPayoutsEnabled     *bool
+	AccountDetailsSubmitted   *bool
+	AccountRequirementsDue    *bool
+	DisputeStatus             *string
+	DisputeReason             *string
+	DisputeNetworkReasonCode  *string
+	DisputeDueBy              *time.Time
+	Supported                 bool
 }
 
 func NewService(pool *pgxpool.Pool, config ServiceConfig) *Service {
@@ -240,7 +268,7 @@ func (s *Service) TaskProviderStatus(ctx context.Context) bool {
 }
 
 func (s *Service) ReceiveStripeWebhook(ctx context.Context, rawBody []byte, signatureHeader string) (Receipt, error) {
-	if !s.webhookProviderEnabled(ctx, "stripe") {
+	if s == nil || s.pool == nil || !s.config.Enabled {
 		return Receipt{}, ErrDisabled
 	}
 	if err := s.verifier.Verify(rawBody, signatureHeader); err != nil {
@@ -250,20 +278,27 @@ func (s *Service) ReceiveStripeWebhook(ctx context.Context, rawBody []byte, sign
 	if err != nil {
 		return Receipt{}, err
 	}
-	return s.receiveProviderEvent(ctx, "stripe", event)
+	event.StripeVerificationVersion = stripeBillingWebhookVersion
+	return s.receiveSignedProductEvent(ctx, "stripe", event)
 }
 
 // ReceiveWaffoWebhook verifies a raw Waffo body through the local connector,
 // which is the process that owns the Pancake private key and SDK verifier.
 func (s *Service) ReceiveWaffoWebhook(ctx context.Context, rawBody []byte, signatureHeader string) (Receipt, error) {
-	if !s.webhookProviderEnabled(ctx, "waffo_pancake") {
+	if s == nil || s.pool == nil || !s.config.Enabled {
 		return Receipt{}, ErrDisabled
 	}
-	waffoEnvironment, waffoStoreID := s.waffoWebhookSettings(ctx)
-	if strings.TrimSpace(waffoEnvironment) == "" || strings.TrimSpace(waffoStoreID) == "" {
+	// Verifier keys belong to the deployment environment, not today's sales
+	// selection. Existing obligations continue receiving signed results.
+	waffoEnvironment := strings.ToLower(strings.TrimSpace(s.config.WaffoEnvironment))
+	if !oneOf(waffoEnvironment, "test", "prod") {
 		return Receipt{}, ErrProviderConfigMismatch
 	}
-	if len(rawBody) == 0 || int64(len(rawBody)) > maxWaffoResponseBytes || strings.TrimSpace(signatureHeader) == "" ||
+	boundary := NewWaffoRuntime(WaffoRuntimeConfig{ConnectorURL: s.config.WaffoWebhookURL, ConnectorToken: s.config.WaffoConnectorToken, Environment: waffoEnvironment})
+	if !boundary.validConnector() {
+		return Receipt{}, ErrProviderConfigMismatch
+	}
+	if len(rawBody) == 0 || int64(len(rawBody)) > maxWaffoResponseBytes || len(signatureHeader) > 4096 || strings.TrimSpace(signatureHeader) == "" ||
 		strings.TrimSpace(s.config.WaffoWebhookURL) == "" || strings.TrimSpace(s.config.WaffoConnectorToken) == "" {
 		return Receipt{}, ErrInvalidSignature
 	}
@@ -292,20 +327,41 @@ func (s *Service) ReceiveWaffoWebhook(ctx context.Context, rawBody []byte, signa
 		return Receipt{}, ErrInvalidEvent
 	}
 	var verified struct {
-		Event waffoWebhookEnvelope `json:"event"`
+		Verification struct {
+			ContractVersion string `json:"contractVersion"`
+			Environment     string `json:"environment"`
+			PayloadSHA256   string `json:"payloadSHA256"`
+		} `json:"verification"`
 	}
-	if json.Unmarshal(data, &verified) != nil {
+	hash := sha256.Sum256(rawBody)
+	if json.Unmarshal(data, &verified) != nil || verified.Verification.ContractVersion != waffoWebhookContractVersion ||
+		verified.Verification.Environment != waffoEnvironment || verified.Verification.PayloadSHA256 != hex.EncodeToString(hash[:]) {
+		return Receipt{}, ErrInvalidSignature
+	}
+	var envelope waffoWebhookEnvelope
+	if json.Unmarshal(rawBody, &envelope) != nil {
 		return Receipt{}, ErrInvalidEvent
 	}
-	event, err := minimizeWaffoEvent(verified.Event, rawBody, waffoEnvironment, waffoStoreID)
+	event, err := minimizeWaffoEvent(envelope, rawBody, waffoEnvironment, "")
 	if err != nil {
 		return Receipt{}, err
 	}
-	return s.receiveProviderEvent(ctx, "waffo_pancake", event)
+	event.WaffoVerificationVersion = verified.Verification.ContractVersion
+	var purpose string
+	if err := s.pool.QueryRow(ctx, `SELECT purpose FROM payment_intents WHERE id=$1 AND provider='waffo_pancake'`, event.PaymentID).Scan(&purpose); errors.Is(err, pgx.ErrNoRows) {
+		if recordErr := s.quarantineProductEvent(ctx, "waffo_pancake", event, "payment_unknown"); recordErr != nil {
+			return Receipt{}, fmt.Errorf("record rejected Waffo evidence: %w", recordErr)
+		}
+		return Receipt{}, ErrInvalidEvent
+	} else if err != nil {
+		return Receipt{}, err
+	}
+	return s.receiveSignedProductEvent(ctx, "waffo_pancake", event)
 }
 
-// webhookProviderEnabled mirrors the product-provider selection boundary. A
-// deployment can register more than one runtime, while Admin chooses the one
+// webhookProviderEnabled is the current sales/billing routing boundary. Known
+// product obligations are checked separately against their original payment.
+// A deployment can register more than one runtime, while Admin chooses the one
 // enabled row in payment_provider_configs. The static config provider remains
 // the fallback for installations that have not created the table row yet.
 func (s *Service) webhookProviderEnabled(ctx context.Context, provider string) bool {
@@ -342,20 +398,118 @@ func (s *Service) receiveProviderEvent(ctx context.Context, provider string, eve
 	if err != nil {
 		return Receipt{}, err
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer tx.Rollback(ctx)
+	if err = lockWebhookAdmission(ctx, tx, provider, event.ProviderEventID); err != nil {
+		return Receipt{}, err
+	}
+	item, err := s.receiveProviderEventTx(ctx, tx, provider, event)
+	if err != nil {
+		return Receipt{}, err
+	}
+	if err = admitMatchingQuarantinesTx(ctx, tx, provider, event); err != nil {
+		return Receipt{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return Receipt{}, err
+	}
+	return item, nil
+}
+func (s *Service) receiveProviderEventTx(ctx context.Context, tx pgx.Tx, provider string, event minimizedProviderEvent) (Receipt, error) {
+	var err error
+	paymentExists := false
+	stripeProduct := false
+	var stripeBilling *stripeBillingWebhookBinding
+	if event.PaymentID != nil {
+		// Receipt admission must remain available while outbound refunds hold
+		// the payment lock: a provider may deliver its callback before returning
+		// the refund response. Financial application rechecks under its own lock;
+		// operator rechecks explicitly lock the payment before this helper.
+		err = tx.QueryRow(ctx, `SELECT true FROM payment_intents WHERE id=$1`, event.PaymentID).Scan(&paymentExists)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return Receipt{}, err
+		}
+	}
 
+	if provider == "stripe" {
+		if isStripeDisputeEvent(event.EventType) {
+			// Disputes are admitted as provider evidence before local binding. A
+			// dispute payload normally has no HCAI metadata, so binding is done
+			// from the immutable PaymentIntent/Charge/amount tuple below.
+			if event.PaymentID == nil {
+				paymentID, resourceID, purpose, bindErr := bindStripeDisputePaymentTx(ctx, tx, event)
+				if bindErr != nil {
+					return Receipt{}, bindErr
+				}
+				event.PaymentID, event.ResourceID, event.Purpose = paymentID, resourceID, purpose
+			}
+			stripeProduct = event.Purpose != nil && *event.Purpose == "product"
+			// Do not route an unmatched dispute into billing or ordinary payment
+			// processing. It is retained and marked for review by the worker.
+			if event.Purpose == nil || !stripeProduct {
+				event.Purpose = nil
+				event.PaymentID = nil
+				event.ResourceID = nil
+			}
+		} else {
+			product := false
+			if event.Supported {
+				product, err = validateStripeProductEvent(ctx, tx, event)
+				if err != nil {
+					return Receipt{}, err
+				}
+			}
+			stripeProduct = product
+			if event.Supported && !product {
+				stripeBilling, err = bindStripeBillingWebhookTx(ctx, tx, event)
+				if err != nil {
+					return Receipt{}, err
+				}
+			}
+			if !product && stripeBilling == nil && !s.webhookProviderEnabled(ctx, provider) {
+				return Receipt{}, ErrDisabled
+			}
+			if event.Supported && !product && event.Purpose != nil && *event.Purpose == "product" {
+				if !paymentExists {
+					return Receipt{}, errProductPaymentUnknown
+				}
+				return Receipt{}, ErrInvalidEvent
+			}
+		}
+	}
+	var waffoBinding *waffoProductWebhookBinding
+	var billingWaffoBinding *waffoBillingWebhookBinding
+	if provider == "waffo_pancake" {
+		waffoBinding, err = bindWaffoProductWebhookTx(ctx, tx, event)
+		if errors.Is(err, pgx.ErrNoRows) && event.Purpose != nil && *event.Purpose == "product" {
+			return Receipt{}, errProductPaymentUnknown
+		}
+		if err != nil {
+			return Receipt{}, err
+		}
+		if waffoBinding == nil && event.Purpose != nil && *event.Purpose == "product" {
+			return Receipt{}, ErrInvalidEvent
+		}
+		if waffoBinding == nil {
+			billingWaffoBinding, err = bindWaffoBillingWebhookTx(ctx, tx, event)
+			if err != nil {
+				return Receipt{}, err
+			}
+		}
+	}
 	var eventID uuid.UUID
 	err = tx.QueryRow(ctx, `
 		INSERT INTO payment_provider_events(
 		  provider,provider_event_id,event_type,api_version,live_mode,occurred_at,payload_sha256,object_id,object_type,
 		  payment_id,resource_id,purpose,amount_cents,currency,payment_status,provider_payment_id,provider_charge_id,provider_transfer_id,destination_id,
-		  destination_user_id,account_charges_enabled,account_payouts_enabled,account_details_submitted,account_requirements_due
-		) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
+		  destination_user_id,account_charges_enabled,account_payouts_enabled,account_details_submitted,account_requirements_due,refund_operation_id,
+		  dispute_status,dispute_reason,dispute_network_reason_code,dispute_due_by
+		) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29)
 		ON CONFLICT(provider,provider_event_id) DO NOTHING RETURNING id`,
 		provider, event.ProviderEventID, event.EventType, event.APIVersion, event.LiveMode, event.OccurredAt, event.PayloadSHA256,
 		event.ObjectID, event.ObjectType, event.PaymentID, event.ResourceID, event.Purpose, event.AmountCents, event.Currency,
 		event.PaymentStatus, event.ProviderPaymentID, event.ProviderChargeID, event.ProviderTransferID, event.DestinationID,
 		event.DestinationUserID, event.AccountChargesEnabled, event.AccountPayoutsEnabled, event.AccountDetailsSubmitted, event.AccountRequirementsDue,
+		event.RefundOperationID, event.DisputeStatus, event.DisputeReason, event.DisputeNetworkReasonCode, event.DisputeDueBy,
 	).Scan(&eventID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		var existingHash, status string
@@ -368,13 +522,45 @@ func (s *Service) receiveProviderEvent(ctx context.Context, provider string, eve
 		if existingHash != event.PayloadSHA256 {
 			return Receipt{}, ErrEventConflict
 		}
-		if err := tx.Commit(ctx); err != nil {
-			return Receipt{}, err
+		if stripeProduct {
+			if err := verifyStoredStripeWebhookEventTx(ctx, tx, eventID, event); err != nil {
+				return Receipt{}, err
+			}
+		}
+		if stripeBilling != nil {
+			if err := saveStripeBillingWebhookBindingTx(ctx, tx, eventID, *stripeBilling, event); err != nil {
+				return Receipt{}, err
+			}
+		}
+		if waffoBinding != nil {
+			if err := saveWaffoProductWebhookBindingTx(ctx, tx, eventID, *waffoBinding, event); err != nil {
+				return Receipt{}, err
+			}
+		}
+		if billingWaffoBinding != nil {
+			if err := saveWaffoBillingWebhookBindingTx(ctx, tx, eventID, *billingWaffoBinding, event); err != nil {
+				return Receipt{}, err
+			}
 		}
 		return Receipt{EventID: eventID, ProviderEventID: event.ProviderEventID, EventType: event.EventType, Status: status, Duplicate: true}, nil
 	}
 	if err != nil {
 		return Receipt{}, err
+	}
+	if stripeBilling != nil {
+		if err := saveStripeBillingWebhookBindingTx(ctx, tx, eventID, *stripeBilling, event); err != nil {
+			return Receipt{}, err
+		}
+	}
+	if waffoBinding != nil {
+		if err := saveWaffoProductWebhookBindingTx(ctx, tx, eventID, *waffoBinding, event); err != nil {
+			return Receipt{}, err
+		}
+	}
+	if billingWaffoBinding != nil {
+		if err := saveWaffoBillingWebhookBindingTx(ctx, tx, eventID, *billingWaffoBinding, event); err != nil {
+			return Receipt{}, err
+		}
 	}
 	status := "received"
 	var processedAt *time.Time
@@ -390,9 +576,6 @@ func (s *Service) receiveProviderEvent(ctx context.Context, provider string, eve
 		if _, err := tx.Exec(ctx, `INSERT INTO jobs(kind,payload,max_attempts) VALUES($1,jsonb_build_object('eventId',$2::text),8)`, PaymentEventJobKind, eventID); err != nil {
 			return Receipt{}, err
 		}
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return Receipt{}, err
 	}
 	return Receipt{EventID: eventID, ProviderEventID: event.ProviderEventID, EventType: event.EventType, Status: status}, nil
 }
@@ -410,6 +593,16 @@ func minimizeStripeEvent(rawBody []byte, apiVersion string, liveMode bool) (mini
 	if envelope.LiveMode != liveMode {
 		return minimizedProviderEvent{}, ErrModeMismatch
 	}
+	// Outbound financial requests charge the platform directly; they never use
+	// Stripe-Account/Stripe-Context. A Connect/organization event can share an
+	// endpoint signature while belonging to a different merchant. Its metadata
+	// must not authorize money or rights for a platform transaction.
+	if supportedStripeEvents[envelope.Type] && envelope.Type != "account.updated" && (envelope.Account != "" || envelope.Context != "") {
+		return minimizedProviderEvent{}, ErrInvalidEvent
+	}
+	if envelope.Type == "account.updated" && (envelope.Context != "" || (envelope.Account != "" && envelope.Account != envelope.Data.Object.ID)) {
+		return minimizedProviderEvent{}, ErrInvalidEvent
+	}
 	hash := sha256.Sum256(rawBody)
 	event := minimizedProviderEvent{
 		ProviderEventID: envelope.ID, EventType: envelope.Type, APIVersion: envelope.APIVersion, LiveMode: envelope.LiveMode,
@@ -417,6 +610,15 @@ func minimizeStripeEvent(rawBody []byte, apiVersion string, liveMode bool) (mini
 		ObjectType: envelope.Data.Object.Object, Supported: supportedStripeEvents[envelope.Type],
 	}
 	object := envelope.Data.Object
+	if event.EventType == "refund.updated" {
+		if value, present := object.Metadata["hcai_refund_operation_id"]; present {
+			parsed, err := uuid.Parse(value)
+			if err != nil || parsed == uuid.Nil {
+				return minimizedProviderEvent{}, ErrInvalidEvent
+			}
+			event.RefundOperationID = &parsed
+		}
+	}
 	if value := strings.TrimSpace(object.Metadata["hcai_payment_id"]); value != "" {
 		parsed, err := uuid.Parse(value)
 		if err != nil || parsed == uuid.Nil {
@@ -444,8 +646,34 @@ func minimizeStripeEvent(rawBody []byte, apiVersion string, liveMode bool) (mini
 		}
 		event.Purpose = &value
 	}
-	if event.Supported && event.EventType != "account.updated" && event.PaymentID == nil {
+	if event.Supported && event.EventType != "account.updated" && !isStripeDisputeEvent(event.EventType) && event.PaymentID == nil {
 		return minimizedProviderEvent{}, ErrInvalidEvent
+	}
+	if isStripeDisputeEvent(event.EventType) {
+		// Stripe dispute metadata is provider-controlled and is not a binding
+		// authority. The worker resolves the local payment from the tuple.
+		event.PaymentID, event.ResourceID, event.Purpose = nil, nil, nil
+		if object.Object != "dispute" || !validStripeID(object.ID, "dp_") || !validStripeID(object.PaymentIntent, "pi_") || !validStripeID(object.Charge, "ch_") ||
+			object.Amount == nil || object.Currency == "" || strings.TrimSpace(object.Status) == "" || strings.TrimSpace(object.Reason) == "" ||
+			strings.TrimSpace(object.NetworkReasonCode) == "" || object.EvidenceDetails == nil || object.EvidenceDetails.DueBy == nil || *object.EvidenceDetails.DueBy <= 0 {
+			return minimizedProviderEvent{}, ErrInvalidEvent
+		}
+		if *object.Amount < 1 || *object.Amount > 99999999 || strings.ToUpper(strings.TrimSpace(object.Currency)) != "USD" {
+			return minimizedProviderEvent{}, ErrInvalidEvent
+		}
+		status := strings.ToLower(strings.TrimSpace(object.Status))
+		reason := strings.ToLower(strings.TrimSpace(object.Reason))
+		networkReason := strings.ToLower(strings.TrimSpace(object.NetworkReasonCode))
+		if !safeStatusPattern.MatchString(status) || !safeStatusPattern.MatchString(reason) || !safeStatusPattern.MatchString(networkReason) {
+			return minimizedProviderEvent{}, ErrInvalidEvent
+		}
+		amount := *object.Amount
+		currency := "USD"
+		event.AmountCents, event.Currency, event.PaymentStatus = &amount, &currency, &status
+		event.ProviderPaymentID, event.ProviderChargeID = stringPointer(object.PaymentIntent), stringPointer(object.Charge)
+		event.DisputeStatus, event.DisputeReason, event.DisputeNetworkReasonCode = stringPointer(status), stringPointer(reason), stringPointer(networkReason)
+		due := time.Unix(*object.EvidenceDetails.DueBy, 0).UTC()
+		event.DisputeDueBy = &due
 	}
 	if event.EventType == "account.updated" {
 		if object.Object != "account" || !validStripeID(object.ID, "acct_") || object.ChargesEnabled == nil || object.PayoutsEnabled == nil || object.DetailsSubmitted == nil {
@@ -453,7 +681,7 @@ func minimizeStripeEvent(rawBody []byte, apiVersion string, liveMode bool) (mini
 		}
 		destinationID := object.ID
 		event.DestinationID = &destinationID
-		due := len(object.Requirements.CurrentlyDue) > 0 || len(object.Requirements.PastDue) > 0 || len(object.Requirements.PendingVerification) > 0 || strings.TrimSpace(object.Requirements.DisabledReason) != ""
+		due := object.Requirements.unresolved()
 		event.AccountChargesEnabled = object.ChargesEnabled
 		event.AccountPayoutsEnabled = object.PayoutsEnabled
 		event.AccountDetailsSubmitted = object.DetailsSubmitted
@@ -518,12 +746,24 @@ func minimizeWaffoEvent(envelope waffoWebhookEnvelope, rawBody []byte, environme
 	supported := oneOf(eventType, "order.completed", "subscription.activated", "subscription.payment_succeeded", "refund.succeeded", "refund.failed")
 	if len(strings.TrimSpace(envelope.ID)) < 8 || !safeProviderIDPattern.MatchString(strings.TrimSpace(envelope.ID)) ||
 		!safeProviderIDPattern.MatchString(strings.TrimSpace(envelope.EventID)) ||
-		strings.TrimSpace(envelope.Timestamp) == "" || strings.TrimSpace(envelope.StoreID) == "" ||
+		strings.TrimSpace(envelope.Timestamp) == "" || !safeProviderIDPattern.MatchString(strings.TrimSpace(envelope.StoreID)) ||
 		(strings.TrimSpace(expectedStoreID) != "" && envelope.StoreID != expectedStoreID) ||
 		!oneOf(strings.ToLower(strings.TrimSpace(envelope.Mode)), "test", "prod") ||
 		(strings.TrimSpace(environment) != "" && strings.ToLower(strings.TrimSpace(environment)) != strings.ToLower(strings.TrimSpace(envelope.Mode))) ||
 		!supported {
 		return minimizedProviderEvent{}, ErrInvalidEvent
+	}
+	// These merchant-supplied fields are local UUIDs in our checkout contract.
+	// Reject malformed values before they can become replayable typed evidence;
+	// in particular, do not retain an email or arbitrary text as a buyer ID.
+	for _, identity := range []string{envelope.Data.OrderMerchantExternalID, envelope.Data.MerchantProvidedBuyerIdentity} {
+		value := strings.TrimSpace(identity)
+		if value != "" {
+			parsed, err := uuid.Parse(value)
+			if err != nil || parsed == uuid.Nil || parsed.String() != value {
+				return minimizedProviderEvent{}, ErrInvalidEvent
+			}
+		}
 	}
 	occurredAt, err := parseWaffoTime(envelope.Timestamp)
 	if err != nil {
@@ -555,7 +795,10 @@ func minimizeWaffoEvent(envelope waffoWebhookEnvelope, rawBody []byte, environme
 	hash := sha256.Sum256(rawBody)
 	mode := strings.EqualFold(strings.TrimSpace(envelope.Mode), "prod")
 	event := minimizedProviderEvent{
-		ProviderEventID: strings.TrimSpace(envelope.ID), EventType: eventType, APIVersion: "waffo-pancake-v1", LiveMode: mode,
+		WaffoStoreID:         strings.TrimSpace(envelope.StoreID),
+		WaffoOrderExternalID: strings.TrimSpace(envelope.Data.OrderMerchantExternalID),
+		WaffoBuyerIdentity:   strings.TrimSpace(envelope.Data.MerchantProvidedBuyerIdentity),
+		ProviderEventID:      strings.TrimSpace(envelope.ID), EventType: eventType, APIVersion: "waffo-pancake-v1", LiveMode: mode,
 		OccurredAt: occurredAt, PayloadSHA256: hex.EncodeToString(hash[:]), ObjectID: objectID, ObjectType: objectType,
 		PaymentID: &paymentID, Supported: true,
 	}
@@ -662,6 +905,8 @@ func objectPrefix(objectType string) string {
 		return "tr_"
 	case "account":
 		return "acct_"
+	case "dispute":
+		return "dp_"
 	default:
 		return "never_"
 	}

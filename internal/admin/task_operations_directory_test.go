@@ -75,7 +75,7 @@ func TestAdminTaskOperationsTraverseBeyondLegacyWindow(t *testing.T) {
 		t.Fatalf("unsupported task status was accepted: %v", err)
 	}
 
-	resolved, err := service.ResolveTaskDispute(ctx, administratorID, targetTaskID, admin.TaskDisputeResolution{
+	resolved, err := service.ResolveTaskDispute(ctx, administratorID, targetTaskID, admin.TaskDisputeResolution{Reason: "Reviewed the task evidence and funding before this decision.", Confirm: true,
 		Decision: "cancel_without_settlement", ExpectedVersion: 1}, "task-directory-backlog")
 	if err != nil || resolved.ID != targetTaskID || resolved.Status != "cancelled" || resolved.DisputeStatus == nil || *resolved.DisputeStatus != "resolved_client" {
 		t.Fatalf("exact older task resolution response failed: %#v %v", resolved, err)

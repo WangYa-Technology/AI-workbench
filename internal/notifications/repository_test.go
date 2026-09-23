@@ -124,7 +124,17 @@ func deliverNext(t *testing.T, ctx context.Context, repository *notifications.Re
 }
 
 func TestNotificationTargetAllowlist(t *testing.T) {
-	valid := []string{"/notifications", "/workspace/orders", "/market/demands/" + uuid.NewString(), "/workspace/assets/" + uuid.NewString(), "/community/posts/" + uuid.NewString()}
+	for _, target := range []string{"/workspace/payouts", "/workspace/payouts/" + uuid.NewString()} {
+		if !notifications.ValidTargetPath(target) {
+			t.Fatalf("valid payout target rejected: %s", target)
+		}
+	}
+	for _, target := range []string{"/workspace/payouts/00000000-0000-0000-0000-000000000000", "/workspace/payouts/not-an-id", "/workspace/payouts/" + uuid.NewString() + "?actor=other", "/workspace/payouts/" + uuid.NewString() + "/extra"} {
+		if notifications.ValidTargetPath(target) {
+			t.Fatalf("invalid payout target accepted: %s", target)
+		}
+	}
+	valid := []string{"/notifications", "/workspace/orders", "/workspace/sales", "/market/demands/" + uuid.NewString(), "/workspace/assets/" + uuid.NewString(), "/community/posts/" + uuid.NewString()}
 	for _, target := range valid {
 		if !notifications.ValidTargetPath(target) {
 			t.Errorf("valid target rejected: %s", target)

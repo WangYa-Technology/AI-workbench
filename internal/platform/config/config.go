@@ -14,6 +14,8 @@ import (
 )
 
 type Config struct {
+	DataExport                                 DataExportConfig
+	MediaStage                                 MediaStageConfig
 	Environment                                string
 	HTTPAddr                                   string
 	DatabaseURL                                string
@@ -35,12 +37,16 @@ type Config struct {
 	WebOrigin                                  string
 	TrustedProxyCIDRs                          []netip.Prefix
 	LocalProviderEnabled                       bool
-	DemoDataEnabled                            bool
 	CookieSecure                               bool
 	WebhookEncryptionKey                       []byte
 	WebhookAllowLocal                          bool
 	EmailDeliveryMode                          string
 	EmailActionKey                             []byte
+	SMTPHost                                   string
+	SMTPPort                                   int
+	SMTPUsername                               string
+	SMTPPassword                               string
+	SMTPFrom                                   string
 	OpenAIEnabled                              bool
 	OpenAIPaidCallsApproved                    bool
 	OpenAIAPIKey                               string
@@ -95,6 +101,14 @@ type Config struct {
 }
 
 func Load() (Config, error) {
+	staging, err := loadMediaStageConfig()
+	if err != nil {
+		return Config{}, err
+	}
+	exports, err := loadDataExportConfig()
+	if err != nil {
+		return Config{}, err
+	}
 	openAIEnabled, err := strictBoolean("OPENAI_ENABLED", false)
 	if err != nil {
 		return Config{}, err
@@ -197,6 +211,8 @@ func Load() (Config, error) {
 		openAIImageAPIKey = openAIAPIKey
 	}
 	cfg := Config{
+		DataExport:                     exports,
+		MediaStage:                     staging,
 		Environment:                    value("APP_ENV", "development"),
 		HTTPAddr:                       value("HTTP_ADDR", ":8080"),
 		DatabaseURL:                    value("DATABASE_URL", "postgres://hcai:hcai@localhost:5432/hcai?sslmode=disable"),
@@ -218,10 +234,13 @@ func Load() (Config, error) {
 		WebOrigin:                      value("WEB_ORIGIN", "http://localhost:5173"),
 		TrustedProxyCIDRs:              trustedProxyCIDRs,
 		LocalProviderEnabled:           boolean("LOCAL_PROVIDER_ENABLED", true),
-		DemoDataEnabled:                boolean("DEMO_DATA_ENABLED", false),
 		CookieSecure:                   boolean("COOKIE_SECURE", false),
 		WebhookAllowLocal:              boolean("WEBHOOK_ALLOW_LOCAL", true),
 		EmailDeliveryMode:              value("EMAIL_DELIVERY_MODE", emailDeliveryDefault(value("APP_ENV", "development"))),
+		SMTPHost:                       strings.TrimSpace(os.Getenv("SMTP_HOST")),
+		SMTPUsername:                   strings.TrimSpace(os.Getenv("SMTP_USERNAME")),
+		SMTPPassword:                   os.Getenv("SMTP_PASSWORD"),
+		SMTPFrom:                       strings.TrimSpace(os.Getenv("SMTP_FROM")),
 		OpenAIEnabled:                  openAIEnabled,
 		OpenAIPaidCallsApproved:        openAIPaidCallsApproved,
 		OpenAIAPIKey:                   openAIAPIKey,
@@ -292,8 +311,8 @@ func Load() (Config, error) {
 	} else {
 		cfg.EmailActionKey = decoded
 	}
-	if cfg.EmailDeliveryMode != "local_file" && cfg.EmailDeliveryMode != "disabled" {
-		return Config{}, fmt.Errorf("EMAIL_DELIVERY_MODE must be local_file or disabled")
+	if err := validateEmail(&cfg); err != nil {
+		return Config{}, err
 	}
 	if err := validateOpenAI(&cfg); err != nil {
 		return Config{}, err
@@ -320,8 +339,8 @@ func Load() (Config, error) {
 	if cfg.Environment == "production" && cfg.WebhookAllowLocal {
 		return Config{}, fmt.Errorf("WEBHOOK_ALLOW_LOCAL must be false in production")
 	}
-	if cfg.Environment == "production" && cfg.EmailDeliveryMode != "disabled" {
-		return Config{}, fmt.Errorf("EMAIL_DELIVERY_MODE must be disabled in production until an approved provider is implemented")
+	if cfg.Environment == "production" && cfg.EmailDeliveryMode == "local_file" {
+		return Config{}, fmt.Errorf("EMAIL_DELIVERY_MODE cannot use local_file in production")
 	}
 	if cfg.Environment == "production" {
 		if err := validateProduction(cfg); err != nil {

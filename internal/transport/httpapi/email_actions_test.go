@@ -14,11 +14,11 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/hcai-chat/hcai-chat/internal/emailactions"
-	"github.com/hcai-chat/hcai-chat/internal/identity"
 	"github.com/hcai-chat/hcai-chat/internal/platform/config"
 	"github.com/hcai-chat/hcai-chat/internal/platform/jobs"
 	"github.com/hcai-chat/hcai-chat/internal/transport/httpapi"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"golang.org/x/crypto/bcrypt"
 )
 
 func TestIdentityEmailHTTPContract(t *testing.T) {
@@ -77,13 +77,17 @@ func TestIdentityEmailHTTPContract(t *testing.T) {
 	if _, err := pool.Exec(ctx, `UPDATE identity_email_actions SET status='dead_letter',dead_lettered_at=now(),version=version+1 WHERE id=$1`, actionID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO users(id,email,handle,display_name,role,status,locale,timezone,email_verified_at) VALUES($1,'email-admin@test.local','email_admin','Email Admin','admin','active','en-US','UTC',now())`, uuid.MustParse(identity.DemoAdminID)); err != nil {
+	hash, err := bcrypt.GenerateFromPassword([]byte("fixture-password-2026"), bcrypt.MinCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO users(id,email,handle,display_name,role,status,locale,timezone,email_verified_at,password_hash) VALUES($1,'email-admin@test.local','email_admin','Email Admin','admin','active','en-US','UTC',now(),$2)`, uuid.MustParse("00000000-0000-4000-8000-000000000004"), string(hash)); err != nil {
 		t.Fatal(err)
 	}
 	adminClient := testHTTPClient(t)
-	response = requestJSON(t, adminClient, http.MethodPost, server.URL+"/api/v1/auth/demo", map[string]any{"actor": "admin"}, nil)
+	response = requestJSON(t, adminClient, http.MethodPost, server.URL+"/api/v1/auth/login", map[string]any{"email": "email-admin@test.local", "password": "fixture-password-2026"}, nil)
 	if response.StatusCode != http.StatusOK {
-		t.Fatalf("admin demo session failed: %d", response.StatusCode)
+		t.Fatalf("admin password session failed: %d", response.StatusCode)
 	}
 	var deadLetters struct {
 		Items      []emailactions.Action `json:"items"`

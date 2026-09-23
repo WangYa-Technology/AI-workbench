@@ -14,8 +14,8 @@ import (
 )
 
 type RankingRolloutUpdate struct {
-	Percent         int    `json:"percent"`
-	ExpectedVersion int    `json:"expectedVersion"`
+	Percent         int `json:"percent"`
+	ExpectedVersion int `json:"expectedVersion"`
 }
 
 type DiscoveryIndexRun struct {
@@ -260,9 +260,9 @@ func (s *Service) RunDiscoveryIndexAnalyze(ctx context.Context, actorID uuid.UUI
 	}
 	item.DocumentCounts, item.IndexSizes = map[string]int64{}, map[string]int64{}
 	countQueries := map[string]string{
-		"works":    `SELECT count(*) FROM works w JOIN assets a ON a.id=w.asset_id AND a.scan_status='clean' JOIN users u ON u.id=w.author_id AND u.status='active' WHERE w.status='published'`,
-		"creators": `SELECT count(*) FROM users u WHERE u.status='active' AND (EXISTS(SELECT 1 FROM works w JOIN assets a ON a.id=w.asset_id AND a.scan_status='clean' WHERE w.author_id=u.id AND w.status='published') OR EXISTS(SELECT 1 FROM products p JOIN assets a ON a.id=p.asset_id AND a.scan_status='clean' WHERE p.seller_id=u.id AND p.status='active'))`,
-		"products": `SELECT count(*) FROM products p JOIN assets a ON a.id=p.asset_id AND a.scan_status='clean' JOIN users u ON u.id=p.seller_id AND u.status='active' JOIN licenses l ON l.code=p.license_code AND l.status='active' WHERE p.status='active'`,
+		"works":    `SELECT count(*) FROM public_works`,
+		"creators": `SELECT count(*) FROM users u WHERE u.status='active' AND (EXISTS(SELECT 1 FROM public_works w WHERE w.author_id=u.id) OR EXISTS(SELECT 1 FROM public_products p WHERE p.seller_id=u.id))`,
+		"products": `SELECT count(*) FROM public_products`,
 		"demands":  `SELECT count(*) FROM demands d JOIN users u ON u.id=d.client_id AND u.status='active' WHERE d.status='open'`,
 	}
 	for kind, query := range countQueries {
@@ -410,10 +410,10 @@ func (s *Service) GetDiscoveryOperations(ctx context.Context, inputs ...Discover
 func (s *Service) discoveryEvaluationCases(ctx context.Context) ([]evaluationCase, error) {
 	rows, err := s.pool.Query(ctx, `
 		WITH cases AS (
-		  SELECT 'work'::text kind,w.id,w.title query FROM works w JOIN assets a ON a.id=w.asset_id AND a.scan_status='clean' JOIN users u ON u.id=w.author_id AND u.status='active' WHERE w.status='published'
-		  UNION ALL SELECT 'product',p.id,p.title FROM products p JOIN assets a ON a.id=p.asset_id AND a.scan_status='clean' JOIN users u ON u.id=p.seller_id AND u.status='active' JOIN licenses l ON l.code=p.license_code AND l.status='active' WHERE p.status='active'
+		  SELECT 'work'::text kind,w.id,w.title query FROM public_works w
+		  UNION ALL SELECT 'product',p.id,p.title FROM public_products p
 		  UNION ALL SELECT 'demand',d.id,d.title FROM demands d JOIN users u ON u.id=d.client_id AND u.status='active' WHERE d.status='open'
-		  UNION ALL SELECT 'creator',u.id,u.handle FROM users u WHERE u.status='active' AND (EXISTS(SELECT 1 FROM works w JOIN assets a ON a.id=w.asset_id AND a.scan_status='clean' WHERE w.author_id=u.id AND w.status='published') OR EXISTS(SELECT 1 FROM products p JOIN assets a ON a.id=p.asset_id AND a.scan_status='clean' WHERE p.seller_id=u.id AND p.status='active'))
+		  UNION ALL SELECT 'creator',u.id,u.handle FROM users u WHERE u.status='active' AND (EXISTS(SELECT 1 FROM public_works w WHERE w.author_id=u.id) OR EXISTS(SELECT 1 FROM public_products p WHERE p.seller_id=u.id))
 		)
 		SELECT kind,id,query FROM cases WHERE char_length(trim(query)) BETWEEN 2 AND 120 ORDER BY kind,id LIMIT 20`)
 	if err != nil {

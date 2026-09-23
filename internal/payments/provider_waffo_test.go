@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -56,7 +58,7 @@ func TestWaffoRuntimeCheckoutAndRefundContract(t *testing.T) {
 			if payload["providerPaymentId"] != "PAY_test_123" || payload["currency"] != "USD" || payload["storeId"] != "STO_test" {
 				t.Fatalf("unexpected refund payload: %#v", payload)
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"providerId": "RFD_test_123", "providerPaymentId": "PAY_test_123", "amountCents": 1250, "currency": "USD", "status": "pending"})
+			_ = json.NewEncoder(w).Encode(map[string]any{"providerId": "RFD_test_123", "providerPaymentId": "PAY_test_123", "amountCents": 1250, "currency": "USD", "status": "pending", "paymentIdentity": payload["paymentIdentity"], "operationId": payload["operationId"], "refundContractVersion": payload["refundContractVersion"]})
 		default:
 			http.NotFound(w, r)
 		}
@@ -67,7 +69,7 @@ func TestWaffoRuntimeCheckoutAndRefundContract(t *testing.T) {
 	if err != nil || checkout.ProviderID != "CHK_test_123" || checkout.LiveMode {
 		t.Fatalf("checkout contract failed: %#v %v", checkout, err)
 	}
-	refund, err := runtime.CreateRefund(context.Background(), RefundRequest{PaymentID: paymentID, OperationID: operationID, ProviderPaymentID: "PAY_test_123", StoreID: "STO_test", AmountCents: 1250, Currency: "USD"})
+	refund, err := runtime.CreateRefund(context.Background(), RefundRequest{PaymentID: paymentID, OperationID: operationID, ProviderPaymentID: "PAY_test_123", StoreID: "STO_test", BuyerIdentity: "buyer-123", PaymentIdentity: &ProductCheckoutIdentity{Provider: "waffo_pancake", MerchantID: "MER_test", StoreID: "STO_test", Endpoint: server.URL, APIVersion: waffoProductCheckoutAPI, RequestVersion: waffoProductCheckoutVersion}, AmountCents: 1250, Currency: "USD"})
 	if err != nil || refund.ProviderID != "RFD_test_123" || refund.Status != "pending" {
 		t.Fatalf("refund contract failed: %#v %v", refund, err)
 	}
@@ -81,6 +83,55 @@ func TestWaffoRuntimeRejectsInsecureRemoteConnector(t *testing.T) {
 	_, err := runtime.CreateCheckout(context.Background(), CheckoutRequest{PaymentID: uuid.New(), ResourceID: uuid.New(), Purpose: "product", AmountCents: 1250, Currency: "USD", SuccessURL: "https://app.example.test/success", CancelURL: "https://app.example.test/cancel", ProductID: "PROD_test"})
 	if err == nil || !strings.Contains(err.Error(), "payment_invalid_request") {
 		t.Fatalf("remote HTTP connector should be rejected: %v", err)
+	}
+}
+
+func TestWaffoRuntimeRejectsCheckoutResponseWithoutLiveMode(t *testing.T) {
+	connector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/checkout" {
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"providerId": "CHK_test_123", "checkoutUrl": "https://checkout.waffo.ai/session/CHK_test_123", "status": "open", "paymentStatus": "pending",
+			"expiresAt": time.Now().UTC().Add(time.Hour).Format(time.RFC3339Nano),
+		})
+	}))
+	defer connector.Close()
+	runtime := NewWaffoRuntime(WaffoRuntimeConfig{ConnectorURL: connector.URL, ConnectorToken: "connector-test-token", Environment: "test", ProductIDOnetime: "PROD_test"})
+	_, err := runtime.CreateCheckout(context.Background(), CheckoutRequest{
+		PaymentID: uuid.New(), ResourceID: uuid.New(), Purpose: "product", AmountCents: 1250, Currency: "USD",
+		SuccessURL: "https://app.example.test/success", CancelURL: "https://app.example.test/cancel", ProductID: "PROD_test",
+	})
+	if err == nil || !strings.Contains(err.Error(), "payment_response_invalid") {
+		t.Fatalf("missing liveMode response was accepted: %v", err)
+	}
+}
+
+func TestWaffoRuntimeLookupProductCheckoutBindsOriginalOrder(t *testing.T) {
+	paymentID, resourceID := uuid.New(), uuid.New()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/checkout/lookup" || r.Header.Get("Authorization") != "Bearer connector-test-token" {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload["orderMerchantExternalId"] != paymentID.String() || payload["storeId"] != "STO_test" {
+			t.Fatalf("unexpected lookup payload: %#v %v", payload, err)
+		}
+		_ = json.NewEncoder(w).Encode(CheckoutLookupResult{
+			Outcome: "found", Pages: 1, Scanned: 1, Matches: []string{"ORD_test_123"},
+			Observation: &CheckoutObservation{ProviderCheckoutID: "ORD_test_123", ProviderPaymentID: "PAY_test_123", Status: "complete", PaymentStatus: "paid", AmountReceived: 1250, AmountCents: 1250, Currency: "USD", ExpiresAt: time.Now().UTC(), LiveMode: false},
+		})
+	}))
+	defer server.Close()
+	runtime := NewWaffoRuntime(WaffoRuntimeConfig{ConnectorURL: server.URL, ConnectorToken: "connector-test-token", Environment: "test", StoreID: "STO_test"})
+	result, err := runtime.LookupProductCheckout(context.Background(), CheckoutLookupRequest{
+		CheckoutReadRequest: CheckoutReadRequest{PaymentID: paymentID, ResourceID: resourceID, AmountCents: 1250, Currency: "USD", LiveMode: false},
+		OrderExternalID:     paymentID.String(), BuyerIdentity: uuid.New().String(), StoreID: "STO_test", CreatedAfter: time.Now().UTC().Add(-time.Hour), CreatedBefore: time.Now().UTC().Add(time.Hour),
+	})
+	if err != nil || result.Outcome != "found" || result.Observation == nil || result.Observation.ProviderPaymentID != "PAY_test_123" {
+		t.Fatalf("lookup contract failed: %#v %v", result, err)
 	}
 }
 
@@ -153,39 +204,6 @@ func TestProductProviderStatusFailsClosedForIncompleteWaffoConfig(t *testing.T) 
 	}
 }
 
-func TestWaffoWebhookFollowsPersistedProviderSelection(t *testing.T) {
-	pool, cleanup := paymentTestPool(t)
-	defer cleanup()
-	ctx := context.Background()
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO payment_provider_configs(provider,enabled,environment,merchant_id,store_id,product_id_onetime)
-		VALUES('stripe',false,'test','','',''),('waffo_pancake',true,'test','MER_test','STO_test','PROD_test')`); err != nil {
-		t.Fatal(err)
-	}
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	connector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/webhook/verify" || r.Header.Get("Authorization") != "Bearer connector-test-token" {
-			t.Fatalf("unexpected Waffo verification request: path=%s authorization=%q", r.URL.Path, r.Header.Get("Authorization"))
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"event":{"id":"delivery-123456","timestamp":"` + now + `","eventType":"order.completed","eventId":"PAY_test_123","storeId":"STO_test","mode":"test","data":{"orderId":"ORD_test_123","currency":"USD","orderMetadata":{"hcaiPaymentId":"` + testPaymentID.String() + `","hcaiResourceId":"` + testResourceID.String() + `","hcaiPurpose":"product"},"amount":"12.50","paymentId":"PAY_test_123","paymentStatus":"succeeded"}}}`))
-	}))
-	defer connector.Close()
-	service := NewServiceWithRuntimes(pool, ServiceConfig{
-		Enabled: true, Provider: "stripe", WaffoWebhookURL: connector.URL, WaffoConnectorToken: "connector-test-token", WaffoEnvironment: "test",
-	}, NewRuntimeCatalog(&waffoAvailabilityRuntime{}))
-	receipt, err := service.ReceiveWaffoWebhook(ctx, []byte(`{"signed":"raw"}`), "t=1,v1=signature")
-	if err != nil || receipt.ProviderEventID != "delivery-123456" || receipt.Status != "received" {
-		t.Fatalf("persisted Waffo provider selection was not honored: receipt=%#v err=%v", receipt, err)
-	}
-	if _, err := pool.Exec(ctx, `UPDATE payment_provider_configs SET enabled=false WHERE provider='waffo_pancake'`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := service.ReceiveWaffoWebhook(ctx, []byte(`{"signed":"raw"}`), "t=1,v1=signature"); !errors.Is(err, ErrDisabled) {
-		t.Fatalf("disabled persisted Waffo provider still accepted a webhook: %v", err)
-	}
-}
-
 func TestMinimizeWaffoEventUsesDeliveryIDAndExactAmount(t *testing.T) {
 	paymentID := uuid.New()
 	envelope := waffoWebhookEnvelope{
@@ -219,5 +237,73 @@ func TestMinimizeWaffoEventUsesDeliveryIDAndExactAmount(t *testing.T) {
 	activationEvent, err := minimizeWaffoEvent(envelope, []byte(`{"event":"activation"}`), "test", "STO_test")
 	if err != nil || !activationEvent.Supported || activationEvent.EventType != "subscription.activated" || activationEvent.PaymentStatus == nil || *activationEvent.PaymentStatus != "succeeded" {
 		t.Fatalf("subscription activation event was not minimized: %#v %v", activationEvent, err)
+	}
+}
+
+func TestWaffoRefundRejectsUnboundResponses(t *testing.T) {
+	cases := map[string]func(map[string]any){
+		"old connector":     func(v map[string]any) { delete(v, "refundContractVersion") },
+		"wrong operation":   func(v map[string]any) { v["operationId"] = uuid.NewString() },
+		"missing operation": func(v map[string]any) { delete(v, "operationId") },
+		"wrong payment":     func(v map[string]any) { v["providerPaymentId"] = "PAY_other" },
+		"wrong amount":      func(v map[string]any) { v["amountCents"] = 1249 },
+		"wrong currency":    func(v map[string]any) { v["currency"] = "EUR" },
+		"missing identity":  func(v map[string]any) { delete(v, "paymentIdentity") },
+		"changed merchant":  func(v map[string]any) { v["paymentIdentity"].(map[string]any)["merchantId"] = "MER_changed" },
+		"unsafe ticket":     func(v map[string]any) { v["providerId"] = "ticket/unsafe" },
+		"invented state":    func(v map[string]any) { v["status"] = "complete" },
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			connector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var body map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Error(err)
+					return
+				}
+				if body["refundContractVersion"] != waffoRefundContractVersion {
+					t.Error("missing outbound contract")
+				}
+				result := map[string]any{"operationId": body["operationId"], "refundContractVersion": body["refundContractVersion"], "providerId": "TKT_original", "providerPaymentId": "PAY_original", "amountCents": 1250, "currency": "USD", "status": "pending", "paymentIdentity": body["paymentIdentity"]}
+				mutate(result)
+				_ = json.NewEncoder(w).Encode(result)
+			}))
+			defer connector.Close()
+			runtime := NewWaffoRuntime(WaffoRuntimeConfig{ConnectorURL: connector.URL, ConnectorToken: "connector-test-token", Environment: "test"})
+			_, err := runtime.CreateRefund(context.Background(), RefundRequest{PaymentID: uuid.New(), OperationID: uuid.New(), ProviderPaymentID: "PAY_original", AmountCents: 1250, Currency: "USD", BuyerIdentity: "original-buyer", StoreID: "STO_original", PaymentIdentity: &ProductCheckoutIdentity{Provider: "waffo_pancake", MerchantID: "MER_original", StoreID: "STO_original", Endpoint: connector.URL, APIVersion: waffoProductCheckoutAPI, RequestVersion: waffoProductCheckoutVersion}})
+			if err == nil || !strings.Contains(err.Error(), "payment_response_invalid") {
+				t.Fatalf("unbound response accepted: %v", err)
+			}
+		})
+	}
+}
+
+func TestWaffoRuntimeRejectsRefundRedirect(t *testing.T) {
+	for _, code := range []int{301, 302, 303, 307, 308} {
+		t.Run(fmt.Sprint(code), func(t *testing.T) {
+			var redirects, posts atomic.Int32
+			connector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/refund" {
+					posts.Add(1)
+					http.Redirect(w, r, "/again", code)
+					return
+				}
+				redirects.Add(1)
+				w.WriteHeader(http.StatusOK)
+			}))
+			defer connector.Close()
+			original := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
+				t.Error("injected redirect policy should not control financial dispatch")
+				return nil
+			}}
+			runtime := NewWaffoRuntime(WaffoRuntimeConfig{ConnectorURL: connector.URL, ConnectorToken: "connector-test-token", Environment: "test", HTTPClient: original})
+			if runtime.client == original {
+				t.Fatal("caller-owned HTTP client was mutated")
+			}
+			_, err := runtime.CreateRefund(context.Background(), RefundRequest{PaymentID: uuid.New(), OperationID: uuid.New(), ProviderPaymentID: "PAY_original", AmountCents: 1250, Currency: "USD", BuyerIdentity: "original-buyer", StoreID: "STO_original", PaymentIdentity: &ProductCheckoutIdentity{Provider: "waffo_pancake", MerchantID: "MER_original", StoreID: "STO_original", Endpoint: connector.URL, APIVersion: waffoProductCheckoutAPI, RequestVersion: waffoProductCheckoutVersion}})
+			if err == nil || posts.Load() != 1 || redirects.Load() != 0 {
+				t.Fatalf("financial redirect followed: err=%v posts=%d redirects=%d", err, posts.Load(), redirects.Load())
+			}
+		})
 	}
 }

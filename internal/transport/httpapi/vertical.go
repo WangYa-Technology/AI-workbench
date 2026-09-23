@@ -1,10 +1,12 @@
 package httpapi
 
 import (
-	"encoding/json"
+	"context"
 	"errors"
 	"io"
+	"mime"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -31,31 +33,6 @@ func (s *Server) session(w http.ResponseWriter, r *http.Request) {
 	httputil.JSON(w, http.StatusOK, map[string]any{"user": user, "authentication": "session_cookie"})
 }
 
-func (s *Server) demoLogin(w http.ResponseWriter, r *http.Request) {
-	if s.config.Environment == "production" || !s.config.LocalProviderEnabled {
-		httputil.WriteError(w, r, http.StatusNotFound, "not_found", "This endpoint is not available.", false)
-		return
-	}
-	var input struct {
-		Actor string `json:"actor"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil && !errors.Is(err, io.EOF) {
-		httputil.WriteError(w, r, http.StatusBadRequest, "invalid_json", "The request body must be valid JSON.", false)
-		return
-	}
-	if input.Actor != "" && input.Actor != "creator" && input.Actor != "publisher" && input.Actor != "admin" {
-		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_demo_actor", "Choose creator, publisher, or admin for the local demo session.", false)
-		return
-	}
-	user, token, err := s.identity.StartDemoSession(r.Context(), input.Actor, requestClientInfo(r, s.config.TrustedProxyCIDRs))
-	if err != nil {
-		s.internalError(w, r, "start demo session", err)
-		return
-	}
-	setSessionCookie(w, token, s.config.CookieSecure)
-	httputil.JSON(w, http.StatusOK, map[string]any{"user": user, "authentication": "local_demo"})
-}
-
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	token := sessionToken(r)
 	if err := s.identity.Revoke(r.Context(), token); err != nil {
@@ -67,27 +44,21 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listWorks(w http.ResponseWriter, r *http.Request) {
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	filter := discovery.WorkFilter{Query: r.URL.Query().Get("q"), Kind: r.URL.Query().Get("kind"), PromptVisibility: r.URL.Query().Get("promptVisibility")}
-	var before *time.Time
-	if cursor := strings.TrimSpace(r.URL.Query().Get("cursor")); cursor != "" {
-		parts := strings.SplitN(cursor, "|", 2)
-		if len(parts) == 2 {
-			id, err := uuid.Parse(parts[1])
-			if err != nil {
-				httputil.WriteError(w, r, 400, "invalid_cursor", "The pagination cursor is invalid.", false)
-				return
-			}
-			filter.BeforeID = &id
-		}
-		cursor = parts[0]
-		parsed, err := time.Parse(time.RFC3339Nano, cursor)
-		if err != nil {
-			httputil.WriteError(w, r, http.StatusBadRequest, "invalid_cursor", "The pagination cursor is invalid.", false)
-			return
-		}
-		before = &parsed
+	limit, ok := discoveryNumber(w, r, "limit", 12, 24)
+	if !ok {
+		return
 	}
+	filter, err := discovery.NormalizeWorkFilter(discovery.WorkFilter{Query: r.URL.Query().Get("q"), Kind: r.URL.Query().Get("kind"), PromptVisibility: r.URL.Query().Get("promptVisibility")})
+	if err != nil {
+		httputil.WriteError(w, r, 422, "invalid_discover_filters", "Use at most 120 characters and supported filters.", false)
+		return
+	}
+	before, id, err := discovery.DecodeWorkCursor(r.URL.Query().Get("cursor"), filter)
+	if err != nil {
+		httputil.WriteError(w, r, 400, "invalid_cursor", "Restart pagination with the current filters.", false)
+		return
+	}
+	filter.BeforeID = id
 	page, err := s.discovery.List(r.Context(), limit, before, filter)
 	if err != nil {
 		s.internalError(w, r, "list works", err)
@@ -97,11 +68,12 @@ func (s *Server) listWorks(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getWork(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "private, no-store")
 	id, ok := pathUUID(w, r, "workID")
 	if !ok {
 		return
 	}
-	work, err := s.discovery.Get(r.Context(), id)
+	work, err := s.discovery.Get(r.Context(), id, s.discoveryViewer(r))
 	if errors.Is(err, discovery.ErrNotFound) {
 		httputil.WriteError(w, r, http.StatusNotFound, "work_not_found", "The requested work was not found.", false)
 		return
@@ -114,8 +86,14 @@ func (s *Server) getWork(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) searchDiscovery(w http.ResponseWriter, r *http.Request) {
-	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	page, ok := discoveryNumber(w, r, "page", 1, 100)
+	if !ok {
+		return
+	}
+	limit, ok := discoveryNumber(w, r, "limit", 12, 24)
+	if !ok {
+		return
+	}
 	types := make([]string, 0)
 	for _, kind := range strings.Split(r.URL.Query().Get("types"), ",") {
 		if kind = strings.TrimSpace(kind); kind != "" {
@@ -137,13 +115,26 @@ func (s *Server) searchDiscovery(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getCreator(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "private, no-store")
 	var viewerID uuid.UUID
 	if token := sessionToken(r); token != "" {
 		if user, err := s.identity.Authenticate(r.Context(), token); err == nil {
 			viewerID = user.ID
 		}
 	}
-	profile, err := s.discovery.Creator(r.Context(), chi.URLParam(r, "handle"), viewerID)
+	worksPage, ok := discoveryNumber(w, r, "worksPage", 1, 1000000)
+	if !ok {
+		return
+	}
+	productsPage, ok := discoveryNumber(w, r, "productsPage", 1, 1000000)
+	if !ok {
+		return
+	}
+	limit, ok := discoveryNumber(w, r, "limit", 12, 24)
+	if !ok {
+		return
+	}
+	profile, err := s.discovery.Creator(r.Context(), chi.URLParam(r, "handle"), viewerID, discovery.CreatorFilter{WorksPage: worksPage, ProductsPage: productsPage, Limit: limit})
 	if errors.Is(err, discovery.ErrNotFound) {
 		httputil.WriteError(w, r, http.StatusNotFound, "creator_not_found", "The requested creator was not found.", false)
 		return
@@ -430,6 +421,10 @@ func (s *Server) checkoutWalletTopup(w http.ResponseWriter, r *http.Request) {
 		origin+"/workspace/billing?payment=success", origin+"/workspace/billing?payment=cancelled",
 	)
 	switch {
+	case errors.Is(err, billing.ErrTopupAmountOutOfRange):
+		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "wallet_topup_amount_out_of_range", "The top-up amount is below the current minimum. Reload the top-up settings.", false)
+	case errors.Is(err, payments.ErrCheckoutBusy):
+		httputil.WriteError(w, r, http.StatusConflict, "payment_checkout_busy", "Checkout settings changed concurrently. Retry the same request.", true)
 	case errors.Is(err, payments.ErrDisabled), errors.Is(err, payments.ErrProviderUnavailable), errors.Is(err, payments.ErrProviderConfigMismatch):
 		httputil.WriteError(w, r, http.StatusServiceUnavailable, "payment_provider_unavailable", "Payment checkout is not enabled or configured for wallet top-ups.", false)
 	case errors.Is(err, payments.ErrInvalidCheckout):
@@ -577,6 +572,12 @@ func (s *Server) listAssets(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	input.Source = r.URL.Query().Get("source")
+	input.Purpose = r.URL.Query().Get("purpose")
+	if len(r.URL.Query()["source"]) > 1 || len(r.URL.Query()["purpose"]) > 1 {
+		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_asset_filters", "Specify each Asset filter only once.", false)
+		return
+	}
 	page, err := s.assets.List(r.Context(), user.ID, input)
 	if errors.Is(err, assets.ErrInvalidList) {
 		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_asset_filters", "Use a page size from 1 to 50 and an unmodified Asset cursor.", false)
@@ -586,6 +587,7 @@ func (s *Server) listAssets(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, "list assets", err)
 		return
 	}
+	w.Header().Set("Cache-Control", "private, no-store")
 	httputil.JSON(w, http.StatusOK, page)
 }
 
@@ -640,9 +642,9 @@ func (s *Server) listAssetUsages(w http.ResponseWriter, r *http.Request) {
 
 func parseAssetListInput(w http.ResponseWriter, r *http.Request, code string) (assets.ListInput, bool) {
 	limit := 0
-	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
-		parsed, err := strconv.Atoi(raw)
-		if err != nil {
+	if values, present := r.URL.Query()["limit"]; present {
+		parsed, err := strconv.Atoi(strings.TrimSpace(values[0]))
+		if err != nil || len(values) != 1 || parsed < 1 || parsed > 50 {
 			httputil.WriteError(w, r, http.StatusUnprocessableEntity, code, "Use a page size from 1 to 50 and an unmodified cursor.", false)
 			return assets.ListInput{}, false
 		}
@@ -654,6 +656,11 @@ func parseAssetListInput(w http.ResponseWriter, r *http.Request, code string) (a
 func (s *Server) uploadAsset(w http.ResponseWriter, r *http.Request) {
 	user, ok := s.requirePermission(w, r, "assets:upload")
 	if !ok {
+		return
+	}
+	key := r.Header.Get("Idempotency-Key")
+	if len(r.Header.Values("Idempotency-Key")) != 1 || !assets.ValidUploadKey(key) {
+		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_upload_key", "Supply an Idempotency-Key of 8–128 ASCII letters, digits, dots, underscores, colons or hyphens.", false)
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, assets.MaxUploadSize+(256<<10))
@@ -676,9 +683,15 @@ func (s *Server) uploadAsset(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 	item, err := s.assets.Upload(r.Context(), user.ID, assets.UploadInput{
-		Title: r.FormValue("title"), Filename: header.Filename, Reader: file, RequestID: httputil.RequestID(r.Context()),
+		Title: r.FormValue("title"), Filename: header.Filename, Reader: file, RequestID: httputil.RequestID(r.Context()), IdempotencyKey: key,
 	})
 	switch {
+	case errors.Is(err, assets.ErrUploadKey):
+		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_upload_key", "Supply a valid upload retry key.", false)
+	case errors.Is(err, assets.ErrUploadConflict):
+		httputil.WriteError(w, r, http.StatusConflict, "upload_idempotency_conflict", "This upload key belongs to different content. Restore the original file and fields or start a new upload.", false)
+	case errors.Is(err, assets.ErrForbidden):
+		httputil.WriteError(w, r, http.StatusForbidden, "forbidden", "Your account cannot upload assets.", false)
 	case errors.Is(err, assets.ErrTooLarge):
 		httputil.WriteError(w, r, http.StatusRequestEntityTooLarge, "upload_too_large", "Upload one supported file no larger than 10 MiB.", false)
 	case errors.Is(err, assets.ErrInvalid):
@@ -687,7 +700,11 @@ func (s *Server) uploadAsset(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, "upload asset", err)
 	default:
 		w.Header().Set("Location", "/api/v1/assets/"+item.ID.String())
-		httputil.JSON(w, http.StatusCreated, item)
+		status := http.StatusCreated
+		if item.UploadReplayed {
+			status = http.StatusOK
+		}
+		httputil.JSON(w, status, item)
 	}
 }
 
@@ -722,6 +739,11 @@ func (s *Server) uploadAssetVersion(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	key := r.Header.Get("Idempotency-Key")
+	if len(r.Header.Values("Idempotency-Key")) != 1 || !assets.ValidUploadKey(key) {
+		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_upload_key", "Supply an Idempotency-Key of 8–128 ASCII letters, digits, dots, underscores, colons or hyphens.", false)
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, assets.MaxUploadSize+(256<<10))
 	if err := r.ParseMultipartForm(1 << 20); err != nil {
 		var maxBytesError *http.MaxBytesError
@@ -742,10 +764,14 @@ func (s *Server) uploadAssetVersion(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 	item, err := s.assets.UploadVersion(r.Context(), user.ID, baseAssetID, assets.VersionInput{
-		UploadInput: assets.UploadInput{Title: r.FormValue("title"), Filename: header.Filename, Reader: file, RequestID: httputil.RequestID(r.Context())},
+		UploadInput: assets.UploadInput{Title: r.FormValue("title"), Filename: header.Filename, Reader: file, RequestID: httputil.RequestID(r.Context()), IdempotencyKey: key},
 		Note:        r.FormValue("note"),
 	})
 	switch {
+	case errors.Is(err, assets.ErrUploadKey):
+		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_upload_key", "Supply a valid upload retry key.", false)
+	case errors.Is(err, assets.ErrUploadConflict):
+		httputil.WriteError(w, r, http.StatusConflict, "upload_idempotency_conflict", "This upload key belongs to different content. Restore the original file and fields or start a new upload.", false)
 	case errors.Is(err, assets.ErrNotFound):
 		httputil.WriteError(w, r, http.StatusNotFound, "asset_not_found", "The base Asset was not found.", false)
 	case errors.Is(err, assets.ErrForbidden):
@@ -760,7 +786,11 @@ func (s *Server) uploadAssetVersion(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, "upload asset version", err)
 	default:
 		w.Header().Set("Location", "/api/v1/assets/"+item.ID.String())
-		httputil.JSON(w, http.StatusCreated, item)
+		status := http.StatusCreated
+		if item.UploadReplayed {
+			status = http.StatusOK
+		}
+		httputil.JSON(w, status, item)
 	}
 }
 
@@ -775,8 +805,35 @@ func (s *Server) assetContent(w http.ResponseWriter, r *http.Request) {
 			viewerID = user.ID
 		}
 	}
-	content, err := s.assets.Content(r.Context(), viewerID, id)
+	var content assets.Content
+	var err error
+	query, parseErr := url.ParseQuery(r.URL.RawQuery)
+	if parseErr != nil {
+		s.writeAssetContent(w, r, id, content, assets.ErrInvalid)
+		return
+	}
+	if values, exists := query["fileIndex"]; exists {
+		if len(values) != 1 || len(query) != 1 {
+			s.writeAssetContent(w, r, id, content, assets.ErrInvalid)
+			return
+		}
+		index, parseErr := strconv.Atoi(values[0])
+		if parseErr != nil || index < 0 || index >= 20 || strconv.Itoa(index) != values[0] {
+			s.writeAssetContent(w, r, id, content, assets.ErrInvalid)
+			return
+		}
+		content, err = s.assets.ContentFile(r.Context(), viewerID, id, index)
+	} else {
+		content, err = s.assets.Content(r.Context(), viewerID, id)
+	}
+	s.writeAssetContent(w, r, id, content, err)
+}
+
+func (s *Server) writeAssetContent(w http.ResponseWriter, r *http.Request, id uuid.UUID, content assets.Content, err error) {
 	switch {
+	case errors.Is(err, assets.ErrInvalid):
+		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_asset_file", "Select one file from the purchased package.", false)
+		return
 	case errors.Is(err, assets.ErrNotFound):
 		httputil.WriteError(w, r, http.StatusNotFound, "asset_not_found", "The asset content was not found.", false)
 		return
@@ -787,7 +844,23 @@ func (s *Server) assetContent(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, "get asset content", err)
 		return
 	}
+	// Verification and a licensed package transfer can exceed the ordinary
+	// JSON response deadline. Keep an absolute budget and release the verified
+	// reader on timeout/client cancellation; never disable deadlines globally.
+	deadline := time.Now().Add(7 * time.Minute)
+	if err := http.NewResponseController(w).SetWriteDeadline(deadline); err != nil {
+		s.internalError(w, r, "set asset content deadline", err)
+		return
+	}
+	ctx, cancel := context.WithDeadline(r.Context(), deadline)
+	defer cancel()
+	r = r.WithContext(ctx)
+	w.Header().Set("X-Accel-Buffering", "no")
 	info, err := content.Stat(r.Context())
+	if errors.Is(err, assets.ErrForbidden) {
+		httputil.WriteError(w, r, http.StatusForbidden, "forbidden", "You cannot access this asset.", false)
+		return
+	}
 	if errors.Is(err, media.ErrNotFound) {
 		httputil.WriteError(w, r, http.StatusNotFound, "asset_content_missing", "The asset file is missing.", true)
 		return
@@ -803,6 +876,10 @@ func (s *Server) assetContent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	object, err := content.Open(r.Context(), requestedRange)
+	if errors.Is(err, assets.ErrForbidden) {
+		httputil.WriteError(w, r, http.StatusForbidden, "forbidden", "You cannot access this asset.", false)
+		return
+	}
 	if errors.Is(err, media.ErrNotFound) {
 		httputil.WriteError(w, r, http.StatusNotFound, "asset_content_missing", "The asset file is missing.", true)
 		return
@@ -812,9 +889,20 @@ func (s *Server) assetContent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer object.Body.Close()
+	// Stat determines response headers and range bounds. If the object changed
+	// before Open, those headers no longer describe the returned bytes. Reject
+	// before writing any media; verified purchases expose their frozen digest
+	// and size through both operations.
+	if object.Info.Size != info.Size || (info.ETag != "" && object.Info.ETag != info.ETag) {
+		s.internalError(w, r, "asset content changed during read", media.ErrIntegrity)
+		return
+	}
 	w.Header().Set("Accept-Ranges", "bytes")
 	w.Header().Set("Content-Type", content.MimeType)
-	w.Header().Set("Cache-Control", "private, max-age=60")
+	w.Header().Set("Cache-Control", "private, no-store")
+	if content.Attachment {
+		w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": content.Name}))
+	}
 	if info.ETag != "" {
 		w.Header().Set("ETag", info.ETag)
 	}
@@ -875,7 +963,7 @@ func parseSingleByteRange(value string, size int64) (*media.ByteRange, error) {
 }
 
 func (s *Server) publish(w http.ResponseWriter, r *http.Request) {
-	user, ok := s.requireUser(w, r)
+	user, ok := s.requirePermission(w, r, "community:publish")
 	if !ok {
 		return
 	}
@@ -902,7 +990,7 @@ func (s *Server) publish(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listContentDrafts(w http.ResponseWriter, r *http.Request) {
-	user, ok := s.requireUser(w, r)
+	user, ok := s.requirePermission(w, r, "community:publish")
 	if !ok {
 		return
 	}
@@ -928,7 +1016,7 @@ func (s *Server) listContentDrafts(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getContentDraft(w http.ResponseWriter, r *http.Request) {
-	user, ok := s.requireUser(w, r)
+	user, ok := s.requirePermission(w, r, "community:publish")
 	if !ok {
 		return
 	}
@@ -941,7 +1029,7 @@ func (s *Server) getContentDraft(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) createContentDraft(w http.ResponseWriter, r *http.Request) {
-	user, ok := s.requireUser(w, r)
+	user, ok := s.requirePermission(w, r, "community:publish")
 	if !ok {
 		return
 	}
@@ -954,7 +1042,7 @@ func (s *Server) createContentDraft(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) updateContentDraft(w http.ResponseWriter, r *http.Request) {
-	user, ok := s.requireUser(w, r)
+	user, ok := s.requirePermission(w, r, "community:publish")
 	if !ok {
 		return
 	}
@@ -971,7 +1059,7 @@ func (s *Server) updateContentDraft(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) publishContentDraft(w http.ResponseWriter, r *http.Request) {
-	user, ok := s.requireUser(w, r)
+	user, ok := s.requirePermission(w, r, "community:publish")
 	if !ok {
 		return
 	}
@@ -1006,7 +1094,7 @@ func (s *Server) publishContentDraft(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) discardContentDraft(w http.ResponseWriter, r *http.Request) {
-	user, ok := s.requireUser(w, r)
+	user, ok := s.requirePermission(w, r, "community:publish")
 	if !ok {
 		return
 	}
@@ -1056,8 +1144,15 @@ func writeContentDraft(w http.ResponseWriter, r *http.Request, s *Server, item c
 }
 
 func (s *Server) listPosts(w http.ResponseWriter, r *http.Request) {
-	input := community.PostListInput{Sort: r.URL.Query().Get("sort"), Cursor: r.URL.Query().Get("cursor"), Category: r.URL.Query().Get("category"), Query: r.URL.Query().Get("q")}
+	input := community.PostListInput{View: r.URL.Query().Get("view"), Sort: r.URL.Query().Get("sort"), Cursor: r.URL.Query().Get("cursor"), Category: r.URL.Query().Get("category"), Query: r.URL.Query().Get("q")}
 	viewerID := s.optionalViewer(r)
+	if input.View != "" && input.View != "all" {
+		user, ok := s.requireUser(w, r)
+		if !ok {
+			return
+		}
+		viewerID = user.ID
+	}
 	if raw := strings.TrimSpace(r.URL.Query().Get("mine")); raw != "" {
 		mine, err := strconv.ParseBool(raw)
 		if err != nil {
@@ -1124,6 +1219,39 @@ func pathUUID(w http.ResponseWriter, r *http.Request, name string) (uuid.UUID, b
 }
 
 func (s *Server) internalError(w http.ResponseWriter, r *http.Request, operation string, err error) {
+	for _, resourceErr := range []error{media.ErrStageBusy, media.ErrStageStorage} {
+		if errors.Is(err, resourceErr) {
+			code := resourceErr.Error()
+			s.logger.Warn(operation, "request_id", httputil.RequestID(r.Context()), "error_code", code)
+			w.Header().Set("Retry-After", "5")
+			httputil.WriteError(w, r, http.StatusServiceUnavailable, code, "File verification capacity is temporarily unavailable. Please retry shortly.", true)
+			return
+		}
+	}
 	s.logger.Error(operation, "request_id", httputil.RequestID(r.Context()), "error", err)
 	httputil.WriteError(w, r, http.StatusInternalServerError, "internal_error", "The request could not be completed.", true)
+}
+
+func discoveryNumber(w http.ResponseWriter, r *http.Request, key string, fallback, max int) (int, bool) {
+	raw, exists := r.URL.Query()[key]
+	if !exists {
+		return fallback, true
+	}
+	if len(raw) == 1 {
+		value, err := strconv.Atoi(raw[0])
+		if err == nil && value >= 1 && value <= max {
+			return value, true
+		}
+	}
+	httputil.WriteError(w, r, 422, "invalid_discover_filters", "Use a valid page or page size.", false)
+	return 0, false
+}
+
+func (s *Server) discoveryViewer(r *http.Request) uuid.UUID {
+	if token := sessionToken(r); token != "" {
+		if user, err := s.identity.Authenticate(r.Context(), token); err == nil {
+			return user.ID
+		}
+	}
+	return uuid.Nil
 }

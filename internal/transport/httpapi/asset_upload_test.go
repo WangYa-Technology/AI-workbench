@@ -10,7 +10,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
+	"github.com/hcai-chat/hcai-chat/internal/accountlifecycle"
 	"github.com/hcai-chat/hcai-chat/internal/admin"
 	"github.com/hcai-chat/hcai-chat/internal/assets"
 	"github.com/hcai-chat/hcai-chat/internal/platform/config"
@@ -51,6 +53,7 @@ func TestAssetUploadScanAndAdminMediaHTTPContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	request.Header.Set("Content-Type", writer.FormDataContentType())
+	request.Header.Set("Idempotency-Key", "upload-"+time.Now().Format("150405.000000000"))
 	response, err := client.Do(request)
 	if err != nil {
 		t.Fatal(err)
@@ -113,7 +116,11 @@ func TestAssetUploadScanAndAdminMediaHTTPContract(t *testing.T) {
 	if invalidRangeResponse.StatusCode != http.StatusRequestedRangeNotSatisfiable || invalidRangeResponse.Header.Get("Content-Range") != "bytes */61" {
 		t.Fatalf("invalid asset range was accepted: status=%d range=%q", invalidRangeResponse.StatusCode, invalidRangeResponse.Header.Get("Content-Range"))
 	}
-	if err := media.NewLocalStore(mediaRoot).Delete(context.Background(), uploaded.ID.String()+".txt"); err != nil {
+	var storedKey string
+	if err := pool.QueryRow(t.Context(), `SELECT storage_key FROM assets WHERE id=$1`, uploaded.ID).Scan(&storedKey); err != nil {
+		t.Fatal(err)
+	}
+	if err := media.NewLocalStore(mediaRoot).Delete(context.Background(), storedKey); err != nil {
 		t.Fatal(err)
 	}
 	response = requestJSON(t, client, http.MethodGet, server.URL+uploaded.MediaURL, nil, nil)
@@ -157,5 +164,94 @@ func TestAssetUploadScanAndAdminMediaHTTPContract(t *testing.T) {
 	response = requestJSON(t, client, http.MethodGet, server.URL+uploaded.MediaURL, nil, nil)
 	if response.StatusCode != http.StatusNotFound {
 		t.Fatalf("rejected upload content remained exposed: %d", response.StatusCode)
+	}
+}
+
+func TestAssetUploadRejectsAccountRevokedAfterAuthentication(t *testing.T) {
+	pool, cleanup := httpTestPool(t)
+	defer cleanup()
+	ctx := t.Context()
+	server := httptest.NewServer(httpapi.New(config.Config{Environment: "test", MediaRoot: t.TempDir(), WebOrigin: "http://localhost:5173", LocalProviderEnabled: true}, pool, slog.New(slog.NewTextHandler(io.Discard, nil))))
+	defer server.Close()
+	client := testHTTPClient(t)
+	owner := registerGovernanceUser(t, client, server.URL, "upload_revocation")
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	if err = accountlifecycle.Lock(ctx, tx, owner.ID); err != nil {
+		t.Fatal(err)
+	}
+	var pid int
+	if err = tx.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&pid); err != nil {
+		t.Fatal(err)
+	}
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	if err = writer.WriteField("title", "Revoked upload"); err != nil {
+		t.Fatal(err)
+	}
+	part, err := writer.CreateFormFile("file", "revoked.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = part.Write([]byte("Uploaded before account permission changes.")); err != nil {
+		t.Fatal(err)
+	}
+	if err = writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+"/api/v1/assets/uploads", &body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	request.Header.Set("Idempotency-Key", "upload-"+time.Now().Format("150405.000000000"))
+	type outcome struct {
+		response *http.Response
+		err      error
+	}
+	result := make(chan outcome, 1)
+	go func() { r, e := client.Do(request); result <- outcome{r, e} }()
+	deadline := time.Now().Add(5 * time.Second)
+	waiting := false
+	for !waiting && time.Now().Before(deadline) {
+		select {
+		case r := <-result:
+			if r.response != nil {
+				r.response.Body.Close()
+			}
+			t.Fatalf("upload did not wait for current authorization: %v", r.err)
+		default:
+		}
+		if err = pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)))`, pid).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if !waiting {
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	if !waiting {
+		t.Fatal("upload not waiting after authentication")
+	}
+	if _, err = tx.Exec(ctx, `UPDATE users SET status='suspended' WHERE id=$1`, owner.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	r := <-result
+	if r.err != nil {
+		t.Fatal(r.err)
+	}
+	defer r.response.Body.Close()
+	if r.response.StatusCode != http.StatusForbidden {
+		b, _ := io.ReadAll(r.response.Body)
+		t.Fatalf("account revocation status=%d body=%s", r.response.StatusCode, b)
+	}
+	var count int
+	if err = pool.QueryRow(ctx, `SELECT count(*) FROM assets WHERE owner_id=$1`, owner.ID).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("revoked upload committed: %d %v", count, err)
 	}
 }

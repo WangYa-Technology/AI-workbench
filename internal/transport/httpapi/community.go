@@ -14,7 +14,7 @@ import (
 )
 
 func (s *Server) createCommunityPost(w http.ResponseWriter, r *http.Request) {
-	actor, ok := s.requirePermission(w, r, "community:interact")
+	actor, ok := s.requirePermission(w, r, "community:publish")
 	if !ok {
 		return
 	}
@@ -22,11 +22,35 @@ func (s *Server) createCommunityPost(w http.ResponseWriter, r *http.Request) {
 	if !httputil.DecodeJSON(w, r, &input) {
 		return
 	}
-	item, err := s.community.CreatePost(r.Context(), actor.ID, input)
+	item, err := s.community.CreatePost(r.Context(), actor.ID, input, r.Header.Get("Idempotency-Key"))
 	if err == nil {
 		w.Header().Set("Location", "/community/posts/"+item.ID.String())
 	}
 	s.writeCommunityResult(w, r, item, err, http.StatusCreated)
+}
+
+func (s *Server) communityCapabilities(w http.ResponseWriter, r *http.Request) {
+	settings, err := s.admin.GetSystemSettings(r.Context())
+	if err != nil {
+		s.internalError(w, r, "community capabilities", err)
+		return
+	}
+	canPublish, canInteract, canReport := false, false, false
+	if sessionToken(r) != "" {
+		if user, err := s.identity.Authenticate(r.Context(), sessionToken(r)); err == nil {
+			for _, permission := range user.Permissions {
+				switch permission {
+				case "community:publish":
+					canPublish = true
+				case "community:interact":
+					canInteract = true
+				case "community:report":
+					canReport = true
+				}
+			}
+		}
+	}
+	httputil.JSON(w, http.StatusOK, map[string]bool{"canPublish": canPublish && settings.PublishingEnabled, "canSaveDraft": canPublish, "canInteract": canInteract, "canReport": canReport, "publishingEnabled": settings.PublishingEnabled})
 }
 
 func (s *Server) getCommunityPost(w http.ResponseWriter, r *http.Request) {
@@ -35,6 +59,72 @@ func (s *Server) getCommunityPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	item, err := s.community.GetPostForViewer(r.Context(), s.optionalViewer(r), postID)
+	s.writeCommunityResult(w, r, item, err, http.StatusOK)
+}
+
+func (s *Server) getOwnedCommunityPost(w http.ResponseWriter, r *http.Request) {
+	actor, ok := s.requireUser(w, r)
+	if !ok {
+		return
+	}
+	id, ok := pathUUID(w, r, "postID")
+	if !ok {
+		return
+	}
+	item, err := s.community.GetOwnedPost(r.Context(), actor.ID, id)
+	s.writeCommunityResult(w, r, item, err, http.StatusOK)
+}
+
+func (s *Server) updateCommunityPost(w http.ResponseWriter, r *http.Request) {
+	actor, ok := s.requirePermission(w, r, "community:publish")
+	if !ok {
+		return
+	}
+	id, ok := pathUUID(w, r, "postID")
+	if !ok {
+		return
+	}
+	var input community.PostUpdateInput
+	if !httputil.DecodeJSON(w, r, &input) {
+		return
+	}
+	item, err := s.community.UpdatePost(r.Context(), actor.ID, id, input, httputil.RequestID(r.Context()))
+	s.writeCommunityResult(w, r, item, err, http.StatusOK)
+}
+
+func (s *Server) deleteCommunityPost(w http.ResponseWriter, r *http.Request) {
+	actor, ok := s.requireUser(w, r)
+	if !ok {
+		return
+	}
+	id, ok := pathUUID(w, r, "postID")
+	if !ok {
+		return
+	}
+	var input struct {
+		ExpectedVersion int `json:"expectedVersion"`
+	}
+	if !httputil.DecodeJSON(w, r, &input) {
+		return
+	}
+	err := s.community.DeletePost(r.Context(), actor.ID, id, input.ExpectedVersion, httputil.RequestID(r.Context()))
+	if err == nil {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	s.writeCommunityResult(w, r, nil, err, http.StatusOK)
+}
+
+func (s *Server) getCommunityReport(w http.ResponseWriter, r *http.Request) {
+	actor, ok := s.requirePermission(w, r, "community:report")
+	if !ok {
+		return
+	}
+	id, ok := pathUUID(w, r, "reportID")
+	if !ok {
+		return
+	}
+	item, err := s.community.GetReportForViewer(r.Context(), actor.ID, id)
 	s.writeCommunityResult(w, r, item, err, http.StatusOK)
 }
 
@@ -79,7 +169,7 @@ func (s *Server) createComment(w http.ResponseWriter, r *http.Request) {
 	if !httputil.DecodeJSON(w, r, &input) {
 		return
 	}
-	item, err := s.community.CreateComment(r.Context(), actor.ID, postID, input.Body)
+	item, err := s.community.CreateComment(r.Context(), actor.ID, postID, input.Body, r.Header.Get("Idempotency-Key"))
 	s.writeCommunityResult(w, r, item, err, http.StatusCreated)
 }
 

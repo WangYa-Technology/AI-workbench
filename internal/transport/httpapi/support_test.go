@@ -33,7 +33,7 @@ func TestSupportCopyrightLifecyclePermissions(t *testing.T) {
 	ctx := context.Background()
 	assetID, workID := uuid.New(), uuid.New()
 	if _, err := pool.Exec(ctx, `INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,scan_status,source_type,license_code)
-		VALUES($1,$2,'image','Copyright target','/media/support-target.jpg','image/jpeg','clean','demo','personal')`, assetID, creator.ID); err != nil {
+		VALUES($1,$2,'image','Copyright target','/media/support-target.jpg','image/jpeg','clean','delivery','personal')`, assetID, creator.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO works(id,author_id,asset_id,title,summary,model_name,status,ai_disclosure,published_at)

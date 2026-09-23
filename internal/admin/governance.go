@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/hcai-chat/hcai-chat/internal/notifications"
@@ -15,6 +16,7 @@ import (
 )
 
 type GovernanceReport struct {
+	Version          int        `json:"version"`
 	ID               uuid.UUID  `json:"id"`
 	ReporterID       uuid.UUID  `json:"reporterId"`
 	ReporterHandle   string     `json:"reporterHandle"`
@@ -36,7 +38,10 @@ type GovernanceReport struct {
 }
 
 type ReportResolution struct {
-	Outcome string `json:"outcome"`
+	Reason          string `json:"reason"`
+	Confirm         bool   `json:"confirm"`
+	ExpectedVersion int    `json:"expectedVersion"`
+	Outcome         string `json:"outcome"`
 }
 
 type GovernanceReportListInput struct {
@@ -54,6 +59,7 @@ type GovernanceReportPage struct {
 }
 
 type GovernanceAppeal struct {
+	Version          int        `json:"version"`
 	ID               uuid.UUID  `json:"id"`
 	ReportID         uuid.UUID  `json:"reportId"`
 	AppellantID      uuid.UUID  `json:"appellantId"`
@@ -70,7 +76,10 @@ type GovernanceAppeal struct {
 }
 
 type AppealResolution struct {
-	Decision string `json:"decision"`
+	Reason          string `json:"reason"`
+	Confirm         bool   `json:"confirm"`
+	ExpectedVersion int    `json:"expectedVersion"`
+	Decision        string `json:"decision"`
 }
 
 type GovernanceAppealListInput struct {
@@ -96,7 +105,7 @@ func (s *Service) ListReports(ctx context.Context, input GovernanceReportListInp
 	input.ResourceType = strings.ToLower(strings.TrimSpace(input.ResourceType))
 	input.Category = strings.ToLower(strings.TrimSpace(input.Category))
 	input.Status = strings.ToLower(strings.TrimSpace(input.Status))
-	if len(input.Query) > 120 || (input.ResourceType != "" && !oneOf(input.ResourceType, "work", "post", "comment")) ||
+	if utf8.RuneCountInString(input.Query) > 120 || (input.ResourceType != "" && !oneOf(input.ResourceType, "work", "post", "comment")) ||
 		(input.Category != "" && !oneOf(input.Category, "spam", "harassment", "copyright", "sexual", "violence", "misleading", "other")) ||
 		(input.Status != "" && !oneOf(input.Status, "open", "reviewing", "resolved", "dismissed")) {
 		return GovernanceReportPage{}, ErrInvalidReportFilter
@@ -148,9 +157,9 @@ func (s *Service) ListReports(ctx context.Context, input GovernanceReportListInp
 	return page, nil
 }
 
-func (s *Service) ResolveReport(ctx context.Context, actorID, reportID uuid.UUID, input ReportResolution, _ string) (GovernanceReport, error) {
+func (s *Service) ResolveReport(ctx context.Context, actorID, reportID uuid.UUID, input ReportResolution, requestID string) (GovernanceReport, error) {
 	input.Outcome = strings.TrimSpace(strings.ToLower(input.Outcome))
-	if !oneOf(input.Outcome, "no_action", "hidden", "removed") {
+	if !validContentDecision(input.Reason, input.Confirm, input.ExpectedVersion) || !oneOf(input.Outcome, "no_action", "hidden", "removed") {
 		return GovernanceReport{}, ErrInvalid
 	}
 	tx, err := s.pool.Begin(ctx)
@@ -158,23 +167,27 @@ func (s *Service) ResolveReport(ctx context.Context, actorID, reportID uuid.UUID
 		return GovernanceReport{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err := lockModeration(ctx, tx); err != nil {
+		return GovernanceReport{}, err
+	}
+	var version int
 
 	var reporterID, resourceID, subjectID uuid.UUID
 	var resourceType, status string
 	if err := tx.QueryRow(ctx, `
-		SELECT reporter_id,resource_type,resource_id,subject_author_id,status
-		FROM content_reports WHERE id=$1 FOR UPDATE`, reportID).Scan(&reporterID, &resourceType, &resourceID, &subjectID, &status); errors.Is(err, pgx.ErrNoRows) {
+		SELECT reporter_id,resource_type,resource_id,subject_author_id,status,version
+		FROM content_reports WHERE id=$1 FOR UPDATE`, reportID).Scan(&reporterID, &resourceType, &resourceID, &subjectID, &status, &version); errors.Is(err, pgx.ErrNoRows) {
 		return GovernanceReport{}, ErrNotFound
 	} else if err != nil {
 		return GovernanceReport{}, err
 	}
-	if status != "open" && status != "reviewing" {
+	if version != input.ExpectedVersion || (status != "open" && status != "reviewing") {
 		return GovernanceReport{}, ErrConflict
 	}
 
 	var previousStatus *string
 	if input.Outcome != "no_action" {
-		value, err := moderateReportedResource(ctx, tx, resourceType, resourceID, input.Outcome)
+		value, err := applyReportHold(ctx, tx, reportID, resourceType, resourceID, input.Outcome)
 		if err != nil {
 			return GovernanceReport{}, err
 		}
@@ -188,22 +201,25 @@ func (s *Service) ResolveReport(ctx context.Context, actorID, reportID uuid.UUID
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE content_reports
-		SET status=$2,outcome=$3,previous_status=$4,moderator_id=$5,resolution_reason=$6,updated_at=now(),resolved_at=now()
-		WHERE id=$1`, reportID, nextStatus, input.Outcome, previousStatus, actorID, "Administrative decision: "+input.Outcome); err != nil {
+		SET status=$2,outcome=$3,previous_status=$4,moderator_id=$5,resolution_reason=$6,updated_at=now(),resolved_at=now(),version=version+1,decision_version=decision_version+1
+		WHERE id=$1`, reportID, nextStatus, input.Outcome, previousStatus, actorID, strings.TrimSpace(input.Reason)); err != nil {
 		return GovernanceReport{}, fmt.Errorf("resolve governance report: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO governance_events(report_id,actor_id,kind,from_status,to_status,reason,metadata)
-		VALUES($1,$2,$3,$4,$5,$6,jsonb_build_object('outcome',$7::text))`, reportID, actorID, eventKind, status, nextStatus, "Administrative decision: "+input.Outcome, input.Outcome); err != nil {
+		VALUES($1,$2,$3,$4,$5,$6,jsonb_build_object('outcome',$7::text))`, reportID, actorID, eventKind, status, nextStatus, strings.TrimSpace(input.Reason), input.Outcome); err != nil {
 		return GovernanceReport{}, fmt.Errorf("record governance resolution: %w", err)
 	}
-	if err := notifyModerationDecision(ctx, tx, reporterID, reportID, "Report reviewed", reportDecisionBody(input.Outcome, true), "reporter"); err != nil {
+	if err := notifyModerationDecision(ctx, tx, reporterID, reportID, "Report reviewed", reportDecisionBody(input.Outcome, true), fmt.Sprintf("reporter:v%d", version+1)); err != nil {
 		return GovernanceReport{}, err
 	}
 	if subjectID != reporterID {
-		if err := notifyModerationDecision(ctx, tx, subjectID, reportID, "Content review completed", reportDecisionBody(input.Outcome, false), "subject"); err != nil {
+		if err := notifyModerationDecision(ctx, tx, subjectID, reportID, "Content review completed", reportDecisionBody(input.Outcome, false), fmt.Sprintf("subject:v%d", version+1)); err != nil {
 			return GovernanceReport{}, err
 		}
+	}
+	if err := contentAudit(ctx, tx, actorID, reportID, "community.report_resolved", "content_report", input.Reason, requestID, map[string]any{"status": status, "version": version}, map[string]any{"status": nextStatus, "version": version + 1, "outcome": input.Outcome}); err != nil {
+		return GovernanceReport{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return GovernanceReport{}, err
@@ -215,7 +231,7 @@ func (s *Service) ListAppeals(ctx context.Context, input GovernanceAppealListInp
 	input.Query = strings.ToLower(strings.TrimSpace(input.Query))
 	input.ResourceType = strings.ToLower(strings.TrimSpace(input.ResourceType))
 	input.Status = strings.ToLower(strings.TrimSpace(input.Status))
-	if len(input.Query) > 120 || (input.ResourceType != "" && !oneOf(input.ResourceType, "work", "post", "comment")) ||
+	if utf8.RuneCountInString(input.Query) > 120 || (input.ResourceType != "" && !oneOf(input.ResourceType, "work", "post", "comment")) ||
 		(input.Status != "" && !oneOf(input.Status, "pending", "upheld", "denied")) {
 		return GovernanceAppealPage{}, ErrInvalidAppealFilter
 	}
@@ -279,9 +295,9 @@ func decodeGovernanceCursor(value string, invalid error) (governanceCursor, erro
 	return cursor, nil
 }
 
-func (s *Service) ResolveAppeal(ctx context.Context, actorID, appealID uuid.UUID, input AppealResolution, _ string) (GovernanceAppeal, error) {
+func (s *Service) ResolveAppeal(ctx context.Context, actorID, appealID uuid.UUID, input AppealResolution, requestID string) (GovernanceAppeal, error) {
 	input.Decision = strings.TrimSpace(strings.ToLower(input.Decision))
-	if !oneOf(input.Decision, "upheld", "denied") {
+	if !validContentDecision(input.Reason, input.Confirm, input.ExpectedVersion) || !oneOf(input.Decision, "upheld", "denied") {
 		return GovernanceAppeal{}, ErrInvalid
 	}
 	tx, err := s.pool.Begin(ctx)
@@ -289,43 +305,60 @@ func (s *Service) ResolveAppeal(ctx context.Context, actorID, appealID uuid.UUID
 		return GovernanceAppeal{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err := lockModeration(ctx, tx); err != nil {
+		return GovernanceAppeal{}, err
+	}
+	var version int
 
-	var reportID, appellantID, resourceID uuid.UUID
+	var reportID, appellantID, resourceID, reporterID, subjectID uuid.UUID
 	var appealStatus, reportStatus, resourceType string
-	var previousStatus, outcome *string
+	var reportDecision, appealDecision int
+	var previousStatus, outcome, originalOutcome *string
 	if err := tx.QueryRow(ctx, `
-		SELECT a.report_id,a.appellant_id,a.status,r.status,r.resource_type,r.resource_id,r.previous_status,r.outcome
+		SELECT a.report_id,a.appellant_id,a.status,r.status,r.resource_type,r.resource_id,r.previous_status,r.outcome,a.version,r.reporter_id,r.subject_author_id,r.decision_version,a.decision_version,a.decision_outcome
 		FROM moderation_appeals a JOIN content_reports r ON r.id=a.report_id
-		WHERE a.id=$1 FOR UPDATE OF a,r`, appealID).Scan(&reportID, &appellantID, &appealStatus, &reportStatus, &resourceType, &resourceID, &previousStatus, &outcome); errors.Is(err, pgx.ErrNoRows) {
+		WHERE a.id=$1 FOR UPDATE OF a,r`, appealID).Scan(&reportID, &appellantID, &appealStatus, &reportStatus, &resourceType, &resourceID, &previousStatus, &outcome, &version, &reporterID, &subjectID, &reportDecision, &appealDecision, &originalOutcome); errors.Is(err, pgx.ErrNoRows) {
 		return GovernanceAppeal{}, ErrNotFound
 	} else if err != nil {
 		return GovernanceAppeal{}, err
 	}
-	if appealStatus != "pending" || (reportStatus != "resolved" && reportStatus != "dismissed") {
+	if (input.Decision == "upheld" && reportDecision != appealDecision) || version != input.ExpectedVersion || appealStatus != "pending" {
 		return GovernanceAppeal{}, ErrConflict
 	}
-	if input.Decision == "upheld" && outcome != nil && (*outcome == "hidden" || *outcome == "removed") {
-		if previousStatus == nil || !oneOf(*previousStatus, "draft", "published", "hidden", "removed") {
-			return GovernanceAppeal{}, ErrConflict
-		}
-		if err := restoreReportedResource(ctx, tx, resourceType, resourceID, *previousStatus); err != nil {
+	if input.Decision == "upheld" && originalOutcome == nil {
+		return GovernanceAppeal{}, ErrConflict
+	}
+	reopened := false
+	if input.Decision == "upheld" && originalOutcome != nil && (*originalOutcome == "hidden" || *originalOutcome == "removed") && outcome != nil && (*outcome == "hidden" || *outcome == "removed") {
+		if err := releaseReportHolds(ctx, tx, reportID); err != nil {
 			return GovernanceAppeal{}, err
 		}
-		if _, err := tx.Exec(ctx, `UPDATE content_reports SET status='dismissed',outcome='no_action',updated_at=now() WHERE id=$1`, reportID); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE content_reports SET status='dismissed',outcome='no_action',updated_at=now(),version=version+1 WHERE id=$1`, reportID); err != nil {
+			return GovernanceAppeal{}, err
+		}
+	}
+	if input.Decision == "upheld" && originalOutcome != nil && *originalOutcome == "no_action" && reportStatus != "reviewing" {
+		reopened = true
+		if _, err := tx.Exec(ctx, `UPDATE content_reports SET status='reviewing',outcome=NULL,moderator_id=NULL,resolution_reason=NULL,resolved_at=NULL,updated_at=now(),version=version+1 WHERE id=$1`, reportID); err != nil {
 			return GovernanceAppeal{}, err
 		}
 	}
 	if _, err := tx.Exec(ctx, `
-		UPDATE moderation_appeals SET status=$2,reviewer_id=$3,resolution_reason=$4,resolved_at=now() WHERE id=$1`, appealID, input.Decision, actorID, "Administrative decision: "+input.Decision); err != nil {
+		UPDATE moderation_appeals SET status=$2,reviewer_id=$3,resolution_reason=$4,resolved_at=now(),version=version+1 WHERE id=$1`, appealID, input.Decision, actorID, strings.TrimSpace(input.Reason)); err != nil {
 		return GovernanceAppeal{}, fmt.Errorf("resolve governance appeal: %w", err)
 	}
 	eventKind := "appeal_" + input.Decision
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO governance_events(report_id,appeal_id,actor_id,kind,from_status,to_status,reason)
-		VALUES($1,$2,$3,$4,$5,$6,$7)`, reportID, appealID, actorID, eventKind, appealStatus, input.Decision, "Administrative decision: "+input.Decision); err != nil {
+		VALUES($1,$2,$3,$4,$5,$6,$7)`, reportID, appealID, actorID, eventKind, appealStatus, input.Decision, strings.TrimSpace(input.Reason)); err != nil {
 		return GovernanceAppeal{}, fmt.Errorf("record appeal resolution: %w", err)
 	}
-	if err := notifyModerationDecision(ctx, tx, appellantID, reportID, "Appeal reviewed", appealDecisionBody(input.Decision), "appeal:"+appealID.String()); err != nil {
+	for _, recipient := range []uuid.UUID{reporterID, subjectID} {
+		if err := notifyModerationDecision(ctx, tx, recipient, reportID, "Appeal reviewed", appealDecisionBody(input.Decision, reopened), "appeal:"+appealID.String()+":"+recipient.String()); err != nil {
+			return GovernanceAppeal{}, err
+		}
+	}
+	if err := contentAudit(ctx, tx, actorID, appealID, "community.appeal_resolved", "moderation_appeal", input.Reason, requestID, map[string]any{"status": appealStatus, "version": version}, map[string]any{"status": input.Decision, "version": version + 1, "reportId": reportID}); err != nil {
 		return GovernanceAppeal{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -334,59 +367,9 @@ func (s *Service) ResolveAppeal(ctx context.Context, actorID, appealID uuid.UUID
 	return s.governanceAppeal(ctx, appealID)
 }
 
-func moderateReportedResource(ctx context.Context, tx pgx.Tx, resourceType string, resourceID uuid.UUID, status string) (string, error) {
-	var previous string
-	switch resourceType {
-	case "post":
-		var workID *uuid.UUID
-		if err := tx.QueryRow(ctx, `SELECT status,work_id FROM posts WHERE id=$1 FOR UPDATE`, resourceID).Scan(&previous, &workID); errors.Is(err, pgx.ErrNoRows) {
-			return "", ErrNotFound
-		} else if err != nil {
-			return "", err
-		}
-		if _, err := tx.Exec(ctx, `UPDATE posts SET status=$2,updated_at=now() WHERE id=$1`, resourceID, status); err != nil {
-			return "", err
-		}
-		if workID != nil {
-			if _, err := tx.Exec(ctx, `UPDATE works SET status=$2,updated_at=now() WHERE id=$1`, *workID, status); err != nil {
-				return "", err
-			}
-		}
-	case "work":
-		if err := tx.QueryRow(ctx, `SELECT status FROM works WHERE id=$1 FOR UPDATE`, resourceID).Scan(&previous); errors.Is(err, pgx.ErrNoRows) {
-			return "", ErrNotFound
-		} else if err != nil {
-			return "", err
-		}
-		if _, err := tx.Exec(ctx, `UPDATE works SET status=$2,updated_at=now() WHERE id=$1`, resourceID, status); err != nil {
-			return "", err
-		}
-		if _, err := tx.Exec(ctx, `UPDATE posts SET status=$2,updated_at=now() WHERE work_id=$1`, resourceID, status); err != nil {
-			return "", err
-		}
-	case "comment":
-		if err := tx.QueryRow(ctx, `SELECT status FROM comments WHERE id=$1 FOR UPDATE`, resourceID).Scan(&previous); errors.Is(err, pgx.ErrNoRows) {
-			return "", ErrNotFound
-		} else if err != nil {
-			return "", err
-		}
-		if _, err := tx.Exec(ctx, `UPDATE comments SET status=$2,updated_at=now() WHERE id=$1`, resourceID, status); err != nil {
-			return "", err
-		}
-	default:
-		return "", ErrInvalid
-	}
-	return previous, nil
-}
-
-func restoreReportedResource(ctx context.Context, tx pgx.Tx, resourceType string, resourceID uuid.UUID, status string) error {
-	_, err := moderateReportedResource(ctx, tx, resourceType, resourceID, status)
-	return err
-}
-
 func notifyModerationDecision(ctx context.Context, tx pgx.Tx, userID, reportID uuid.UUID, title, body, audience string) error {
 	return notifications.CreateTx(ctx, tx, notifications.CreateInput{
-		UserID: userID, Kind: "community.moderation", Title: title, Body: body, TargetPath: "/community",
+		UserID: userID, Kind: "community.moderation", Title: title, Body: body, TargetPath: "/community/reports/" + reportID.String(),
 		ResourceType: "content_report", ResourceID: &reportID, SourceKey: "moderation:" + reportID.String() + ":" + audience,
 	})
 }
@@ -412,18 +395,21 @@ func reportDecisionBody(outcome string, reporter bool) string {
 	}
 }
 
-func appealDecisionBody(decision string) string {
-	if decision == "upheld" {
-		return "Your appeal was upheld. Any moderation action from this report was reversed."
+func appealDecisionBody(decision string, reopened bool) string {
+	if reopened {
+		return "The appeal was upheld. The report has been reopened for a new review."
 	}
-	return "Your appeal was denied. The existing moderation decision remains in effect."
+	if decision == "upheld" {
+		return "The appeal was upheld. This report no longer restricts the content; other active restrictions still apply."
+	}
+	return "The appeal was denied. The existing moderation decision remains in effect."
 }
 
 const governanceReportSelect = `
 	SELECT r.id,r.reporter_id,reporter.handle,r.resource_type,r.resource_id,
 	       CASE r.resource_type WHEN 'post' THEN COALESCE(p.title,pw.title,'Community post') WHEN 'work' THEN COALESCE(w.title,'Work') ELSE 'Comment' END,
 	       r.subject_author_id,subject.handle,r.category,r.details,r.status,r.outcome,r.previous_status,r.moderator_id,
-	       r.resolution_reason,r.created_at,r.updated_at,r.resolved_at
+	       r.resolution_reason,r.created_at,r.updated_at,r.resolved_at,r.version
 	FROM content_reports r
 	JOIN users reporter ON reporter.id=r.reporter_id
 	JOIN users subject ON subject.id=r.subject_author_id
@@ -443,14 +429,14 @@ func scanGovernanceReport(row scanner) (GovernanceReport, error) {
 	var item GovernanceReport
 	err := row.Scan(&item.ID, &item.ReporterID, &item.ReporterHandle, &item.ResourceType, &item.ResourceID, &item.ResourceTitle,
 		&item.SubjectAuthorID, &item.SubjectHandle, &item.Category, &item.Details, &item.Status, &item.Outcome, &item.PreviousStatus,
-		&item.ModeratorID, &item.ResolutionReason, &item.CreatedAt, &item.UpdatedAt, &item.ResolvedAt)
+		&item.ModeratorID, &item.ResolutionReason, &item.CreatedAt, &item.UpdatedAt, &item.ResolvedAt, &item.Version)
 	return item, err
 }
 
 const governanceAppealSelect = `
 	SELECT a.id,a.report_id,a.appellant_id,u.handle,r.resource_type,r.resource_id,
 	       CASE r.resource_type WHEN 'post' THEN COALESCE(p.title,pw.title,'Community post') WHEN 'work' THEN COALESCE(w.title,'Work') ELSE 'Comment' END,
-	       a.reason,a.status,a.reviewer_id,a.resolution_reason,a.created_at,a.resolved_at
+	       a.reason,a.status,a.reviewer_id,a.resolution_reason,a.created_at,a.resolved_at,a.version
 	FROM moderation_appeals a
 	JOIN content_reports r ON r.id=a.report_id
 	JOIN users u ON u.id=a.appellant_id
@@ -469,6 +455,6 @@ func (s *Service) governanceAppeal(ctx context.Context, id uuid.UUID) (Governanc
 func scanGovernanceAppeal(row scanner) (GovernanceAppeal, error) {
 	var item GovernanceAppeal
 	err := row.Scan(&item.ID, &item.ReportID, &item.AppellantID, &item.AppellantHandle, &item.ResourceType, &item.ResourceID,
-		&item.ResourceTitle, &item.Reason, &item.Status, &item.ReviewerID, &item.ResolutionReason, &item.CreatedAt, &item.ResolvedAt)
+		&item.ResourceTitle, &item.Reason, &item.Status, &item.ReviewerID, &item.ResolutionReason, &item.CreatedAt, &item.ResolvedAt, &item.Version)
 	return item, err
 }

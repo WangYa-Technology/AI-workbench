@@ -36,7 +36,7 @@ func TestAdminGovernanceInventoriesTraverseBeyondLegacyWindow(t *testing.T) {
 	assetID, workID := uuid.New(), uuid.New()
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,scan_status,source_type,license_code,created_at)
-		VALUES($1,$2,'image','Governance source','/media/governance-source.jpg','image/jpeg','clean','demo','demo',now() - interval '5 hours')`, assetID, subjectID); err != nil {
+		VALUES($1,$2,'image','Governance source','/media/governance-source.jpg','image/jpeg','clean','delivery','personal',now() - interval '5 hours')`, assetID, subjectID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -85,7 +85,7 @@ func TestAdminGovernanceInventoriesTraverseBeyondLegacyWindow(t *testing.T) {
 	if _, err := service.ListReports(ctx, admin.GovernanceReportListInput{Cursor: "modified", Limit: 20}); !errors.Is(err, admin.ErrInvalidReportFilter) {
 		t.Fatalf("modified report cursor was accepted: %v", err)
 	}
-	resolvedReport, err := service.ResolveReport(ctx, administratorID, targetReportID, admin.ReportResolution{
+	resolvedReport, err := service.ResolveReport(ctx, administratorID, targetReportID, admin.ReportResolution{Reason: "Reviewed the evidence and selected this decision.", Confirm: true, ExpectedVersion: 1,
 		Outcome: "no_action"}, "governance-backlog-report")
 	if err != nil || resolvedReport.ID != targetReportID || resolvedReport.Status != "dismissed" {
 		t.Fatalf("exact older report resolution response failed: %#v %v", resolvedReport, err)
@@ -136,7 +136,7 @@ func TestAdminGovernanceInventoriesTraverseBeyondLegacyWindow(t *testing.T) {
 	if _, err := service.ListAppeals(ctx, admin.GovernanceAppealListInput{Cursor: "modified", Limit: 20}); !errors.Is(err, admin.ErrInvalidAppealFilter) {
 		t.Fatalf("modified appeal cursor was accepted: %v", err)
 	}
-	resolvedAppeal, err := service.ResolveAppeal(ctx, administratorID, targetAppealID, admin.AppealResolution{
+	resolvedAppeal, err := service.ResolveAppeal(ctx, administratorID, targetAppealID, admin.AppealResolution{Reason: "Reviewed the evidence and selected this decision.", Confirm: true, ExpectedVersion: 1,
 		Decision: "denied"}, "governance-backlog-appeal")
 	if err != nil || resolvedAppeal.ID != targetAppealID || resolvedAppeal.Status != "denied" || resolvedAppeal.ResolvedAt == nil {
 		t.Fatalf("exact older appeal resolution response failed: %#v %v", resolvedAppeal, err)

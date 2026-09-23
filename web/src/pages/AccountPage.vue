@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import UiEmptyState from '../components/ui/UiEmptyState.vue'
+import UiForm from '../components/ui/UiForm.vue'
 import { CheckCircle2, Copy, Download, FileKey2, Github, Globe2, KeyRound, Landmark, Laptop2, LogOut, Mail, MailCheck, Pencil, Plus, RefreshCw, Send, ShieldCheck, Smartphone, Trash2, UserRound, Webhook, X } from 'lucide-vue-next'
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -17,7 +19,7 @@ import UiIconButton from '../components/ui/UiIconButton.vue'
 import UiSelect from '../components/ui/UiSelect.vue'
 import UiStatus from '../components/ui/UiStatus.vue'
 import UiTextarea from '../components/ui/UiTextarea.vue'
-import PageHero from '../components/ui/PageHero.vue'
+import PageHeader from '../components/ui/PageHeader.vue'
 
 const { t, locale } = useI18n()
 const route = useRoute()
@@ -231,6 +233,7 @@ async function beginPayoutOnboarding() {
     // Account Links are single-use and short-lived; leave HCAI immediately for Stripe-hosted onboarding.
     globalThis.location.assign(link.url)
   } catch (reason) {
+    await loadPayoutStatus()
     error.value = messageFrom(reason)
     actionID.value = ''
   }
@@ -411,7 +414,11 @@ async function cancelDataRightsRequest(item: DataRightsRequest) {
 }
 
 function canCancel(item: DataRightsRequest) {
-  return ['queued', 'scheduled', 'blocked'].includes(item.status)
+  if (item.requestType === 'account_deletion') {
+    const deadline = item.cancelUntil ? Date.parse(item.cancelUntil) : Number.NaN
+    if (!Number.isFinite(deadline) || Date.now() >= deadline) return false
+  }
+  return ['queued', 'scheduled', 'blocked'].includes(item.status) || (item.status === 'failed' && item.requestType === 'data_export')
 }
 
 function exportURL(item: DataRightsRequest) {
@@ -472,7 +479,11 @@ async function revokeOthers() {
 }
 
 async function signOut() {
-  await session.logout()
+  error.value = ''
+  if (!await session.logout()) {
+    error.value = session.error || t('errors.codes.command_session_changed')
+    return
+  }
   notifications.clear()
   sessions.value = []
   await router.replace({ path: '/auth', query: { returnTo: route.fullPath } })
@@ -511,8 +522,8 @@ onMounted(async () => {
     </div>
 
     <template v-else-if="session.user">
-      <PageHero
-        class="account-hero"
+      <PageHeader
+        class="account-hero" stat-format="text"
         :eyebrow="t('account.accountLabel')"
         :eyebrow-icon="UserRound"
         :title="session.user.displayName"
@@ -521,7 +532,7 @@ onMounted(async () => {
         :stats-label="t('account.identityOverview')"
       >
         <template #actions>
-          <UiButton class="command-button secondary" variant="secondary" @click="signOut">
+          <UiButton class="command-button secondary" variant="secondary" :loading="session.loading" @click="signOut">
             <template #start>
               <LogOut :size="17" />
             </template>{{ t('account.signOut') }}
@@ -535,7 +546,7 @@ onMounted(async () => {
             </span>
           </div>
         </template>
-      </PageHero>
+      </PageHeader>
 
       <div class="account-workspace">
         <aside class="account-section-nav task-category-panel">
@@ -552,8 +563,8 @@ onMounted(async () => {
           <div v-if="success" class="task-feedback success account-feedback" role="status">
             <CheckCircle2 :size="18" />{{ success }}
           </div>
-          <div v-if="error" class="task-feedback error account-feedback" role="alert">
-            <RefreshCw :size="18" />{{ error }}
+          <div v-if="error || session.error" class="task-feedback error account-feedback" role="alert">
+            <RefreshCw :size="18" />{{ error || session.error }}
           </div>
 
           <div v-if="section === 'profile'" class="account-profile-overview">
@@ -720,17 +731,15 @@ onMounted(async () => {
 
             <aside><span class="settings-aside-title">{{ t('account.serviceAccounts') }}</span><p>{{ t('account.serviceAccountsSummary') }}</p></aside>
             <section class="settings-panel developer-accounts">
-              <form class="account-form developer-create" @submit.prevent="createDeveloperAccount">
+              <UiForm surface="muted" class="account-form developer-create" @submit.prevent="createDeveloperAccount">
                 <label>{{ t('account.serviceAccountName') }}<UiInput v-model="developerForm.accountName" minlength="3" maxlength="80" required /></label>
                 <UiButton class="command-button primary" variant="primary" type="submit" :loading="actionID === 'developer-account-create'" :disabled="!developerAccess?.control.enabled">
                   <template #start>
                     <Plus v-if="actionID !== 'developer-account-create'" :size="17" />
                   </template>{{ t('account.createServiceAccount') }}
                 </UiButton>
-              </form>
-              <p v-if="developerAccess && !developerAccess.accounts.length" class="inline-empty">
-                {{ t('account.noServiceAccounts') }}
-              </p>
+              </UiForm>
+              <UiEmptyState v-if="developerAccess && !developerAccess.accounts.length" density="compact" :title="t('account.noServiceAccounts')" />
               <article v-for="account in developerAccess?.accounts || []" :key="account.id" class="developer-account-row">
                 <header>
                   <div><strong>{{ account.name }}</strong><span>{{ t(`account.developerStatuses.${account.status}`) }} · v{{ account.version }}</span></div><UiButton v-if="account.status === 'active'" class="command-button secondary" variant="secondary" :loading="actionID === `developer-account-${account.id}`" :disabled="!developerForm.confirmed" @click="revokeDeveloperAccount(account)">
@@ -778,14 +787,12 @@ onMounted(async () => {
                   </template>{{ t('account.copyKey') }}
                 </UiButton>
               </div>
-              <p v-else class="inline-empty">
-                {{ t('account.noRevealedKey') }}
-              </p>
+              <UiEmptyState v-else density="compact" :title="t('account.noRevealedKey')" />
             </section>
 
             <aside><span class="settings-aside-title">{{ t('account.webhookEndpoints') }}</span><p>{{ t('account.webhookEndpointsSummary') }}</p></aside>
             <section class="settings-panel webhook-endpoints">
-              <form class="account-form webhook-create" @submit.prevent="createDeveloperWebhook">
+              <UiForm surface="muted" class="account-form webhook-create" @submit.prevent="createDeveloperWebhook">
                 <div class="form-pair">
                   <label>{{ t('account.webhookName') }}<UiInput v-model="webhookForm.name" minlength="3" maxlength="80" required /></label>
                   <label>{{ t('account.webhookUrl') }}<UiInput v-model="webhookForm.url" type="url" maxlength="2048" :placeholder="t('account.webhookUrlPlaceholder')" required /></label>
@@ -799,10 +806,8 @@ onMounted(async () => {
                     <Plus v-if="actionID !== 'webhook-create'" :size="17" />
                   </template>{{ t('account.createWebhook') }}
                 </UiButton>
-              </form>
-              <p v-if="webhookAccess && !webhookAccess.endpoints.length" class="inline-empty">
-                {{ t('account.noWebhooks') }}
-              </p>
+              </UiForm>
+              <UiEmptyState v-if="webhookAccess && !webhookAccess.endpoints.length" density="compact" :title="t('account.noWebhooks')" />
               <article v-for="endpoint in webhookAccess?.endpoints || []" :key="endpoint.id" class="webhook-endpoint-row">
                 <header>
                   <div><strong>{{ endpoint.name }}</strong><span>{{ endpoint.url }}</span><small>{{ t(`account.developerStatuses.${endpoint.status}`) }} · {{ t('account.webhookSecretVersion', { version: endpoint.currentSecretVersion, hint: endpoint.secretHint }) }}</small></div>
@@ -839,9 +844,7 @@ onMounted(async () => {
                     </UiButton>
                   </div>
                 </div>
-                <p v-else class="inline-empty">
-                  {{ t('account.noWebhookDeliveries') }}
-                </p>
+                <UiEmptyState v-else density="compact" :title="t('account.noWebhookDeliveries')" />
               </article>
               <div v-if="webhookAccess?.endpoints.some(endpoint => endpoint.status === 'active')" class="developer-danger-controls webhook-danger-controls">
                 <label>{{ t('account.operationReason') }}<UiTextarea v-model="webhookForm.reason" rows="2" minlength="10" maxlength="500" /></label>
@@ -858,9 +861,7 @@ onMounted(async () => {
                   </template>{{ t('account.copyWebhookSecret') }}
                 </UiButton>
               </div>
-              <p v-else class="inline-empty">
-                {{ t('account.noRevealedWebhookSecret') }}
-              </p>
+              <UiEmptyState v-else density="compact" :title="t('account.noRevealedWebhookSecret')" />
             </section>
           </div>
 
@@ -892,15 +893,15 @@ onMounted(async () => {
 
             <aside><span class="settings-aside-title">{{ t('account.rightsHistory') }}</span><p>{{ t('account.rightsHistorySummary') }}</p></aside>
             <section class="settings-panel data-rights-list">
-              <p v-if="!dataRightsRequests.length" class="inline-empty">
-                {{ t('account.noRightsRequests') }}
-              </p>
+              <UiEmptyState v-if="!dataRightsRequests.length" density="compact" :title="t('account.noRightsRequests')" />
               <article v-for="item in dataRightsRequests" v-else :key="item.id">
                 <div>
                   <strong>{{ t(`account.rightsTypes.${item.requestType}`) }}</strong>
                   <span>{{ t(`account.rightsStatuses.${item.status}`) }} · {{ date(item.createdAt) }}</span>
                   <small v-if="item.export">{{ bytes(item.export.sizeBytes) }} · SHA-256 {{ item.export.checksumSha256.slice(0, 16) }}… · {{ t('account.expires', { date: date(item.export.expiresAt) }) }}</small>
                   <small v-else-if="item.cancelUntil">{{ t('account.cancelUntil', { date: date(item.cancelUntil) }) }}</small>
+                  <small v-if="item.status === 'failed' && item.requestType === 'data_export'">{{ t('account.exportFailedHelp') }}</small>
+                  <small v-if="item.failureCode && ['data_export_too_large', 'data_export_record_too_large', 'data_export_storage_unavailable', 'data_export_busy'].includes(item.failureCode)">{{ t(`errors.codes.${item.failureCode}`) }}</small>
                   <small v-if="item.receipt">{{ t('account.receiptEvidence', { checksum: item.receipt.checksumSha256.slice(0, 16) }) }}</small>
                 </div>
                 <UiButton v-if="item.requestType === 'data_export' && item.status === 'ready' && item.export && !item.export.purgedAt" as="a" class="command-button secondary" variant="secondary" :href="exportURL(item)" download>
@@ -923,7 +924,7 @@ onMounted(async () => {
       </div>
 
       <UiDrawer v-model:open="profileDrawerOpen" size="md" :label="t('account.editProfile')">
-        <form class="account-profile-drawer" @submit.prevent="saveProfile">
+        <UiForm surface="muted" class="account-profile-drawer" @submit.prevent="saveProfile">
           <header>
             <div><span class="status-label">{{ t('account.accountLabel') }}</span><h2>{{ t('account.editProfile') }}</h2><p>{{ t('account.editProfileSummary') }}</p></div>
             <UiIconButton variant="ghost" :label="t('actions.close')" @click="profileDrawerOpen = false">
@@ -951,8 +952,16 @@ onMounted(async () => {
               {{ t('account.saveProfile') }}
             </UiButton>
           </footer>
-        </form>
+        </UiForm>
       </UiDrawer>
     </template>
+    <div v-else class="page-state">
+      <p v-if="error || session.error" class="form-error" role="alert">
+        {{ error || session.error }}
+      </p>
+      <UiButton as="RouterLink" :to="{ path: '/auth', query: { returnTo: route.fullPath } }">
+        {{ t('account.signIn') }}
+      </UiButton>
+    </div>
   </section>
 </template>

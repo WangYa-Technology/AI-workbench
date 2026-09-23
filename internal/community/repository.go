@@ -41,6 +41,7 @@ type Publication struct {
 }
 
 type PostCreateInput struct {
+	Draft    bool   `json:"draft"`
 	Title    string `json:"title"`
 	Body     string `json:"body"`
 	Category string `json:"category"`
@@ -87,6 +88,8 @@ type draftCursor struct {
 }
 
 type Post struct {
+	Status           string     `json:"status"`
+	Version          int        `json:"version"`
 	Category         string     `json:"category"`
 	ID               uuid.UUID  `json:"id"`
 	Title            string     `json:"title"`
@@ -109,6 +112,7 @@ type Post struct {
 }
 
 type PostListInput struct {
+	View     string
 	Sort     string
 	Query    string
 	Category string
@@ -118,6 +122,7 @@ type PostListInput struct {
 }
 
 type PostPage struct {
+	Total          int            `json:"total"`
 	CategoryCounts map[string]int `json:"categoryCounts"`
 	Items          []Post         `json:"items"`
 	NextCursor     *string        `json:"nextCursor,omitempty"`
@@ -145,14 +150,14 @@ func (r *Repository) Publish(ctx context.Context, authorID uuid.UUID, input Publ
 	input.Prompt = strings.TrimSpace(input.Prompt)
 	input.AIDisclosure = strings.TrimSpace(input.AIDisclosure)
 	input.Body = strings.TrimSpace(input.Body)
-	if input.AssetID == uuid.Nil || len(input.Title) < 3 || len(input.Title) > 120 || len(input.Summary) > 500 ||
-		len(input.Prompt) > 2000 || len(input.AIDisclosure) < 10 || len(input.AIDisclosure) > 500 || len(input.Body) > 2000 {
+	if input.AssetID == uuid.Nil || textLength(input.Title) < 3 || textLength(input.Title) > 120 || textLength(input.Summary) > 500 ||
+		textLength(input.Prompt) > 2000 || textLength(input.AIDisclosure) < 10 || textLength(input.AIDisclosure) > 500 || textLength(input.Body) > 2000 {
 		return Publication{}, ErrInvalid
 	}
 	if input.PromptVisibility == "" {
 		input.PromptVisibility = "public"
 	}
-	if input.PromptVisibility != "public" && input.PromptVisibility != "partial" && input.PromptVisibility != "private" {
+	if input.PromptVisibility != "public" && input.PromptVisibility != "private" {
 		return Publication{}, ErrInvalid
 	}
 
@@ -161,6 +166,9 @@ func (r *Repository) Publish(ctx context.Context, authorID uuid.UUID, input Publ
 		return Publication{}, fmt.Errorf("begin publication: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err := categoryTx(ctx, tx, &input.Category); err != nil {
+		return Publication{}, err
+	}
 	if err := systemsettings.RequireTx(ctx, tx, systemsettings.Publishing); err != nil {
 		return Publication{}, err
 	}
@@ -169,14 +177,17 @@ func (r *Repository) Publish(ctx context.Context, authorID uuid.UUID, input Publ
 	var scanStatus, sourceType string
 	var modelName *string
 	err = tx.QueryRow(ctx, `
-		SELECT a.owner_id,a.scan_status,a.source_type,
+		SELECT a.owner_id,a.scan_status,CASE WHEN a.license_code='task-contract' THEN 'task-grant' ELSE a.source_type END,
 		       (SELECT g.model_name FROM generations g WHERE g.output_asset_id=a.id AND g.status='succeeded' LIMIT 1)
 		FROM assets a WHERE a.id=$1 FOR UPDATE`, input.AssetID).Scan(&ownerID, &scanStatus, &sourceType, &modelName)
-	if errors.Is(err, pgx.ErrNoRows) || ownerID != authorID || scanStatus != "clean" || sourceType == "purchase" {
+	if errors.Is(err, pgx.ErrNoRows) || ownerID != authorID || scanStatus != "clean" || (sourceType == "purchase" || sourceType == "task-grant") {
 		return Publication{}, ErrForbidden
 	}
 	if err != nil {
 		return Publication{}, fmt.Errorf("load publication asset: %w", err)
+	}
+	if err := rejectProductDeliveryPublication(ctx, tx, input.AssetID); err != nil {
+		return Publication{}, err
 	}
 	var exists bool
 	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM works WHERE asset_id=$1 AND status='published')`, input.AssetID).Scan(&exists); err != nil {
@@ -217,10 +228,10 @@ func (r *Repository) Publish(ctx context.Context, authorID uuid.UUID, input Publ
 	return publication, nil
 }
 
-func (r *Repository) CreatePost(ctx context.Context, authorID uuid.UUID, input PostCreateInput) (Post, error) {
+func (r *Repository) CreatePost(ctx context.Context, authorID uuid.UUID, input PostCreateInput, keys ...string) (Post, error) {
 	input.Title = strings.TrimSpace(input.Title)
 	input.Body = strings.TrimSpace(input.Body)
-	if authorID == uuid.Nil || len(input.Title) < 3 || len(input.Title) > 120 || len(input.Body) < 2 || len(input.Body) > 2000 {
+	if authorID == uuid.Nil || !validPostInput(input) {
 		return Post{}, ErrInvalid
 	}
 	tx, err := r.pool.Begin(ctx)
@@ -228,19 +239,31 @@ func (r *Repository) CreatePost(ctx context.Context, authorID uuid.UUID, input P
 		return Post{}, fmt.Errorf("begin Community post: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if err := systemsettings.RequireTx(ctx, tx, systemsettings.Publishing); err != nil {
+	postID, replay, err := commandTx(ctx, tx, authorID, "post.create", keys, input, uuid.New())
+	if err != nil {
 		return Post{}, err
 	}
-	postID := uuid.New()
+	if replay {
+		_ = tx.Rollback(ctx)
+		return r.GetOwnedPost(ctx, authorID, postID)
+	}
+	if err := categoryTx(ctx, tx, &input.Category); err != nil {
+		return Post{}, err
+	}
+	if !input.Draft {
+		if err := systemsettings.RequireTx(ctx, tx, systemsettings.Publishing); err != nil {
+			return Post{}, err
+		}
+	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO posts(id,author_id,title,body,status,published_at,category)
-		VALUES($1,$2,$3,$4,'published',now(),$5)`, postID, authorID, input.Title, input.Body, input.Category); err != nil {
+		VALUES($1,$2,$3,$4,$6,CASE WHEN $6='published' THEN now() ELSE NULL END,$5)`, postID, authorID, input.Title, input.Body, input.Category, postInputStatus(input)); err != nil {
 		return Post{}, fmt.Errorf("insert Community post: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Post{}, fmt.Errorf("commit Community post: %w", err)
 	}
-	return r.GetPostForViewer(ctx, authorID, postID)
+	return r.GetOwnedPost(ctx, authorID, postID)
 }
 
 func (r *Repository) ListDrafts(ctx context.Context, authorID uuid.UUID, input DraftListInput) (DraftPage, error) {
@@ -305,6 +328,11 @@ func (r *Repository) SaveDraft(ctx context.Context, authorID uuid.UUID, draftID 
 		return Draft{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if draftID == nil || input.Category != "" {
+		if err := categoryTx(ctx, tx, &input.Category); err != nil {
+			return Draft{}, err
+		}
+	}
 	modelName, err := draftAsset(ctx, tx, authorID, input.AssetID, false)
 	if err != nil {
 		return Draft{}, err
@@ -470,27 +498,43 @@ func normalizeDraftInput(input *DraftInput) {
 }
 
 func validDraftInput(input DraftInput) bool {
-	return input.AssetID != uuid.Nil && len(input.Title) <= 120 && len(input.Summary) <= 500 && len(input.Prompt) <= 2000 &&
-		len(input.AIDisclosure) <= 500 && len(input.Body) <= 2000 && oneOf(input.PromptVisibility, "public", "partial", "private")
+	return input.AssetID != uuid.Nil && textLength(input.Title) <= 120 && textLength(input.Summary) <= 500 && textLength(input.Prompt) <= 2000 &&
+		textLength(input.AIDisclosure) <= 500 && textLength(input.Body) <= 2000 && oneOf(input.PromptVisibility, "public", "private")
 }
 
 func validPublicationInput(input PublishInput) bool {
-	return input.AssetID != uuid.Nil && len(strings.TrimSpace(input.Title)) >= 3 && len(input.Title) <= 120 && len(input.Summary) <= 500 &&
-		len(input.Prompt) <= 2000 && len(strings.TrimSpace(input.AIDisclosure)) >= 10 && len(input.AIDisclosure) <= 500 &&
-		len(input.Body) <= 2000 && oneOf(input.PromptVisibility, "public", "partial", "private")
+	return input.AssetID != uuid.Nil && textLength(strings.TrimSpace(input.Title)) >= 3 && textLength(input.Title) <= 120 && textLength(input.Summary) <= 500 &&
+		textLength(input.Prompt) <= 2000 && textLength(strings.TrimSpace(input.AIDisclosure)) >= 10 && textLength(input.AIDisclosure) <= 500 &&
+		textLength(input.Body) <= 2000 && oneOf(input.PromptVisibility, "public", "private")
 }
 
 func draftAsset(ctx context.Context, tx pgx.Tx, authorID, assetID uuid.UUID, requireClean bool) (string, error) {
 	var ownerID uuid.UUID
 	var scanStatus, sourceType, modelName string
-	err := tx.QueryRow(ctx, `SELECT a.owner_id,a.scan_status,a.source_type,COALESCE((SELECT g.model_name FROM generations g WHERE g.output_asset_id=a.id AND g.status='succeeded' LIMIT 1),'Imported asset') FROM assets a WHERE a.id=$1 FOR UPDATE`, assetID).Scan(&ownerID, &scanStatus, &sourceType, &modelName)
-	if errors.Is(err, pgx.ErrNoRows) || ownerID != authorID || sourceType == "purchase" || requireClean && scanStatus != "clean" {
+	err := tx.QueryRow(ctx, `SELECT a.owner_id,a.scan_status,CASE WHEN a.license_code='task-contract' THEN 'task-grant' ELSE a.source_type END,COALESCE((SELECT g.model_name FROM generations g WHERE g.output_asset_id=a.id AND g.status='succeeded' LIMIT 1),'Imported asset') FROM assets a WHERE a.id=$1 FOR UPDATE`, assetID).Scan(&ownerID, &scanStatus, &sourceType, &modelName)
+	if errors.Is(err, pgx.ErrNoRows) || ownerID != authorID || (sourceType == "purchase" || sourceType == "task-grant") || requireClean && scanStatus != "clean" {
 		return "", ErrForbidden
 	}
 	if err != nil {
 		return "", err
 	}
+	if requireClean {
+		if err := rejectProductDeliveryPublication(ctx, tx, assetID); err != nil {
+			return "", err
+		}
+	}
 	return modelName, nil
+}
+
+func rejectProductDeliveryPublication(ctx context.Context, tx pgx.Tx, assetID uuid.UUID) error {
+	var protected bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM assets a JOIN product_delivery_roots r ON r.asset_id=COALESCE(a.origin_asset_id,a.id) WHERE a.id=$1)`, assetID).Scan(&protected); err != nil {
+		return err
+	}
+	if protected {
+		return ErrForbidden
+	}
+	return nil
 }
 
 func safeRequestID(value string) string {
@@ -513,13 +557,13 @@ func (r *Repository) GetPostForViewer(ctx context.Context, viewerID, postID uuid
 	var item Post
 	err := r.pool.QueryRow(ctx, `
 		SELECT p.id,p.category,COALESCE(p.title,w.title,'Community post'),p.body,p.published_at,w.id,w.title,a.media_url,a.kind,w.ai_disclosure,u.id,u.handle,u.display_name,
-		       (SELECT count(*) FROM comments c WHERE c.post_id=p.id AND c.status='published'),
+		       (SELECT count(*) FROM comments c JOIN users cu ON cu.id=c.author_id AND cu.status='active' WHERE c.post_id=p.id AND c.status='published'),
 		       (SELECT count(*) FROM post_reactions pr WHERE pr.post_id=p.id AND pr.kind='like'),
 		       (SELECT count(*) FROM post_reactions pr WHERE pr.post_id=p.id AND pr.kind='bookmark'),
 		       EXISTS(SELECT 1 FROM post_reactions pr WHERE pr.post_id=p.id AND pr.user_id=$1 AND pr.kind='like'),
 		       EXISTS(SELECT 1 FROM post_reactions pr WHERE pr.post_id=p.id AND pr.user_id=$1 AND pr.kind='bookmark'),
-		       EXISTS(SELECT 1 FROM user_follows f WHERE f.follower_id=$1 AND f.following_id=u.id)
-		FROM posts p
+		       EXISTS(SELECT 1 FROM user_follows f WHERE f.follower_id=$1 AND f.following_id=u.id),p.status,p.version
+		FROM community_visible_posts p
 		LEFT JOIN works w ON w.id=p.work_id
 		LEFT JOIN assets a ON a.id=w.asset_id
 		JOIN users u ON u.id=p.author_id
@@ -527,7 +571,7 @@ func (r *Repository) GetPostForViewer(ctx context.Context, viewerID, postID uuid
 		  AND (p.work_id IS NULL OR (w.status='published' AND a.scan_status='clean'))`, viewerID, postID).Scan(
 		&item.ID, &item.Category, &item.Title, &item.Body, &item.PublishedAt, &item.WorkID, &item.WorkTitle, &item.MediaURL,
 		&item.MediaKind, &item.AIDisclosure, &item.AuthorID, &item.AuthorHandle, &item.AuthorName,
-		&item.CommentCount, &item.LikeCount, &item.BookmarkCount, &item.ViewerLiked, &item.ViewerBookmarked, &item.ViewerFollowing)
+		&item.CommentCount, &item.LikeCount, &item.BookmarkCount, &item.ViewerLiked, &item.ViewerBookmarked, &item.ViewerFollowing, &item.Status, &item.Version)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Post{}, ErrNotFound
 	}
@@ -535,107 +579,6 @@ func (r *Repository) GetPostForViewer(ctx context.Context, viewerID, postID uuid
 		return Post{}, fmt.Errorf("get post: %w", err)
 	}
 	return item, nil
-}
-
-func (r *Repository) ListPageForViewer(ctx context.Context, viewerID uuid.UUID, input PostListInput) (PostPage, error) {
-	if input.Sort == "" {
-		input.Sort = "latest"
-	}
-	if input.Sort != "latest" && input.Sort != "discussed" {
-		return PostPage{}, ErrInvalidPostFilter
-	}
-	if input.Limit == 0 {
-		input.Limit = 20
-	}
-	if input.Limit < 1 || input.Limit > 50 {
-		return PostPage{}, ErrInvalidPostFilter
-	}
-	var replies, likes int
-	var cursorTime *time.Time
-	var cursorID *uuid.UUID
-	if input.Cursor != "" {
-		cursor, err := decodePostCursor(input.Cursor)
-		if err != nil {
-			return PostPage{}, err
-		}
-		if cursor.Sort == "" {
-			cursor.Sort = "latest"
-		}
-		if cursor.Sort != input.Sort || cursor.Replies < 0 || cursor.Likes < 0 {
-			return PostPage{}, ErrInvalidPostFilter
-		}
-		replies, likes = cursor.Replies, cursor.Likes
-		cursorTime, cursorID = &cursor.PublishedAt, &cursor.ID
-	}
-	rows, err := r.pool.Query(ctx, `
-		SELECT p.id,p.category,COALESCE(p.title,w.title,'Community post'),p.body,p.published_at,w.id,w.title,a.media_url,a.kind,w.ai_disclosure,u.id,u.handle,u.display_name,
-		       rc.count,
-		       lc.count,
-		       (SELECT count(*) FROM post_reactions pr WHERE pr.post_id=p.id AND pr.kind='bookmark'),
-		       EXISTS(SELECT 1 FROM post_reactions pr WHERE pr.post_id=p.id AND pr.user_id=$1 AND pr.kind='like'),
-		       EXISTS(SELECT 1 FROM post_reactions pr WHERE pr.post_id=p.id AND pr.user_id=$1 AND pr.kind='bookmark'),
-		       EXISTS(SELECT 1 FROM user_follows f WHERE f.follower_id=$1 AND f.following_id=u.id)
-		FROM posts p
-		LEFT JOIN works w ON w.id=p.work_id
-		LEFT JOIN assets a ON a.id=w.asset_id
-		JOIN users u ON u.id=p.author_id
-        CROSS JOIN LATERAL (SELECT count(*) AS count FROM comments c WHERE c.post_id=p.id AND c.status='published') rc
-        CROSS JOIN LATERAL (SELECT count(*) AS count FROM post_reactions pr WHERE pr.post_id=p.id AND pr.kind='like') lc
-			WHERE p.status='published'
-			  AND (p.work_id IS NULL OR (w.status='published' AND a.scan_status='clean'))
-			  AND ($5::boolean = false OR p.author_id=$1)
-			  AND ($6='' OR p.category=$6)
-			  AND ($7='' OR concat_ws(' ',p.title,w.title,p.body,u.display_name,u.handle) ILIKE '%'||$7||'%')
-			  AND ($2::timestamptz IS NULL OR
-             ($8='latest' AND (p.published_at,p.id)<($2,$3::uuid)) OR
-             ($8='discussed' AND (rc.count,lc.count,p.published_at,p.id)<($9::bigint,$10::bigint,$2,$3::uuid)))
-			ORDER BY CASE WHEN $8='discussed' THEN rc.count END DESC, CASE WHEN $8='discussed' THEN lc.count END DESC, p.published_at DESC,p.id DESC LIMIT $4`, viewerID, cursorTime, cursorID, input.Limit+1, input.Mine, input.Category, strings.TrimSpace(input.Query), input.Sort, replies, likes)
-	if err != nil {
-		return PostPage{}, fmt.Errorf("list posts: %w", err)
-	}
-	defer rows.Close()
-	items := make([]Post, 0)
-	for rows.Next() {
-		var item Post
-		if err := rows.Scan(&item.ID, &item.Category, &item.Title, &item.Body, &item.PublishedAt, &item.WorkID, &item.WorkTitle, &item.MediaURL,
-			&item.MediaKind, &item.AIDisclosure, &item.AuthorID, &item.AuthorHandle, &item.AuthorName,
-			&item.CommentCount, &item.LikeCount, &item.BookmarkCount, &item.ViewerLiked, &item.ViewerBookmarked, &item.ViewerFollowing); err != nil {
-			return PostPage{}, fmt.Errorf("scan post: %w", err)
-		}
-		items = append(items, item)
-	}
-	if err := rows.Err(); err != nil {
-		return PostPage{}, err
-	}
-	page := PostPage{Items: items}
-	rows.Close()
-	counts, err := r.pool.Query(ctx, `SELECT p.category,count(*) FROM posts p
-		LEFT JOIN works w ON w.id=p.work_id LEFT JOIN assets a ON a.id=w.asset_id JOIN users u ON u.id=p.author_id
-		WHERE p.status='published' AND (p.work_id IS NULL OR (w.status='published' AND a.scan_status='clean'))
-		AND ($2::boolean=false OR p.author_id=$1)
-		AND ($3='' OR concat_ws(' ',p.title,w.title,p.body,u.display_name,u.handle) ILIKE '%'||$3||'%') GROUP BY p.category`, viewerID, input.Mine, strings.TrimSpace(input.Query))
-	if err != nil {
-		return PostPage{}, err
-	}
-	defer counts.Close()
-	page.CategoryCounts = map[string]int{}
-	for counts.Next() {
-		var category string
-		var count int
-		if err := counts.Scan(&category, &count); err != nil {
-			return PostPage{}, err
-		}
-		page.CategoryCounts[category] = count
-	}
-	if err := counts.Err(); err != nil {
-		return PostPage{}, err
-	}
-	if len(page.Items) > input.Limit {
-		page.Items = page.Items[:input.Limit]
-		cursor := encodePostCursor(page.Items[len(page.Items)-1], input.Sort)
-		page.NextCursor = &cursor
-	}
-	return page, nil
 }
 
 func nullable(value string) any {

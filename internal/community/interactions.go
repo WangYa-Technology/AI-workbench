@@ -132,8 +132,8 @@ func (r *Repository) ListComments(ctx context.Context, postID uuid.UUID, input C
 	rows, err := r.pool.Query(ctx, `
 		SELECT c.id,c.post_id,c.body,c.status,u.id,u.handle,u.display_name,c.created_at
 		FROM comments c JOIN users u ON u.id=c.author_id
-		JOIN posts p ON p.id=c.post_id AND p.status='published'
-		WHERE c.post_id=$1 AND c.status='published'
+		JOIN community_visible_posts p ON p.id=c.post_id AND p.status='published'
+		WHERE c.post_id=$1 AND c.status='published' AND u.status='active'
 		  AND ($2::timestamptz IS NULL OR (c.created_at,c.id)>($2,$3::uuid))
 		ORDER BY c.created_at ASC,c.id ASC LIMIT $4`, postID, cursorTime, cursorID, input.Limit+1)
 	if err != nil {
@@ -160,9 +160,9 @@ func (r *Repository) ListComments(ctx context.Context, postID uuid.UUID, input C
 	return page, nil
 }
 
-func (r *Repository) CreateComment(ctx context.Context, actorID, postID uuid.UUID, body string) (Comment, error) {
+func (r *Repository) CreateComment(ctx context.Context, actorID, postID uuid.UUID, body string, keys ...string) (Comment, error) {
 	body = strings.TrimSpace(body)
-	if len(body) < 2 || len(body) > 1000 {
+	if textLength(body) < 2 || textLength(body) > 1000 {
 		return Comment{}, ErrInvalid
 	}
 	tx, err := r.pool.Begin(ctx)
@@ -170,6 +170,9 @@ func (r *Repository) CreateComment(ctx context.Context, actorID, postID uuid.UUI
 		return Comment{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err := visiblePostTx(ctx, tx, postID); err != nil {
+		return Comment{}, err
+	}
 	var postAuthorID uuid.UUID
 	var postTitle string
 	if err := tx.QueryRow(ctx, `
@@ -181,7 +184,18 @@ func (r *Repository) CreateComment(ctx context.Context, actorID, postID uuid.UUI
 		return Comment{}, err
 	}
 	var item Comment
-	item.ID = uuid.New()
+	var replay bool
+	item.ID, replay, err = commandTx(ctx, tx, actorID, "comment.create", keys, struct {
+		PostID uuid.UUID
+		Body   string
+	}{postID, body}, uuid.New())
+	if err != nil {
+		return Comment{}, err
+	}
+	if replay {
+		err = tx.QueryRow(ctx, `SELECT c.post_id,c.body,c.status,c.created_at,u.id,u.handle,u.display_name FROM comments c JOIN users u ON u.id=c.author_id WHERE c.id=$1 AND c.author_id=$2`, item.ID, actorID).Scan(&item.PostID, &item.Body, &item.Status, &item.CreatedAt, &item.AuthorID, &item.AuthorHandle, &item.AuthorName)
+		return item, err
+	}
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO comments(id,post_id,author_id,body,status) VALUES($1,$2,$3,$4,'published')
 		RETURNING post_id,body,status,created_at`, item.ID, postID, actorID, body).Scan(&item.PostID, &item.Body, &item.Status, &item.CreatedAt); err != nil {
@@ -214,6 +228,9 @@ func (r *Repository) SetReaction(ctx context.Context, actorID, postID uuid.UUID,
 		return InteractionState{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err := visiblePostTx(ctx, tx, postID); err != nil {
+		return InteractionState{}, err
+	}
 	var exists bool
 	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM posts p LEFT JOIN works w ON w.id=p.work_id WHERE p.id=$1 AND p.status='published' AND (p.work_id IS NULL OR w.status='published'))`, postID).Scan(&exists); err != nil {
 		return InteractionState{}, err
@@ -260,13 +277,13 @@ func (r *Repository) SetFollow(ctx context.Context, actorID, authorID uuid.UUID,
 			return FollowState{}, err
 		}
 		if result.RowsAffected() == 1 {
-			var followerName string
-			if err := tx.QueryRow(ctx, `SELECT display_name FROM users WHERE id=$1`, actorID).Scan(&followerName); err != nil {
+			var followerName, followerHandle string
+			if err := tx.QueryRow(ctx, `SELECT display_name,handle FROM users WHERE id=$1`, actorID).Scan(&followerName, &followerHandle); err != nil {
 				return FollowState{}, err
 			}
 			if err := notifications.CreateTx(ctx, tx, notifications.CreateInput{
 				UserID: authorID, Kind: "community.follow", Title: "New follower", Body: followerName + " followed your Community work.",
-				TargetPath: "/community", ResourceType: "user", ResourceID: &actorID, SourceKey: "follow:" + actorID.String() + ":" + authorID.String(),
+				TargetPath: "/creators/" + followerHandle, ResourceType: "user", ResourceID: &actorID, SourceKey: "follow:" + actorID.String() + ":" + authorID.String(),
 			}); err != nil {
 				return FollowState{}, err
 			}
@@ -283,7 +300,7 @@ func (r *Repository) SetFollow(ctx context.Context, actorID, authorID uuid.UUID,
 func (r *Repository) ReportPost(ctx context.Context, actorID, postID uuid.UUID, input ReportInput) (Report, error) {
 	input.Category = strings.TrimSpace(strings.ToLower(input.Category))
 	input.Details = strings.TrimSpace(input.Details)
-	if !oneOf(input.Category, "spam", "harassment", "copyright", "sexual", "violence", "misleading", "other") || len(input.Details) < 10 || len(input.Details) > 1000 {
+	if !oneOf(input.Category, "spam", "harassment", "copyright", "sexual", "violence", "misleading", "other") || textLength(input.Details) < 10 || textLength(input.Details) > 1000 {
 		return Report{}, ErrInvalid
 	}
 	tx, err := r.pool.Begin(ctx)
@@ -291,6 +308,9 @@ func (r *Repository) ReportPost(ctx context.Context, actorID, postID uuid.UUID, 
 		return Report{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err := visiblePostTx(ctx, tx, postID); err != nil {
+		return Report{}, err
+	}
 	var authorID uuid.UUID
 	var title, handle string
 	if err := tx.QueryRow(ctx, `SELECT p.author_id,COALESCE(p.title,w.title,'Community post'),u.handle FROM posts p LEFT JOIN works w ON w.id=p.work_id JOIN users u ON u.id=p.author_id WHERE p.id=$1 AND p.status='published' AND (p.work_id IS NULL OR w.status='published')`, postID).Scan(&authorID, &title, &handle); errors.Is(err, pgx.ErrNoRows) {
@@ -374,7 +394,7 @@ func (r *Repository) ListMyReports(ctx context.Context, actorID uuid.UUID, input
 
 func (r *Repository) CreateAppeal(ctx context.Context, actorID, reportID uuid.UUID, reason string) (Appeal, error) {
 	reason = strings.TrimSpace(reason)
-	if len(reason) < 10 || len(reason) > 1000 {
+	if textLength(reason) < 10 || textLength(reason) > 1000 {
 		return Appeal{}, ErrInvalid
 	}
 	tx, err := r.pool.Begin(ctx)
@@ -384,7 +404,9 @@ func (r *Repository) CreateAppeal(ctx context.Context, actorID, reportID uuid.UU
 	defer func() { _ = tx.Rollback(ctx) }()
 	var reporterID, subjectID uuid.UUID
 	var reportStatus string
-	if err := tx.QueryRow(ctx, `SELECT reporter_id,subject_author_id,status FROM content_reports WHERE id=$1 FOR UPDATE`, reportID).Scan(&reporterID, &subjectID, &reportStatus); errors.Is(err, pgx.ErrNoRows) {
+	var decisionVersion int
+	var decisionOutcome *string
+	if err := tx.QueryRow(ctx, `SELECT reporter_id,subject_author_id,status,decision_version,outcome FROM content_reports WHERE id=$1 FOR UPDATE`, reportID).Scan(&reporterID, &subjectID, &reportStatus, &decisionVersion, &decisionOutcome); errors.Is(err, pgx.ErrNoRows) {
 		return Appeal{}, ErrNotFound
 	} else if err != nil {
 		return Appeal{}, err
@@ -397,9 +419,9 @@ func (r *Repository) CreateAppeal(ctx context.Context, actorID, reportID uuid.UU
 	}
 	item := Appeal{ID: uuid.New(), ReportID: reportID, AppellantID: actorID, Reason: reason, Status: "pending"}
 	if err := tx.QueryRow(ctx, `
-		INSERT INTO moderation_appeals(id,report_id,appellant_id,reason) VALUES($1,$2,$3,$4)
-		RETURNING created_at`, item.ID, reportID, actorID, reason).Scan(&item.CreatedAt); err != nil {
-		if isUniqueViolation(err, "moderation_appeals_report_id_appellant_id_key") {
+		INSERT INTO moderation_appeals(id,report_id,appellant_id,reason,decision_version,decision_outcome) VALUES($1,$2,$3,$4,$5,$6)
+		RETURNING created_at`, item.ID, reportID, actorID, reason, decisionVersion, decisionOutcome).Scan(&item.CreatedAt); err != nil {
+		if isUniqueViolation(err, "moderation_appeals_actor_decision_key") {
 			return Appeal{}, ErrConflict
 		}
 		return Appeal{}, err
@@ -426,7 +448,7 @@ const reportSelect = `
 		LEFT JOIN posts p ON r.resource_type='post' AND p.id=r.resource_id
 		LEFT JOIN works w ON w.id=p.work_id
 		LEFT JOIN works ww ON r.resource_type='work' AND ww.id=r.resource_id
-		LEFT JOIN moderation_appeals a ON a.report_id=r.id
+		LEFT JOIN moderation_appeals a ON a.report_id=r.id AND a.appellant_id=$1 AND a.decision_version=r.decision_version
 		LEFT JOIN users au ON au.id=a.appellant_id `
 
 func scanReport(row pgx.Row, actorID uuid.UUID) (Report, error) {
@@ -446,6 +468,10 @@ func scanReport(row pgx.Row, actorID uuid.UUID) (Report, error) {
 		item.Appeal = &Appeal{ID: *appealID, ReportID: item.ID, AppellantID: *appellantID, AppellantHandle: value(appealHandle), Reason: *appealReason, Status: *appealStatus, ResolutionReason: appealResolution, CreatedAt: *appealCreated, ResolvedAt: appealResolved}
 	}
 	item.ViewerCanAppeal = (actorID == item.ReporterID || actorID == item.SubjectAuthorID) && (item.Status == "resolved" || item.Status == "dismissed") && item.Appeal == nil
+	if actorID != item.ReporterID {
+		item.ReporterID = uuid.Nil
+		item.Details = ""
+	}
 	return item, nil
 }
 

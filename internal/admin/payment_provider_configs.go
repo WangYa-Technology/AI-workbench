@@ -92,13 +92,32 @@ func (s *Service) UpdatePaymentProviderConfig(ctx context.Context, actorID uuid.
 }
 
 func (s *Service) UpdatePaymentProviderConfigWithDeployment(ctx context.Context, actorID uuid.UUID, provider string, input PaymentProviderConfigUpdate, requestID string, deployment *PaymentProviderDeploymentStatus) (PaymentProviderConfig, error) {
+	item, err := s.updatePaymentProviderConfigWithDeployment(ctx, actorID, provider, input, requestID, deployment)
+	return item, financeCommandError(err)
+}
+
+func (s *Service) updatePaymentProviderConfigWithDeployment(ctx context.Context, actorID uuid.UUID, provider string, input PaymentProviderConfigUpdate, requestID string, deployment *PaymentProviderDeploymentStatus) (PaymentProviderConfig, error) {
 	provider = strings.ToLower(strings.TrimSpace(provider))
-	if !oneOfAdmin(provider, "stripe", "waffo_pancake", "epay") {
+	if actorID == uuid.Nil || !oneOfAdmin(provider, "stripe", "waffo_pancake", "epay") {
 		return PaymentProviderConfig{}, ErrInvalid
+	}
+	// Serialize all provider switches, including first-time rows. Read the
+	// current configuration only after acquiring the lock so partial updates
+	// cannot restore stale fields or enable two providers concurrently.
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	if err != nil {
+		return PaymentProviderConfig{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := financeAuthorityTx(ctx, tx, actorID, false); err != nil {
+		return PaymentProviderConfig{}, err
+	}
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('admin:payment-provider-config',0))`); err != nil {
+		return PaymentProviderConfig{}, err
 	}
 	current := PaymentProviderConfig{Provider: provider, Environment: "test"}
 	var existingID uuid.UUID
-	err := s.pool.QueryRow(ctx, `SELECT id,enabled,environment,merchant_id,store_id,product_id_onetime,product_id_subscription,secret_configured,connector_configured FROM payment_provider_configs WHERE provider=$1`, provider).Scan(
+	err = tx.QueryRow(ctx, `SELECT id,enabled,environment,merchant_id,store_id,product_id_onetime,product_id_subscription,secret_configured,connector_configured FROM payment_provider_configs WHERE provider=$1 FOR UPDATE`, provider).Scan(
 		&existingID, &current.Enabled, &current.Environment, &current.MerchantID, &current.StoreID, &current.ProductIDOnetime, &current.ProductIDSubscription, &current.SecretConfigured, &current.ConnectorConfigured)
 	if errors.Is(err, pgx.ErrNoRows) {
 		current.ID = uuid.New()
@@ -144,21 +163,19 @@ func (s *Service) UpdatePaymentProviderConfigWithDeployment(ctx context.Context,
 	if err != nil {
 		return PaymentProviderConfig{}, err
 	}
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
+	if err := financeAuthorityTx(ctx, tx, actorID, true); err != nil {
 		return PaymentProviderConfig{}, err
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
 	if current.Enabled {
 		if _, err := tx.Exec(ctx, `UPDATE payment_provider_configs SET enabled=false,updated_at=now(),updated_by=$1 WHERE provider<>$2 AND enabled=true`, actorID, provider); err != nil {
 			return PaymentProviderConfig{}, err
 		}
 	}
-	if _, err := tx.Exec(ctx, `
+	if err := tx.QueryRow(ctx, `
 		INSERT INTO payment_provider_configs(id,provider,enabled,environment,merchant_id,store_id,product_id_onetime,product_id_subscription,secret_configured,connector_configured,created_by,updated_by)
 		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11)
-		ON CONFLICT(provider) DO UPDATE SET enabled=EXCLUDED.enabled,environment=EXCLUDED.environment,merchant_id=EXCLUDED.merchant_id,store_id=EXCLUDED.store_id,product_id_onetime=EXCLUDED.product_id_onetime,product_id_subscription=EXCLUDED.product_id_subscription,secret_configured=EXCLUDED.secret_configured,connector_configured=EXCLUDED.connector_configured,updated_by=EXCLUDED.updated_by,updated_at=now()`,
-		current.ID, provider, current.Enabled, current.Environment, current.MerchantID, current.StoreID, current.ProductIDOnetime, current.ProductIDSubscription, current.SecretConfigured, current.ConnectorConfigured, actorID); err != nil {
+		ON CONFLICT(provider) DO UPDATE SET enabled=EXCLUDED.enabled,environment=EXCLUDED.environment,merchant_id=EXCLUDED.merchant_id,store_id=EXCLUDED.store_id,product_id_onetime=EXCLUDED.product_id_onetime,product_id_subscription=EXCLUDED.product_id_subscription,secret_configured=EXCLUDED.secret_configured,connector_configured=EXCLUDED.connector_configured,updated_by=EXCLUDED.updated_by,updated_at=now() RETURNING id`,
+		current.ID, provider, current.Enabled, current.Environment, current.MerchantID, current.StoreID, current.ProductIDOnetime, current.ProductIDSubscription, current.SecretConfigured, current.ConnectorConfigured, actorID).Scan(&current.ID); err != nil {
 		return PaymentProviderConfig{}, err
 	}
 	if _, err := tx.Exec(ctx, `INSERT INTO audit_events(actor_id,action,resource_type,resource_id,reason,request_id,metadata) VALUES($1,'admin.payment_provider_config_updated','payment_provider_config',$2,'Administrator updated payment Provider configuration',$3,$4)`, actorID, current.ID, requestID, configurationJSON); err != nil {

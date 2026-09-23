@@ -1,4 +1,9 @@
 <script setup lang="ts">
+import { textWithin } from '../lib/unicodeText'
+import CommunityPostDrawer from '../components/domain/CommunityPostDrawer.vue'
+import { readCommentDraft, saveCommentDraft } from '../lib/communityDrafts'
+import UiEmptyState from '../components/ui/UiEmptyState.vue'
+import DetailToolbar from '../components/ui/DetailToolbar.vue'
 import { ArrowLeft, ArrowRight, Flag, LoaderCircle, MessageCircle, MoreHorizontal, RefreshCw, Sparkles, UserPlus, X } from 'lucide-vue-next'
 import { onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -21,10 +26,12 @@ const router = useRouter()
 const session = useSessionStore()
 const post = ref<CommunityPost | null>(null)
 const categories = ref<TaskType[]>([])
+const capabilities = ref<Awaited<ReturnType<typeof api.communityCapabilities>> | null>(null)
 const categoryName = (code?: string) => { const item = categories.value.find(i => i.code === code); return item ? (locale.value.startsWith('zh') ? item.nameZh : item.nameEn) : code || '' }
 const comments = ref<CommunityComment[]>([])
 const commentNextCursor = ref<string | null>(null)
 const commentDraft = ref('')
+const editing = ref(false)
 const loading = ref(true)
 const commentLoadingMore = ref(false)
 const actionLoading = ref('')
@@ -72,13 +79,15 @@ async function load() {
   try {
     await session.ensure()
     if (version !== loadVersion) return
-    const [postItem, commentPage, directory] = await Promise.all([
+    const [postItem, commentPage, directory, ability] = await Promise.all([
       api.getCommunityPost(postId),
       api.listCommunityComments(postId, { limit: 20 }),
       api.listTaskTypes('community'),
+      api.communityCapabilities(),
     ])
     if (version !== loadVersion) return
     post.value = postItem
+    capabilities.value = ability
     categories.value = directory.items
     comments.value = commentPage.items
     commentNextCursor.value = commentPage.nextCursor || null
@@ -125,7 +134,7 @@ async function follow() {
 async function addComment() {
   if (!post.value || !await requireAccount()) return
   const body = commentDraft.value.trim()
-  if (!body) return
+  if (!textWithin(body, 2, 1000)) { commentError.value = t('community.textLengthError'); return }
   const version = loadVersion
   actionLoading.value = 'comment'
   commentError.value = ''
@@ -167,6 +176,7 @@ async function openReport() {
 
 async function submitReport() {
   if (!post.value) return
+  if (!textWithin(reportForm.details, 10, 1000)) { feedback.value = t('community.textLengthError'); return }
   const version = loadVersion
   actionLoading.value = 'report'
   feedback.value = ''
@@ -182,24 +192,20 @@ async function submitReport() {
   }
 }
 
-watch(() => route.params.id, () => {
-  try { commentDraft.value = globalThis.sessionStorage.getItem(`community-draft:${route.params.id}`) || '' } catch { commentDraft.value = '' }
+watch(() => [route.params.id, session.user?.id], () => {
+  commentDraft.value = readCommentDraft(String(route.params.id))
   void load()
 }, { immediate: true })
-watch(commentDraft, value => {
-  try {
-    const key = `community-draft:${route.params.id}`
-    if (value) globalThis.sessionStorage.setItem(key, value)
-    else globalThis.sessionStorage.removeItem(key)
-  } catch { /* Storage may be disabled; editing remains available. */ }
-})
+watch(commentDraft, value => saveCommentDraft(String(route.params.id), value), { flush: 'sync' })
 </script>
 
 <template>
   <section class="community-post-page content-width">
-    <RouterLink class="text-link community-post-back" :to="contentListReturn('/community')">
-      <ArrowLeft :size="15" :stroke-width="1.75" />{{ t('community.backToCommunity') }}
-    </RouterLink>
+    <DetailToolbar class="community-post-toolbar">
+      <RouterLink class="text-link community-post-back" :to="contentListReturn('/community')">
+        <ArrowLeft :size="15" :stroke-width="1.75" />{{ t('community.backToCommunity') }}
+      </RouterLink>
+    </DetailToolbar>
 
     <div v-if="loading" class="page-state" aria-live="polite">
       <LoaderCircle class="spin" :size="18" />{{ t('community.loadingPost') }}
@@ -212,38 +218,42 @@ watch(commentDraft, value => {
         </template>{{ t('actions.retry') }}
       </UiButton>
     </div>
-    <div v-else-if="post" class="community-post-layout" :class="{ 'is-standalone': !post.workId }">
+    <div v-else-if="post" class="community-post-layout" :class="{ 'is-standalone': !(post.workId && post.workTitle && post.mediaUrl && post.mediaKind) }">
+      <header class="community-post-heading">
+        <h1>{{ post.title }}</h1>
+        <header class="community-post-author">
+          <RouterLink class="community-post-avatar" :to="`/creators/${post.authorHandle}`" :aria-label="post.authorName">
+            {{ post.authorName.slice(0, 1) }}
+          </RouterLink>
+          <div>
+            <RouterLink :to="`/creators/${post.authorHandle}`">
+              <strong>{{ post.authorName }}</strong>
+              <small>@{{ post.authorHandle }}</small>
+            </RouterLink>
+            <span>{{ categoryName(post.category) }} · {{ formatMediaKind(post.mediaKind) }}</span>
+          </div>
+          <time :datetime="post.publishedAt">{{ formatPublishedAt(post.publishedAt) }}</time>
+          <UiButton v-if="session.user?.id !== post.authorId && (!session.user || capabilities?.canInteract)" variant="secondary" type="button" :loading="actionLoading === 'follow'" @click="follow">
+            <UserPlus :size="16" />{{ post.viewerFollowing ? t('community.following') : t('community.follow') }}
+          </UiButton>
+        </header>
+      </header>
       <div class="community-post-main">
         <article class="community-post-article">
-          <header class="community-post-author">
-            <RouterLink class="community-post-avatar" :to="`/creators/${post.authorHandle}`" :aria-label="post.authorName">
-              {{ post.authorName.slice(0, 1) }}
-            </RouterLink>
-            <div>
-              <RouterLink :to="`/creators/${post.authorHandle}`">
-                <strong>{{ post.authorName }}</strong>
-                <small>@{{ post.authorHandle }}</small>
-              </RouterLink>
-              <span>{{ categoryName(post.category) }} · {{ formatMediaKind(post.mediaKind) }}</span>
-            </div>
-            <time :datetime="post.publishedAt">{{ formatPublishedAt(post.publishedAt) }}</time>
-            <UiButton v-if="session.user?.id !== post.authorId" variant="secondary" type="button" :loading="actionLoading === 'follow'" @click="follow">
-              <UserPlus :size="16" />{{ post.viewerFollowing ? t('community.following') : t('community.follow') }}
-            </UiButton>
-          </header>
-
-          <h1>{{ post.title }}</h1>
           <MarkdownContent class="community-post-body" :source="post.body" />
 
           <div class="community-post-actions" :aria-label="t('community.postActions')">
-            <UiButton variant="ghost" type="button" :class="{ active: post.viewerLiked }" :disabled="actionLoading === 'like'" :loading="actionLoading === 'like'" @click="react('like')">
+            <UiButton variant="ghost" type="button" :class="{ active: post.viewerLiked }" :disabled="actionLoading === 'like' || Boolean(session.user && !capabilities?.canInteract)" :loading="actionLoading === 'like'" @click="react('like')">
               <MotionFavoriteIcon :active="post.viewerLiked" kind="heart" :size="16" />{{ t('community.like') }} <span>{{ post.likeCount }}</span>
             </UiButton>
-            <UiButton variant="ghost" type="button" :class="{ active: post.viewerBookmarked }" :disabled="actionLoading === 'bookmark'" :loading="actionLoading === 'bookmark'" @click="react('bookmark')">
+            <UiButton variant="ghost" type="button" :class="{ active: post.viewerBookmarked }" :disabled="actionLoading === 'bookmark' || Boolean(session.user && !capabilities?.canInteract)" :loading="actionLoading === 'bookmark'" @click="react('bookmark')">
               <MotionFavoriteIcon :active="post.viewerBookmarked" kind="bookmark" :size="16" />{{ t('community.bookmark') }} <span>{{ post.bookmarkCount }}</span>
             </UiButton>
             <a class="text-link" href="#post-comments"><MessageCircle :size="16" />{{ t('community.comments') }} {{ post.commentCount }}</a>
-            <UiDropdownMenu v-if="session.user?.id !== post.authorId" class="post-more" :label="t('content.more')">
+            <UiButton v-if="session.user?.id === post.authorId && !post.workId" variant="ghost" @click="editing = true">
+              {{ t('community.editPost') }}
+            </UiButton>
+            <UiDropdownMenu v-if="session.user?.id !== post.authorId && (!session.user || capabilities?.canReport)" class="post-more" :label="t('content.more')">
               <template #trigger>
                 <MoreHorizontal :size="18" />
               </template>
@@ -265,7 +275,7 @@ watch(commentDraft, value => {
               </UiIconButton>
             </header>
             <label>{{ t('community.reportCategory') }}<UiSelect v-model="reportForm.category"><option v-for="category in ['spam','harassment','copyright','sexual','violence','misleading','other']" :key="category" :value="category">{{ t(`community.reportCategories.${category}`) }}</option></UiSelect></label>
-            <label>{{ t('community.reportDetails') }}<UiTextarea v-model="reportForm.details" rows="3" minlength="10" maxlength="1000" required /></label>
+            <label>{{ t('community.reportDetails') }}<UiTextarea v-model="reportForm.details" rows="3" required /></label>
             <UiButton class="command-button secondary" variant="secondary" type="submit" :loading="actionLoading === 'report'">
               {{ t('community.submitReport') }}
             </UiButton>
@@ -315,18 +325,16 @@ watch(commentDraft, value => {
             </div>
           </article>
         </div>
-        <p v-else class="community-comments-empty">
-          {{ t('community.noComments') }}
-        </p>
+        <UiEmptyState v-else density="compact" :title="t('community.noComments')" />
 
         <UiButton v-if="commentNextCursor" class="command-button secondary community-comment-load-more" variant="secondary" :loading="commentLoadingMore" @click="loadMoreComments">
           {{ t('actions.loadMore') }}
         </UiButton>
 
-        <form class="community-comment-composer" @submit.prevent="addComment">
+        <form v-if="!session.user || capabilities?.canInteract" class="community-comment-composer" @submit.prevent="addComment">
           <label for="community-comment">{{ t('content.discussion') }}</label>
           <div class="community-comment-field">
-            <UiTextarea id="community-comment" v-model="commentDraft" name="body" rows="3" minlength="2" maxlength="1000" required :placeholder="t('community.commentPlaceholder')" />
+            <UiTextarea id="community-comment" v-model="commentDraft" name="body" rows="3" required :placeholder="t('community.commentPlaceholder')" />
             <div>
               <UiButton class="command-button" variant="primary" type="submit" :loading="actionLoading === 'comment'">
                 <template #start>
@@ -339,18 +347,29 @@ watch(commentDraft, value => {
       </section>
     </div>
   </section>
+  <CommunityPostDrawer v-if="post" v-model:open="editing" :post-id="post.id" @created="load" @deleted="router.push('/community?view=mine')" />
 </template>
 
 <style scoped>
-.community-post-layout { grid-template-columns: minmax(0, 740px) minmax(220px, 280px); gap: 0 24px; justify-content: center; }
-.community-post-layout.is-standalone { grid-template-columns: minmax(0, 800px); }
+.community-post-page { --content-max: 1400px; padding-top: 0; }
+.community-post-back { min-height: 40px; margin: 0; font-size: 13px; color: var(--text-secondary); }
+.community-post-layout { grid-template-columns: minmax(0, 1fr) 288px; grid-template-areas: "heading heading" "post context" "comments context"; gap: 24px; }
+.community-post-heading { grid-area: heading; min-width: 0; padding: 24px; border: 1px solid var(--border); border-radius: var(--radius-surface); background: var(--surface); }
+.community-post-heading h1 { margin: 0 0 20px; font-size: 32px; line-height: 1.3; overflow-wrap: anywhere; }
+.community-post-article, .community-comments { padding: 24px; border: 1px solid var(--border); border-radius: var(--radius-surface); background: var(--surface); }
+.community-post-actions { margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--border); }
+.community-comments > header { margin-bottom: 16px; }
+.community-comments > header h2 { font-size: 18px; }
+.community-post-context { position: static; }
+.community-post-context p { display: block; overflow: visible; }
+.community-post-layout.is-standalone { grid-template-columns: minmax(0, 1fr); grid-template-areas: "heading" "post" "comments"; }
 .community-post-author { grid-template-columns: 36px minmax(0, 1fr) auto auto; }
 .community-post-author > div { flex-wrap: wrap; }
 .community-post-author > div > a { flex-wrap: wrap; max-width: 100%; overflow-wrap: anywhere; }
 .community-post-author strong, .community-post-author small { min-width: 0; max-width: 100%; }
 .community-post-author strong { font-size: 13px; }
 .community-post-author small, .community-post-author span, .community-post-author time { font-size: 12px; }
-.community-post-article h1 { font-size: clamp(25px, 2.4vw, 32px); line-height: 1.35; overflow-wrap: anywhere; }
+
 .community-post-body { max-width: none; color: var(--text); font-size: 15px; line-height: 1.8; white-space: normal; overflow-wrap: anywhere; }
 .community-post-body :deep(pre) { max-width: 100%; overflow-x: auto; }
 .community-post-actions button, .community-post-actions > a { min-height: 38px; font-size: 13px; }
@@ -363,7 +382,7 @@ watch(commentDraft, value => {
 .community-comment-list article strong, .community-comment-list article small, .community-comment-list article time, .community-comments-empty { font-size: 12px; }
 .community-comment-composer label { font-size: 13px; }
 .community-comment-composer .command-button { min-height: 38px; font-size: 13px; background: var(--accent); color: white; border-color: transparent; }
-.community-comments { scroll-margin-top: 24px; }
-@media(max-width: 1000px) { .community-post-layout { grid-template-columns: minmax(0, 1fr); grid-template-areas: 'post' 'context' 'comments'; gap: 20px; } .community-post-context { position: static; } }
-@media(max-width: 600px) { .community-post-author { grid-template-columns: 36px minmax(0, 1fr) auto; } .community-post-author time { grid-column: 2; grid-row: 2; } .community-post-author > button { grid-column: 3; grid-row: 1 / 3; } }
+.community-comments { scroll-margin-top: 64px; }
+@media(max-width: 1000px) { .community-post-layout { grid-template-columns: minmax(0, 1fr); grid-template-areas: 'heading' 'post' 'context' 'comments'; gap: 20px; } .community-post-context { position: static; } }
+@media(max-width: 600px) { .community-post-heading, .community-post-article, .community-comments { padding: 18px; } .community-post-heading h1 { font-size: 25px; } .community-post-layout { gap: 16px; } .community-post-author { grid-template-columns: 36px minmax(0, 1fr) auto; } .community-post-author time { grid-column: 2; grid-row: 2; } .community-post-author > button { grid-column: 3; grid-row: 1 / 3; } }
 </style>

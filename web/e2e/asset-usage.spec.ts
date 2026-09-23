@@ -1,3 +1,4 @@
+import { fixtureCredentials } from './helpers/identity'
 import { expect, test } from '@playwright/test'
 
 test('traces an Asset into downstream creation and publication usage', async ({ page }) => {
@@ -6,24 +7,24 @@ test('traces an Asset into downstream creation and publication usage', async ({ 
   const downstreamPrompt = `Asset usage downstream creation ${runID}`
   const workTitle = `Asset usage published Work ${runID}`
 
-  const session = await page.request.post('/api/v1/auth/demo', { data: { actor: 'creator' } })
+  const session = await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('creator') })
   expect(session.ok()).toBeTruthy()
 
   await page.goto('/create/image')
-  await page.locator('.studio-composer textarea').fill(sourcePrompt)
-  await page.getByRole('button', { name: 'Generate image', exact: true }).click()
-  const sourceGeneration = page.locator('.studio-task').filter({ hasText: sourcePrompt }).first()
-  await expect(sourceGeneration.locator('.studio-task-status')).toContainText('Saved to Assets')
-  await sourceGeneration.locator('.studio-task-copy').click()
+  await page.locator('.creation-composer textarea').fill(sourcePrompt)
+  await page.getByRole('button', { name: 'Generate Image', exact: true }).click()
+  const sourceGeneration = page.locator('.creation-turn').filter({ hasText: sourcePrompt }).first()
+  await expect(sourceGeneration.locator('.creation-status')).toContainText('Saved to Assets')
+  await sourceGeneration.locator('.creation-result').click()
   const publishHref = await page.getByRole('dialog', { name: 'Generation details' }).getByRole('link', { name: 'Publish work', exact: true }).getAttribute('href')
   const sourceAssetID = new URL(publishHref!, 'http://127.0.0.1:5173').searchParams.get('assetId')
   expect(sourceAssetID).toBeTruthy()
 
   await page.goto(`/create/image?sourceAssetId=${sourceAssetID}`)
-  await expect(page.locator('.source-reference').filter({ hasText: sourcePrompt })).toBeVisible()
-  await page.locator('.studio-composer textarea').fill(downstreamPrompt)
-  await page.getByRole('button', { name: 'Generate image', exact: true }).click()
-  await expect(page.locator('.studio-task').filter({ hasText: downstreamPrompt }).first().locator('.studio-task-status')).toContainText('Saved to Assets')
+  await expect(page.locator('.creation-context-chip').filter({ hasText: sourcePrompt })).toBeVisible()
+  await page.locator('.creation-composer textarea').fill(downstreamPrompt)
+  await page.getByRole('button', { name: 'Generate Image', exact: true }).click()
+  await expect(page.locator('.creation-turn').filter({ hasText: downstreamPrompt }).first().locator('.creation-status')).toContainText('Saved to Assets')
 
   await page.goto(`/workspace/assets?publish=${sourceAssetID}`)
   await page.getByLabel('Work title', { exact: true }).fill(workTitle)
@@ -40,8 +41,8 @@ test('traces an Asset into downstream creation and publication usage', async ({ 
   await expect(page.locator('.usage-lineage').filter({ hasText: workTitle })).toContainText('Published')
 
   await creationUsage.click()
-  await expect(page).toHaveURL(/\/workspace\/generations\?generationId=[0-9a-f-]+$/)
-  const focusedGeneration = page.locator('.generation-row.usage-focus')
+  await expect(page).toHaveURL(/\/create\/image\?.*generationId=[0-9a-f-]+/)
+  const focusedGeneration = page.getByRole('dialog', { name: 'Generation details' })
   await expect(focusedGeneration).toContainText(downstreamPrompt)
   const widths = await page.evaluate(() => ({ client: document.documentElement.clientWidth, scroll: document.documentElement.scrollWidth }))
   expect(widths.scroll).toBe(widths.client)

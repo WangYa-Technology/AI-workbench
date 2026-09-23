@@ -55,7 +55,7 @@ func TestAdminGovernanceDirectoryHTTPContract(t *testing.T) {
 	assetID, workID := uuid.New(), uuid.New()
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,scan_status,source_type,license_code,created_at)
-		VALUES($1,$2,'image','HTTP governance source','/media/http-governance-source.jpg','image/jpeg','clean','demo','demo',now() - interval '4 hours')`, assetID, subjectID); err != nil {
+		VALUES($1,$2,'image','HTTP governance source','/media/http-governance-source.jpg','image/jpeg','clean','delivery','personal',now() - interval '4 hours')`, assetID, subjectID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -101,7 +101,7 @@ func TestAdminGovernanceDirectoryHTTPContract(t *testing.T) {
 	}
 	var resolvedReport admin.GovernanceReport
 	response = requestJSON(t, adminClient, http.MethodPost, server.URL+"/api/v1/admin/governance/reports/"+targetReportID.String()+"/resolve", map[string]any{
-		"outcome": "no_action"}, &resolvedReport)
+		"reason": "Reviewed the evidence and selected this decision.", "confirm": true, "expectedVersion": 1, "outcome": "no_action"}, &resolvedReport)
 	if response.StatusCode != http.StatusOK || resolvedReport.ID != targetReportID || resolvedReport.Status != "dismissed" {
 		t.Fatalf("exact HTTP report response failed: status=%d item=%#v", response.StatusCode, resolvedReport)
 	}
@@ -147,7 +147,7 @@ func TestAdminGovernanceDirectoryHTTPContract(t *testing.T) {
 	}
 	var resolvedAppeal admin.GovernanceAppeal
 	response = requestJSON(t, adminClient, http.MethodPost, server.URL+"/api/v1/admin/governance/appeals/"+targetAppealID.String()+"/resolve", map[string]any{
-		"decision": "denied"}, &resolvedAppeal)
+		"reason": "Reviewed the evidence and selected this decision.", "confirm": true, "expectedVersion": 1, "decision": "denied"}, &resolvedAppeal)
 	if response.StatusCode != http.StatusOK || resolvedAppeal.ID != targetAppealID || resolvedAppeal.Status != "denied" {
 		t.Fatalf("exact HTTP appeal response failed: status=%d item=%#v", response.StatusCode, resolvedAppeal)
 	}

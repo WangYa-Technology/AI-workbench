@@ -24,7 +24,7 @@ func TestDiscoverBrowseFiltersAndEqualTimestampPagination(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO users(id,email,handle,display_name,role,status) VALUES($1,'browse@test.local','browse_author','Browse Author','creator','active')`, user); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,scan_status,source_type,license_code) VALUES($1,$2,'image','Browse image','/media/test.jpg','image/jpeg','clean','demo','demo')`, asset, user); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,scan_status,source_type,license_code) VALUES($1,$2,'image','Browse image','/media/test.jpg','image/jpeg','clean','delivery','personal')`, asset, user); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO works(author_id,asset_id,title,summary,model_name,status,ai_disclosure,prompt_visibility,published_at) SELECT $1,$2,'Browse target '||n,'Visible description','Model X','published','AI generated test image','public','2026-01-01T00:00:00Z' FROM generate_series(1,15) n`, user, asset); err != nil {
@@ -64,8 +64,8 @@ func TestDiscoverBrowseFiltersAndEqualTimestampPagination(t *testing.T) {
 			t.Fatal("counts ignored search or visibility")
 		}
 	}
-	if res := requestJSON(t, client, http.MethodGet, base+"&cursor=2026-01-02T00:00:00Z", nil, nil); res.StatusCode != 200 {
-		t.Fatal("legacy cursor rejected")
+	if res := requestJSON(t, client, http.MethodGet, base+"&cursor=2026-01-02T00:00:00Z", nil, nil); res.StatusCode != 400 {
+		t.Fatal("unsafe legacy cursor accepted")
 	}
 	if res := requestJSON(t, client, http.MethodGet, base+"&cursor=2026-01-02T00:00:00Z%7Cbad", nil, nil); res.StatusCode != 400 {
 		t.Fatal("invalid cursor accepted")

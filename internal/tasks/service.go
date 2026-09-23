@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/hcai-chat/hcai-chat/internal/billing"
@@ -16,6 +17,7 @@ import (
 	"github.com/hcai-chat/hcai-chat/internal/payments"
 	"github.com/hcai-chat/hcai-chat/internal/risk"
 	"github.com/hcai-chat/hcai-chat/internal/systemsettings"
+	"github.com/hcai-chat/hcai-chat/internal/taskdelivery"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -63,7 +65,18 @@ type Proposal struct {
 	UpdatedAt    time.Time `json:"updatedAt"`
 }
 
+type DeliveryAsset struct {
+	ID       uuid.UUID `json:"id"`
+	Title    string    `json:"title"`
+	MediaURL string    `json:"mediaUrl"`
+	Kind     string    `json:"kind"`
+}
+
 type Delivery struct {
+	Assets         []DeliveryAsset `json:"assets"`
+	RightsEvidence string          `json:"rightsEvidence"`
+	AIDisclosure   string          `json:"aiDisclosure"`
+
 	Creator    Person     `json:"creator"`
 	ID         uuid.UUID  `json:"id"`
 	AssetID    uuid.UUID  `json:"assetId"`
@@ -111,6 +124,8 @@ type Funding struct {
 }
 
 type Detail struct {
+	DeadlineChange       *DeadlineChange `json:"deadlineChange,omitempty"`
+	AllowDerivativeReuse bool            `json:"allowDerivativeReuse"`
 	Summary
 	Brief                   string      `json:"brief"`
 	Deliverables            []string    `json:"deliverables"`
@@ -126,6 +141,7 @@ type Detail struct {
 }
 
 type ListFilter struct {
+	Cursor          string
 	Query           string
 	DeliverableType string
 	Status          string
@@ -135,6 +151,7 @@ type ListFilter struct {
 }
 
 type CreateInput struct {
+	AllowDerivativeReuse    bool      `json:"allowDerivativeReuse"`
 	Title                   string    `json:"title"`
 	Summary                 string    `json:"summary"`
 	Brief                   string    `json:"brief"`
@@ -158,6 +175,11 @@ type ProposeInput struct {
 }
 
 type DeliverInput struct {
+	AssetIDs        []uuid.UUID `json:"assetIds"`
+	RightsEvidence  string      `json:"rightsEvidence"`
+	AIDisclosure    string      `json:"aiDisclosure"`
+	RightsConfirmed bool        `json:"rightsConfirmed"`
+
 	AssetID uuid.UUID `json:"assetId"`
 	Note    string    `json:"note"`
 }
@@ -179,57 +201,26 @@ func NewServiceWithPayments(pool *pgxpool.Pool, providerPayments bool) *Service 
 }
 
 func (s *Service) List(ctx context.Context, actorID uuid.UUID, filter ListFilter) ([]Summary, error) {
-	filter.Query = strings.TrimSpace(filter.Query)
-	filter.DeliverableType = strings.TrimSpace(strings.ToLower(filter.DeliverableType))
-	filter.Status = strings.TrimSpace(strings.ToLower(filter.Status))
-	if filter.Limit <= 0 || filter.Limit > 100 {
-		filter.Limit = 40
-	}
-	order := "d.created_at DESC"
-	switch filter.Sort {
-	case "deadline":
-		order = "d.deadline ASC"
-	case "budget_desc":
-		order = "d.budget_cents DESC, d.created_at DESC"
-	}
-	rows, err := s.pool.Query(ctx, fmt.Sprintf(`
-		SELECT d.id,d.title,d.summary,d.deliverable_type,d.budget_cents,d.currency,d.deadline,d.status,
-		       d.client_timezone,d.allow_direct_accept,COUNT(p.id),c.id,c.handle,c.display_name,
-		       a.id,a.handle,a.display_name,d.created_at,d.updated_at
-		FROM demands d
-		JOIN users c ON c.id=d.client_id
-		LEFT JOIN users a ON a.id=d.assignee_id
-		LEFT JOIN proposals p ON p.demand_id=d.id
-		WHERE ($1='' OR d.title ILIKE '%%'||$1||'%%' OR d.summary ILIKE '%%'||$1||'%%' OR d.brief ILIKE '%%'||$1||'%%')
-		  AND ($2='' OR d.deliverable_type=$2)
-		  AND ($3='' OR d.status=$3)
-		  AND (NOT $4 OR d.client_id=$5 OR d.assignee_id=$5 OR EXISTS(SELECT 1 FROM proposals mine WHERE mine.demand_id=d.id AND mine.creator_id=$5))
-		GROUP BY d.id,c.id,a.id
-		ORDER BY %s LIMIT $6`, order), filter.Query, filter.DeliverableType, filter.Status, filter.Mine, actorID, filter.Limit)
-	if err != nil {
-		return nil, fmt.Errorf("list tasks: %w", err)
-	}
-	defer rows.Close()
-	items := make([]Summary, 0)
-	for rows.Next() {
-		item, err := scanSummary(rows)
-		if err != nil {
-			return nil, fmt.Errorf("scan task: %w", err)
-		}
-		items = append(items, item)
-	}
-	return items, rows.Err()
+	page, err := s.ListPage(ctx, actorID, filter)
+	return page.Items, err
 }
 
 func (s *Service) Get(ctx context.Context, actorID, demandID uuid.UUID) (Detail, error) {
+	var operator bool
+	if actorID != uuid.Nil {
+		if err := s.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM users u JOIN role_permissions rp ON rp.role=u.role WHERE u.id=$1 AND u.status='active' AND rp.permission_id='admin:tasks')`, actorID).Scan(&operator); err != nil {
+			return Detail{}, err
+		}
+	}
 	var item Detail
 	var deliverablesJSON, rulesJSON []byte
 	row := s.pool.QueryRow(ctx, `
 		SELECT d.id,d.title,d.summary,d.deliverable_type,d.budget_cents,d.currency,d.deadline,d.status,
 		       d.client_timezone,d.allow_direct_accept,(SELECT COUNT(*) FROM proposals p WHERE p.demand_id=d.id),
 		       c.id,c.handle,c.display_name,a.id,a.handle,a.display_name,d.created_at,d.updated_at,
-		       d.brief,d.deliverables,d.acceptance_rules,d.rights_terms,d.ai_disclosure_requirement,d.client_id,d.assignee_id
-		FROM demands d JOIN users c ON c.id=d.client_id LEFT JOIN users a ON a.id=d.assignee_id WHERE d.id=$1`, demandID)
+		       d.brief,d.deliverables,d.acceptance_rules,d.rights_terms,d.ai_disclosure_requirement,d.client_id,d.assignee_id,d.allow_derivative_reuse
+		FROM demands d JOIN users c ON c.id=d.client_id LEFT JOIN users a ON a.id=d.assignee_id WHERE d.id=$1
+		AND ($3 OR c.status='active' OR d.client_id=$2 OR d.assignee_id=$2 OR EXISTS(SELECT 1 FROM proposals mine WHERE mine.demand_id=d.id AND mine.creator_id=$2))`, demandID, actorID, operator)
 	var assigneeID *uuid.UUID
 	var assigneeHandle, assigneeName *string
 	var clientID uuid.UUID
@@ -238,7 +229,7 @@ func (s *Service) Get(ctx context.Context, actorID, demandID uuid.UUID) (Detail,
 		&item.Deadline, &item.Status, &item.ClientTimezone, &item.AllowDirectAccept, &item.ProposalCount,
 		&item.Client.ID, &item.Client.Handle, &item.Client.DisplayName, &assigneeID, &assigneeHandle, &assigneeName,
 		&item.CreatedAt, &item.UpdatedAt, &item.Brief, &deliverablesJSON, &rulesJSON, &item.RightsTerms,
-		&item.AIDisclosureRequirement, &clientID, &assignedID)
+		&item.AIDisclosureRequirement, &clientID, &assignedID, &item.AllowDerivativeReuse)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Detail{}, ErrNotFound
 	}
@@ -256,21 +247,28 @@ func (s *Service) Get(ctx context.Context, actorID, demandID uuid.UUID) (Detail,
 	} else if assignedID != nil && actorID == *assignedID {
 		item.ViewerRole = "assignee"
 	}
-	proposals, err := s.listProposals(ctx, demandID, actorID, clientID)
+	proposalViewer := actorID
+	if operator && item.ViewerRole == "viewer" {
+		item.ViewerRole = "operator"
+		proposalViewer = clientID
+	}
+	proposals, err := s.listProposals(ctx, demandID, proposalViewer, clientID)
 	if err != nil {
 		return Detail{}, err
 	}
 	item.Proposals = proposals
-	deliveries, err := s.listDeliveries(ctx, demandID)
-	if err != nil {
-		return Detail{}, err
+	item.Deliveries = []Delivery{}
+	item.Events = []Event{}
+	if item.ViewerRole != "viewer" {
+		item.Deliveries, err = s.listDeliveries(ctx, demandID)
+		if err != nil {
+			return Detail{}, err
+		}
+		item.Events, err = s.listEvents(ctx, demandID)
+		if err != nil {
+			return Detail{}, err
+		}
 	}
-	item.Deliveries = deliveries
-	events, err := s.listEvents(ctx, demandID)
-	if err != nil {
-		return Detail{}, err
-	}
-	item.Events = events
 	var funding Funding
 	err = s.pool.QueryRow(ctx, `
 		SELECT provider,status,amount_cents,currency,live_mode,proposal_id,
@@ -283,9 +281,27 @@ func (s *Service) Get(ctx context.Context, actorID, demandID uuid.UUID) (Detail,
 		&funding.PaymentMode, &funding.Status, &funding.AmountCents, &funding.Currency, &funding.LiveMode, &funding.ProposalID,
 		&funding.CheckoutURL, &funding.CheckoutExpiresAt, &funding.UpdatedAt)
 	if err == nil {
-		item.Funding = &funding
+		visible := item.ViewerRole != "viewer" || funding.ProposalID == nil
+		for _, proposal := range item.Proposals {
+			if funding.ProposalID != nil && proposal.ID == *funding.ProposalID {
+				visible = true
+			}
+		}
+		if visible {
+			item.Funding = &funding
+		}
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return Detail{}, fmt.Errorf("get task funding: %w", err)
+	}
+	if item.ViewerRole == "viewer" {
+		return item, nil
+	}
+	var pending DeadlineChange
+	err = s.pool.QueryRow(ctx, `SELECT id,proposed_by,deadline,reason FROM task_deadline_changes WHERE demand_id=$1 AND status='pending'`, demandID).Scan(&pending.ID, &pending.ProposedBy, &pending.Deadline, &pending.Reason)
+	if err == nil {
+		item.DeadlineChange = &pending
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return Detail{}, err
 	}
 	var settlement Settlement
 	err = s.pool.QueryRow(ctx, `SELECT id,amount_cents,currency,mode,created_at FROM task_settlements WHERE demand_id=$1`, demandID).Scan(
@@ -307,23 +323,24 @@ func (s *Service) Create(ctx context.Context, actorID uuid.UUID, input CreateInp
 	input.ClientTimezone = strings.TrimSpace(input.ClientTimezone)
 	input.RightsTerms = strings.TrimSpace(input.RightsTerms)
 	input.AIDisclosureRequirement = strings.TrimSpace(input.AIDisclosureRequirement)
+	input.Deliverables = cleanStrings(input.Deliverables)
+	input.AcceptanceRules = cleanStrings(input.AcceptanceRules)
 	var validType int
 	if err := s.pool.QueryRow(ctx, `SELECT 1 FROM task_types WHERE code=$1`, input.DeliverableType).Scan(&validType); err != nil {
 		return Detail{}, ErrInvalid
 	}
-	if len(input.Title) < 5 || len(input.Summary) < 10 || len(input.Brief) < 30 || input.BudgetCents <= 0 || input.Currency != "USD" || !input.Deadline.After(time.Now()) || len(input.Deliverables) == 0 || len(input.AcceptanceRules) == 0 || input.RightsTerms == "" || input.AIDisclosureRequirement == "" {
+	if utf8.RuneCountInString(input.Title) < 5 || utf8.RuneCountInString(input.Summary) < 10 || utf8.RuneCountInString(input.Brief) < 30 || input.BudgetCents < 50 || input.BudgetCents > 99999999 || input.Currency != "USD" || len(input.Deliverables) == 0 || len(input.AcceptanceRules) == 0 || input.RightsTerms == "" || input.AIDisclosureRequirement == "" {
 		return Detail{}, ErrInvalid
 	}
 	if input.ClientTimezone == "" {
 		input.ClientTimezone = "UTC"
 	}
-	if strings.TrimSpace(key) == "" || len(strings.TrimSpace(key)) < 8 {
+	if _, err := time.LoadLocation(input.ClientTimezone); err != nil {
 		return Detail{}, ErrInvalid
 	}
-	if replayID, replay, err := findCommand(ctx, s.pool, actorID, "create", key, input); err != nil {
-		return Detail{}, err
-	} else if replay {
-		return s.Get(ctx, actorID, replayID)
+	key = strings.TrimSpace(key)
+	if len(key) < 8 || len(key) > 200 {
+		return Detail{}, ErrInvalid
 	}
 	demandID := uuid.New()
 	tx, err := s.pool.Begin(ctx)
@@ -331,6 +348,19 @@ func (s *Service) Create(ctx context.Context, actorID uuid.UUID, input CreateInp
 		return Detail{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	// Serialize identical creation requests before inserting a randomly identified task.
+	if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, actorID.String()+":task:create:"+strings.TrimSpace(key)); err != nil {
+		return Detail{}, err
+	}
+	if replayID, replay, err := findCommand(ctx, tx, actorID, "create", key, input); err != nil {
+		return Detail{}, err
+	} else if replay {
+		_ = tx.Rollback(ctx)
+		return s.Get(ctx, actorID, replayID)
+	}
+	if !input.Deadline.After(time.Now()) {
+		return Detail{}, ErrInvalid
+	}
 	if err := systemsettings.RequireTx(ctx, tx, systemsettings.TaskCreation); err != nil {
 		return Detail{}, err
 	}
@@ -338,14 +368,17 @@ func (s *Service) Create(ctx context.Context, actorID uuid.UUID, input CreateInp
 	rules, _ := json.Marshal(cleanStrings(input.AcceptanceRules))
 	_, err = tx.Exec(ctx, `
 		INSERT INTO demands(id,client_id,title,summary,brief,deliverable_type,deliverables,acceptance_rules,rights_terms,
-		 ai_disclosure_requirement,budget_cents,currency,deadline,status,client_timezone,allow_direct_accept,idempotency_key)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'open',$14,$15,$16)`, demandID, actorID, input.Title,
+		 ai_disclosure_requirement,budget_cents,currency,deadline,status,client_timezone,allow_direct_accept,idempotency_key,allow_derivative_reuse)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'open',$14,$15,$16,$17)`, demandID, actorID, input.Title,
 		input.Summary, input.Brief, input.DeliverableType, deliverables, rules, input.RightsTerms, input.AIDisclosureRequirement,
-		input.BudgetCents, input.Currency, input.Deadline, input.ClientTimezone, input.AllowDirectAccept, key)
+		input.BudgetCents, input.Currency, input.Deadline, input.ClientTimezone, input.AllowDirectAccept, key, input.AllowDerivativeReuse)
 	if err != nil {
 		return Detail{}, fmt.Errorf("create task: %w", err)
 	}
 	if _, _, err := registerCommand(ctx, tx, actorID, demandID, "create", key, input); err != nil {
+		return Detail{}, err
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO jobs(kind,payload,available_at,max_attempts) VALUES($1,jsonb_build_object('taskId',$2::text),$3,20)`, ExpiryJobKind, demandID, input.Deadline); err != nil {
 		return Detail{}, err
 	}
 	if err := insertEvent(ctx, tx, demandID, actorID, "created", nil, "open", "", nil); err != nil {
@@ -360,7 +393,7 @@ func (s *Service) Create(ctx context.Context, actorID uuid.UUID, input CreateInp
 func (s *Service) Propose(ctx context.Context, actorID, demandID uuid.UUID, input ProposeInput, key string) (Detail, error) {
 	input.Approach = strings.TrimSpace(input.Approach)
 	input.Deliverables = strings.TrimSpace(input.Deliverables)
-	if len(input.Approach) < 20 || len(input.Deliverables) < 10 || input.AmountCents <= 0 || input.TimelineDays <= 0 {
+	if utf8.RuneCountInString(input.Approach) < 20 || utf8.RuneCountInString(input.Deliverables) < 10 || input.AmountCents < 50 || input.AmountCents > 99999999 || input.TimelineDays <= 0 {
 		return Detail{}, ErrInvalid
 	}
 	tx, err := s.pool.Begin(ctx)
@@ -376,9 +409,10 @@ func (s *Service) Propose(ctx context.Context, actorID, demandID uuid.UUID, inpu
 		_ = tx.Rollback(ctx)
 		return s.Get(ctx, actorID, replayID)
 	}
+	var deadline time.Time
 	var clientID uuid.UUID
 	var status, taskTitle string
-	if err := tx.QueryRow(ctx, `SELECT client_id,status,title FROM demands WHERE id=$1 FOR UPDATE`, demandID).Scan(&clientID, &status, &taskTitle); errors.Is(err, pgx.ErrNoRows) {
+	if err := tx.QueryRow(ctx, `SELECT client_id,status,title,deadline FROM demands WHERE id=$1 FOR UPDATE`, demandID).Scan(&clientID, &status, &taskTitle, &deadline); errors.Is(err, pgx.ErrNoRows) {
 		return Detail{}, ErrNotFound
 	} else if err != nil {
 		return Detail{}, err
@@ -386,7 +420,7 @@ func (s *Service) Propose(ctx context.Context, actorID, demandID uuid.UUID, inpu
 	if clientID == actorID {
 		return Detail{}, ErrForbidden
 	}
-	if status != "open" {
+	if !deadline.After(time.Now()) || status != "open" {
 		return Detail{}, ErrConflict
 	}
 	_, err = tx.Exec(ctx, `INSERT INTO proposals(demand_id,creator_id,approach,deliverables,amount_cents,timeline_days,status,idempotency_key) VALUES($1,$2,$3,$4,$5,$6,'submitted',$7)`, demandID, actorID, input.Approach, input.Deliverables, input.AmountCents, input.TimelineDays, key)
@@ -422,11 +456,12 @@ func (s *Service) Claim(ctx context.Context, actorID, demandID uuid.UUID, key st
 		_ = tx.Rollback(ctx)
 		return s.Get(ctx, actorID, replayID)
 	}
+	var deadline time.Time
 	var clientID uuid.UUID
 	var status, taskTitle string
 	var allow bool
 	var budget int
-	if err = tx.QueryRow(ctx, `SELECT client_id,status,allow_direct_accept,budget_cents,title FROM demands WHERE id=$1 FOR UPDATE`, demandID).Scan(&clientID, &status, &allow, &budget, &taskTitle); errors.Is(err, pgx.ErrNoRows) {
+	if err = tx.QueryRow(ctx, `SELECT client_id,status,allow_direct_accept,budget_cents,title,deadline FROM demands WHERE id=$1 FOR UPDATE`, demandID).Scan(&clientID, &status, &allow, &budget, &taskTitle, &deadline); errors.Is(err, pgx.ErrNoRows) {
 		return Detail{}, ErrNotFound
 	} else if err != nil {
 		return Detail{}, err
@@ -434,13 +469,16 @@ func (s *Service) Claim(ctx context.Context, actorID, demandID uuid.UUID, key st
 	if clientID == actorID {
 		return Detail{}, ErrForbidden
 	}
-	if status != "open" || !allow {
+	if !deadline.After(time.Now()) || status != "open" || !allow {
 		return Detail{}, ErrConflict
 	}
 	if err := s.requireTaskFundingTx(ctx, tx, demandID, nil, actorID, budget, "USD"); err != nil {
 		return Detail{}, err
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO proposals(demand_id,creator_id,approach,deliverables,amount_cents,timeline_days,status,idempotency_key) VALUES($1,$2,'Direct acceptance','Deliver according to the published brief',$3,1,'accepted',$4)`, demandID, actorID, budget, key)
+	if err = closeOtherProposals(ctx, tx, demandID, actorID, taskTitle); err != nil {
+		return Detail{}, err
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO proposals(demand_id,creator_id,approach,deliverables,amount_cents,timeline_days,status,idempotency_key) VALUES($1,$2,'Direct acceptance','Deliver according to the published brief',$3,1,'accepted',$4) ON CONFLICT(demand_id,creator_id) DO UPDATE SET status='accepted',amount_cents=EXCLUDED.amount_cents,updated_at=now() WHERE proposals.status='submitted'`, demandID, actorID, budget, key)
 	if err != nil {
 		return Detail{}, err
 	}
@@ -474,9 +512,10 @@ func (s *Service) AcceptProposal(ctx context.Context, actorID, demandID, proposa
 		_ = tx.Rollback(ctx)
 		return s.Get(ctx, actorID, replayID)
 	}
+	var deadline time.Time
 	var clientID uuid.UUID
 	var status, taskTitle string
-	if err = tx.QueryRow(ctx, `SELECT client_id,status,title FROM demands WHERE id=$1 FOR UPDATE`, demandID).Scan(&clientID, &status, &taskTitle); errors.Is(err, pgx.ErrNoRows) {
+	if err = tx.QueryRow(ctx, `SELECT client_id,status,title,deadline FROM demands WHERE id=$1 FOR UPDATE`, demandID).Scan(&clientID, &status, &taskTitle, &deadline); errors.Is(err, pgx.ErrNoRows) {
 		return Detail{}, ErrNotFound
 	} else if err != nil {
 		return Detail{}, err
@@ -484,7 +523,7 @@ func (s *Service) AcceptProposal(ctx context.Context, actorID, demandID, proposa
 	if clientID != actorID {
 		return Detail{}, ErrForbidden
 	}
-	if status != "open" {
+	if !deadline.After(time.Now()) || status != "open" {
 		return Detail{}, ErrConflict
 	}
 	var creatorID uuid.UUID
@@ -502,6 +541,9 @@ func (s *Service) AcceptProposal(ctx context.Context, actorID, demandID, proposa
 		return Detail{}, err
 	}
 	if err := s.requireTaskFundingTx(ctx, tx, demandID, &proposalID, creatorID, proposalAmount, "USD"); err != nil {
+		return Detail{}, err
+	}
+	if err = closeOtherProposals(ctx, tx, demandID, creatorID, taskTitle); err != nil {
 		return Detail{}, err
 	}
 	if _, err = tx.Exec(ctx, `UPDATE proposals SET status=CASE WHEN id=$2 THEN 'accepted' ELSE 'rejected' END,updated_at=now() WHERE demand_id=$1 AND status='submitted'`, demandID, proposalID); err != nil {
@@ -524,7 +566,23 @@ func (s *Service) AcceptProposal(ctx context.Context, actorID, demandID, proposa
 
 func (s *Service) Deliver(ctx context.Context, actorID, demandID uuid.UUID, input DeliverInput, key string) (Detail, error) {
 	input.Note = strings.TrimSpace(input.Note)
-	if input.AssetID == uuid.Nil || len(input.Note) < 5 {
+	input.RightsEvidence = strings.TrimSpace(input.RightsEvidence)
+	input.AIDisclosure = strings.TrimSpace(input.AIDisclosure)
+	if len(input.AssetIDs) == 0 && input.AssetID != uuid.Nil {
+		input.AssetIDs = []uuid.UUID{input.AssetID}
+	}
+	if len(input.AssetIDs) < 1 || len(input.AssetIDs) > 20 || !input.RightsConfirmed || utf8.RuneCountInString(input.RightsEvidence) < 10 || utf8.RuneCountInString(input.AIDisclosure) < 5 {
+		return Detail{}, ErrInvalid
+	}
+	seen := map[uuid.UUID]bool{}
+	for _, id := range input.AssetIDs {
+		if id == uuid.Nil || seen[id] {
+			return Detail{}, ErrInvalid
+		}
+		seen[id] = true
+	}
+	input.AssetID = input.AssetIDs[0]
+	if input.AssetID == uuid.Nil || utf8.RuneCountInString(input.Note) < 5 {
 		return Detail{}, ErrInvalid
 	}
 	tx, err := s.pool.Begin(ctx)
@@ -542,8 +600,8 @@ func (s *Service) Deliver(ctx context.Context, actorID, demandID uuid.UUID, inpu
 	}
 	var assigneeID *uuid.UUID
 	var clientID uuid.UUID
-	var status, taskTitle string
-	if err = tx.QueryRow(ctx, `SELECT assignee_id,client_id,status,title FROM demands WHERE id=$1 FOR UPDATE`, demandID).Scan(&assigneeID, &clientID, &status, &taskTitle); errors.Is(err, pgx.ErrNoRows) {
+	var status, taskTitle, deliverableType string
+	if err = tx.QueryRow(ctx, `SELECT assignee_id,client_id,status,title,deliverable_type FROM demands WHERE id=$1 FOR UPDATE`, demandID).Scan(&assigneeID, &clientID, &status, &taskTitle, &deliverableType); errors.Is(err, pgx.ErrNoRows) {
 		return Detail{}, ErrNotFound
 	} else if err != nil {
 		return Detail{}, err
@@ -554,19 +612,51 @@ func (s *Service) Deliver(ctx context.Context, actorID, demandID uuid.UUID, inpu
 	if status != "assigned" && status != "revision" {
 		return Detail{}, ErrConflict
 	}
-	var assetOK bool
-	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM assets WHERE id=$1 AND owner_id=$2 AND scan_status='clean')`, input.AssetID, actorID).Scan(&assetOK); err != nil {
+	// Share the original-file lock with product publication. A submitted task
+	// delivery must not simultaneously become a privately sold product source.
+	lockedAssets, lockErr := tx.Query(ctx, `SELECT id FROM assets WHERE id=ANY($1) ORDER BY id FOR UPDATE`, input.AssetIDs)
+	if lockErr != nil {
+		return Detail{}, lockErr
+	}
+	for lockedAssets.Next() {
+		var id uuid.UUID
+		if err = lockedAssets.Scan(&id); err != nil {
+			lockedAssets.Close()
+			return Detail{}, err
+		}
+	}
+	err = lockedAssets.Err()
+	lockedAssets.Close()
+	if err != nil {
 		return Detail{}, err
 	}
-	if !assetOK {
+	// Require source ownership, a clean scan, no resale of purchased/granted assets,
+	// and at least one primary asset matching the brief. Supporting documents are allowed.
+	var assetCount, matching int
+	if err = tx.QueryRow(ctx, `SELECT count(*),count(*) FILTER (WHERE kind=$3 OR ($3='text' AND kind='document') OR $3='mixed')
+ FROM assets a WHERE a.id=ANY($1) AND a.owner_id=$2 AND a.scan_status='clean'
+ AND a.source_type<>'purchase' AND a.license_code<>'task-contract'
+ AND NOT EXISTS(SELECT 1 FROM product_delivery_roots root WHERE root.asset_id=COALESCE(a.origin_asset_id,a.id))`, input.AssetIDs, actorID, deliverableType).Scan(&assetCount, &matching); err != nil {
+		return Detail{}, err
+	}
+	if assetCount != len(input.AssetIDs) {
 		return Detail{}, ErrForbidden
+	}
+	if matching == 0 {
+		return Detail{}, ErrInvalid
 	}
 	var version int
 	if err = tx.QueryRow(ctx, `SELECT COALESCE(MAX(version),0)+1 FROM deliveries WHERE demand_id=$1`, demandID).Scan(&version); err != nil {
 		return Detail{}, err
 	}
-	if _, err = tx.Exec(ctx, `INSERT INTO deliveries(demand_id,creator_id,asset_id,note,status,version,idempotency_key) VALUES($1,$2,$3,$4,'submitted',$5,$6)`, demandID, actorID, input.AssetID, input.Note, version, key); err != nil {
+	var deliveryID uuid.UUID
+	if err = tx.QueryRow(ctx, `INSERT INTO deliveries(demand_id,creator_id,asset_id,note,status,version,idempotency_key,rights_evidence,ai_disclosure) VALUES($1,$2,$3,$4,'submitted',$5,$6,$7,$8) RETURNING id`, demandID, actorID, input.AssetID, input.Note, version, key, input.RightsEvidence, input.AIDisclosure).Scan(&deliveryID); err != nil {
 		return Detail{}, err
+	}
+	for position, id := range input.AssetIDs {
+		if _, err = tx.Exec(ctx, `INSERT INTO delivery_assets(delivery_id,asset_id,position) VALUES($1,$2,$3)`, deliveryID, id, position); err != nil {
+			return Detail{}, err
+		}
 	}
 	if _, err = tx.Exec(ctx, `UPDATE demands SET status='submitted',updated_at=now() WHERE id=$1`, demandID); err != nil {
 		return Detail{}, err
@@ -589,7 +679,7 @@ func (s *Service) Review(ctx context.Context, actorID, demandID uuid.UUID, input
 	if input.Decision != "accept" && input.Decision != "request_revision" {
 		return Detail{}, ErrInvalid
 	}
-	if input.Decision == "request_revision" && len(input.Note) < 10 {
+	if input.Decision == "request_revision" && utf8.RuneCountInString(input.Note) < 10 {
 		return Detail{}, ErrInvalid
 	}
 	tx, err := s.pool.Begin(ctx)
@@ -689,6 +779,11 @@ func (s *Service) Review(ctx context.Context, actorID, demandID uuid.UUID, input
 				return Detail{}, err
 			}
 		}
+		if err = taskdelivery.GrantTx(ctx, tx, deliveryID); errors.Is(err, taskdelivery.ErrUnavailable) {
+			return Detail{}, ErrConflict
+		} else if err != nil {
+			return Detail{}, err
+		}
 		if err = insertEvent(ctx, tx, demandID, actorID, "delivery_accepted", stringPtr("submitted"), "accepted", input.Note, map[string]string{"settlementMode": settlementMode}); err != nil {
 			return Detail{}, err
 		}
@@ -742,7 +837,7 @@ func sameUUID(left, right *uuid.UUID) bool {
 
 func (s *Service) OpenDispute(ctx context.Context, actorID, demandID uuid.UUID, reason, key string) (Detail, error) {
 	reason = strings.TrimSpace(reason)
-	if len(reason) < 20 {
+	if utf8.RuneCountInString(reason) < 20 {
 		return Detail{}, ErrInvalid
 	}
 	tx, err := s.pool.Begin(ctx)
@@ -769,7 +864,7 @@ func (s *Service) OpenDispute(ctx context.Context, actorID, demandID uuid.UUID, 
 	if actorID != clientID && (assigneeID == nil || actorID != *assigneeID) {
 		return Detail{}, ErrForbidden
 	}
-	if status != "submitted" && status != "revision" {
+	if status != "assigned" && status != "submitted" && status != "revision" {
 		return Detail{}, ErrConflict
 	}
 	if _, err = tx.Exec(ctx, `INSERT INTO task_disputes(demand_id,opened_by,reason,idempotency_key) VALUES($1,$2,$3,$4)`, demandID, actorID, reason, key); err != nil {
@@ -807,7 +902,7 @@ func (s *Service) OpenDispute(ctx context.Context, actorID, demandID uuid.UUID, 
 
 func (s *Service) Cancel(ctx context.Context, actorID, demandID uuid.UUID, reason, key string) (Detail, error) {
 	reason = strings.TrimSpace(reason)
-	if len(reason) < 10 {
+	if utf8.RuneCountInString(reason) < 10 {
 		return Detail{}, ErrInvalid
 	}
 	tx, err := s.pool.Begin(ctx)
@@ -943,7 +1038,8 @@ func (s *Service) listProposals(ctx context.Context, demandID, actorID, clientID
 }
 
 func (s *Service) listDeliveries(ctx context.Context, demandID uuid.UUID) ([]Delivery, error) {
-	rows, err := s.pool.Query(ctx, `SELECT u.id,u.handle,u.display_name,d.id,d.asset_id,a.title,a.media_url,a.kind,d.note,d.status,d.version,d.review_note,d.created_at,d.reviewed_at,d.accepted_at FROM deliveries d JOIN assets a ON a.id=d.asset_id JOIN users u ON u.id=d.creator_id WHERE d.demand_id=$1 ORDER BY d.version DESC`, demandID)
+	rows, err := s.pool.Query(ctx, `SELECT u.id,u.handle,u.display_name,d.id,d.asset_id,a.title,a.media_url,a.kind,d.note,d.status,d.version,d.review_note,d.created_at,d.reviewed_at,d.accepted_at,d.rights_evidence,d.ai_disclosure,
+ COALESCE((SELECT jsonb_agg(jsonb_build_object('id',a2.id,'title',a2.title,'mediaUrl',a2.media_url,'kind',a2.kind) ORDER BY da.position) FROM delivery_assets da JOIN assets a2 ON a2.id=da.asset_id WHERE da.delivery_id=d.id),'[]'::jsonb) FROM deliveries d JOIN assets a ON a.id=d.asset_id JOIN users u ON u.id=d.creator_id WHERE d.demand_id=$1 ORDER BY d.version DESC`, demandID)
 	if err != nil {
 		return nil, err
 	}
@@ -951,7 +1047,11 @@ func (s *Service) listDeliveries(ctx context.Context, demandID uuid.UUID) ([]Del
 	items := make([]Delivery, 0)
 	for rows.Next() {
 		var d Delivery
-		if err = rows.Scan(&d.Creator.ID, &d.Creator.Handle, &d.Creator.DisplayName, &d.ID, &d.AssetID, &d.AssetTitle, &d.MediaURL, &d.MediaKind, &d.Note, &d.Status, &d.Version, &d.ReviewNote, &d.CreatedAt, &d.ReviewedAt, &d.AcceptedAt); err != nil {
+		var bundle []byte
+		if err = rows.Scan(&d.Creator.ID, &d.Creator.Handle, &d.Creator.DisplayName, &d.ID, &d.AssetID, &d.AssetTitle, &d.MediaURL, &d.MediaKind, &d.Note, &d.Status, &d.Version, &d.ReviewNote, &d.CreatedAt, &d.ReviewedAt, &d.AcceptedAt, &d.RightsEvidence, &d.AIDisclosure, &bundle); err != nil {
+			return nil, err
+		}
+		if err = json.Unmarshal(bundle, &d.Assets); err != nil {
 			return nil, err
 		}
 		items = append(items, d)
@@ -1012,7 +1112,7 @@ func registerCommand(ctx context.Context, tx pgx.Tx, actorID, demandID uuid.UUID
 	if err = tx.QueryRow(ctx, `SELECT demand_id,request_hash FROM task_commands WHERE actor_id=$1 AND operation=$2 AND idempotency_key=$3`, actorID, operation, key).Scan(&existingID, &existingHash); err != nil {
 		return uuid.Nil, false, err
 	}
-	if existingHash != hash {
+	if existingHash != hash || (operation != "create" && existingID != demandID) {
 		return uuid.Nil, false, ErrConflict
 	}
 	return existingID, true, nil
@@ -1088,4 +1188,31 @@ func value(v *string) string {
 		return ""
 	}
 	return *v
+}
+
+// Close losing proposals in the same locked-task transaction as assignment.
+func closeOtherProposals(ctx context.Context, tx pgx.Tx, demandID, winnerID uuid.UUID, title string) error {
+	rows, err := tx.Query(ctx, `UPDATE proposals SET status='rejected',updated_at=now() WHERE demand_id=$1 AND creator_id<>$2 AND status='submitted' RETURNING creator_id`, demandID, winnerID)
+	if err != nil {
+		return err
+	}
+	var ids []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err = rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if err = rows.Err(); err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if err = notifyTask(ctx, tx, id, "task.proposal_rejected", "Proposal closed", "Another creator was selected for “"+title+"”.", demandID, "proposal-rejected:"+id.String()); err != nil {
+			return err
+		}
+	}
+	return nil
 }

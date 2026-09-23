@@ -1,3 +1,5 @@
+import { fixtureCredentials } from './helpers/identity'
+import { chooseOption } from './helpers/select'
 import { expect, test, type APIRequestContext } from '@playwright/test'
 
 type Generation = {
@@ -40,13 +42,13 @@ test('filters, paginates, restores deep links, and renders completed actions', a
   const secondPrompt = `Generation Center chat beta ${runID}`
   const imagePrompt = `Generation Center image ${runID}`
 
-  const session = await page.request.post('/api/v1/auth/demo', { data: { actor: 'creator' } })
+  const session = await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('creator') })
   expect(session.ok()).toBeTruthy()
 
   const first = await submitGeneration(page.request, 'chat', firstPrompt)
   const second = await submitGeneration(page.request, 'chat', secondPrompt)
   const image = await submitGeneration(page.request, 'image', imagePrompt)
-  const [, completedSecond] = await Promise.all([
+  const [, completedSecond, completedImage] = await Promise.all([
     waitForSuccess(page.request, first.id),
     waitForSuccess(page.request, second.id),
     waitForSuccess(page.request, image.id),
@@ -55,18 +57,19 @@ test('filters, paginates, restores deep links, and renders completed actions', a
   expect(completedSecond.actions).toMatchObject({
     canCancel: false,
     canRetry: false,
-    canDownload: true,
-    canReuse: true,
+    canDownload: false,
+    canReuse: false,
     canView: true,
   })
 
+  expect(completedImage.actions).toMatchObject({ canDownload: true, canReuse: true, canView: true })
   await page.goto('/workspace/generations')
   const utcDate = new Date().toISOString().slice(0, 10)
   const filters = page.locator('.generation-filters')
-  await filters.getByRole('combobox', { name: 'Mode', exact: true }).selectOption('chat')
-  await filters.getByRole('combobox', { name: 'Status', exact: true }).selectOption('succeeded')
-  await filters.getByRole('textbox', { name: 'From (UTC)', exact: true }).fill(utcDate)
-  await filters.getByRole('textbox', { name: 'To (UTC)', exact: true }).fill(utcDate)
+  await chooseOption(filters.getByRole('combobox', { name: 'Mode', exact: true }), 'chat')
+  await chooseOption(filters.getByRole('combobox', { name: 'Status', exact: true }), 'succeeded')
+  await filters.getByLabel('From (UTC)', { exact: true }).fill(utcDate)
+  await filters.getByLabel('To (UTC)', { exact: true }).fill(utcDate)
   await page.getByRole('button', { name: 'Apply filters', exact: true }).click()
   await expect(page).toHaveURL(new RegExp(`mode=chat.*status=succeeded.*dateFrom=${utcDate}.*dateTo=${utcDate}`))
   await expect(page.getByText(firstPrompt, { exact: true })).toBeVisible()
@@ -80,10 +83,10 @@ test('filters, paginates, restores deep links, and renders completed actions', a
   await expect(page.getByText(firstPrompt, { exact: true })).toBeVisible()
   await expect(page.getByText(secondPrompt, { exact: true })).toBeVisible()
 
-  await page.goto(`/workspace/generations?mode=music&generationId=${second.id}`)
+  await page.goto(`/workspace/generations?mode=music&generationId=${image.id}`)
   const focused = page.locator('.generation-row.usage-focus')
-  await expect(focused).toContainText(secondPrompt)
-  await expect(focused).toContainText(second.id)
+  await expect(focused).toContainText(imagePrompt)
+  await expect(focused).toContainText(image.id)
   await expect(focused.getByRole('link', { name: 'Download', exact: true })).toBeVisible()
   await expect(focused.getByRole('link', { name: 'Use in Create', exact: true })).toBeVisible()
   await expect(focused.getByRole('link', { name: 'View details', exact: true })).toBeVisible()
@@ -93,12 +96,15 @@ test('filters, paginates, restores deep links, and renders completed actions', a
   await expect(page.locator('.generation-row.usage-focus')).toBeVisible()
   const widths = await page.evaluate(() => ({ client: document.documentElement.clientWidth, scroll: document.documentElement.scrollWidth }))
   expect(widths.scroll).toBe(widths.client)
+  await filters.getByRole('button', { name: 'Clear filters', exact: true }).click()
+  await expect(page).toHaveURL(/\/workspace\/generations$/)
+  await expect(page.locator('.generation-row')).not.toHaveCount(0)
 })
 
 test('renders server-derived cancel and retry eligibility', async ({ page }) => {
   const runID = Date.now().toString(36)
   const cancelPrompt = `Generation Center cancelled ${runID}`
-  const session = await page.request.post('/api/v1/auth/demo', { data: { actor: 'creator' } })
+  const session = await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('creator') })
   expect(session.ok()).toBeTruthy()
 
   const cancellable = await submitGeneration(page.request, 'image', cancelPrompt)

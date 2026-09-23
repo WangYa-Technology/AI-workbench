@@ -19,6 +19,8 @@ var (
 	ErrModelNotIncluded     = errors.New("model is not included in subscription")
 	ErrPricingNotConfigured = errors.New("model point pricing is not configured")
 	ErrInvalidPlan          = errors.New("invalid subscription plan")
+	ErrPlanConflict         = errors.New("subscription plan changed")
+	ErrPlanForbidden        = errors.New("subscription plan finance authority required")
 	ErrInvalidPricing       = errors.New("invalid model point pricing")
 	ErrSubscriptionReplay   = errors.New("subscription idempotency conflict")
 	ErrSubscriptionActive   = errors.New("subscription plan is already active")
@@ -59,6 +61,7 @@ type SubscriptionPlan struct {
 	SortOrder         int         `json:"sortOrder"`
 	Active            bool        `json:"active"`
 	ModelIDs          []uuid.UUID `json:"modelIds"`
+	Version           int64       `json:"version"`
 	CreatedAt         time.Time   `json:"createdAt"`
 	UpdatedAt         time.Time   `json:"updatedAt"`
 }
@@ -98,6 +101,7 @@ type SubscriptionPlanInput struct {
 }
 
 type SubscriptionPlanUpdate struct {
+	ExpectedVersion   int64        `json:"expectedVersion"`
 	TierCode          *string      `json:"tierCode,omitempty"`
 	Name              *string      `json:"name,omitempty"`
 	Description       *string      `json:"description,omitempty"`
@@ -202,16 +206,19 @@ func getPointAccount(ctx context.Context, q rowQuerier, userID uuid.UUID) (Point
 func currentSubscription(ctx context.Context, q rowQuerier, userID uuid.UUID) (UserSubscription, error) {
 	var item UserSubscription
 	err := q.QueryRow(ctx, `
-		SELECT s.id,s.user_id,s.plan_id,p.name,p.tier_code,s.status,s.price_cents,s.currency,s.granted_points,s.started_at,s.current_period_end
+		SELECT s.id,s.user_id,s.plan_id,COALESCE(c.plan_name,p.name),COALESCE(c.tier_code,p.tier_code),s.status,s.price_cents,s.currency,s.granted_points,s.started_at,s.current_period_end
 		FROM user_subscriptions s JOIN subscription_plans p ON p.id=s.plan_id
-		WHERE s.user_id=$1 AND s.status='active' AND s.current_period_end>now()`, userID).Scan(
+		LEFT JOIN subscription_checkout_contracts c ON c.payment_id=s.purchase_operation_id AND c.buyer_id=s.user_id AND c.plan_id=s.plan_id
+		AND c.price_cents=s.price_cents AND c.currency=s.currency AND c.included_points=s.granted_points
+		WHERE s.user_id=$1 AND s.status='active' AND s.current_period_end>now()
+		AND (c.payment_id IS NOT NULL OR NOT EXISTS(SELECT 1 FROM payment_intents i WHERE i.id=s.purchase_operation_id AND i.purpose='subscription'))`, userID).Scan(
 		&item.ID, &item.UserID, &item.PlanID, &item.PlanName, &item.TierCode, &item.Status, &item.PriceCents, &item.Currency, &item.GrantedPoints, &item.StartedAt, &item.CurrentPeriodEnd)
 	return item, err
 }
 
 func (s *Service) ListSubscriptionPlans(ctx context.Context, includeInactive bool) ([]SubscriptionPlan, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT p.id,p.tier_code,p.name,p.description,p.price_cents,p.currency,p.included_points,p.billing_period_days,p.sort_order,p.active,p.created_at,p.updated_at,
+		SELECT p.id,p.tier_code,p.name,p.description,p.price_cents,p.currency,p.included_points,p.billing_period_days,p.sort_order,p.active,p.created_at,p.updated_at,p.version,
 		       COALESCE(array_agg(pm.provider_model_id ORDER BY pm.provider_model_id) FILTER (WHERE pm.provider_model_id IS NOT NULL),'{}'::uuid[])
 		FROM subscription_plans p LEFT JOIN subscription_plan_models pm ON pm.plan_id=p.id
 		WHERE ($1 OR p.active=true)
@@ -223,7 +230,7 @@ func (s *Service) ListSubscriptionPlans(ctx context.Context, includeInactive boo
 	items := make([]SubscriptionPlan, 0)
 	for rows.Next() {
 		var item SubscriptionPlan
-		if err := rows.Scan(&item.ID, &item.TierCode, &item.Name, &item.Description, &item.PriceCents, &item.Currency, &item.IncludedPoints, &item.BillingPeriodDays, &item.SortOrder, &item.Active, &item.CreatedAt, &item.UpdatedAt, &item.ModelIDs); err != nil {
+		if err := rows.Scan(&item.ID, &item.TierCode, &item.Name, &item.Description, &item.PriceCents, &item.Currency, &item.IncludedPoints, &item.BillingPeriodDays, &item.SortOrder, &item.Active, &item.CreatedAt, &item.UpdatedAt, &item.Version, &item.ModelIDs); err != nil {
 			return nil, fmt.Errorf("scan subscription plan: %w", err)
 		}
 		items = append(items, item)
@@ -249,17 +256,25 @@ func validatePlanInput(input SubscriptionPlanInput) error {
 	return nil
 }
 
-func (s *Service) CreateSubscriptionPlan(ctx context.Context, actorID uuid.UUID, input SubscriptionPlanInput) (SubscriptionPlan, error) {
+func (s *Service) CreateSubscriptionPlan(ctx context.Context, actorID uuid.UUID, input SubscriptionPlanInput, requestID string) (_ SubscriptionPlan, resultErr error) {
+	defer func() { resultErr = planCommandError(resultErr) }()
+	requestID = strings.TrimSpace(requestID)
+	if requestID == "" {
+		return SubscriptionPlan{}, ErrInvalidPlan
+	}
 	input.TierCode = strings.TrimSpace(strings.ToLower(input.TierCode))
 	input.Name, input.Description, input.Currency = strings.TrimSpace(input.Name), strings.TrimSpace(input.Description), strings.ToUpper(strings.TrimSpace(input.Currency))
 	if err := validatePlanInput(input); err != nil {
 		return SubscriptionPlan{}, err
 	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
 		return SubscriptionPlan{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err := planFinanceAuthorityTx(ctx, tx, actorID, true); err != nil {
+		return SubscriptionPlan{}, err
+	}
 	var id uuid.UUID
 	if err := tx.QueryRow(ctx, `INSERT INTO subscription_plans(tier_code,name,description,price_cents,currency,included_points,billing_period_days,sort_order,active,created_by,updated_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10) RETURNING id`, input.TierCode, input.Name, input.Description, input.PriceCents, input.Currency, input.IncludedPoints, input.BillingPeriodDays, input.SortOrder, input.Active, actorID).Scan(&id); err != nil {
 		return SubscriptionPlan{}, fmt.Errorf("create subscription plan: %w", err)
@@ -267,14 +282,43 @@ func (s *Service) CreateSubscriptionPlan(ctx context.Context, actorID uuid.UUID,
 	if err := replacePlanModels(ctx, tx, id, input.ModelIDs); err != nil {
 		return SubscriptionPlan{}, err
 	}
+	item, err := subscriptionPlanTx(ctx, tx, id)
+	if err != nil {
+		return SubscriptionPlan{}, err
+	}
+	if err := recordPlanCommandTx(ctx, tx, actorID, nil, item, requestID); err != nil {
+		return SubscriptionPlan{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return SubscriptionPlan{}, err
 	}
-	return s.getSubscriptionPlan(ctx, id)
+	return item, nil
 }
 
-func (s *Service) UpdateSubscriptionPlan(ctx context.Context, actorID, planID uuid.UUID, input SubscriptionPlanUpdate) (SubscriptionPlan, error) {
-	current, err := s.getSubscriptionPlan(ctx, planID)
+func (s *Service) UpdateSubscriptionPlan(ctx context.Context, actorID, planID uuid.UUID, input SubscriptionPlanUpdate, requestID string) (_ SubscriptionPlan, resultErr error) {
+	defer func() { resultErr = planCommandError(resultErr) }()
+	requestID = strings.TrimSpace(requestID)
+	if requestID == "" || input.ExpectedVersion < 1 {
+		return SubscriptionPlan{}, ErrInvalidPlan
+	}
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	if err != nil {
+		return SubscriptionPlan{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := planFinanceAuthorityTx(ctx, tx, actorID, false); err != nil {
+		return SubscriptionPlan{}, err
+	}
+	var revision int64
+	if err := tx.QueryRow(ctx, `SELECT version FROM subscription_plans WHERE id=$1 FOR UPDATE`, planID).Scan(&revision); errors.Is(err, pgx.ErrNoRows) {
+		return SubscriptionPlan{}, ErrInvalidPlan
+	} else if err != nil {
+		return SubscriptionPlan{}, err
+	}
+	if revision != input.ExpectedVersion {
+		return SubscriptionPlan{}, ErrPlanConflict
+	}
+	current, err := subscriptionPlanTx(ctx, tx, planID)
 	if err != nil {
 		return SubscriptionPlan{}, err
 	}
@@ -316,11 +360,9 @@ func (s *Service) UpdateSubscriptionPlan(ctx context.Context, actorID, planID uu
 	if err := validatePlanInput(value); err != nil {
 		return SubscriptionPlan{}, err
 	}
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
+	if err := planFinanceAuthorityTx(ctx, tx, actorID, true); err != nil {
 		return SubscriptionPlan{}, err
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
 	result, err := tx.Exec(ctx, `UPDATE subscription_plans SET tier_code=$2,name=$3,description=$4,price_cents=$5,currency=$6,included_points=$7,billing_period_days=$8,sort_order=$9,active=$10,updated_by=$11,updated_at=now() WHERE id=$1`, planID, value.TierCode, value.Name, value.Description, value.PriceCents, value.Currency, value.IncludedPoints, value.BillingPeriodDays, value.SortOrder, value.Active, actorID)
 	if err != nil {
 		return SubscriptionPlan{}, fmt.Errorf("update subscription plan: %w", err)
@@ -333,10 +375,17 @@ func (s *Service) UpdateSubscriptionPlan(ctx context.Context, actorID, planID uu
 			return SubscriptionPlan{}, err
 		}
 	}
+	item, err := subscriptionPlanTx(ctx, tx, planID)
+	if err != nil {
+		return SubscriptionPlan{}, err
+	}
+	if err := recordPlanCommandTx(ctx, tx, actorID, &current, item, requestID); err != nil {
+		return SubscriptionPlan{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return SubscriptionPlan{}, err
 	}
-	return s.getSubscriptionPlan(ctx, planID)
+	return item, nil
 }
 
 func replacePlanModels(ctx context.Context, tx pgx.Tx, planID uuid.UUID, modelIDs []uuid.UUID) error {
@@ -344,7 +393,9 @@ func replacePlanModels(ctx context.Context, tx pgx.Tx, planID uuid.UUID, modelID
 		return err
 	}
 	for _, modelID := range modelIDs {
-		result, err := tx.Exec(ctx, `INSERT INTO subscription_plan_models(plan_id,provider_model_id) SELECT $1,id FROM provider_config_models WHERE id=$2 AND archived_at IS NULL`, planID, modelID)
+		result, err := tx.Exec(ctx, `INSERT INTO subscription_plan_models(plan_id,provider_model_id)
+		 SELECT $1,m.id FROM provider_config_models m JOIN provider_configs p ON p.id=m.provider_id
+		 WHERE m.id=$2 AND m.archived_at IS NULL AND p.archived_at IS NULL FOR SHARE OF m,p`, planID, modelID)
 		if err != nil {
 			return fmt.Errorf("assign plan model: %w", err)
 		}
@@ -599,24 +650,26 @@ func ReserveGenerationPointsTx(ctx context.Context, tx pgx.Tx, userID, generatio
 		return 0, nil, err
 	}
 	var subscriptionID uuid.UUID
-	if providerModelID != nil {
-		err = tx.QueryRow(ctx, `SELECT s.id FROM user_subscriptions s JOIN subscription_plan_models pm ON pm.plan_id=s.plan_id WHERE s.user_id=$1 AND s.status='active' AND s.current_period_end>now() AND pm.provider_model_id=$2`, userID, *providerModelID).Scan(&subscriptionID)
-		if errors.Is(err, pgx.ErrNoRows) {
-			var active bool
-			_ = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM user_subscriptions WHERE user_id=$1 AND status='active' AND current_period_end>now())`, userID).Scan(&active)
-			if active {
-				return 0, nil, ErrModelNotIncluded
-			}
-			return 0, nil, ErrSubscriptionRequired
-		}
-	} else {
-		err = tx.QueryRow(ctx, `SELECT id FROM user_subscriptions WHERE user_id=$1 AND status='active' AND current_period_end>now()`, userID).Scan(&subscriptionID)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return 0, nil, ErrSubscriptionRequired
-		}
+	var modelIncluded bool
+	// External subscriptions use only accepted model IDs. A profile without a
+	// concrete model ID cannot establish membership in that contract. Starter
+	// and local wallet subscriptions retain their existing membership rules.
+	err = tx.QueryRow(ctx, `SELECT s.id,
+		CASE WHEN c.payment_id IS NOT NULL THEN $2::uuid IS NOT NULL AND $2=ANY(c.model_ids)
+		ELSE NOT EXISTS(SELECT 1 FROM payment_intents i WHERE i.id=s.purchase_operation_id AND i.purpose='subscription')
+		AND ($2::uuid IS NULL OR EXISTS(SELECT 1 FROM subscription_plan_models pm WHERE pm.plan_id=s.plan_id AND pm.provider_model_id=$2)) END
+		FROM user_subscriptions s
+		LEFT JOIN subscription_checkout_contracts c ON c.payment_id=s.purchase_operation_id AND c.buyer_id=s.user_id AND c.plan_id=s.plan_id
+		AND c.price_cents=s.price_cents AND c.currency=s.currency AND c.included_points=s.granted_points
+		WHERE s.user_id=$1 AND s.status='active' AND s.current_period_end>now()`, userID, providerModelID).Scan(&subscriptionID, &modelIncluded)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, nil, ErrSubscriptionRequired
 	}
 	if err != nil {
 		return 0, nil, err
+	}
+	if !modelIncluded {
+		return 0, nil, ErrModelNotIncluded
 	}
 	estimate, resolution := EstimatePoints(rule, input)
 	snapshot, _ := json.Marshal(pricingSnapshot{Rule: rule, RequestedResolution: resolution, EstimateInput: input})
@@ -698,8 +751,10 @@ func ReleaseGenerationPointsTx(ctx context.Context, tx pgx.Tx, generationID uuid
 	if status != "held" {
 		return ErrReservationState
 	}
-	if _, err := tx.Exec(ctx, `UPDATE point_accounts SET reserved_points=reserved_points-$2,version=version+1,updated_at=now() WHERE user_id=$1 AND reserved_points >= $2`, userID, held); err != nil {
+	if result, err := tx.Exec(ctx, `UPDATE point_accounts SET reserved_points=reserved_points-$2,version=version+1,updated_at=now() WHERE user_id=$1 AND reserved_points >= $2`, userID, held); err != nil {
 		return err
+	} else if result.RowsAffected() != 1 {
+		return ErrReservationState
 	}
 	_, err := tx.Exec(ctx, `UPDATE point_reservations SET status='released',release_reason=$2,updated_at=now() WHERE generation_id=$1`, generationID, strings.TrimSpace(reason))
 	return err

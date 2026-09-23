@@ -66,22 +66,29 @@ func (w *Worker) Run(ctx context.Context) error {
 			}
 			return ctx.Err()
 		case <-ticker.C:
+			// Recovery is fleet maintenance, not an execution slot. Saturated
+			// workers must still release leases left by departed workers.
+			pollCtx, cancelPoll := context.WithTimeout(ctx, 5*time.Second)
+			err := w.repository.RecoverExpired(pollCtx)
+			cancelPoll()
+			if err != nil {
+				w.logger.Error("recover jobs", "error_code", failureCode(err))
+			}
 			select {
 			case semaphore <- struct{}{}:
 			default:
 				continue
 			}
-			if err := w.repository.RecoverExpired(ctx); err != nil {
-				w.logger.Error("recover jobs", "error", err)
-			}
-			job, err := w.repository.Claim(ctx, w.owner, w.lease)
+			pollCtx, cancelPoll = context.WithTimeout(ctx, 5*time.Second)
+			job, err := w.repository.Claim(pollCtx, w.owner, w.lease)
+			cancelPoll()
 			if errors.Is(err, ErrNoJob) {
 				<-semaphore
 				continue
 			}
 			if err != nil {
 				<-semaphore
-				w.logger.Error("claim job", "error", err)
+				w.logger.Error("claim job", "error_code", failureCode(err))
 				continue
 			}
 			running.Add(1)
@@ -97,14 +104,18 @@ func (w *Worker) Run(ctx context.Context) error {
 				} else {
 					err = w.execute(ctx, job, handler)
 				}
+				// A blocked terminal write must not occupy a handler slot forever.
+				// Leave the durable lease/attempt for recovery if finalization times out.
+				finishCtx, cancelFinish := context.WithTimeout(ctx, w.lease/3)
+				defer cancelFinish()
 				if err != nil {
 					w.logger.Error("job failed", "job_id", job.ID, "kind", job.Kind, "error_code", failureCode(err))
-					if failErr := w.repository.Fail(ctx, job, w.owner, err); failErr != nil {
+					if failErr := w.repository.Fail(finishCtx, job, w.owner, err); failErr != nil {
 						w.logger.Error("record job failure", "job_id", job.ID, "kind", job.Kind, "error_code", failureCode(failErr))
 					}
 					return
 				}
-				if err := w.repository.Complete(ctx, job, w.owner); err != nil {
+				if err := w.repository.Complete(finishCtx, job, w.owner); err != nil {
 					w.logger.Error("complete job", "job_id", job.ID, "kind", job.Kind, "error_code", failureCode(err))
 				}
 			}(job)
@@ -113,6 +124,14 @@ func (w *Worker) Run(ctx context.Context) error {
 }
 
 func (w *Worker) execute(ctx context.Context, job Job, handler Handler) error {
+	// A delayed claim response must not start side effects under an expired
+	// lease. The repository rechecks after acquiring the row lock.
+	verifyCtx, cancelVerify := context.WithTimeout(ctx, w.lease/3)
+	err := w.repository.Renew(verifyCtx, job, w.owner, w.lease)
+	cancelVerify()
+	if err != nil {
+		return err
+	}
 	handlerCtx, cancelHandler := context.WithCancel(ctx)
 	heartbeatCtx, cancelHeartbeat := context.WithCancel(ctx)
 	defer cancelHandler()
@@ -127,7 +146,10 @@ func (w *Worker) execute(ctx context.Context, job Job, handler Handler) error {
 				heartbeatDone <- nil
 				return
 			case <-ticker.C:
-				if err := w.repository.Renew(heartbeatCtx, job, w.owner, w.lease); err != nil {
+				renewCtx, stopRenew := context.WithTimeout(heartbeatCtx, w.lease/3)
+				err := w.repository.Renew(renewCtx, job, w.owner, w.lease)
+				stopRenew()
+				if err != nil {
 					if heartbeatCtx.Err() != nil {
 						heartbeatDone <- nil
 						return

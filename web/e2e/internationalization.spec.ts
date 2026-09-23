@@ -1,7 +1,8 @@
+import { fixtureCredentials } from './helpers/identity'
 import { expect, test } from '@playwright/test'
 
 test('keeps the Chinese core workflow localized and within mobile and desktop viewports', async ({ page }) => {
-  const session = await page.request.post('/api/v1/auth/demo', { data: { actor: 'creator' } })
+  const session = await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('creator') })
   expect(session.ok()).toBeTruthy()
   const consoleIssues: string[] = []
   page.on('console', (message) => {
@@ -11,7 +12,7 @@ test('keeps the Chinese core workflow localized and within mobile and desktop vi
   await page.goto('/discover')
   await page.evaluate(() => globalThis.localStorage.setItem('hcai-locale', 'zh-CN'))
   const routes = [
-    ['/create/image', '创作图片'],
+    ['/create/image', 'AI 创作空间'],
     ['/workspace/assets', '资产'],
     ['/market', '数字产品市场'],
     ['/market/demands', '任务广场'],
@@ -29,7 +30,7 @@ test('keeps the Chinese core workflow localized and within mobile and desktop vi
     expect(layout.body).not.toMatch(/(?:^|\s)(?:accessibility|actions|admin|community|create|discover|marketplace|nav|notifications|publish|search|status|tasks|workspace)\.[A-Za-z][\w.]+/)
   }
 
-  const adminSession = await page.request.post('/api/v1/auth/demo', { data: { actor: 'admin' } })
+  const adminSession = await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('admin') })
   expect(adminSession.ok()).toBeTruthy()
   await page.setViewportSize({ width: 1600, height: 1000 })
   await page.goto('/admin')
@@ -46,11 +47,17 @@ test('keeps the Chinese core workflow localized and within mobile and desktop vi
 test('localizes stable API failures instead of exposing English server copy', async ({ page }) => {
   await page.goto('/discover')
   await page.evaluate(() => globalThis.localStorage.setItem('hcai-locale', 'zh-CN'))
+  const email = `localized-${Date.now()}@test.local`
+  const registered = await page.request.post('/api/v1/auth/register', { data: {
+    email, password: 'correct-password-2026', handle: `localized_${Date.now()}`, displayName: 'Localized', locale: 'zh-CN', timezone: 'UTC',
+  } })
+  expect(registered.status()).toBe(201)
   await page.request.post('/api/v1/auth/logout')
   await page.goto('/settings')
 
   const form = page.locator('.auth-panel .account-form')
-  await form.getByLabel('邮箱', { exact: true }).fill('missing-user@example.com')
+  await form.getByLabel('邮箱', { exact: true }).fill(email)
+  await form.getByRole('button', { name: '下一步', exact: true }).click()
   await form.getByLabel('密码', { exact: true }).fill('not-the-right-password')
   await form.getByRole('button', { name: '登录', exact: true }).click()
 

@@ -1,3 +1,4 @@
+import { registerFromEmail } from './helpers/auth'
 import { expect, test } from '@playwright/test'
 
 test('lets a visitor browse a task and return after creating an account', async ({ page }) => {
@@ -19,13 +20,8 @@ test('lets a visitor browse a task and return after creating an account', async 
   await expect(page.getByText('Tasks are temporarily unavailable', { exact: true })).toHaveCount(0)
   await page.locator('.market-auth-prompt').getByRole('link', { name: 'Create account', exact: true }).click()
 
-  await expect(page).toHaveURL(/\/settings\?auth=register/)
-  await expect(page.locator('.auth-tabs').getByRole('button', { name: 'Create account', exact: true })).toHaveClass(/active/)
-  await page.getByLabel('Display name', { exact: true }).fill('Public Market Visitor')
-  await page.getByLabel('Handle', { exact: true }).fill(`visitor_${runID}`)
-  await page.getByLabel('Email', { exact: true }).fill(`visitor-${runID}@example.com`)
-  await page.locator('.account-form').getByLabel('Password', { exact: false }).fill('visitor-password-2026')
-  await page.locator('.account-form').getByRole('button', { name: 'Create account', exact: true }).click()
+  await expect(page).toHaveURL(/\/auth\?auth=register/)
+  await registerFromEmail(page, `visitor_${runID}`)
 
   await expect(page).toHaveURL(taskPath)
   await expect(page.getByRole('button', { name: 'Submit proposal', exact: true })).toBeVisible()
@@ -42,14 +38,12 @@ test('lets an anonymous visitor inspect product rights before sign-in', async ({
   await firstProduct.click()
 
   await expect(page.getByRole('heading', { name: 'Sign in to license this product', exact: true })).toBeVisible()
-  await expect(page.getByText('Local Test price', { exact: true })).toBeVisible()
   await expect(page.getByText('I reviewed and accept', { exact: false })).toHaveCount(0)
   const widths = await page.evaluate(() => ({ client: document.documentElement.clientWidth, scroll: document.documentElement.scrollWidth }))
   expect(widths.scroll).toBe(widths.client)
 
   await page.locator('.market-auth-prompt').getByRole('link', { name: 'Sign in', exact: true }).click()
-  await expect(page).toHaveURL(/\/settings\?auth=login/)
-  await expect(page.locator('.auth-tabs').getByRole('button', { name: 'Sign in', exact: true })).toHaveClass(/active/)
+  await expect(page).toHaveURL(/\/auth\?auth=login/)
 })
 
 test('keeps desktop header actions separate and icon controls square', async ({ page }) => {
@@ -60,7 +54,7 @@ test('keeps desktop header actions separate and icon controls square', async ({ 
   const search = page.locator('.global-search')
   const searchInput = page.locator('.global-search-input')
   const searchSubmit = page.locator('.global-search-submit')
-  const publish = page.locator('.header-publish-action')
+  const publish = page.locator('.header-actions')
   await expect(search).toBeVisible()
   await expect(publish).toBeVisible()
 

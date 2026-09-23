@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { ArrowLeft, RefreshCw, Sparkles } from 'lucide-vue-next'
+import { useSessionStore } from '../stores/session'
+import DetailToolbar from '../components/ui/DetailToolbar.vue'
+import { ArrowLeft, Bookmark, RefreshCw, Sparkles } from 'lucide-vue-next'
 import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { RouterLink, useRoute } from 'vue-router'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { api, messageFrom, type Work } from '../api/client'
 import AssetMedia from '../components/domain/AssetMedia.vue'
 import UiButton from '../components/ui/UiButton.vue'
@@ -12,6 +14,11 @@ import { contentListReturn, creationPath, licenseLabel } from '../lib/contentPre
 
 const { t } = useI18n()
 const route = useRoute()
+const router = useRouter()
+const session = useSessionStore()
+const capabilities = ref<Awaited<ReturnType<typeof api.communityCapabilities>> | null>(null)
+const saving = ref(false)
+const feedback = ref('')
 const work = ref<Work | null>(null)
 const loading = ref(true)
 const error = ref('')
@@ -24,11 +31,16 @@ async function load() {
   const version = ++requestVersion
   loading.value = true
   error.value = ''
+  feedback.value = ''
+  saving.value = false
   copyError.value = ''
   disclosureOpen.value = false
   promptExpanded.value = false
   try {
-    const result = await api.getWork(String(route.params.id))
+    await session.ensure()
+    if (version !== requestVersion) return
+    const [result, ability] = await Promise.all([api.getWork(String(route.params.id)), api.communityCapabilities()])
+    if (version === requestVersion) capabilities.value = ability
     if (version === requestVersion) work.value = result
   } catch (reason) {
     if (version === requestVersion) error.value = messageFrom(reason)
@@ -37,14 +49,28 @@ async function load() {
   }
 }
 
+async function bookmark() {
+  if (!work.value?.postId || saving.value) return
+  if (!session.user) { await router.push({ path: '/auth', query: { auth: 'login', returnTo: route.fullPath } }); return }
+  if (!capabilities.value?.canInteract) return
+  const version = requestVersion
+  saving.value = true; feedback.value = ''
+  try {
+    const state = await api.setCommunityReaction(work.value.postId, 'bookmark', !work.value.viewerBookmarked)
+    if (version === requestVersion && work.value) work.value.viewerBookmarked = state.viewerBookmarked
+  } catch (reason) { if (version === requestVersion) feedback.value = messageFrom(reason) }
+  finally { if (version === requestVersion) saving.value = false }
+}
 watch(() => route.params.id, () => void load(), { immediate: true })
 </script>
 
 <template>
   <section class="work-detail content-width">
-    <RouterLink class="text-link back-link" :to="contentListReturn('/discover')">
-      <ArrowLeft :size="16" />{{ t('actions.backDiscover') }}
-    </RouterLink>
+    <DetailToolbar class="work-detail-toolbar">
+      <RouterLink class="text-link back-link" :to="contentListReturn('/discover')">
+        <ArrowLeft :size="16" />{{ t('actions.backDiscover') }}
+      </RouterLink>
+    </DetailToolbar>
     <div v-if="loading" class="page-state" aria-live="polite">
       {{ t('status.loadingWork') }}
     </div>
@@ -58,14 +84,28 @@ watch(() => route.params.id, () => void load(), { immediate: true })
     </div>
     <div v-else-if="work" class="work-detail-grid">
       <header class="work-detail-heading">
-        <span class="status-label">{{ work.licenseCode.startsWith('demo') ? t('status.demo') : t('status.published') }}</span>
+        <span class="status-label">{{ t('status.published') }}</span>
         <h1>{{ work.title }}</h1>
         <p class="work-summary">
           {{ work.summary }}
         </p>
-        <UiButton as="RouterLink" variant="primary" :to="{ path: creationPath(work.mediaKind), query: { sourceWorkId: work.id } }">
-          <Sparkles :size="17" />{{ t('actions.remix') }}
-        </UiButton>
+        <div class="work-detail-actions">
+          <UiButton as="RouterLink" variant="primary" :to="{ path: creationPath(work.mediaKind), query: { sourceWorkId: work.id } }">
+            <Sparkles :size="17" />{{ t('inspiration.createFromWork') }}
+          </UiButton>
+          <UiButton v-if="work.postId" variant="secondary" :loading="saving" :aria-pressed="Boolean(work.viewerBookmarked)" :disabled="Boolean(session.user && !capabilities?.canInteract)" @click="bookmark">
+            <Bookmark :size="16" />{{ t(work.viewerBookmarked ? 'inspiration.unsave' : 'community.bookmark') }}
+          </UiButton>
+          <UiButton v-if="work.postId" as="RouterLink" variant="secondary" :to="`/community/posts/${work.postId}`">
+            {{ t('inspiration.discussion') }}
+          </UiButton>
+        </div>
+        <p class="work-remix-hint">
+          {{ t('inspiration.remixHint') }}
+        </p>
+        <p v-if="feedback" class="form-error" role="alert">
+          {{ feedback }}
+        </p>
       </header>
       <div class="work-detail-media">
         <AssetMedia :src="work.mediaUrl" :kind="work.mediaKind" :alt="work.title" :width="work.width || 1600" :height="work.height || 1000" />
@@ -93,11 +133,22 @@ watch(() => route.params.id, () => void load(), { immediate: true })
             {{ work.prompt }}
           </p>
           <p v-else>
-            {{ t('work.promptPrivate') }}
+            {{ t(`inspiration.promptMessages.${work.promptVisibility}`) }}
           </p>
           <UiButton v-if="work.prompt && work.prompt.length > 600" variant="ghost" size="sm" :aria-expanded="promptExpanded" aria-controls="work-prompt" @click="promptExpanded = !promptExpanded">
             {{ t(promptExpanded ? 'content.collapsePrompt' : 'content.expandPrompt') }}
           </UiButton>
+        </section>
+        <section v-if="work.sources?.length" class="detail-block">
+          <h2>{{ t('inspiration.sources') }}</h2>
+          <p>{{ t('inspiration.sourcesHint') }}</p>
+          <ol class="work-sources">
+            <li v-for="source in work.sources" :key="source.id">
+              <RouterLink class="text-link" :to="`/works/${source.id}`">
+                {{ source.title }}
+              </RouterLink><span> · {{ source.author.displayName }}</span>
+            </li>
+          </ol>
         </section>
         <UiCollapsible v-model:open="disclosureOpen" class="detail-block disclosure-block" :title="t('content.details')">
           <p>{{ work.aiDisclosure }}</p>
@@ -109,12 +160,20 @@ watch(() => route.params.id, () => void load(), { immediate: true })
 </template>
 
 <style scoped>
+.work-detail { --content-max: 1400px; padding-top: 0; }
+.work-detail-heading { padding: 24px; border: 1px solid var(--border); border-radius: var(--radius-surface); background: var(--surface); }
+.work-detail-media { border: 1px solid var(--border); border-radius: var(--radius-surface); overflow: hidden; }
+.work-inspector { position: static; }
+
 .work-detail-grid { grid-template-columns: minmax(0, 1fr) minmax(300px, 380px); gap: 24px; }
 .work-detail-heading { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 20px; align-items: center; }
 .work-detail-heading .status-label { grid-column: 1 / -1; }
 .work-detail-heading h1 { margin: 0; font-size: clamp(24px, 2.4vw, 32px); line-height: 1.25; overflow-wrap: anywhere; }
 .work-detail-heading .work-summary { grid-column: 1; margin: 0; max-width: 76ch; font-size: 14px; line-height: 1.65; }
-.work-detail-heading .ui-button { grid-column: 2; grid-row: 2 / 4; }
+.work-detail-actions { grid-column: 2; grid-row: 2 / 4; display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+.work-remix-hint { grid-column: 1 / -1; font-size: 13px; color: var(--text-muted); margin: 4px 0 0; }
+.work-sources { padding-left: 20px; overflow-wrap: anywhere; }
+.work-sources li + li { margin-top: 8px; }
 .work-detail-media { position: relative; min-height: 0; height: min(62dvh, 600px); }
 .work-detail-media :deep(img), .work-detail-media :deep(video) { width: 100%; height: 100%; max-height: 100%; object-fit: contain; }
 .work-full-preview { position: absolute; right: 12px; bottom: 12px; padding: 10px 14px; border-radius: var(--radius-control); background: rgb(0 0 0 / 72%); color: white; font-size: 13px; }
@@ -128,5 +187,5 @@ watch(() => route.params.id, () => void load(), { immediate: true })
 .disclosure-block p { margin-top: 12px; line-height: 1.6; }
 .disclosure-block small { display: block; margin-top: 8px; overflow-wrap: anywhere; }
 @media(max-width: 1000px) { .work-detail-grid { grid-template-columns: minmax(0, 1fr); } .work-inspector { position: static; } }
-@media(max-width: 600px) { .work-detail-heading { grid-template-columns: 1fr; } .work-detail-heading .ui-button { grid-column: 1; grid-row: auto; justify-self: start; } .work-detail-media { height: min(50dvh, 420px); } }
+@media(max-width: 600px) { .work-detail-heading { padding: 18px; } .work-detail-grid { gap: 16px; } .work-detail-heading { grid-template-columns: 1fr; } .work-detail-actions { grid-column: 1; grid-row: auto; justify-content: flex-start; } .work-detail-media { height: min(50dvh, 420px); } }
 </style>

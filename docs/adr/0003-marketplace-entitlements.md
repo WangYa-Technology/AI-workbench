@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted for CP-04.
+Historical CP-04 decision. Local purchase creation has been retired; current checkout uses Provider payment intents and immutable contracts. Only evidence-checked historical balance reversal remains. See [the current lifecycle and 0097 compatibility boundary](../resource-marketplace-flows.md#75-旧本地购买退役与历史余额冲回0097).
 
 ## Context
 

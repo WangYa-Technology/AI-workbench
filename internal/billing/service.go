@@ -285,10 +285,12 @@ func ReleaseGenerationTx(ctx context.Context, tx pgx.Tx, generationID uuid.UUID,
 	if status != "held" {
 		return ErrReservationState
 	}
-	if _, err := tx.Exec(ctx, `
+	if result, err := tx.Exec(ctx, `
 		UPDATE billing_accounts SET reserved_cents=reserved_cents-$3,version=version+1,updated_at=now()
 		WHERE user_id=$1 AND currency=$2 AND reserved_cents >= $3`, userID, currency, amount); err != nil {
 		return fmt.Errorf("release generation credits: %w", err)
+	} else if result.RowsAffected() != 1 {
+		return ErrReservationState
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE billing_reservations SET status='released',release_reason=$2,updated_at=now()

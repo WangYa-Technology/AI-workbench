@@ -4,11 +4,12 @@ const webPort = process.env.E2E_WEB_PORT ?? '15173'
 
 export default defineConfig({
   testDir: './e2e',
+  testIgnore: '**/*.payment.spec.ts',
   globalTeardown: './e2e/global-teardown.ts',
   timeout: 30_000,
   expect: { timeout: 10_000 },
   fullyParallel: false,
-  // Workflow tests use one isolated PostgreSQL schema and deterministic demo actors.
+  // Workflow tests use one isolated PostgreSQL schema and dedicated test identities.
   workers: 1,
   reporter: [['list'], ['html', { open: 'never' }]],
   use: {

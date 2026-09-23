@@ -35,15 +35,10 @@ test('email verification and password reset form a durable local identity loop',
   const initialPassword = 'initial-password-2026'
   const replacementPassword = 'replacement-password-2026'
 
-  await page.goto('/settings')
-  await page.getByRole('button', { name: 'Create account' }).click()
-  await page.getByLabel('Display name').fill('Email E2E Creator')
-  await page.getByLabel('Handle').fill(handle)
-  await page.getByLabel('Email').fill(email)
-  await page.getByLabel('Password').fill(initialPassword)
-  await page.getByLabel('IANA timezone').fill('UTC')
-  await page.getByRole('button', { name: 'Create account' }).last().click()
-  await expect(page.getByRole('heading', { name: 'Email E2E Creator' })).toBeVisible()
+  const registered = await page.request.post('/api/v1/auth/register', { data: {
+    email, handle, password: initialPassword, displayName: 'Email E2E Creator', locale: 'en-US', timezone: 'UTC',
+  } })
+  expect(registered.status()).toBe(201)
 
   const session = await request.get('/api/v1/auth/session', { headers: { Cookie: (await page.context().cookies()).map(cookie => `${cookie.name}=${cookie.value}`).join('; ') } })
   expect(session.ok()).toBeTruthy()
@@ -56,6 +51,9 @@ test('email verification and password reset form a durable local identity loop',
   await expect(page.getByText('Verified', { exact: true }).first()).toBeVisible()
 
   await page.getByRole('button', { name: 'Sign out' }).first().click()
+  await page.goto('/auth')
+  await page.getByLabel('Email', { exact: true }).fill(email)
+  await page.getByRole('button', { name: 'Next', exact: true }).click()
   await page.getByRole('button', { name: 'Forgot password?' }).click()
   await page.getByLabel('Email').fill(email)
   await page.getByRole('button', { name: 'Send reset link' }).click()
@@ -63,13 +61,14 @@ test('email verification and password reset form a durable local identity loop',
 
   const resetMail = await newestEmail(sessionBody.user.id, 'Reset your HCAI CHAT password')
   await page.goto(actionURL(resetMail))
-  await page.getByLabel('New password', { exact: true }).fill(replacementPassword)
+  await page.locator('input[autocomplete="new-password"]').first().fill(replacementPassword)
   await page.getByLabel('Confirm new password').fill(replacementPassword)
   await page.getByRole('button', { name: 'Reset password' }).click()
   await expect(page.getByRole('heading', { name: 'Password reset complete' })).toBeVisible()
   await page.getByRole('link', { name: 'Sign in' }).click()
   await page.getByLabel('Email').fill(email)
-  await page.getByLabel('Password').fill(replacementPassword)
+  await page.getByRole('button', { name: 'Next', exact: true }).click()
+  await page.getByLabel('Password', { exact: true }).fill(replacementPassword)
   await page.getByRole('button', { name: 'Sign in' }).last().click()
-  await expect(page.getByRole('heading', { name: 'Email E2E Creator' })).toBeVisible()
+  await expect(page).toHaveURL(/\/settings$/)
 })

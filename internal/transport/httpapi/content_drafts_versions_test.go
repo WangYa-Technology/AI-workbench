@@ -51,7 +51,7 @@ func TestContentDraftAndAssetVersionHTTPContract(t *testing.T) {
 	extraAssetID := uuid.New()
 	if _, err := pool.Exec(context.Background(), `
 		INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,scan_status,source_type,license_code,created_at)
-		VALUES($1,$2,'image','HTTP paged Asset','/media/http-paged-asset.jpg','image/jpeg','clean','demo','hcai-personal-v1',now()+interval '1 hour')`, extraAssetID, owner.ID); err != nil {
+		VALUES($1,$2,'image','HTTP paged Asset','/media/http-paged-asset.jpg','image/jpeg','clean','delivery','hcai-personal-v1',now()+interval '1 hour')`, extraAssetID, owner.ID); err != nil {
 		t.Fatal(err)
 	}
 	var firstPage assets.AssetPage
@@ -86,7 +86,7 @@ func TestContentDraftAndAssetVersionHTTPContract(t *testing.T) {
 	}
 	response = requestJSON(t, client, http.MethodPatch, server.URL+"/api/v1/content-drafts/"+draft.ID.String(), map[string]any{
 		"assetId": version.ID, "title": "Durable HTTP content draft", "summary": "Saved before a controlled publication.",
-		"prompt": "HTTP draft prompt", "promptVisibility": "partial", "aiDisclosure": "Created with the deterministic Local Test Provider.",
+		"prompt": "HTTP draft prompt", "promptVisibility": "private", "aiDisclosure": "Created with the deterministic Local Test Provider.",
 		"body": "This post was restored from a private server-side draft.", "expectedVersion": draft.Version,
 	}, &draft)
 	if response.StatusCode != http.StatusOK || draft.Version != 2 {
@@ -133,6 +133,7 @@ func uploadAssetPart(t *testing.T, client *http.Client, target string, fields ma
 		t.Fatal(err)
 	}
 	request.Header.Set("Content-Type", writer.FormDataContentType())
+	request.Header.Set("Idempotency-Key", uuid.NewString())
 	response, err := client.Do(request)
 	if err != nil {
 		t.Fatal(err)

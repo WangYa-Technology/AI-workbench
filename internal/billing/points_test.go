@@ -66,12 +66,12 @@ func TestSubscriptionPurchaseIsAtomicIdempotentAndModelScoped(t *testing.T) {
 		TierCode: "point_test_" + uuid.NewString()[:8], Name: "Point Test", Description: "A deterministic subscription purchase fixture.",
 		PriceCents: 1500, Currency: "USD", IncludedPoints: 20000, BillingPeriodDays: 30, SortOrder: 99, Active: true,
 		ModelIDs: []uuid.UUID{chatModelID, imageModelID},
-	})
+	}, "points-plan-create")
 	if err != nil {
 		t.Fatal(err)
 	}
 	description, includedPoints := "Updated plan terms used for the purchase.", int64(24000)
-	updated, err := service.UpdateSubscriptionPlan(ctx, adminID, plan.ID, billing.SubscriptionPlanUpdate{Description: &description, IncludedPoints: &includedPoints})
+	updated, err := service.UpdateSubscriptionPlan(ctx, adminID, plan.ID, billing.SubscriptionPlanUpdate{ExpectedVersion: plan.Version, Description: &description, IncludedPoints: &includedPoints}, "points-plan-update")
 	if err != nil || updated.Description != description || updated.IncludedPoints != includedPoints || len(updated.ModelIDs) != 2 {
 		t.Fatalf("update subscription plan: %#v err=%v", updated, err)
 	}

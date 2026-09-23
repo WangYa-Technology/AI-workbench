@@ -17,6 +17,9 @@ type onboardingRuntime struct {
 }
 
 func (*onboardingRuntime) Provider() string { return "stripe" }
+func (*onboardingRuntime) ProductCheckoutIdentity(ctx context.Context) (ProductCheckoutIdentity, error) {
+	return (&productCheckoutRuntime{}).ProductCheckoutIdentity(ctx)
+}
 func (*onboardingRuntime) CreateCheckout(context.Context, CheckoutRequest) (CheckoutSession, error) {
 	return CheckoutSession{}, ErrProviderUnavailable
 }

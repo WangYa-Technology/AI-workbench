@@ -21,21 +21,21 @@ func TestMarketplaceBusinessCategoryPreservesProduct(t *testing.T) {
 		t.Fatal(err)
 	}
 	before, err := service.ListProducts(ctx, buyer, marketplace.ListFilter{})
-	if err != nil || len(before) != 1 {
+	if err != nil || len(before.Items) != 1 {
 		t.Fatalf("fixture %v %v", before, err)
 	}
 	if err = directory.Assign(ctx, "marketplace", product.String(), category.Code); err != nil {
 		t.Fatal(err)
 	}
 	after, err := service.ListProducts(ctx, buyer, marketplace.ListFilter{Category: category.Code})
-	if err != nil || len(after) != 1 {
+	if err != nil || len(after.Items) != 1 {
 		t.Fatalf("filter %v %v", after, err)
 	}
-	if after[0].ProductType != before[0].ProductType || after[0].MediaKind != before[0].MediaKind || after[0].PriceCents != before[0].PriceCents || after[0].AssetID != before[0].AssetID {
+	if after.Items[0].ProductType != before.Items[0].ProductType || after.Items[0].MediaKind != before.Items[0].MediaKind || after.Items[0].PriceCents != before.Items[0].PriceCents || after.Items[0].AssetID != before.Items[0].AssetID {
 		t.Fatal("classification changed product semantics")
 	}
 	empty, err := service.ListProducts(ctx, buyer, marketplace.ListFilter{Category: "market_asset"})
-	if err != nil || len(empty) != 0 {
+	if err != nil || len(empty.Items) != 0 {
 		t.Fatal("category filtering ignored")
 	}
 	if err = directory.Delete(ctx, category.Code, "community_general", "marketplace"); err == nil {
@@ -45,7 +45,7 @@ func TestMarketplaceBusinessCategoryPreservesProduct(t *testing.T) {
 		t.Fatal(err)
 	}
 	after, err = service.ListProducts(ctx, buyer, marketplace.ListFilter{Category: "market_asset"})
-	if err != nil || len(after) != 1 || after[0].ID != product {
+	if err != nil || len(after.Items) != 1 || after.Items[0].ID != product {
 		t.Fatal("transfer lost product")
 	}
 }

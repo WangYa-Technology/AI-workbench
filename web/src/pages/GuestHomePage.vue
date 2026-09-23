@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import UiEmptyState from '../components/ui/UiEmptyState.vue'
 import {
   ArrowRight, BriefcaseBusiness, Check, ImageIcon, Languages, MessageCircle,
   Moon, Music2, Play, Send, ShieldCheck, Sun, Video,
@@ -275,11 +276,13 @@ onBeforeUnmount(() => {
             <AssetMedia :src="work.mediaUrl" :kind="work.mediaKind" :alt="work.title" :width="work.width || 1000" :height="work.height || 800" :controls="false" /><span><strong>{{ work.title }}</strong><small>{{ work.author.displayName }} / {{ work.modelName }}</small></span>
           </RouterLink>
         </div>
-        <div v-else class="home-empty">
-          <p>{{ t('home.work.empty') }}</p><RouterLink to="/create/image">
-            {{ t('home.work.create') }}<ArrowRight :size="14" />
-          </RouterLink>
-        </div>
+        <UiEmptyState v-else density="compact" :title="t('home.work.empty')">
+          <template #actions>
+            <UiButton as="RouterLink" variant="secondary" to="/create/image">
+              {{ t('home.work.create') }}<ArrowRight :size="16" />
+            </UiButton>
+          </template>
+        </UiEmptyState>
       </section>
 
       <section class="loop-section" data-home-reveal>
@@ -303,9 +306,7 @@ onBeforeUnmount(() => {
             <span class="task-icon"><BriefcaseBusiness :size="16" /></span><span class="task-copy"><small>{{ t(`tasks.types.${task.deliverableType}`) }}</small><strong>{{ task.title }}</strong><span>{{ task.summary }}</span></span><span class="task-reward"><small>{{ t('tasks.reward') }}</small><strong>{{ currency(task) }}</strong></span><ArrowRight :size="16" />
           </RouterLink>
         </div>
-        <div v-else-if="!loading" class="home-empty">
-          <p>{{ t('home.tasks.empty') }}</p>
-        </div>
+        <UiEmptyState v-else-if="!loading" density="compact" :title="t('home.tasks.empty')" />
       </section>
 
       <section class="trust-section home-width" data-home-reveal>
@@ -461,7 +462,7 @@ onBeforeUnmount(() => {
 .story-copy ul { display: grid; gap: 12px; margin: 0 0 28px; padding: 0; list-style: none; color: var(--home-muted); font-size: 12px; }
 .story-copy li { display: flex; align-items: center; gap: 9px; }
 .story-copy li svg { color: var(--home-blue); }
-.story-copy > a, .section-heading > a, .home-empty a { display: inline-flex; align-items: center; gap: 7px; color: var(--home-blue); font-size: 12px; font-weight: 580; }
+.story-copy > a, .section-heading > a { display: inline-flex; align-items: center; gap: 7px; color: var(--home-blue); font-size: 12px; font-weight: 580; }
 .workspace-visual { min-width: 0; }
 .workspace-media { width: 100%; aspect-ratio: 16 / 9.8; display: block; object-fit: cover; border-radius: 12px; }
 .workspace-caption { display: grid; grid-template-columns: 150px minmax(0, 1fr) auto; align-items: start; gap: 28px; padding-top: 15px; }
@@ -485,8 +486,6 @@ onBeforeUnmount(() => {
 .home-work strong { font-size: 12px; font-weight: 570; }
 .home-work small { margin-top: 3px; color: var(--text-tertiary); font-size: 9px; }
 .home-loading span { animation: home-pulse 1.5s ease-in-out infinite; }
-.home-empty { min-height: 170px; display: grid; align-content: center; justify-items: start; gap: 9px; color: var(--text-secondary); }
-.home-empty p { margin: 0; font-size: 12px; }
 .loop-section { padding-block: 108px; background: var(--home-blue-soft); }
 .loop-layout { display: grid; grid-template-columns: .78fr 1.22fr; gap: clamp(60px, 9vw, 130px); }
 .loop-section header p { max-width: 430px; margin: 17px 0 0; color: var(--text-secondary); font-size: 13px; line-height: 1.7; }

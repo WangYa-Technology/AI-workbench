@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { Github, Globe2, KeyRound, Mail, MailCheck, Send, ShieldCheck, UserRound, UsersRound, X } from 'lucide-vue-next'
+import UiForm from '../components/ui/UiForm.vue'
+import { validNewPassword } from '../lib/password'
+import { Github, Globe2, KeyRound, Mail, MailCheck, Send, ShieldCheck, UserRound, X } from 'lucide-vue-next'
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
@@ -28,7 +30,6 @@ const authEmail = ref('')
 const authCode = ref('')
 const authChallenge = ref<AuthChallenge | null>(null)
 const providers = ref<OAuthProvider[]>([])
-const localDemoAvailable = ref(false)
 const actionID = ref('')
 const error = ref('')
 const success = ref('')
@@ -49,6 +50,7 @@ function authLocale() {
 
 function resetAuthError() {
   error.value = ''
+  session.error = ''
   success.value = ''
 }
 
@@ -113,6 +115,10 @@ async function submitLoginCode() {
 
 async function submitRegistration() {
   resetAuthError()
+  if (!validNewPassword(registerForm.password)) {
+    error.value = t('account.passwordHint')
+    return
+  }
   if (!authChallenge.value) return
   registerForm.displayName = registerForm.displayName.trim() || registerForm.handle.trim()
   await finishAuth(await session.registerWithCode({ challengeId: authChallenge.value.challengeId, code: authCode.value, email: registerForm.email, password: registerForm.password, handle: registerForm.handle, displayName: registerForm.displayName, locale: registerForm.locale, timezone: registerForm.timezone }))
@@ -131,25 +137,14 @@ async function requestReset() {
   }
 }
 
-async function startDemo(actor: 'creator' | 'publisher') {
-  actionID.value = `demo-${actor}`
-  resetAuthError()
-  const user = await session.startDemoSession(actor)
-  actionID.value = ''
-  await finishAuth(user)
-}
-
 onMounted(async () => {
   const user = await session.ensure()
   if (user) {
     await router.replace(destination.value)
     return
   }
-  const [meta, providerResponse] = await Promise.all([
-    api.meta().catch(() => null),
-    api.listOAuthProviders().catch(() => ({ items: [] as OAuthProvider[] })),
-  ])
-  localDemoAvailable.value = Boolean(meta?.localDemoAvailable)
+  error.value ||= session.error
+  const providerResponse = await api.listOAuthProviders().catch(() => ({ items: [] as OAuthProvider[] }))
   providers.value = providerResponse.items
 })
 </script>
@@ -194,7 +189,7 @@ onMounted(async () => {
           <h2>{{ authStep === 'reset' ? t('account.resetPassword') : authStep === 'registration' ? t('account.createAccount') : authStep === 'email' ? t('account.continueWithEmail') : t('account.signIn') }}</h2>
         </header>
 
-        <form v-if="authStep === 'email'" class="account-form" @submit.prevent="submitAuthEmail">
+        <UiForm v-if="authStep === 'email'" surface="default" class="account-form" @submit.prevent="submitAuthEmail">
           <p class="auth-form-summary">
             {{ t('account.unifiedAuthSummary') }}
           </p>
@@ -207,9 +202,9 @@ onMounted(async () => {
               <Mail v-if="actionID !== 'auth-email'" :size="17" />
             </template>{{ t('account.next') }}
           </UiButton>
-        </form>
+        </UiForm>
 
-        <form v-else-if="authStep === 'existing'" class="account-form" @submit.prevent="submitLogin">
+        <UiForm v-else-if="authStep === 'existing'" surface="default" class="account-form" @submit.prevent="submitLogin">
           <label>{{ t('account.email') }}<UiInput v-model="loginForm.email" type="email" autocomplete="email" readonly /></label>
           <label>{{ t('account.password') }}<UiInput v-model="loginForm.password" type="password" autocomplete="current-password" required /></label>
           <p v-if="error" class="form-error" role="alert">
@@ -229,9 +224,9 @@ onMounted(async () => {
           <UiButton class="text-link" variant="ghost" size="sm" type="button" @click="authStep = 'email'; resetAuthError()">
             {{ t('account.useDifferentEmail') }}
           </UiButton>
-        </form>
+        </UiForm>
 
-        <form v-else-if="authStep === 'existing-code'" class="account-form" @submit.prevent="submitLoginCode">
+        <UiForm v-else-if="authStep === 'existing-code'" surface="default" class="account-form" @submit.prevent="submitLoginCode">
           <p class="auth-form-summary">
             {{ t('account.codeSentSummary', { email: authEmail }) }}
           </p>
@@ -253,15 +248,15 @@ onMounted(async () => {
           <UiButton class="text-link" variant="ghost" size="sm" type="button" @click="authStep = 'existing'; resetAuthError()">
             {{ t('account.usePassword') }}
           </UiButton>
-        </form>
+        </UiForm>
 
-        <form v-else-if="authStep === 'registration'" class="account-form" @submit.prevent="submitRegistration">
+        <UiForm v-else-if="authStep === 'registration'" surface="default" class="account-form" @submit.prevent="submitRegistration">
           <p class="auth-form-summary">
             {{ t('account.registrationCodeSummary', { email: registerForm.email }) }}
           </p>
           <label>{{ t('account.verificationCode') }}<UiInput v-model="authCode" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" minlength="6" maxlength="6" required /></label>
           <label>{{ t('account.handle') }}<UiInput v-model="registerForm.handle" pattern="[a-z0-9_]{3,30}" autocomplete="username" required /></label>
-          <label>{{ t('account.password') }}<UiInput v-model="registerForm.password" type="password" autocomplete="new-password" minlength="10" maxlength="128" required /><small>{{ t('account.passwordHint') }}</small></label>
+          <label>{{ t('account.password') }}<UiInput v-model="registerForm.password" type="password" autocomplete="new-password" minlength="10" maxlength="72" required /><small>{{ t('account.passwordHint') }}</small></label>
           <p v-if="error" class="form-error" role="alert">
             {{ error }}
           </p>
@@ -276,9 +271,9 @@ onMounted(async () => {
           <UiButton class="text-link" variant="ghost" size="sm" type="button" @click="authStep = 'email'; authEmail = ''; authChallenge = null; resetAuthError()">
             {{ t('account.useDifferentEmail') }}
           </UiButton>
-        </form>
+        </UiForm>
 
-        <form v-else class="account-form" @submit.prevent="requestReset">
+        <UiForm v-else surface="default" class="account-form" @submit.prevent="requestReset">
           <p class="auth-form-summary">
             {{ t('account.resetPasswordSummary') }}
           </p>
@@ -297,7 +292,7 @@ onMounted(async () => {
           <UiButton class="text-link" variant="ghost" size="sm" type="button" @click="authStep = 'email'; resetAuthError()">
             {{ t('account.backToSignIn') }}
           </UiButton>
-        </form>
+        </UiForm>
 
         <section v-if="providers.length" class="oauth-boundary" aria-labelledby="oauth-heading">
           <h2 id="oauth-heading">
@@ -312,23 +307,6 @@ onMounted(async () => {
               <span class="availability-label">{{ t('account.unavailable') }}</span>
             </template>
           </UiButton>
-        </section>
-
-        <section v-if="localDemoAvailable" class="local-demo-boundary">
-          <h2>{{ t('account.localDemo') }}</h2>
-          <p>{{ t('account.localDemoDetail') }}</p>
-          <div>
-            <UiButton class="command-button secondary" variant="secondary" :loading="actionID === 'demo-creator'" :disabled="Boolean(actionID)" @click="startDemo('creator')">
-              <template #start>
-                <UserRound v-if="actionID !== 'demo-creator'" :size="17" />
-              </template>{{ t('account.demoCreator') }}
-            </UiButton>
-            <UiButton class="command-button secondary" variant="secondary" :loading="actionID === 'demo-publisher'" :disabled="Boolean(actionID)" @click="startDemo('publisher')">
-              <template #start>
-                <UsersRound v-if="actionID !== 'demo-publisher'" :size="17" />
-              </template>{{ t('account.demoPublisher') }}
-            </UiButton>
-          </div>
         </section>
       </div>
     </div>

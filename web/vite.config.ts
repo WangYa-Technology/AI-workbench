@@ -11,6 +11,17 @@ export default defineConfig({
       },
     },
   })],
+  build: {
+    rollupOptions: {
+      output: {
+        // Cache the shared framework separately from application code and translations.
+        onlyExplicitManualChunks: true,
+        manualChunks(id) {
+          if (/\/node_modules\/(?:@vue\/|@intlify\/|vue\/|vue-router\/|vue-i18n\/|pinia\/)/.test(id)) return 'framework'
+        },
+      },
+    },
+  },
   server: {
     port: 5173,
     proxy: {

@@ -1,26 +1,30 @@
+import { fixtureCredentials } from './helpers/identity'
+import { assignTaskFixture } from './fixtures/task'
+import { chooseOption } from './helpers/select'
 import { expect, test } from '@playwright/test'
 
-test('turns a disputed task into a permission-controlled, audited risk review', async ({ page }) => {
+test('turns a disputed task into a permission-controlled, versioned risk review', async ({ page }) => {
   test.setTimeout(90_000)
   const runID = Date.now().toString(36)
   const title = `Risk review image brief ${runID}`
 
-  const publisherSession = await page.request.post('/api/v1/auth/demo', { data: { actor: 'publisher' } })
+  const publisherSession = await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('publisher') })
   const publisher = (await publisherSession.json()) as { user: { id: string } }
   const statementResponse = await page.request.get('/api/v1/billing/statement')
   const statement = (await statementResponse.json()) as { account: { availableCents: number } }
   if (statement.account.availableCents < 50_000) {
-    await page.request.post('/api/v1/auth/demo', { data: { actor: 'admin' } })
+    await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('admin') })
     const adjustment = await page.request.post(`/api/v1/admin/finance/accounts/${publisher.user.id}/adjust`, {
+      headers: { 'Idempotency-Key': crypto.randomUUID() },
       data: {
         deltaCents: 100_000 - statement.account.availableCents,
         currency: 'USD',
-        reason: `Repeatable risk workflow funding ${runID}`,
-        confirmed: true,
+
+
       },
     })
     expect(adjustment.ok()).toBeTruthy()
-    await page.request.post('/api/v1/auth/demo', { data: { actor: 'publisher' } })
+    await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('publisher') })
   }
 
   const createResponse = await page.request.post('/api/v1/tasks', {
@@ -44,9 +48,11 @@ test('turns a disputed task into a permission-controlled, audited risk review', 
   expect(createResponse.ok()).toBeTruthy()
   const created = (await createResponse.json()) as { id: string }
 
-  await page.request.post('/api/v1/auth/demo', { data: { actor: 'creator' } })
+  await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('creator') })
   await page.goto(`/market/demands/${created.id}`)
-  await page.getByRole('button', { name: 'Accept task', exact: true }).click()
+  // Prepare assignment only; payment/claim contracts are tested separately.
+  assignTaskFixture(created.id, '10000000-0000-4000-8000-000000000002')
+  await page.reload()
   await page.getByLabel('Delivery note', { exact: true }).fill('Delivery submitted with Local Test source evidence and model disclosure.')
   await page.getByRole('button', { name: 'Submit delivery', exact: true }).click()
   await page.getByRole('button', { name: 'Open dispute', exact: true }).click()
@@ -58,12 +64,12 @@ test('turns a disputed task into a permission-controlled, audited risk review', 
   expect(deniedQueue.status()).toBe(403)
 
   await page.setViewportSize({ width: 390, height: 844 })
-  await page.request.post('/api/v1/auth/demo', { data: { actor: 'admin' } })
+  await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('admin') })
   await page.goto('/admin?tab=risk')
   await expect(page.getByRole('heading', { name: 'Cross-domain risk review', exact: true })).toBeVisible()
   const riskFilters = page.locator('.admin-operations-filters')
   await riskFilters.getByLabel('Search signals', { exact: true }).fill(created.id)
-  await riskFilters.getByRole('combobox').nth(0).selectOption('open')
+  await chooseOption(riskFilters.getByRole('combobox').nth(0), 'open')
   await riskFilters.getByRole('button', { name: 'Apply filters', exact: true }).click()
   await expect(page).toHaveURL(new RegExp(`tab=risk.*riskQ=${created.id}.*riskStatus=open`))
   const widths = await page.evaluate(() => ({ client: document.documentElement.clientWidth, scroll: document.documentElement.scrollWidth }))
@@ -76,37 +82,33 @@ test('turns a disputed task into a permission-controlled, audited risk review', 
   await signal.getByRole('button', { name: 'Review signal', exact: true }).click()
   const commandPanel = page.locator('.admin-command-panel')
   await expect(commandPanel).toBeInViewport()
-  await commandPanel.getByRole('combobox', { name: 'Review decision', exact: true }).selectOption('no_action')
-  const reviewReason = `Reviewed the bounded Local Test dispute evidence and closed without action ${runID}.`
-  await commandPanel.getByRole('textbox', { name: 'Required reason', exact: true }).fill(reviewReason)
-  await commandPanel.getByRole('checkbox', { name: 'I reviewed the target and confirm this operation.', exact: true }).check()
-  await commandPanel.getByRole('button', { name: 'Apply and record', exact: true }).click()
+  await chooseOption(commandPanel.getByRole('combobox', { name: 'Review decision', exact: true }), 'no_action')
+  await commandPanel.getByRole('button', { name: 'Apply', exact: true }).click()
 
-  await expect(page.getByText('Operation completed and audit evidence recorded.', { exact: true })).toBeVisible()
+  await expect(page.getByText('Operation completed.', { exact: true })).toBeVisible()
 	await expect(signal).toHaveCount(0)
-	await riskFilters.getByRole('combobox').nth(0).selectOption('dismissed')
+	await chooseOption(riskFilters.getByRole('combobox').nth(0), 'dismissed')
 	await riskFilters.getByRole('button', { name: 'Apply filters', exact: true }).click()
 	await expect(page).toHaveURL(new RegExp(`tab=risk.*riskQ=${created.id}.*riskStatus=dismissed`))
   await expect(signal).toContainText('No action')
   await expect(signal).toContainText('v2')
   await expect(signal.getByRole('link', { name: 'Open resource', exact: true })).toHaveAttribute('href', `/market/demands?task=${created.id}`)
 
-  await page.getByRole('button', { name: 'Audit', exact: true }).click()
-  await expect(page.getByText('admin.risk_reviewed', { exact: true }).first()).toBeVisible()
-  await expect(page.locator('.audit-list article').filter({ hasText: reviewReason }).first()).toBeVisible()
+  await page.reload()
+  await expect(signal).toContainText('No action')
+  await expect(signal).toContainText('v2')
 })
 
 test('activates an immutable risk rule revision for subsequent dispute signals', async ({ page }) => {
   test.setTimeout(90_000)
   const runID = Date.now().toString(36)
   const title = `Versioned risk brief ${runID}`
-  const changeReason = `Increase subsequent dispute classification for bounded workflow ${runID}.`
 
-  await page.request.post('/api/v1/auth/demo', { data: { actor: 'creator' } })
+  await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('creator') })
   const deniedRules = await page.request.get('/api/v1/admin/risk/rules')
   expect(deniedRules.status()).toBe(403)
 
-  await page.request.post('/api/v1/auth/demo', { data: { actor: 'admin' } })
+  await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('admin') })
   await page.goto('/admin?tab=riskRules')
   await expect(page.getByRole('heading', { name: 'Cross-domain risk rules', exact: true })).toBeVisible()
   const form = page.locator('.risk-rules-admin form')
@@ -120,27 +122,26 @@ test('activates an immutable risk rule revision for subsequent dispute signals',
   await form.getByRole('spinbutton', { name: 'Registration account-link score', exact: true }).fill('65')
   await form.getByRole('spinbutton', { name: 'Minimum distinct accounts', exact: true }).fill('3')
   await form.getByRole('spinbutton', { name: 'Observation window in hours', exact: true }).fill('24')
-  await expect(form.getByText('Only aggregate counts and the immutable rule revision are retained in risk evidence. Raw IP addresses, device fingerprints, network hashes, and linked-account lists are not stored.', { exact: true })).toBeVisible()
+  await expect(form.getByText('Only aggregate counts and the matching rule revision are retained in risk evidence. Raw IP addresses, device fingerprints, network hashes, and linked-account lists are not stored.', { exact: true })).toBeVisible()
   await form.getByRole('spinbutton', { name: 'Medium threshold', exact: true }).fill('35')
   await form.getByRole('spinbutton', { name: 'High threshold', exact: true }).fill('65')
   await form.getByRole('spinbutton', { name: 'Critical threshold', exact: true }).fill('90')
-  await form.getByRole('textbox', { name: 'Required reason', exact: true }).fill(changeReason)
-  await form.getByRole('checkbox', { name: 'I reviewed the scores and ordered thresholds and confirm this immutable revision.', exact: true }).check()
   await form.getByRole('button', { name: 'Activate revision', exact: true }).click()
-  await expect(page.getByText('Risk rule revision activated with audit evidence.', { exact: true })).toBeVisible()
+  await expect(page.getByText('Risk rule revision activated.', { exact: true })).toBeVisible()
   await expect(page.locator('.risk-rules-admin > section').first().locator('header > span')).toHaveText(`v${previousVersion + 1}`)
 
-  const publisherSession = await page.request.post('/api/v1/auth/demo', { data: { actor: 'publisher' } })
+  const publisherSession = await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('publisher') })
   const publisher = (await publisherSession.json()) as { user: { id: string } }
   const statementResponse = await page.request.get('/api/v1/billing/statement')
   const statement = (await statementResponse.json()) as { account: { availableCents: number } }
   if (statement.account.availableCents < 20_000) {
-    await page.request.post('/api/v1/auth/demo', { data: { actor: 'admin' } })
+    await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('admin') })
     const adjustment = await page.request.post(`/api/v1/admin/finance/accounts/${publisher.user.id}/adjust`, {
-      data: { deltaCents: 50_000, currency: 'USD', reason: `Repeatable versioned risk workflow funding ${runID}`, confirmed: true },
+      headers: { 'Idempotency-Key': crypto.randomUUID() },
+      data: { deltaCents: 50_000, currency: 'USD' },
     })
     expect(adjustment.ok()).toBeTruthy()
-    await page.request.post('/api/v1/auth/demo', { data: { actor: 'publisher' } })
+    await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('publisher') })
   }
   const createResponse = await page.request.post('/api/v1/tasks', {
     headers: { 'Idempotency-Key': `risk-rules-task-${runID}` },
@@ -157,9 +158,11 @@ test('activates an immutable risk rule revision for subsequent dispute signals',
   expect(createResponse.ok()).toBeTruthy()
   const created = (await createResponse.json()) as { id: string }
 
-  await page.request.post('/api/v1/auth/demo', { data: { actor: 'creator' } })
+  await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('creator') })
   await page.goto(`/market/demands/${created.id}`)
-  await page.getByRole('button', { name: 'Accept task', exact: true }).click()
+  // Prepare assignment only; payment/claim contracts are tested separately.
+  assignTaskFixture(created.id, '10000000-0000-4000-8000-000000000002')
+  await page.reload()
   await page.getByLabel('Delivery note', { exact: true }).fill('Submitted with deterministic Local Test source and model evidence.')
   await page.getByRole('button', { name: 'Submit delivery', exact: true }).click()
   await page.getByRole('button', { name: 'Open dispute', exact: true }).click()
@@ -167,7 +170,7 @@ test('activates an immutable risk rule revision for subsequent dispute signals',
   await page.getByRole('button', { name: 'Open dispute', exact: true }).click()
   await expect(page.getByText('Dispute opened. Settlement remains paused.', { exact: true })).toBeVisible()
 
-  await page.request.post('/api/v1/auth/demo', { data: { actor: 'admin' } })
+  await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('admin') })
   const signalsResponse = await page.request.get(`/api/v1/admin/risk/signals?resourceType=task&resourceId=${created.id}`)
   expect(signalsResponse.ok()).toBeTruthy()
   const signals = (await signalsResponse.json()) as { items: Array<{ resourceId: string; score: number; severity: string; evidence: Record<string, unknown> }> }
@@ -177,9 +180,7 @@ test('activates an immutable risk rule revision for subsequent dispute signals',
   expect(signal?.evidence.riskRuleVersion).toBe(previousVersion + 1)
   expect(signal?.evidence.riskRuleRevisionId).toMatch(/^[0-9a-f-]{36}$/)
 
-  await page.goto('/admin?tab=audit')
-  await expect(page.getByText('admin.risk_rules_updated', { exact: true }).first()).toBeVisible()
-  await expect(page.locator('.audit-list article').filter({ hasText: changeReason }).first()).toBeVisible()
+
 })
 
 test('routes privacy-minimized registration account-link evidence to the exact Admin account', async ({ page }) => {
@@ -206,7 +207,7 @@ test('routes privacy-minimized registration account-link evidence to the exact A
   const denied = await page.request.get(`/api/v1/admin/risk/signals?resourceType=user&resourceId=${subject?.id}`)
   expect(denied.status()).toBe(403)
 
-  await page.request.post('/api/v1/auth/demo', { data: { actor: 'admin' } })
+  await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('admin') })
   const focused = await page.request.get(`/api/v1/admin/risk/signals?resourceType=user&resourceId=${subject?.id}`)
   expect(focused.ok()).toBeTruthy()
   const focusedBody = (await focused.json()) as { items: Array<{

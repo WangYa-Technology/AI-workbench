@@ -20,9 +20,12 @@ type fixtureState struct {
 	ConnectAccountCalls   int    `json:"connectAccountCalls"`
 	AccountLinkCalls      int    `json:"accountLinkCalls"`
 	LastCheckoutReference string `json:"lastCheckoutReference"`
+	LastCheckoutID        string `json:"lastCheckoutId"`
 	LastCheckoutKey       string `json:"lastCheckoutIdempotencyKey"`
 	LastRefundPayment     string `json:"lastRefundPaymentIntent"`
 	LastRefundKey         string `json:"lastRefundIdempotencyKey"`
+	LastRefundOperation   string `json:"lastRefundOperationId"`
+	LastRefundID          string `json:"lastRefundId"`
 	LastConnectUserID     string `json:"lastConnectUserId"`
 	LastConnectKey        string `json:"lastConnectIdempotencyKey"`
 	LastAccountLinkID     string `json:"lastAccountLinkId"`
@@ -49,6 +52,18 @@ func main() {
 		defer state.mu.Unlock()
 		writeJSON(w, http.StatusOK, state)
 	})
+	for path, response := range map[string]map[string]any{
+		"/v1/account": {"object": "account", "id": "acct_fixture_merchant"},
+		"/v1/balance": {"object": "balance", "livemode": false},
+	} {
+		mux.HandleFunc("GET "+path, func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get("Authorization") != "Bearer "+*secretKey || r.Header.Get("Stripe-Version") != *apiVersion {
+				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "fixture_credentials_invalid"})
+				return
+			}
+			writeJSON(w, http.StatusOK, response)
+		})
+	}
 	mux.HandleFunc("POST /v1/checkout/sessions", func(w http.ResponseWriter, r *http.Request) {
 		if !validHeaders(r, *secretKey, *apiVersion) || r.ParseForm() != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "fixture_request_invalid"})
@@ -64,10 +79,11 @@ func main() {
 		state.mu.Lock()
 		state.CheckoutCalls++
 		checkoutNumber := state.CheckoutCalls
+		checkoutID := fmt.Sprintf("cs_test_paymentdrill%03d", checkoutNumber)
+		state.LastCheckoutID = checkoutID
 		state.LastCheckoutReference = reference
 		state.LastCheckoutKey = r.Header.Get("Idempotency-Key")
 		state.mu.Unlock()
-		checkoutID := fmt.Sprintf("cs_test_paymentdrill%03d", checkoutNumber)
 		writeJSON(w, http.StatusOK, map[string]any{
 			"id": checkoutID, "url": "https://checkout.stripe.com/c/pay/payment-drill-" + strconv.Itoa(checkoutNumber),
 			"status": "open", "payment_status": "unpaid", "expires_at": time.Now().Add(time.Hour).Unix(),
@@ -87,11 +103,14 @@ func main() {
 		}
 		state.mu.Lock()
 		state.RefundCalls++
+		refundID := fmt.Sprintf("re_test_paymentdrill%03d", state.RefundCalls)
+		state.LastRefundID = refundID
 		state.LastRefundPayment = paymentIntent
 		state.LastRefundKey = r.Header.Get("Idempotency-Key")
+		state.LastRefundOperation = r.PostForm.Get("metadata[hcai_refund_operation_id]")
 		state.mu.Unlock()
 		writeJSON(w, http.StatusOK, map[string]any{
-			"id": "re_test_paymentdrill001", "payment_intent": paymentIntent, "amount": amount,
+			"id": refundID, "payment_intent": paymentIntent, "amount": amount,
 			"currency": "usd", "status": "pending",
 		})
 	})
@@ -115,7 +134,7 @@ func main() {
 		state.mu.Unlock()
 		writeJSON(w, http.StatusOK, map[string]any{
 			"id": "acct_test_paymentdrill001", "object": "account", "charges_enabled": false, "payouts_enabled": false,
-			"details_submitted": false, "livemode": false,
+			"details_submitted": false, "type": "express", "metadata": map[string]string{"hcai_user_id": userID},
 			"requirements": map[string]any{"currently_due": []string{"individual.first_name"}, "past_due": []string{}, "pending_verification": []string{}},
 		})
 	})

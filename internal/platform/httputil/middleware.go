@@ -28,6 +28,7 @@ type RequestObserver func(context.Context, RequestObservation) error
 var validRequestID = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
 
 func Middleware(logger *slog.Logger, allowedOrigin string, observers ...RequestObserver) func(http.Handler) http.Handler {
+	allowedOrigin = strings.TrimRight(allowedOrigin, "/")
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			started := time.Now()

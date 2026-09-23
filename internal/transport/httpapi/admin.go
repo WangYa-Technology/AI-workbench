@@ -388,6 +388,18 @@ func (s *Server) adminArchiveProviderModel(w http.ResponseWriter, r *http.Reques
 	s.writeAdminResult(w, r, map[string]any{"archived": true}, err)
 }
 
+func (s *Server) adminListSubscriptionModels(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requirePermission(w, r, "admin:finance"); !ok {
+		return
+	}
+	items, err := s.billing.ListSubscriptionModels(r.Context())
+	if err != nil {
+		s.internalError(w, r, "admin list subscription models", err)
+		return
+	}
+	httputil.JSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
 func (s *Server) adminListSubscriptionPlans(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requirePermission(w, r, "admin:finance"); !ok {
 		return
@@ -409,7 +421,7 @@ func (s *Server) adminCreateSubscriptionPlan(w http.ResponseWriter, r *http.Requ
 	if !httputil.DecodeJSON(w, r, &input) {
 		return
 	}
-	item, err := s.billing.CreateSubscriptionPlan(r.Context(), actor.ID, input)
+	item, err := s.billing.CreateSubscriptionPlan(r.Context(), actor.ID, input, httputil.RequestID(r.Context()))
 	if err == nil {
 		httputil.JSON(w, http.StatusCreated, item)
 		return
@@ -430,7 +442,7 @@ func (s *Server) adminUpdateSubscriptionPlan(w http.ResponseWriter, r *http.Requ
 	if !httputil.DecodeJSON(w, r, &input) {
 		return
 	}
-	item, err := s.billing.UpdateSubscriptionPlan(r.Context(), actor.ID, planID, input)
+	item, err := s.billing.UpdateSubscriptionPlan(r.Context(), actor.ID, planID, input, httputil.RequestID(r.Context()))
 	s.writeAdminResult(w, r, item, err)
 }
 
@@ -532,7 +544,7 @@ func (s *Server) adminAdjustFinance(w http.ResponseWriter, r *http.Request) {
 	if !httputil.DecodeJSON(w, r, &input) {
 		return
 	}
-	item, err := s.admin.AdjustFinance(r.Context(), actor.ID, id, input, httputil.RequestID(r.Context()))
+	item, err := s.admin.AdjustFinance(r.Context(), actor.ID, id, input, idempotencyKey(r), httputil.RequestID(r.Context()))
 	s.writeAdminResult(w, r, item, err)
 }
 
@@ -973,10 +985,16 @@ func (s *Server) requirePermission(w http.ResponseWriter, r *http.Request, permi
 
 func (s *Server) writeAdminResult(w http.ResponseWriter, r *http.Request, item any, err error) {
 	switch {
+	case errors.Is(err, admin.ErrForbidden):
+		httputil.WriteError(w, r, http.StatusForbidden, "permission_required", "You do not have permission to perform this operation.", false)
 	case errors.Is(err, admin.ErrNotFound), errors.Is(err, billing.ErrAccountNotFound):
 		httputil.WriteError(w, r, http.StatusNotFound, "admin_resource_not_found", "The requested operations resource was not found.", false)
 	case errors.Is(err, admin.ErrInvalid), errors.Is(err, billing.ErrInvalidPlan), errors.Is(err, billing.ErrInvalidPricing):
 		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_admin_command", "Review the submitted fields and refresh any stale data before trying again.", false)
+	case errors.Is(err, billing.ErrPlanForbidden):
+		httputil.WriteError(w, r, http.StatusForbidden, "permission_required", "You do not have permission to change subscription plans.", false)
+	case errors.Is(err, billing.ErrPlanConflict):
+		httputil.WriteError(w, r, http.StatusConflict, "admin_state_conflict", "This subscription plan changed while you were editing it. Refresh before saving.", false)
 	case errors.Is(err, admin.ErrSelfMutation):
 		httputil.WriteError(w, r, http.StatusConflict, "self_access_mutation_forbidden", "Use a different administrator account to change your own role or access state.", false)
 	case errors.Is(err, admin.ErrConflict), errors.Is(err, billing.ErrReservationState):

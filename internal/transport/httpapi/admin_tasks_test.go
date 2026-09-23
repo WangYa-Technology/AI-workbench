@@ -60,10 +60,24 @@ func TestAdminTaskOperationsHTTPContract(t *testing.T) {
 	if response.StatusCode != http.StatusOK || len(queue.Items) != 1 || queue.Items[0].ID != taskID || queue.Items[0].DisputeVersion == nil {
 		t.Fatalf("task operations queue failed: status=%d items=%#v", response.StatusCode, queue.Items)
 	}
+	for _, input := range []map[string]any{
+		{"decision": "cancel_without_settlement", "expectedVersion": 1},
+		{"decision": "cancel_without_settlement", "expectedVersion": 1, "reason": "Reviewed the evidence completely.", "confirm": false},
+	} {
+		response = requestJSON(t, adminClient, http.MethodPost, server.URL+"/api/v1/admin/tasks/"+taskID.String()+"/resolve", input, nil)
+		if response.StatusCode != http.StatusUnprocessableEntity {
+			t.Fatalf("unconfirmed/reasonless decision accepted: %d", response.StatusCode)
+		}
+	}
 	var resolved admin.TaskOperation
 	response = requestJSON(t, adminClient, http.MethodPost, server.URL+"/api/v1/admin/tasks/"+taskID.String()+"/resolve", map[string]any{
-		"decision": "cancel_without_settlement", "expectedVersion": 1}, &resolved)
+		"decision": "cancel_without_settlement", "expectedVersion": 1, "reason": "Reviewed evidence and confirmed cancellation.", "confirm": true}, &resolved)
 	if response.StatusCode != http.StatusOK || resolved.Status != "cancelled" || resolved.DisputeStatus == nil || *resolved.DisputeStatus != "resolved_client" {
 		t.Fatalf("task resolution contract failed: status=%d item=%#v", response.StatusCode, resolved)
 	}
+	var auditCount int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM audit_events WHERE action='admin.task_dispute_resolved' AND actor_id=$1 AND resource_id=$2 AND reason=$3 AND request_id<>'' AND metadata->>'previousVersion'='1' AND metadata->>'version'='2'`, administrator.ID, taskID, "Reviewed evidence and confirmed cancellation.").Scan(&auditCount); err != nil || auditCount != 1 {
+		t.Fatalf("missing decision audit: %d %v", auditCount, err)
+	}
+
 }

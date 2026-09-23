@@ -28,7 +28,7 @@ func TestSavedWorksRemainReferenceOnlyAndRespectVisibility(t *testing.T) {
 	assetID, workID, postID := uuid.New(), uuid.New(), uuid.New()
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,width,height,scan_status,source_type,license_code)
-		VALUES($1,$2,'image','Saved source','/media/saved-source.jpg','image/jpeg',1200,900,'clean','demo','personal')`, assetID, authorID); err != nil {
+		VALUES($1,$2,'image','Saved source','/media/saved-source.jpg','image/jpeg',1200,900,'clean','delivery','personal')`, assetID, authorID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `

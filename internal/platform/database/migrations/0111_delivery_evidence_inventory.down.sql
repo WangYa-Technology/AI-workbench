@@ -1,0 +1,1 @@
+DROP INDEX orders_delivery_evidence_created_idx;

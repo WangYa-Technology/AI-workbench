@@ -35,7 +35,7 @@ func TestCommunityGovernanceLifecycle(t *testing.T) {
 	assetID, workID, postID := uuid.New(), uuid.New(), uuid.New()
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,scan_status,source_type,license_code)
-		VALUES($1,$2,'image','Governed source','/media/governed.jpg','image/jpeg','clean','demo','demo')`, assetID, authorID); err != nil {
+		VALUES($1,$2,'image','Governed source','/media/governed.jpg','image/jpeg','clean','delivery','personal')`, assetID, authorID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -80,7 +80,7 @@ func TestCommunityGovernanceLifecycle(t *testing.T) {
 	}
 
 	adminService := admin.NewService(pool, true)
-	resolved, err := adminService.ResolveReport(ctx, moderatorID, report.ID, admin.ReportResolution{
+	resolved, err := adminService.ResolveReport(ctx, moderatorID, report.ID, admin.ReportResolution{Reason: "Reviewed the evidence and selected this decision.", Confirm: true, ExpectedVersion: 1,
 		Outcome: "hidden",
 	}, "request-governance-hide")
 	if err != nil || resolved.Status != "resolved" || resolved.Outcome == nil || *resolved.Outcome != "hidden" {
@@ -102,7 +102,7 @@ func TestCommunityGovernanceLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	appealResult, err := adminService.ResolveAppeal(ctx, moderatorID, appeal.ID, admin.AppealResolution{
+	appealResult, err := adminService.ResolveAppeal(ctx, moderatorID, appeal.ID, admin.AppealResolution{Reason: "Reviewed the evidence and selected this decision.", Confirm: true, ExpectedVersion: 1,
 		Decision: "upheld",
 	}, "request-governance-restore")
 	if err != nil || appealResult.Status != "upheld" {

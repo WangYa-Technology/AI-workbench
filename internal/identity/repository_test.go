@@ -96,6 +96,30 @@ func TestRegistrationValidationAndConflicts(t *testing.T) {
 	}
 }
 
+func TestRegistrationPasswordByteLimit(t *testing.T) {
+	pool, cleanup := identityTestPool(t)
+	defer cleanup()
+	repository := identity.NewRepository(pool)
+	ctx := context.Background()
+	input := identity.RegisterInput{Email: "boundary@example.test", Password: strings.Repeat("密", 24), Handle: "boundary", DisplayName: "Boundary", Locale: "en-US", Timezone: "UTC"}
+	for _, value := range []string{strings.Repeat("a", 73), strings.Repeat("密", 25), strings.Repeat("🔑", 19)} {
+		invalid := input
+		invalid.Password = value
+		if _, _, err := repository.Register(ctx, invalid, identity.ClientInfo{}); !errors.Is(err, identity.ErrInvalid) {
+			t.Fatalf("expected validation error, got %v", err)
+		}
+		if _, _, err := repository.RegisterVerifiedTx(ctx, nil, invalid, identity.ClientInfo{}); !errors.Is(err, identity.ErrInvalid) {
+			t.Fatalf("verified registration expected validation error, got %v", err)
+		}
+	}
+	if _, _, err := repository.Register(ctx, input, identity.ClientInfo{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := repository.Login(ctx, identity.LoginInput{Email: input.Email, Password: input.Password}, identity.ClientInfo{}); err != nil {
+		t.Fatalf("72-byte password cannot sign in: %v", err)
+	}
+}
+
 func TestRegistrationAccountLinkRiskIsThresholdedAndPrivacyMinimized(t *testing.T) {
 	pool, cleanup := identityTestPool(t)
 	defer cleanup()

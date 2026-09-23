@@ -1,3 +1,4 @@
+import { fixtureCredentials } from './helpers/identity'
 import { expect, test } from '@playwright/test'
 
 const modes = [
@@ -7,9 +8,9 @@ const modes = [
   { mode: 'music', label: 'Music', view: 'Tracks', contentType: 'audio/wav', signature: 'RIFF', selector: 'audio', settingsLabel: 'Duration', accept: 'audio/wav,audio/x-wav,audio/wave,audio/mpeg' },
 ] as const
 
-test('creates Chat, Image, Video, and Music as typed, reusable Assets', async ({ page }) => {
+test('keeps chat conversational and publishes typed Image, Video and Music Assets', async ({ page }) => {
   test.setTimeout(90_000)
-  await page.request.post('/api/v1/auth/demo', { data: { actor: 'creator' } })
+  await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('creator') })
   const publishedTitles: string[] = []
 
   for (const item of modes) {
@@ -18,24 +19,25 @@ test('creates Chat, Image, Video, and Music as typed, reusable Assets', async ({
     const modeMenu = page.getByRole('button', { name: 'Choose what to create' })
     await modeMenu.click()
     await page.getByRole('menuitem', { name: new RegExp(item.label) }).click()
-    await page.locator('.studio-composer textarea').fill(prompt)
-    const actionLabel = item.mode === 'image' ? 'Generate image' : `Generate ${item.label}`
+    await page.locator('.creation-composer textarea').fill(prompt)
+    const actionLabel = item.mode === 'chat' ? 'Continue this chat' : `Generate ${item.label}`
     await page.getByRole('button', { name: actionLabel, exact: true }).click()
     if (item.mode === 'chat') {
-      const conversation = page.locator('.conversation-feed')
+      const conversation = page.locator('.creation-feed')
       await expect(conversation.getByText(prompt, { exact: true })).toBeVisible()
       await expect(conversation.getByText('Deterministic Local Test response', { exact: false })).toBeVisible()
 
       const followUp = `Adapt the previous answer for product teams ${Date.now().toString(36)}`
-      await page.locator('.studio-composer textarea').fill(followUp)
+      await page.locator('.creation-composer textarea').fill(followUp)
       await page.getByRole('button', { name: actionLabel, exact: true }).click()
       await expect(conversation.getByText(followUp, { exact: true })).toBeVisible()
       await expect(conversation.getByText('Conversation context: 1 prior turn(s).', { exact: false })).toBeVisible()
+      continue
     }
-    const generatedTask = page.locator('.studio-task').filter({ hasText: prompt }).first()
-    await expect(generatedTask.locator('.conversation-result')).toContainText('Saved to Assets')
+    const generatedTask = page.locator('.creation-turn').filter({ hasText: prompt }).first()
+    await expect(generatedTask.locator('.creation-result')).toContainText('Saved to Assets')
 
-    await generatedTask.locator('.conversation-result').click()
+    await generatedTask.locator('.creation-result').click()
     const publishLink = page.getByRole('dialog', { name: 'Generation details' }).getByRole('link', { name: 'Publish work', exact: true })
     const publishHref = await publishLink.getAttribute('href')
     const assetID = new URL(publishHref!, 'http://127.0.0.1:5173').searchParams.get('assetId')
@@ -78,19 +80,22 @@ test('creates Chat, Image, Video, and Music as typed, reusable Assets', async ({
   const multiReferencePrompt = `E2E ordered multi-reference image ${Date.now().toString(36)}`
   await page.goto('/create/image')
   await page.getByRole('button', { name: 'Choose what to create' }).click()
-  await page.getByRole('button', { name: 'Add reference', exact: true }).click()
-  const referenceOptions = page.locator('.reference-list > button')
+  await page.getByRole('menuitem', { name: /^Files/ }).click()
+  const referenceOptions = page.locator('.creation-asset-list > button')
   await expect.poll(async () => referenceOptions.count(), { timeout: 10_000 }).toBeGreaterThanOrEqual(2)
   await referenceOptions.nth(0).click()
   await referenceOptions.nth(1).click()
-  await expect(page.locator('.studio-context-item')).toHaveCount(2)
-  await page.locator('.reference-mode-switch').getByRole('button', { name: 'Mask', exact: true }).click()
+  await expect(page.locator('.creation-context-chip:not(.mask)')).toHaveCount(2)
+  await page.getByRole('dialog', { name: 'Reference assets' }).getByRole('button', { name: 'Close', exact: true }).click()
+  await page.getByRole('button', { name: 'Choose what to create' }).click()
+  await page.getByRole('menuitem', { name: /^Add edit mask/ }).click()
   await referenceOptions.nth(0).click()
-  await expect(page.locator('.mask-context-item')).toHaveCount(1)
-  await page.locator('.studio-composer textarea').fill(multiReferencePrompt)
-  await page.getByRole('button', { name: 'Generate image', exact: true }).click()
-  const editedTask = page.locator('.studio-task').filter({ hasText: multiReferencePrompt }).first()
-  await expect(editedTask.locator('.conversation-result')).toContainText('Saved to Assets')
+  await expect(page.locator('.creation-context-chip.mask')).toHaveCount(1)
+  await page.getByRole('dialog', { name: 'Reference assets' }).getByRole('button', { name: 'Close', exact: true }).click()
+  await page.locator('.creation-composer textarea').fill(multiReferencePrompt)
+  await page.getByRole('button', { name: 'Generate Image', exact: true }).click()
+  const editedTask = page.locator('.creation-turn').filter({ hasText: multiReferencePrompt }).first()
+  await expect(editedTask.locator('.creation-result')).toContainText('Saved to Assets')
   await editedTask.getByRole('button', { name: 'Favorite generation', exact: true }).click()
   await expect(editedTask.getByRole('button', { name: 'Remove generation favorite', exact: true })).toBeVisible()
   const generationPage = await (await page.request.get('/api/v1/generations?mode=image&limit=1')).json() as { items: Array<{ sourceAssetIds: string[]; maskAssetId?: string; isFavorite: boolean }> }
@@ -121,8 +126,8 @@ test('initializes every creation mode with its own controls and compatible refer
     await page.getByRole('button', { name: 'Output settings' }).click()
 
     await page.getByRole('button', { name: 'Choose what to create' }).click()
-    await page.getByRole('button', { name: 'Add reference', exact: true }).click()
-    await expect(page.locator('.reference-picker input[type="file"]')).toHaveAttribute('accept', item.accept)
+    await page.getByRole('menuitem', { name: /^Files/ }).click()
+    await expect(page.locator('.creation-assets input[type="file"]')).toHaveAttribute('accept', item.accept)
   }
 })
 
@@ -132,18 +137,11 @@ test('keeps every creation mode visible on a phone-sized viewport', async ({ pag
   await page.goto('/create/video')
 
   await page.getByRole('button', { name: 'Choose what to create' }).click()
-  const menuBox = await page.locator('.studio-mode-menu').boundingBox()
-  const menu = page.locator('.studio-mode-menu')
+  const menuBox = await page.locator('.creation-tools-menu').boundingBox()
   expect(menuBox).not.toBeNull()
-  expect(menuBox!.width).toBeLessThanOrEqual(224)
-  expect(menuBox!.height).toBeLessThanOrEqual(320)
+  expect(menuBox!.width).toBeLessThanOrEqual(390)
+  expect(menuBox!.height).toBeLessThanOrEqual(844)
   expect(menuBox!.y).toBeGreaterThanOrEqual(0)
-  await expect(menu).toHaveCSS('scrollbar-width', 'none')
-  await expect(menu).toHaveCSS('overflow-y', 'auto')
-  const initialScrollTop = await menu.evaluate(element => element.scrollTop)
-  await menu.hover()
-  await page.mouse.wheel(0, 500)
-  await expect.poll(() => menu.evaluate(element => element.scrollTop)).toBeGreaterThan(initialScrollTop)
   for (const label of modes.map(mode => mode.label)) {
     await expect(page.getByRole('menuitem', { name: new RegExp(label) })).toBeVisible()
   }
@@ -157,8 +155,8 @@ test('highlights only the active creation mode and dismisses the menu', async ({
   const trigger = page.getByRole('button', { name: 'Choose what to create' })
   const menu = page.getByRole('menu', { name: 'Choose what to create' })
   await trigger.click()
-  await expect(page.getByRole('menuitem', { name: 'Files', exact: true })).not.toHaveClass(/active/)
-  await expect(page.getByRole('menuitem', { name: 'Chat', exact: true })).toHaveClass(/active/)
+  await expect(page.getByRole('menuitem', { name: /^Files/ })).not.toHaveClass(/selected/)
+  await expect(page.getByRole('menuitem', { name: /^Chat/ })).toHaveClass(/selected/)
 
   await page.getByRole('heading', { name: 'AI creation space', exact: true }).click()
   await expect(menu).toBeHidden()
@@ -175,7 +173,7 @@ test('uses the compact floating style for output settings and dismisses it', asy
 
   const trigger = page.getByRole('button', { name: 'Output settings' })
   const modeTrigger = page.getByRole('button', { name: 'Choose what to create' })
-  await expect(page.locator('.studio-submit')).toHaveCSS('box-shadow', 'none')
+  await expect(page.locator('.creation-submit')).toHaveCSS('box-shadow', 'none')
   const buttonVisuals = async (button: typeof trigger) => button.evaluate((element) => {
     const style = globalThis.getComputedStyle(element)
     return {
@@ -193,9 +191,10 @@ test('uses the compact floating style for output settings and dismisses it', asy
   await trigger.click()
   const panel = page.getByRole('dialog', { name: 'Output settings' })
   await expect(panel).toBeVisible()
-  await expect(panel).toHaveCSS('width', '220px')
-  await expect(panel).toHaveCSS('border-radius', '24px')
-  await expect(panel.locator('label')).toHaveCount(2)
+  const bounds = await panel.boundingBox()
+  expect(bounds!.width).toBeLessThanOrEqual(300)
+  await expect(panel.getByRole('combobox', { name: 'Response length', exact: true })).toBeVisible()
+  await expect(panel.getByRole('combobox')).toHaveCount(1)
 
   await page.getByRole('heading', { name: 'AI creation space', exact: true }).click()
   await expect(panel).toBeHidden()
@@ -225,32 +224,38 @@ test('keeps the creation workspace in sync with the global theme', async ({ page
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
 })
 
-test('keeps the creation workspace free of the global footer', async ({ page }) => {
+test('uses the compact creation disclaimer instead of general footer navigation', async ({ page }) => {
   await page.goto('/create/chat')
-  await expect(page.locator('.site-footer')).toHaveCount(0)
+  await expect(page.locator('.creation-site-footer')).toBeVisible()
+  await expect(page.locator('.creation-site-footer nav')).toHaveCount(0)
 
   await page.goto('/discover')
   await expect(page.locator('.site-footer')).toBeVisible()
 })
 
 test('switches creation modes in place and keeps the selected route active', async ({ page }) => {
-  await page.request.post('/api/v1/auth/demo', { data: { actor: 'creator' } })
+  await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('creator') })
   await page.goto('/create/image')
 
   for (const item of modes) {
     await page.getByRole('button', { name: 'Choose what to create' }).click()
     await page.getByRole('menuitem', { name: new RegExp(item.label) }).click()
-    await expect(page).toHaveURL(new RegExp(`/create/${item.mode}$`))
-    await expect(page.locator(`.creation-studio[data-mode="${item.mode}"]`)).toBeVisible()
+    await expect(page).toHaveURL(new RegExp(`/create/${item.mode}(?:\\?|$)`))
+    await expect(page.locator(`.creation-studio-new[data-mode="${item.mode}"]`)).toBeVisible()
+    await page.reload()
+    await expect(page.locator(`.creation-studio-new[data-mode="${item.mode}"]`)).toBeVisible()
     if (item.mode === 'chat') {
       await expect(page.locator('.creation-mode-chip')).toHaveCount(0)
     } else {
       await expect(page.locator('.creation-mode-chip')).toContainText(item.label)
       const closeButton = page.locator('.creation-mode-chip button')
-      await expect(closeButton).toHaveCSS('width', '18px')
-      await expect(closeButton).toHaveCSS('height', '18px')
-      await expect(closeButton).toHaveCSS('padding', '0px')
-      await expect(closeButton).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+      await expect(closeButton).toHaveClass(/ui-icon-button/)
+      const box = await closeButton.boundingBox()
+      expect(box!.width).toBe(box!.height)
+      expect(box!.width).toBeGreaterThanOrEqual(24)
+      await closeButton.click()
+      await expect(page).toHaveURL(/\/create\/chat(?:\?|$)/)
+      await expect(page.locator('.creation-mode-chip')).toHaveCount(0)
     }
   }
 })

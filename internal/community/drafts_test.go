@@ -24,8 +24,8 @@ func TestPersistedContentDraftLifecycle(t *testing.T) {
 	cleanAssetID, pendingAssetID := uuid.New(), uuid.New()
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,scan_status,source_type,license_code) VALUES
-		($1,$2,'image','Draft source','/media/draft-source.jpg','image/jpeg','clean','demo','personal'),
-		($3,$2,'image','Pending source','/media/pending-source.jpg','image/jpeg','pending','demo','personal')`,
+		($1,$2,'image','Draft source','/media/draft-source.jpg','image/jpeg','clean','delivery','personal'),
+		($3,$2,'image','Pending source','/media/pending-source.jpg','image/jpeg','pending','delivery','personal')`,
 		cleanAssetID, ownerID, pendingAssetID); err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +48,7 @@ func TestPersistedContentDraftLifecycle(t *testing.T) {
 	updated, err := repository.SaveDraft(ctx, ownerID, &draft.ID, community.DraftInput{
 		PublishInput: community.PublishInput{
 			AssetID: cleanAssetID, Title: "Persisted studio draft", Summary: "A private draft saved before publication.",
-			Prompt: "A precise editorial image prompt", PromptVisibility: "partial",
+			Prompt: "A precise editorial image prompt", PromptVisibility: "private",
 			AIDisclosure: "Created with the deterministic Local Test image Provider.", Body: "Prepared privately, then published with durable evidence.",
 		}, ExpectedVersion: draft.Version,
 	}, "draft-update")

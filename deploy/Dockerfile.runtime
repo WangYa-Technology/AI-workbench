@@ -1,20 +1,17 @@
-# syntax=docker/dockerfile:1.7
-
-FROM golang:1.26-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.26.8-alpine AS build
 
 ARG APP=api
-ARG TARGETOS=linux
-ARG TARGETARCH=amd64
+ARG TARGETOS
+ARG TARGETARCH
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN test "$APP" = api || test "$APP" = worker || test "$APP" = migrate || test "$APP" = seed
+RUN test "$APP" = api || test "$APP" = worker || test "$APP" = migrate
 RUN case "$APP" in \
       api) package=./cmd/api ;; \
       worker) package=./cmd/worker ;; \
       migrate) package=./cmd/migrate ;; \
-      seed) package=./cmd/seed ;; \
       *) echo "unsupported APP=$APP" >&2; exit 1 ;; \
     esac && \
     CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" go build -trimpath -ldflags='-s -w' -o /out/hcai "$package"

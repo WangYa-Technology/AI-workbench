@@ -3,8 +3,11 @@
   "private": true,
   "type": "module",
   "version": "0.1.0",
+  "engines": { "node": ">=20.3.0" },
   "scripts": {
-    "start": "node server.mjs"
+    "start": "node server.mjs",
+    "schema:inspect": "node inspect-schema.mjs",
+    "test": "node --test *.test.mjs"
   },
   "dependencies": {
     "@waffo/pancake-ts": "0.19.1"

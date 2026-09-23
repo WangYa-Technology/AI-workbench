@@ -24,16 +24,20 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	items, err := s.tasks.List(r.Context(), viewerID, tasks.ListFilter{
+	page, err := s.tasks.ListPage(r.Context(), viewerID, tasks.ListFilter{
 		Query: r.URL.Query().Get("q"), DeliverableType: r.URL.Query().Get("type"),
 		Status: r.URL.Query().Get("status"), Sort: r.URL.Query().Get("sort"),
-		Mine: mine, Limit: limit,
+		Mine: mine, Limit: limit, Cursor: r.URL.Query().Get("cursor"),
 	})
+	if errors.Is(err, tasks.ErrInvalid) {
+		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "task_filter_invalid", "Invalid task filters or cursor.", false)
+		return
+	}
 	if err != nil {
 		s.internalError(w, r, "list tasks", err)
 		return
 	}
-	httputil.JSON(w, http.StatusOK, map[string]any{"items": items})
+	httputil.JSON(w, http.StatusOK, page)
 }
 
 func (s *Server) getTask(w http.ResponseWriter, r *http.Request) {
@@ -236,4 +240,21 @@ func (s *Server) writeTaskResult(w http.ResponseWriter, r *http.Request, success
 	default:
 		httputil.JSON(w, successStatus, item)
 	}
+}
+
+func (s *Server) changeTaskDeadline(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.requireUser(w, r)
+	if !ok {
+		return
+	}
+	id, ok := pathUUID(w, r, "taskID")
+	if !ok {
+		return
+	}
+	var input tasks.DeadlineInput
+	if !httputil.DecodeJSON(w, r, &input) {
+		return
+	}
+	item, err := s.tasks.ChangeDeadline(r.Context(), user.ID, id, input, idempotencyKey(r))
+	s.writeTaskResult(w, r, http.StatusOK, item, err)
 }

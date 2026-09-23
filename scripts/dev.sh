@@ -3,6 +3,12 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+if [[ -f .env.local ]]; then
+  set -a
+  source .env.local
+  set +a
+fi
+
 # Keep the Pancake private key inside the connector process. A developer may
 # export it for this convenience script, but API/Worker must not inherit it.
 waffo_connector_private_key="${WAFFO_PRIVATE_KEY-}"
@@ -11,10 +17,6 @@ unset WAFFO_PRIVATE_KEY WAFFO_PRIVATE_KEY_BASE64
 
 docker compose up -d postgres
 go run ./cmd/migrate
-if [[ "${HCAI_SEED_DEMO:-0}" == "1" ]]; then
-  export DEMO_DATA_ENABLED=true
-  go run ./cmd/seed
-fi
 
 cleanup() {
   kill "${api_pid:-}" "${worker_pid:-}" "${web_pid:-}" "${waffo_connector_pid:-}" 2>/dev/null || true

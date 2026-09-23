@@ -32,7 +32,12 @@ type HTTPScanner struct {
 }
 
 func NewHTTPScanner(url, token string, timeout time.Duration) *HTTPScanner {
-	return &HTTPScanner{url: url, token: token, client: &http.Client{Timeout: timeout}}
+	return &HTTPScanner{url: url, token: token, client: &http.Client{
+		Timeout: timeout,
+		// Scan bytes, object identities and credentials belong only to the
+		// configured endpoint. A redirect must never supply a clean verdict.
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}}
 }
 
 func (s *HTTPScanner) Adapter() string { return "http" }
@@ -52,15 +57,23 @@ func (s *HTTPScanner) Scan(ctx context.Context, objectKey, mimeType string, data
 	request.Header.Set("X-HCAI-Content-SHA256", digestText)
 	response, err := s.client.Do(request)
 	if err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return ScanResult{}, scannerFailure{code: "scanner_timeout", retry: true}
-		}
-		return ScanResult{}, scannerFailure{code: "scanner_unavailable", retry: true}
+		return ScanResult{}, scannerTransportFailure(err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode > 299 {
 		retry := response.StatusCode == http.StatusTooManyRequests || response.StatusCode >= 500
 		return ScanResult{}, scannerFailure{code: "scanner_http_error", retry: retry}
+	}
+	// Read one byte past the bound so an artificial LimitReader EOF cannot
+	// conceal a second verdict or malformed tail. The client's timeout covers
+	// this complete body read, including a stalled body after a valid prefix.
+	const maximumResponseBytes = 16 << 10
+	body, err := io.ReadAll(io.LimitReader(response.Body, maximumResponseBytes+1))
+	if err != nil {
+		return ScanResult{}, scannerTransportFailure(err)
+	}
+	if len(body) > maximumResponseBytes {
+		return ScanResult{}, scannerFailure{code: "scanner_response_invalid", retry: false}
 	}
 	var result struct {
 		Status        string `json:"status"`
@@ -69,7 +82,7 @@ func (s *HTTPScanner) Scan(ctx context.Context, objectKey, mimeType string, data
 		Engine        string `json:"engine"`
 		Version       string `json:"version"`
 	}
-	decoder := json.NewDecoder(io.LimitReader(response.Body, 16<<10))
+	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&result); err != nil || result.ContentSHA256 != digestText || !closedToken(result.ReasonCode, 3, 80) ||
 		!closedToken(result.Engine, 1, 80) || !closedToken(result.Version, 1, 80) || !oneOf(result.Status, "clean", "review", "rejected") {
@@ -79,6 +92,13 @@ func (s *HTTPScanner) Scan(ctx context.Context, objectKey, mimeType string, data
 		return ScanResult{}, scannerFailure{code: "scanner_response_invalid", retry: false}
 	}
 	return ScanResult{Status: result.Status, ReasonCode: result.ReasonCode, Engine: result.Engine, Version: result.Version}, nil
+}
+
+func scannerTransportFailure(err error) error {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return scannerFailure{code: "scanner_timeout", retry: true}
+	}
+	return scannerFailure{code: "scanner_unavailable", retry: true}
 }
 
 type scannerFailure struct {

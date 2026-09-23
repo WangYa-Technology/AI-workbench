@@ -1,13 +1,17 @@
 package media
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hcai-chat/hcai-chat/internal/platform/config"
@@ -17,6 +21,8 @@ var (
 	ErrNotFound   = errors.New("media object not found")
 	ErrConflict   = errors.New("media object already exists")
 	ErrInvalidKey = errors.New("invalid media object key")
+	// An inaccessible root or bucket is not evidence that an object is absent.
+	ErrStorageUnavailable = errors.New("media storage location is unavailable")
 )
 
 type ByteRange struct {
@@ -45,8 +51,9 @@ type Store interface {
 }
 
 type Catalog struct {
-	primary Store
-	stores  map[string]Store
+	primary     Store
+	stores      map[string]Store
+	stageLimits config.MediaStageConfig
 }
 
 func NewCatalog(primary Store, additional ...Store) *Catalog {
@@ -63,14 +70,34 @@ func NewCatalog(primary Store, additional ...Store) *Catalog {
 func NewCatalogFromConfig(cfg config.Config) *Catalog {
 	local := NewLocalStore(cfg.MediaRoot)
 	if cfg.MediaStorageAdapter != "s3" {
-		return NewCatalog(local)
+		catalog := NewCatalog(local)
+		catalog.stageLimits = cfg.MediaStage
+		return catalog
 	}
 	s3Store := NewS3Store(S3Config{
 		Bucket: cfg.MediaS3Bucket, Region: cfg.MediaS3Region, Endpoint: cfg.MediaS3Endpoint,
 		AccessKeyID: cfg.MediaS3AccessKeyID, SecretAccessKey: cfg.MediaS3SecretAccessKey,
 		SessionToken: cfg.MediaS3SessionToken, PathStyle: cfg.MediaS3PathStyle, Prefix: cfg.MediaS3Prefix,
 	})
-	return NewCatalog(s3Store, local)
+	catalog := NewCatalog(s3Store, local)
+	catalog.stageLimits = cfg.MediaStage
+	return catalog
+}
+
+func (c *Catalog) Stage(ctx context.Context, body io.Reader, maximum int64) (*StagedObject, error) {
+	return Stage(ctx, body, maximum, c.stageLimits)
+}
+
+func (c *Catalog) StageWrite(ctx context.Context, maximum int64, produce func(io.Writer) error) (*StagedObject, error) {
+	return StageWrite(ctx, maximum, produce, c.stageLimits)
+}
+
+func (c *Catalog) OpenVerifiedStage(ctx context.Context, store Store, key, digest string, size int64) (*StagedObject, ObjectInfo, error) {
+	return OpenVerifiedStage(ctx, store, key, digest, size, c.stageLimits)
+}
+
+func (c *Catalog) OpenVerified(ctx context.Context, store Store, key, digest string, size int64, requested *ByteRange) (Object, error) {
+	return OpenVerified(ctx, store, key, digest, size, requested, c.stageLimits)
 }
 
 func (c *Catalog) Primary() Store { return c.primary }
@@ -83,9 +110,23 @@ func (c *Catalog) Get(backend string) (Store, error) {
 	return store, nil
 }
 
-type LocalStore struct{ root string }
+type LocalStore struct {
+	root         string
+	rootMu       sync.Mutex
+	rootIdentity os.FileInfo
+}
 
-func NewLocalStore(root string) *LocalStore { return &LocalStore{root: root} }
+func NewLocalStore(root string) *LocalStore {
+	s := &LocalStore{root: root}
+	// Remember an existing root even before this service's first operation.
+	// A cold worker must not adopt a replacement after another service wrote
+	// or inspected the original directory. Missing development roots are bound
+	// when first initialized; this is not a persistent identity across restarts.
+	if info, err := os.Stat(root); err == nil && info.IsDir() {
+		s.rootIdentity = info
+	}
+	return s
+}
 
 func (s *LocalStore) Backend() string { return "local_file" }
 
@@ -96,102 +137,9 @@ func (s *LocalStore) ObjectKey(base string) (string, error) {
 	return base, nil
 }
 
-func (s *LocalStore) Put(_ context.Context, key string, data []byte, _ string) error {
-	if !safeLocalKey(key) {
-		return ErrInvalidKey
-	}
-	if err := os.MkdirAll(s.root, 0o750); err != nil {
-		return fmt.Errorf("prepare local media storage: %w", err)
-	}
-	temporary, err := os.CreateTemp(s.root, ".media-*")
-	if err != nil {
-		return fmt.Errorf("create local media staging file: %w", err)
-	}
-	temporaryPath := temporary.Name()
-	defer func() { _ = os.Remove(temporaryPath) }()
-	if _, err := temporary.Write(data); err != nil {
-		_ = temporary.Close()
-		return fmt.Errorf("write local media staging file: %w", err)
-	}
-	if err := temporary.Sync(); err != nil {
-		_ = temporary.Close()
-		return fmt.Errorf("sync local media staging file: %w", err)
-	}
-	if err := temporary.Close(); err != nil {
-		return fmt.Errorf("close local media staging file: %w", err)
-	}
-	finalPath := filepath.Join(s.root, key)
-	if err := os.Link(temporaryPath, finalPath); errors.Is(err, os.ErrExist) {
-		return ErrConflict
-	} else if err != nil {
-		return fmt.Errorf("commit local media object: %w", err)
-	}
-	return nil
-}
-
-func (s *LocalStore) Stat(_ context.Context, key string) (ObjectInfo, error) {
-	path, err := s.path(key)
-	if err != nil {
-		return ObjectInfo{}, err
-	}
-	info, err := os.Stat(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return ObjectInfo{}, ErrNotFound
-	}
-	if err != nil {
-		return ObjectInfo{}, fmt.Errorf("stat local media object: %w", err)
-	}
-	return ObjectInfo{Size: info.Size(), LastModified: info.ModTime().UTC(), ETag: fmt.Sprintf("\"local-%x-%x\"", info.Size(), info.ModTime().UnixNano())}, nil
-}
-
-func (s *LocalStore) Open(_ context.Context, key string, requested *ByteRange) (Object, error) {
-	path, err := s.path(key)
-	if err != nil {
-		return Object{}, err
-	}
-	file, err := os.Open(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return Object{}, ErrNotFound
-	}
-	if err != nil {
-		return Object{}, fmt.Errorf("open local media object: %w", err)
-	}
-	info, err := file.Stat()
-	if err != nil {
-		_ = file.Close()
-		return Object{}, fmt.Errorf("stat open local media object: %w", err)
-	}
-	body := io.ReadCloser(file)
-	if requested != nil {
-		if requested.Start < 0 || requested.End < requested.Start || requested.End >= info.Size() {
-			_ = file.Close()
-			return Object{}, ErrInvalidKey
-		}
-		if _, err := file.Seek(requested.Start, io.SeekStart); err != nil {
-			_ = file.Close()
-			return Object{}, fmt.Errorf("seek local media object: %w", err)
-		}
-		body = &limitedReadCloser{Reader: io.LimitReader(file, requested.End-requested.Start+1), closer: file}
-	}
-	return Object{Body: body, Info: ObjectInfo{Size: info.Size(), LastModified: info.ModTime().UTC(), ETag: fmt.Sprintf("\"local-%x-%x\"", info.Size(), info.ModTime().UnixNano())}}, nil
-}
-
-func (s *LocalStore) Delete(_ context.Context, key string) error {
-	path, err := s.path(key)
-	if err != nil {
-		return err
-	}
-	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("delete local media object: %w", err)
-	}
-	return nil
-}
-
-func (s *LocalStore) path(key string) (string, error) {
-	if !safeLocalKey(key) {
-		return "", ErrInvalidKey
-	}
-	return filepath.Join(s.root, key), nil
+func (s *LocalStore) Put(ctx context.Context, key string, data []byte, mime string) error {
+	digest := sha256.Sum256(data)
+	return s.PutStream(ctx, key, bytes.NewReader(data), int64(len(data)), hex.EncodeToString(digest[:]), mime)
 }
 
 func safeLocalKey(key string) bool {

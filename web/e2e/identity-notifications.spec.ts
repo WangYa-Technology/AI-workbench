@@ -81,7 +81,7 @@ test('manages identity, session evidence, notification deep links, and preferenc
   await expect(page).toHaveURL(/\/notifications$/)
   const generationNotice = page.locator('.notification-list article').filter({ hasText: 'Generation ready' }).first()
   await expect(generationNotice).toBeVisible()
-  await generationNotice.getByRole('button', { name: 'Open linked workflow', exact: true }).click()
+  await generationNotice.getByRole('link', { name: 'Open linked workflow', exact: true }).click()
   await expect(page).toHaveURL(/\/workspace\/assets\/[0-9a-f-]+$/)
   await expect(page.getByRole('heading', { name: 'Version history', exact: true })).toBeVisible()
 
@@ -91,7 +91,7 @@ test('manages identity, session evidence, notification deep links, and preferenc
   await stillUnread.getByRole('button', { name: 'Mark as read', exact: true }).click()
   await expect(stillUnread.getByRole('button', { name: 'Mark as read', exact: true })).toBeHidden()
 
-  await page.getByRole('link', { name: 'Preferences', exact: true }).click()
+  await page.getByRole('tab', { name: 'Preferences', exact: true }).click()
   const deliveredEvidence = page.locator('.delivery-evidence article').filter({ hasText: 'Generation completed' }).first()
   await expect(deliveredEvidence).toContainText('Delivered')
   await expect(deliveredEvidence).toContainText('Attempts: 1')
@@ -110,8 +110,8 @@ test('manages identity, session evidence, notification deep links, and preferenc
   await page.getByRole('button', { name: 'Generate Image', exact: true }).click()
   await expect(page.locator('.creation-turn').filter({ hasText: secondPrompt }).first().locator('.creation-status')).toContainText('Saved to Assets')
   await page.goto('/notifications?readState=unread&kind=generation.completed')
-  await expect(page.getByRole('heading', { name: 'Nothing needs your attention.', exact: true })).toBeVisible()
-  await page.getByRole('link', { name: 'Preferences', exact: true }).click()
+  await expect(page.locator('.notification-empty').getByText('No notifications match these filters.', { exact: true })).toBeVisible()
+  await page.getByRole('tab', { name: 'Preferences', exact: true }).click()
   const suppressedEvidence = page.locator('.delivery-evidence article').filter({ hasText: 'Generation completed' }).filter({ hasText: 'Suppressed' }).first()
   await expect(suppressedEvidence).toContainText('Suppressed')
   await expect(suppressedEvidence).toContainText('Preference disabled')
@@ -129,7 +129,7 @@ test('keeps the disabled creator payout boundary clear and usable on mobile', as
   expect(registration.ok()).toBeTruthy()
 
   await page.goto('/settings?section=payouts')
-  await expect(page.getByRole('heading', { name: 'Creator payouts', exact: true })).toBeVisible()
+  await expect(page.locator('.settings-aside-title').filter({ hasText: 'Creator payouts' })).toBeVisible()
   await expect(page.getByText('Not started', { exact: true })).toBeVisible()
   await expect(page.getByText('Unavailable', { exact: true })).toBeVisible()
   await expect(page.getByText('Stripe Connect is disabled in this environment. Local Test transactions remain available and no bank account or real payout is used.', { exact: true })).toBeVisible()

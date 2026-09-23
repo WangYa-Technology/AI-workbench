@@ -128,7 +128,7 @@ func TestExportAndDeletionLifecycle(t *testing.T) {
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,scan_status,source_type,license_code)
-		VALUES($1,$2,'image','Saved rights source','/media/saved-rights.jpg','image/jpeg','clean','demo','personal')`, savedAssetID, savedAuthorID); err != nil {
+		VALUES($1,$2,'image','Saved rights source','/media/saved-rights.jpg','image/jpeg','clean','delivery','personal')`, savedAssetID, savedAuthorID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -425,6 +425,9 @@ func TestExportAndDeletionLifecycle(t *testing.T) {
 	var receiptBody []byte
 	if err := pool.QueryRow(ctx, `SELECT id,receipt FROM data_rights_deletion_receipts WHERE request_id=$1`, deletionRequest.ID).Scan(&receiptID, &receiptBody); err != nil {
 		t.Fatal(err)
+	}
+	if !strings.Contains(string(receiptBody), "retained_contract_payment_and_recovery_evidence") || !strings.Contains(string(receiptBody), "not_erased_by_local_deletion") || strings.Contains(string(receiptBody), "not_configured_local_only") {
+		t.Fatal("receipt omitted retained marketplace evidence or overstated external deletion")
 	}
 	if (!strings.Contains(string(receiptBody), `"domain": "support"`) && !strings.Contains(string(receiptBody), `"domain":"support"`)) || !strings.Contains(string(receiptBody), "developer_webhooks") || !strings.Contains(string(receiptBody), "developer_webhook_credentials") || !strings.Contains(string(receiptBody), "identity_email_actions") || !strings.Contains(string(receiptBody), "identity_email_tokens") || !strings.Contains(string(receiptBody), "redacted_minimal") || !strings.Contains(string(receiptBody), "erased") {
 		t.Fatalf("deletion receipt omitted support disposition: %s", receiptBody)

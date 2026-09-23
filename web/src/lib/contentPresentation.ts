@@ -5,7 +5,7 @@ export function creationPath(kind: string) {
 }
 
 export function licenseLabel(code: string) {
-  const key = code.startsWith('demo') ? 'demo' : code === 'creator-owned-local-test' ? 'owned' : ({ 'hcai-personal-v1': 'personal', 'hcai-commercial-v1': 'commercial' } as Record<string, string>)[code] || 'review'
+  const key = code === 'creator-owned-local-test' ? 'owned' : ({ 'hcai-personal-v1': 'personal', 'hcai-commercial-v1': 'commercial' } as Record<string, string>)[code] || 'review'
   return i18n.global.t(`content.licenses.${key}`)
 }
 

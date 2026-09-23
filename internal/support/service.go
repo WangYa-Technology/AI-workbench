@@ -410,7 +410,7 @@ func (s *Service) events(ctx context.Context, caseID uuid.UUID) ([]Event, error)
 func (s *Service) resourceVisible(ctx context.Context, userID uuid.UUID, kind string, id uuid.UUID) (bool, error) {
 	queries := map[string]string{
 		"work":       `SELECT EXISTS(SELECT 1 FROM works w JOIN assets a ON a.id=w.asset_id WHERE w.id=$2 AND (w.author_id=$1 OR (w.status='published' AND a.scan_status='clean')))`,
-		"product":    `SELECT EXISTS(SELECT 1 FROM products WHERE id=$2 AND (seller_id=$1 OR status='active'))`,
+		"product":    `SELECT EXISTS(SELECT 1 FROM products p WHERE p.id=$2 AND (p.seller_id=$1 OR EXISTS(SELECT 1 FROM public_products visible WHERE visible.id=p.id)))`,
 		"post":       `SELECT EXISTS(SELECT 1 FROM posts WHERE id=$2 AND (author_id=$1 OR status='published'))`,
 		"asset":      `SELECT EXISTS(SELECT 1 FROM assets WHERE id=$2 AND owner_id=$1)`,
 		"generation": `SELECT EXISTS(SELECT 1 FROM generations WHERE id=$2 AND owner_id=$1)`,

@@ -10,7 +10,7 @@ The cross-domain risk queue covered disputes, refunds, Community reports, and re
 
 ## Decision
 
-- Only account registration evaluates this signal. Ordinary login, Local Test demo sessions, and existing-session activity never create or refresh account-link evidence.
+- Only account registration evaluates this signal. Ordinary login and existing-session activity never create or refresh account-link evidence.
 - The HTTP boundary transforms the request network address with the existing domain-separated SHA-256 function before the session transaction. PostgreSQL receives no raw address for this workflow.
 - After the new session is inserted, the registration transaction counts distinct active accounts with the same non-null network hash inside the active immutable risk rule's bounded window. The default boundary is the third distinct account within 24 hours.
 - A threshold crossing creates one idempotent `user/account_link` risk signal for the newly registered account. Its stable source key is scoped to that account; replay returns the same signal.

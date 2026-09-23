@@ -1,3 +1,4 @@
+import { fixtureCredentials } from './helpers/identity'
 import { expect, test, type Locator, type Page } from '@playwright/test'
 
 async function chooseOption(page: Page, trigger: Locator, optionName: string) {
@@ -14,7 +15,7 @@ test('completes private copyright intake through requester and Admin operations'
   const works = await worksResponse.json() as { items: Array<{ id: string }> }
   expect(works.items.length).toBeGreaterThan(0)
 
-  const requesterSession = await page.request.post('/api/v1/auth/demo', { data: { actor: 'creator' } })
+  const requesterSession = await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('creator') })
   expect(requesterSession.ok()).toBeTruthy()
   await page.goto('/support')
   await page.getByRole('button', { name: 'New case', exact: true }).click()
@@ -33,7 +34,7 @@ test('completes private copyright intake through requester and Admin operations'
   const caseURL = page.url()
   expect(caseURL).toMatch(/\/support\/[0-9a-f-]{36}$/)
 
-  const adminSession = await page.request.post('/api/v1/auth/demo', { data: { actor: 'admin' } })
+  const adminSession = await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('admin') })
   expect(adminSession.ok()).toBeTruthy()
   await page.goto('/admin?tab=support')
   const supportFilters = page.locator('.admin-operations-filters')
@@ -56,7 +57,7 @@ test('completes private copyright intake through requester and Admin operations'
   await decisionForm.getByRole('button', { name: 'Apply', exact: true }).click()
   await expect(page.locator('.admin-support-detail > header > em')).toHaveText('Needs your reply')
 
-  const returnToRequester = await page.request.post('/api/v1/auth/demo', { data: { actor: 'creator' } })
+  const returnToRequester = await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('creator') })
   expect(returnToRequester.ok()).toBeTruthy()
   await page.goto(caseURL)
   await expect(page.getByText('We received the copyright intake and started reviewing the stable resource reference.', { exact: true })).toBeVisible()
@@ -64,7 +65,7 @@ test('completes private copyright intake through requester and Admin operations'
   await page.getByRole('button', { name: 'Send reply', exact: true }).click()
   await expect(page.getByText('Your reply was added to the case.', { exact: true })).toBeVisible()
 
-  const returnToAdmin = await page.request.post('/api/v1/auth/demo', { data: { actor: 'admin' } })
+  const returnToAdmin = await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('admin') })
   expect(returnToAdmin.ok()).toBeTruthy()
   await page.goto(`/admin?tab=support&supportQ=${encodeURIComponent(subject)}&supportStatus=in_review&supportCategory=copyright`)
   await page.locator('.admin-support-queue > button').filter({ hasText: subject }).first().click()
@@ -74,20 +75,20 @@ test('completes private copyright intake through requester and Admin operations'
   await resolutionForm.getByRole('button', { name: 'Apply', exact: true }).click()
   await expect(page.locator('.admin-support-detail > header > em')).toHaveText('Resolved')
 
-  await page.request.post('/api/v1/auth/demo', { data: { actor: 'creator' } })
+  await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('creator') })
   await page.goto('/notifications')
   await expect(page.getByText('Support replied', { exact: true }).first()).toBeVisible()
 })
 
 test('keeps user and Admin support workspaces within a mobile viewport', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
-  await page.request.post('/api/v1/auth/demo', { data: { actor: 'creator' } })
+  await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('creator') })
   await page.goto('/support')
   await expect(page.getByRole('heading', { name: 'Support and copyright intake', exact: true })).toBeVisible()
   let widths = await page.evaluate(() => ({ client: document.documentElement.clientWidth, scroll: document.documentElement.scrollWidth }))
   expect(widths.scroll).toBe(widths.client)
 
-  await page.request.post('/api/v1/auth/demo', { data: { actor: 'admin' } })
+  await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('admin') })
   await page.goto('/admin?tab=support')
   await expect(page.getByRole('heading', { name: 'Support queue', exact: true })).toBeVisible()
   widths = await page.evaluate(() => ({ client: document.documentElement.clientWidth, scroll: document.documentElement.scrollWidth }))

@@ -8,12 +8,13 @@ const props = withDefaults(defineProps<{
   type?: 'button' | 'submit' | 'reset'
   variant?: 'default' | 'soft' | 'outline' | 'ghost'
   size?: 'sm' | 'md' | 'lg'
+  motion?: 'default' | 'none'
   label: string
   disabled?: boolean
-}>(), { as: 'button', type: 'button', variant: 'default', size: 'md', disabled: false })
+}>(), { as: 'button', type: 'button', variant: 'default', size: 'md', motion: 'default', disabled: false })
 const attrs = useAttrs()
 const component = computed(() => props.as === 'RouterLink' ? RouterLink : props.as)
-const componentAttrs = computed(() => ({ ...attrs, 'aria-label': props.label, title: attrs.title || props.label, ...(props.as === 'button' ? { type: props.type, disabled: props.disabled } : { 'aria-disabled': props.disabled ? 'true' : undefined }) }))
+const componentAttrs = computed(() => ({ ...attrs, 'aria-label': props.label, title: attrs.title || props.label, ...(props.as === 'button' ? { type: props.type, disabled: props.disabled } : { 'aria-disabled': props.disabled ? 'true' : undefined, tabindex: props.disabled ? -1 : attrs.tabindex }) }))
 const onClick = (event: globalThis.MouseEvent) => {
   if (props.as !== 'button' && props.disabled) {
     event.preventDefault()
@@ -23,7 +24,13 @@ const onClick = (event: globalThis.MouseEvent) => {
 </script>
 
 <template>
-  <component :is="component" v-bind="componentAttrs" class="ui-icon-button" :data-variant="variant" :data-size="size" @click="onClick">
+  <component :is="component" v-bind="componentAttrs" class="ui-icon-button" :data-variant="variant" :data-size="size" :data-motion="motion" @click="onClick">
     <slot></slot>
   </component>
 </template>
+
+<style scoped>
+.ui-icon-button[data-motion='none'],
+.ui-icon-button[data-motion='none']:hover,
+.ui-icon-button[data-motion='none']:active { transform: none; transition: none; animation: none; }
+</style>

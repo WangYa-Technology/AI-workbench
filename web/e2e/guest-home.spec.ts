@@ -1,3 +1,4 @@
+import { fixtureCredentials } from './helpers/identity'
 import { expect, test } from '@playwright/test'
 
 test('shows the product home to guests and keeps the mobile layout contained', async ({ page }) => {
@@ -58,10 +59,10 @@ test('keeps the desktop hero inside a centered marketing container', async ({ pa
 })
 
 test('sends an authenticated user from the public home to Discover', async ({ page }) => {
-  const response = await page.request.post('/api/v1/auth/demo', { data: { actor: 'creator' } })
+  const response = await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('creator') })
   expect(response.ok()).toBeTruthy()
 
   await page.goto('/')
   await expect(page).toHaveURL(/\/discover$/)
-  await expect(page.getByRole('heading', { level: 1, name: /Create, share, and license AI work/i })).toBeVisible()
+  await expect(page.getByRole('heading', { level: 1, name: /Inspiration library/i })).toBeVisible()
 })

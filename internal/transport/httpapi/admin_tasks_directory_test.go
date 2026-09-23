@@ -83,7 +83,7 @@ func TestAdminTaskDirectoryHTTPContract(t *testing.T) {
 
 	var resolved admin.TaskOperation
 	response = requestJSON(t, adminClient, http.MethodPost, server.URL+"/api/v1/admin/tasks/"+targetTaskID.String()+"/resolve", map[string]any{
-		"decision": "cancel_without_settlement", "expectedVersion": 1}, &resolved)
+		"decision": "cancel_without_settlement", "expectedVersion": 1, "reason": "Reviewed task evidence and confirmed cancellation.", "confirm": true}, &resolved)
 	if response.StatusCode != http.StatusOK || resolved.ID != targetTaskID || resolved.Status != "cancelled" {
 		t.Fatalf("exact HTTP task response failed: status=%d item=%#v", response.StatusCode, resolved)
 	}

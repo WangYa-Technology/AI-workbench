@@ -1,3 +1,5 @@
+import { fixtureCredentials } from './helpers/identity'
+import { expectSelection } from './helpers/select'
 import { createHmac } from 'node:crypto'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
@@ -51,7 +53,7 @@ test('creates, signs, rotates, dead-letters, and replays a local Webhook', async
 
   try {
     await page.setViewportSize({ width: 390, height: 844 })
-    expect((await page.request.post('/api/v1/auth/demo', { data: { actor: 'admin' } })).ok()).toBeTruthy()
+    expect((await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('admin') })).ok()).toBeTruthy()
     const initialResponse = await page.request.get('/api/v1/admin/developer/access')
     expect(initialResponse.ok()).toBeTruthy()
     initialControl = (await initialResponse.json()).control
@@ -61,8 +63,8 @@ test('creates, signs, rotates, dead-letters, and replays a local Webhook', async
       maxActiveKeys: initialControl!.maxActiveKeys,
       defaultTtlDays: initialControl!.defaultTtlDays,
       expectedVersion: initialControl!.version,
-      reason: `Enable local signed Webhook browser verification ${suffix}.`,
-      confirmed: true,
+
+
     } })
     expect(enabled.ok()).toBeTruthy()
 
@@ -78,7 +80,7 @@ test('creates, signs, rotates, dead-letters, and replays a local Webhook', async
     expect(registered.status()).toBe(201)
 
     await page.goto('/settings?section=developer')
-    await expect(page.getByRole('heading', { name: 'Signed Webhooks' })).toBeVisible()
+    await expect(page.locator('.settings-aside-title').filter({ hasText: 'Signed Webhooks' })).toBeVisible()
     await page.getByLabel('Endpoint name').fill(endpointName)
     await page.getByLabel('Endpoint URL').fill(endpointURL)
     await page.getByRole('button', { name: 'Create Webhook' }).click()
@@ -114,13 +116,13 @@ test('creates, signs, rotates, dead-letters, and replays a local Webhook', async
     await expect(endpoint.getByText('Dead letter', { exact: true }).first()).toBeVisible()
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390)
 
-		expect((await page.request.post('/api/v1/auth/demo', { data: { actor: 'admin' } })).ok()).toBeTruthy()
+		expect((await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('admin') })).ok()).toBeTruthy()
 		await page.setViewportSize({ width: 390, height: 844 })
 		await page.goto(`/admin?tab=developer&webhookQ=${suffix}&webhookEventType=developer.webhook.test&emailQ=no-match-${suffix}&emailKind=password_reset`)
 		await expect(page.getByRole('searchbox', { name: 'Search Webhook recovery' })).toHaveValue(suffix)
-		await expect(page.getByRole('combobox', { name: 'Event type' })).toHaveValue('developer.webhook.test')
+		await expectSelection(page.getByRole('combobox', { name: 'Event type' }), 'developer.webhook.test')
 		await expect(page.getByRole('searchbox', { name: 'Search email recovery' })).toHaveValue(`no-match-${suffix}`)
-		await expect(page.getByRole('combobox', { name: 'Email action' })).toHaveValue('password_reset')
+		await expectSelection(page.getByRole('combobox', { name: 'Email action' }), 'password_reset')
 		await page.reload()
 		await expect(page.getByRole('searchbox', { name: 'Search Webhook recovery' })).toHaveValue(suffix)
 		expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390)
@@ -128,11 +130,9 @@ test('creates, signs, rotates, dead-letters, and replays a local Webhook', async
 		const deadLetterSection = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Webhook dead letters' }) })
     const deadLetter = deadLetterSection.locator('.webhook-dead-letter-list article').filter({ hasText: endpointName })
     await expect(deadLetter).toBeVisible()
-		await page.getByPlaceholder(/receiver recovery evidence/).fill(`Receiver recovered and its current signing secret was verified ${suffix}.`)
-		await page.getByLabel(/I confirm this dead-letter delivery/).check()
     receiverStatus = 204
     await deadLetter.getByRole('button', { name: `Replay Webhook delivery for ${endpointName}` }).click()
-    await expect(page.getByText('Webhook replay queued with audit and original-delivery lineage.')).toBeVisible()
+    await expect(page.getByText('Webhook replay queued with original-delivery lineage.')).toBeVisible()
     await expect.poll(() => captured.length).toBeGreaterThanOrEqual(4)
     verifySignature(captured[3], rotatedSecret!)
 
@@ -144,7 +144,7 @@ test('creates, signs, rotates, dead-letters, and replays a local Webhook', async
     await expect(restoredEndpoint.getByText('Dead letter', { exact: true }).first()).toBeVisible()
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(1280)
   } finally {
-    await page.request.post('/api/v1/auth/demo', { data: { actor: 'admin' } }).catch(() => undefined)
+    await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('admin') }).catch(() => undefined)
     if (initialControl) {
       const currentResponse = await page.request.get('/api/v1/admin/developer/access').catch(() => undefined)
       if (currentResponse?.ok()) {
@@ -155,8 +155,8 @@ test('creates, signs, rotates, dead-letters, and replays a local Webhook', async
           maxActiveKeys: initialControl.maxActiveKeys,
           defaultTtlDays: initialControl.defaultTtlDays,
           expectedVersion: current.control.version,
-          reason: `Restore Developer Access after signed Webhook verification ${suffix}.`,
-          confirmed: true,
+
+
         } }).catch(() => undefined)
       }
     }

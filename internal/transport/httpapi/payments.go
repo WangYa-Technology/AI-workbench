@@ -45,6 +45,8 @@ func (s *Server) beginPayoutOnboarding(w http.ResponseWriter, r *http.Request) {
 		httputil.WriteError(w, r, http.StatusNotFound, "account_not_found", "The creator account could not be found.", false)
 	case errors.Is(err, payments.ErrPayoutConflict):
 		httputil.WriteError(w, r, http.StatusConflict, "payout_onboarding_conflict", "The payout account changed. Refresh this page and review its current status.", false)
+	case errors.Is(err, payments.ErrPayoutReconciliation):
+		httputil.WriteError(w, r, http.StatusConflict, "payment_reconciliation_required", "The original payout account request must be reconciled before onboarding can continue.", false)
 	case err != nil:
 		var classified interface{ Retryable() bool }
 		if errors.As(err, &classified) {
@@ -76,6 +78,8 @@ func (s *Server) receiveStripeWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	receipt, err := s.payments.ReceiveStripeWebhook(r.Context(), rawBody, r.Header.Get("Stripe-Signature"))
 	switch {
+	case errors.Is(err, payments.ErrWebhookAdmissionBusy):
+		httputil.WriteError(w, r, http.StatusServiceUnavailable, "payment_event_busy", "The payment event is being processed. Retry this delivery.", true)
 	case errors.Is(err, payments.ErrDisabled):
 		httputil.WriteError(w, r, http.StatusServiceUnavailable, "payment_provider_unavailable", "Payment processing is not enabled.", false)
 	case errors.Is(err, payments.ErrInvalidSignature):
@@ -118,6 +122,8 @@ func (s *Server) receiveWaffoWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	receipt, err := s.payments.ReceiveWaffoWebhook(r.Context(), rawBody, r.Header.Get("x-waffo-signature"))
 	switch {
+	case errors.Is(err, payments.ErrWebhookAdmissionBusy):
+		httputil.WriteError(w, r, http.StatusServiceUnavailable, "payment_event_busy", "The payment event is being processed. Retry this delivery.", true)
 	case errors.Is(err, payments.ErrDisabled):
 		httputil.WriteError(w, r, http.StatusServiceUnavailable, "payment_provider_unavailable", "Payment processing is not enabled.", false)
 	case errors.Is(err, payments.ErrProviderConfigMismatch):
@@ -128,6 +134,8 @@ func (s *Server) receiveWaffoWebhook(w http.ResponseWriter, r *http.Request) {
 		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "payment_event_invalid", "The payment event envelope is invalid.", false)
 	case errors.Is(err, payments.ErrEventConflict):
 		httputil.WriteError(w, r, http.StatusConflict, "payment_event_conflict", "The payment event identifier conflicts with earlier evidence.", false)
+	case errors.Is(err, payments.ErrCheckoutReconciliation):
+		httputil.WriteError(w, r, http.StatusConflict, "payment_reconciliation_required", "The original transaction identity requires verification.", false)
 	case err != nil:
 		var retryable interface{ Retryable() bool }
 		if errors.As(err, &retryable) && retryable.Retryable() {

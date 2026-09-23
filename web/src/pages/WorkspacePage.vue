@@ -1,6 +1,18 @@
 <script setup lang="ts">
+import UiEmptyState from '../components/ui/UiEmptyState.vue'
+import { usdAmountCents } from '../lib/topupSettings'
+import UiCardContent from '../components/ui/UiCardContent.vue'
+import UiCardMedia from '../components/ui/UiCardMedia.vue'
+import UiCardActions from '../components/ui/UiCardActions.vue'
+import UiCardTag from '../components/ui/UiCardTag.vue'
+import DetailToolbar from '../components/ui/DetailToolbar.vue'
+import PageHeading from '../components/ui/PageHeading.vue'
+import UiFilterBar from '../components/ui/UiFilterBar.vue'
+import UiCatalog from '../components/ui/UiCatalog.vue'
+import UiLayoutSwitcher from '../components/ui/UiLayoutSwitcher.vue'
+import UiContentCard from '../components/ui/UiContentCard.vue'
 import {
-  ArrowLeft, ArrowRight, Boxes, ClipboardList, Clock3, FileCheck2, FolderOpen, Maximize2, PackageCheck, Plus,
+  ArrowLeft, ArrowRight, Boxes, ClipboardList, Clock3, FileCheck2, Maximize2, PackageCheck, Plus,
   Ban, Bookmark, BookmarkX, Coins, Download, GitBranch, ListFilter, ReceiptText, RefreshCw, RotateCcw, ShieldCheck, ShoppingBag, Store, TrendingUp, Upload, UsersRound, WalletCards, WandSparkles, X,
 } from 'lucide-vue-next'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
@@ -10,15 +22,21 @@ import { api, messageFrom, type Asset, type BillingStatement, type Generation, t
 import { contentListReturn, creationPath, licenseLabel } from '../lib/contentPresentation'
 import { formatCurrency, formatDateTime } from '../lib/format'
 import { openCheckoutWindow } from '../lib/checkout'
+import { validRefundReason } from '../lib/productRefund'
+import { validProductReturnID } from '../lib/productPayment'
 import { useSessionStore } from '../stores/session'
 import AssetPublishDrawer from '../components/domain/AssetPublishDrawer.vue'
 import AssetMedia from '../components/domain/AssetMedia.vue'
+import ProductPaymentStatus from '../components/domain/ProductPaymentStatus.vue'
+import ProductOrderDeliveryLink from '../components/domain/ProductOrderDeliveryLink.vue'
+import ProductCheckoutClosure from '../components/domain/ProductCheckoutClosure.vue'
 import AuthRequiredState from '../components/domain/AuthRequiredState.vue'
 import MotionFavoriteIcon from '../components/ui/MotionFavoriteIcon.vue'
-import PageHero from '../components/ui/PageHero.vue'
+import PageHeader from '../components/ui/PageHeader.vue'
 import UiButton from '../components/ui/UiButton.vue'
 import UiBadge from '../components/ui/UiBadge.vue'
 import UiCard from '../components/ui/UiCard.vue'
+import UiDataList from '../components/ui/UiDataList.vue'
 import UiCheckbox from '../components/ui/UiCheckbox.vue'
 import UiIconButton from '../components/ui/UiIconButton.vue'
 import UiFileInput from '../components/ui/UiFileInput.vue'
@@ -32,12 +50,31 @@ const route = useRoute()
 const router = useRouter()
 const session = useSessionStore()
 const assets = ref<Asset[]>([])
+const assetTotal = ref(0)
 const savedWorks = ref<SavedWork[]>([])
 const generations = ref<Generation[]>([])
 const tasks = ref<TaskSummary[]>([])
+const nextTaskCursor = ref<string>()
+const taskTotal = ref(0)
+const loadingMoreTasks = ref(false)
 const orders = ref<Order[]>([])
 const orderNextCursor = ref<string | null>(null)
 const ordersLoadingMore = ref(false)
+const returnedOrderID = computed(() => typeof route.query.orderId === 'string' ? route.query.orderId : '')
+const returnedPaymentID = computed(() => typeof route.query.paymentId === 'string' ? route.query.paymentId : '')
+const productPaymentReturn = computed(() => route.query.payment === 'success' || route.query.payment === 'cancelled')
+
+function updateClosedOrder(order: Order) {
+  if (section.value !== 'orders') return
+  orders.value = orders.value.map(item => item.id === order.id ? order : item)
+}
+
+function updateReturnedOrder(order: Order) {
+  if (section.value !== 'orders' || order.id !== returnedOrderID.value || order.paymentId !== returnedPaymentID.value) return
+  const current = orders.value.find(item => item.id === order.id)
+  if ((current?.paymentVersion ?? 0) > (order.paymentVersion ?? 0)) return
+  orders.value = [order, ...orders.value.filter(item => item.id !== order.id)]
+}
 const billing = ref<BillingStatement | null>(null)
 const points = ref<PointOverview | null>(null)
 const subscriptionAction = ref('')
@@ -78,8 +115,14 @@ const billingDateFrom = ref('')
 const billingDateTo = ref('')
 const billingEntryTypes = ['subscription_purchase', 'wallet_topup', 'product_purchase', 'product_sale', 'product_refund', 'task_payment', 'task_earning', 'admin_adjustment', 'initial_credit'] as const
 const paymentProvider = ref<Meta['paymentProvider'] | null>(null)
-const topupAmount = ref(20)
+const topupAmount = ref('20.00')
+const topupSettings = ref<import('../api/client').WalletTopupSettings | null>(null)
+const topupAmountValid = computed(() => {
+  const cents = usdAmountCents(topupAmount.value)
+  return Boolean(topupSettings.value && cents !== null && cents >= topupSettings.value.minimumAmountCents && cents <= topupSettings.value.maximumAmountCents)
+})
 const topupAction = ref(false)
+const billingActionError = ref('')
 let paymentConfirmationTimer: ReturnType<typeof globalThis.setTimeout> | undefined
 
 const assetID = computed(() => String(route.params.assetId || ''))
@@ -89,8 +132,10 @@ const publishAssetID = computed(() => String(route.query.publish || ''))
 const publishRequested = computed(() => section.value === 'assets' && Boolean(publishAssetID.value))
 const publishOpen = computed(() => publishRequested.value && Boolean(session.user))
 const assetView = computed(() => section.value === 'assets' && route.query.view === 'saved' ? 'saved' : 'owned')
+const isAssetCatalog = computed(() => section.value === 'assets' || section.value === 'purchases')
+const assetLayout = ref<'list' | 'grid'>('list')
 const generationFocus = computed(() => String(route.query.generationId || ''))
-const visibleAssets = computed(() => section.value === 'purchases' ? assets.value.filter((item) => item.sourceType === 'purchase') : assets.value)
+const visibleAssets = computed(() => assets.value)
 const cleanAssetCount = computed(() => assets.value.filter(item => item.scanStatus === 'clean').length)
 const purchasedCleanCount = computed(() => visibleAssets.value.filter(item => item.scanStatus === 'clean').length)
 const purchasedKindCount = computed(() => new Set(visibleAssets.value.map(item => item.kind)).size)
@@ -171,11 +216,11 @@ const pointTrendGeometry = computed(() => {
   }
 })
 const sectionMeta = computed(() => ({
-  assets: { title: t('workspace.assets'), summary: assetView.value === 'saved' ? t('workspace.savedSummary') : t('workspace.assetsSummary'), count: assetView.value === 'saved' ? savedWorks.value.length : visibleAssets.value.length, icon: Boxes, actionIcon: Upload, actionLabel: t('workspace.uploadAsset'), actionTo: '' },
+  assets: { title: t('workspace.assets'), summary: assetView.value === 'saved' ? t('workspace.savedSummary') : t('workspace.assetsSummary'), count: assetView.value === 'saved' ? savedWorks.value.length : assetTotal.value, icon: Boxes, actionIcon: Upload, actionLabel: t('workspace.uploadAsset'), actionTo: '' },
   generations: { title: t('workspace.generations'), summary: t('workspace.generationsSummary'), count: generations.value.length, icon: Clock3, actionIcon: Plus, actionLabel: t('actions.newCreation'), actionTo: '/create/image' },
-  purchases: { title: t('workspace.purchases'), summary: t('workspace.purchasesSummary'), count: visibleAssets.value.length, icon: ShoppingBag, actionIcon: Store, actionLabel: t('workspace.browseMarket'), actionTo: '/market' },
+  purchases: { title: t('workspace.purchases'), summary: t('workspace.purchasesSummary'), count: assetTotal.value, icon: ShoppingBag, actionIcon: Store, actionLabel: t('workspace.browseMarket'), actionTo: '/market' },
   orders: { title: t('workspace.orders'), summary: t('workspace.ordersSummary'), count: orders.value.length, icon: ReceiptText, actionIcon: Store, actionLabel: t('workspace.browseMarket'), actionTo: '/market' },
-  tasks: { title: t('workspace.tasks'), summary: t('workspace.tasksSummary'), count: tasks.value.length, icon: ClipboardList, actionIcon: ArrowRight, actionLabel: t('workspace.browseTasks'), actionTo: '/market/demands' },
+  tasks: { title: t('workspace.tasks'), summary: t('workspace.tasksSummary'), count: taskTotal.value, icon: ClipboardList, actionIcon: ArrowRight, actionLabel: t('workspace.browseTasks'), actionTo: '/market/demands' },
   billing: { title: t('workspace.billing'), summary: t('workspace.billingSummary'), count: billing.value?.entries.length || 0, icon: WalletCards, actionIcon: Plus, actionLabel: t('actions.newCreation'), actionTo: '/create/image' },
 })[section.value]!)
 const workspaceHero = computed(() => {
@@ -190,7 +235,7 @@ const workspaceHero = computed(() => {
         { value: savedWorks.value.length, label: t('workspace.savedWorks'), icon: Bookmark, tone: 'violet' as const },
         { value: cleanAssetCount.value, label: t('workspace.scanStatus.clean'), icon: ShieldCheck, tone: 'green' as const },
       ],
-      artworkSrc: '/tasks/task-hero-transparent.webp',
+      artworkSrc: '/illustrations/headers/tasks.webp',
     }
   }
   if (section.value === 'purchases') {
@@ -199,11 +244,11 @@ const workspaceHero = computed(() => {
       eyebrowIcon: ShoppingBag,
       statsLabel: t('workspace.purchases'),
       stats: [
-        { value: visibleAssets.value.length, label: t('workspace.purchases'), icon: ShoppingBag, tone: 'blue' as const },
-        { value: purchasedKindCount.value, label: t('workspace.assets'), icon: Boxes, tone: 'violet' as const },
-        { value: purchasedCleanCount.value, label: t('workspace.scanStatus.clean'), icon: ShieldCheck, tone: 'green' as const },
+        { value: assetTotal.value, label: t('workspace.purchases'), icon: ShoppingBag, tone: 'blue' as const },
+        { value: purchasedKindCount.value, label: t('workspace.loadedMediaTypes'), icon: Boxes, tone: 'violet' as const },
+        { value: purchasedCleanCount.value, label: t('workspace.loadedCleanAssets'), icon: ShieldCheck, tone: 'green' as const },
       ],
-      artworkSrc: '/assets/purchase-hero-light.webp',
+      artworkSrc: '/illustrations/headers/purchases.webp',
     }
   }
   if (section.value === 'orders') {
@@ -216,7 +261,7 @@ const workspaceHero = computed(() => {
         { value: refundedOrderCount.value, label: t('workspace.refundedOrders'), icon: RotateCcw, tone: 'violet' as const },
         { value: fulfilledOrderCount.value, label: t('workspace.activeEntitlements'), icon: ShieldCheck, tone: 'green' as const },
       ],
-      artworkSrc: '/assets/order-hero-light.webp',
+      artworkSrc: '/illustrations/headers/orders.webp',
     }
   }
   if (section.value === 'tasks') {
@@ -229,7 +274,7 @@ const workspaceHero = computed(() => {
         { value: formatCurrency(taskRewardTotal.value, 'USD', locale.value), label: t('workspace.taskRewardTotal'), icon: Coins, tone: 'violet' as const },
         { value: taskProposalCount.value, label: t('tasks.proposals'), icon: UsersRound, tone: 'green' as const },
       ],
-      artworkSrc: '/tasks/task-hero-transparent.webp',
+      artworkSrc: '/illustrations/headers/tasks.webp',
     }
   }
   return null
@@ -265,6 +310,7 @@ function orderEventLabel(status: string) {
 }
 
 function orderPaymentModeLabel(order: Order) {
+  if (order.paymentMode === 'unverified') return t('workspace.unverifiedPaymentMode')
   if (order.paymentMode === 'test') return t('workspace.localTestMode')
   if (order.paymentMode === 'waffo_pancake') return t(order.realCharge ? 'workspace.waffoLiveMode' : 'workspace.waffoTestMode')
   if (order.paymentMode === 'epay') return t('workspace.epayMode')
@@ -334,8 +380,10 @@ function syncBillingFilters() {
   billingDateTo.value = String(route.query.dateTo || '')
 }
 
-async function loadBillingStatement(cursor = '') {
+async function loadBillingStatement(cursor = '', version = workspaceLoadVersion) {
+  if (version !== workspaceLoadVersion) return
   const page = await api.billingStatement(billingListQuery(cursor))
+  if (version !== workspaceLoadVersion) return
   if (cursor && billing.value) {
     const known = new Set(billing.value.entries.map(item => item.id))
     billing.value = { ...page, entries: [...billing.value.entries, ...page.entries.filter(item => !known.has(item.id))] }
@@ -352,10 +400,11 @@ function hasPaymentEvidence(paymentId: string) {
   )
 }
 
-async function pollPaymentConfirmation(paymentId: string, attempt = 0) {
-  if (section.value !== 'billing' || String(route.query.paymentId || '') !== paymentId) return
+async function pollPaymentConfirmation(paymentId: string, version: number, attempt = 0) {
+  if (version !== workspaceLoadVersion || section.value !== 'billing' || String(route.query.paymentId || '') !== paymentId) return
   try {
-    const [, pointOverview] = await Promise.all([loadBillingStatement(), api.pointOverview()])
+    const [, pointOverview] = await Promise.all([loadBillingStatement('', version), api.pointOverview()])
+    if (version !== workspaceLoadVersion) return
     points.value = pointOverview
     if (hasPaymentEvidence(paymentId)) {
       success.value = t('workspace.paymentConfirmed')
@@ -364,24 +413,26 @@ async function pollPaymentConfirmation(paymentId: string, attempt = 0) {
   } catch {
     // The normal page error state remains authoritative; a transient poll can retry.
   }
-  if (attempt < 9) {
-    paymentConfirmationTimer = globalThis.setTimeout(() => void pollPaymentConfirmation(paymentId, attempt + 1), 1200)
+  if (version === workspaceLoadVersion && attempt < 9) {
+    paymentConfirmationTimer = globalThis.setTimeout(() => void pollPaymentConfirmation(paymentId, version, attempt + 1), 1200)
   }
 }
 
 async function purchasePlan(planId: string) {
-  if (subscriptionAction.value || !paymentProvider.value?.enabled) return
+  if (loading.value || subscriptionAction.value || !paymentProvider.value?.enabled) return
+  const version = workspaceLoadVersion
   subscriptionAction.value = planId
-  error.value = ''
+  billingActionError.value = ''
   success.value = ''
   try {
     const checkoutWindow = openCheckoutWindow()
     if (!checkoutWindow) {
-      error.value = t('errors.codes.checkout_popup_blocked')
+      billingActionError.value = t('errors.codes.checkout_popup_blocked')
       return
     }
     try {
       const checkout = await api.checkoutSubscription(planId)
+      if (version !== workspaceLoadVersion) { checkoutWindow.close(); return }
       checkoutWindow.location.href = checkout.checkoutUrl
       success.value = t('workspace.paymentCheckoutStarted')
     } catch (reason) {
@@ -389,29 +440,32 @@ async function purchasePlan(planId: string) {
       throw reason
     }
   } catch (reason) {
-    error.value = messageFrom(reason)
+    if (version === workspaceLoadVersion) billingActionError.value = messageFrom(reason)
   } finally {
-    subscriptionAction.value = ''
+    if (version === workspaceLoadVersion) subscriptionAction.value = ''
   }
 }
 
 async function topUpWallet() {
-  if (topupAction.value || !Number.isFinite(topupAmount.value) || topupAmount.value < 0.5) return
+  if (loading.value || topupAction.value || !topupAmountValid.value) return
+  const amountCents = usdAmountCents(topupAmount.value)!
+  const version = workspaceLoadVersion
   topupAction.value = true
-  error.value = ''
+  billingActionError.value = ''
   success.value = ''
   try {
     if (!paymentProvider.value?.enabled) {
-      error.value = t('workspace.externalPaymentUnavailable')
+      billingActionError.value = t('workspace.externalPaymentUnavailable')
       return
     }
     const checkoutWindow = openCheckoutWindow()
     if (!checkoutWindow) {
-      error.value = t('errors.codes.checkout_popup_blocked')
+      billingActionError.value = t('errors.codes.checkout_popup_blocked')
       return
     }
     try {
-      const checkout = await api.checkoutWalletTopup(Math.round(topupAmount.value * 100))
+      const checkout = await api.checkoutWalletTopup(amountCents)
+      if (version !== workspaceLoadVersion) { checkoutWindow.close(); return }
       checkoutWindow.location.href = checkout.checkoutUrl
       success.value = t('workspace.paymentCheckoutStarted')
     } catch (reason) {
@@ -419,9 +473,18 @@ async function topUpWallet() {
       throw reason
     }
   } catch (reason) {
-    error.value = messageFrom(reason)
+    if (version === workspaceLoadVersion) {
+      billingActionError.value = messageFrom(reason)
+      if (reason && typeof reason === 'object' && 'code' in reason && reason.code === 'wallet_topup_amount_out_of_range') {
+        topupSettings.value = null
+        try {
+          const settings = await api.walletTopupSettings()
+          if (version === workspaceLoadVersion) topupSettings.value = settings
+        } catch { /* Keep checkout disabled until a successful reload. */ }
+      }
+    }
   } finally {
-    topupAction.value = false
+    if (version === workspaceLoadVersion) topupAction.value = false
   }
 }
 
@@ -443,25 +506,30 @@ async function clearBillingFilters() {
 }
 
 async function loadMoreBilling() {
-  if (!billingNextCursor.value || billingLoadingMore.value) return
+  if (loading.value || !billingNextCursor.value || billingLoadingMore.value) return
+  const version = workspaceLoadVersion
   billingLoadingMore.value = true
   error.value = ''
   try {
-    await loadBillingStatement(billingNextCursor.value)
+    await loadBillingStatement(billingNextCursor.value, version)
   } catch (reason) {
-    error.value = messageFrom(reason)
+    if (version === workspaceLoadVersion) error.value = messageFrom(reason)
   } finally {
-    billingLoadingMore.value = false
+    if (version === workspaceLoadVersion) billingLoadingMore.value = false
   }
 }
 
-async function loadGenerationList() {
+async function loadGenerationList(version = workspaceLoadVersion) {
+  if (version !== workspaceLoadVersion) return
+  const focusedID = generationFocus.value
   syncGenerationFilters()
   const page = await api.listGenerations(generationListQuery())
+  if (version !== workspaceLoadVersion) return
   generations.value = page.items
   generationNextCursor.value = page.nextCursor || null
-  if (generationFocus.value && !generations.value.some(item => item.id === generationFocus.value)) {
-    const focused = await api.getGeneration(generationFocus.value)
+  if (focusedID && !generations.value.some(item => item.id === focusedID)) {
+    const focused = await api.getGeneration(focusedID)
+    if (version !== workspaceLoadVersion) return
     generations.value = [focused, ...generations.value]
   }
 }
@@ -472,7 +540,7 @@ async function applyGenerationFilters() {
   if (generationStatus.value) query.status = generationStatus.value
   if (generationDateFrom.value) query.dateFrom = generationDateFrom.value
   if (generationDateTo.value) query.dateTo = generationDateTo.value
-  await router.push({ path: '/create/image', query })
+  await router.push({ path: '/workspace/generations', query })
 }
 
 async function clearGenerationFilters() {
@@ -480,14 +548,32 @@ async function clearGenerationFilters() {
   generationStatus.value = ''
   generationDateFrom.value = ''
   generationDateTo.value = ''
-  await router.push('/create/image')
+  await router.push('/workspace/generations')
 }
 
 let workspaceLoadVersion = 0
 async function load() {
   const version = ++workspaceLoadVersion
+  ordersLoadingMore.value = false
+  assetLoadingMore.value = false
+  savedWorkLoadingMore.value = false
+  assetUsageLoadingMore.value = false
+  versionUploading.value = false
+  uploading.value = false
+  refunding.value = ''
+  loadingMoreTasks.value = false
+  billingLoadingMore.value = false
+  generationLoadingMore.value = false
+  generationAction.value = ''
+  subscriptionAction.value = ''
+  topupAction.value = false
+  billingActionError.value = ''
+  topupSettings.value = null
+  selectedGenerationIDs.value = []
   const id = assetID.value
   const currentSection = section.value
+  const requestedOrderID = productPaymentReturn.value ? '' : returnedOrderID.value
+  if (currentSection === 'orders') { orders.value = []; orderNextCursor.value = null }
   if (selectedAsset.value?.id !== id) selectedAsset.value = null
 	if (paymentConfirmationTimer !== undefined) {
 		globalThis.clearTimeout(paymentConfirmationTimer)
@@ -511,39 +597,52 @@ async function load() {
       versionOpen.value = false
       return
     }
-    if (currentSection === 'assets') {
-      const [assetResponse, savedResponse] = await Promise.all([api.listAssets(), api.listSavedWorks()])
+    if (currentSection === 'assets' || currentSection === 'purchases') {
+      const [assetResponse, savedResponse] = await Promise.all([
+        api.listAssets(currentSection === 'purchases' ? { source: 'purchase' } : {}),
+        currentSection === 'assets' ? api.listSavedWorks() : Promise.resolve(null),
+      ])
       if (version !== workspaceLoadVersion) return
       assets.value = assetResponse.items
+      assetTotal.value = assetResponse.total
       assetNextCursor.value = assetResponse.nextCursor || null
-      savedWorks.value = savedResponse.items
-      savedWorkNextCursor.value = savedResponse.nextCursor || null
+      if (savedResponse) {
+        savedWorks.value = savedResponse.items
+        savedWorkNextCursor.value = savedResponse.nextCursor || null
+      }
     } else if (currentSection === 'generations') {
-      await loadGenerationList()
-    } else if (currentSection === 'purchases') {
-      const page = await api.listAssets()
-      if (version !== workspaceLoadVersion) return
-      assets.value = page.items
-      assetNextCursor.value = page.nextCursor || null
+      await loadGenerationList(version)
     } else if (currentSection === 'orders') {
-  const page = await api.listOrders({ limit: 20 })
-  if (version !== workspaceLoadVersion) return
-  orders.value = page.items
-  orderNextCursor.value = page.nextCursor || null
+      if (requestedOrderID && !validProductReturnID(requestedOrderID)) {
+        throw new Error(t('workspace.productPayment.unavailableBody'))
+      }
+      const [page, requestedOrder] = await Promise.all([
+        api.listOrders({ limit: 20 }),
+        requestedOrderID ? api.getOrder(requestedOrderID) : Promise.resolve(null),
+      ])
+      if (version !== workspaceLoadVersion) return
+      if (requestedOrder && requestedOrder.id !== requestedOrderID) {
+        throw new Error(t('workspace.productPayment.unavailableBody'))
+      }
+      orders.value = requestedOrder ? [requestedOrder, ...page.items.filter(item => item.id !== requestedOrder.id)] : page.items
+      orderNextCursor.value = page.nextCursor || null
     } else if (currentSection === 'tasks') {
       const page = await api.listTasks({ mine: true })
       if (version !== workspaceLoadVersion) return
       tasks.value = page.items
+      nextTaskCursor.value = page.nextCursor
+      taskTotal.value = page.total
     } else if (currentSection === 'billing') {
       syncBillingFilters()
-      const [, pointOverview, runtime] = await Promise.all([loadBillingStatement(), api.pointOverview(), api.meta()])
+      const [, pointOverview, runtime, settings] = await Promise.all([loadBillingStatement('', version), api.pointOverview(), api.meta(), api.walletTopupSettings()])
       if (version !== workspaceLoadVersion) return
       points.value = pointOverview
       paymentProvider.value = runtime.paymentProvider
+      topupSettings.value = settings
       if (route.query.payment === 'success') {
         const paymentId = String(route.query.paymentId || '')
         success.value = paymentId && hasPaymentEvidence(paymentId) ? t('workspace.paymentConfirmed') : t('workspace.paymentPendingConfirmation')
-        if (paymentId && !hasPaymentEvidence(paymentId)) void pollPaymentConfirmation(paymentId)
+        if (paymentId && !hasPaymentEvidence(paymentId)) void pollPaymentConfirmation(paymentId, version)
       }
       if (route.query.payment === 'cancelled') success.value = t('workspace.paymentCancelled')
     }
@@ -555,61 +654,85 @@ async function load() {
   }
 }
 
+async function loadMoreTasks() {
+  if (loading.value || !nextTaskCursor.value || loadingMoreTasks.value) return
+  const version = workspaceLoadVersion
+  loadingMoreTasks.value = true
+  try {
+    const page = await api.listTasks({ mine: true, cursor: nextTaskCursor.value })
+    if (version !== workspaceLoadVersion) return
+    const known = new Set(tasks.value.map(item => item.id))
+    tasks.value.push(...page.items.filter(item => !known.has(item.id)))
+    nextTaskCursor.value = page.nextCursor
+    taskTotal.value = page.total
+  } catch (reason) { if (version === workspaceLoadVersion) error.value = messageFrom(reason) }
+  finally { if (version === workspaceLoadVersion) loadingMoreTasks.value = false }
+}
+
 async function loadMoreOrders() {
-  if (!orderNextCursor.value || ordersLoadingMore.value) return
+  if (loading.value || !orderNextCursor.value || ordersLoadingMore.value) return
+  const version = workspaceLoadVersion
   ordersLoadingMore.value = true
   error.value = ''
   try {
     const page = await api.listOrders({ limit: 20, cursor: orderNextCursor.value })
+    if (version !== workspaceLoadVersion) return
     const known = new Set(orders.value.map(item => item.id))
     orders.value = [...orders.value, ...page.items.filter(item => !known.has(item.id))]
     orderNextCursor.value = page.nextCursor || null
   } catch (reason) {
-    error.value = messageFrom(reason)
+    if (version === workspaceLoadVersion) error.value = messageFrom(reason)
   } finally {
-    ordersLoadingMore.value = false
+    if (version === workspaceLoadVersion) ordersLoadingMore.value = false
   }
 }
 
 async function loadMoreAssets() {
-  if (!assetNextCursor.value || assetLoadingMore.value) return
+  if (loading.value || !assetNextCursor.value || assetLoadingMore.value) return
+  const version = workspaceLoadVersion
   assetLoadingMore.value = true
   error.value = ''
   try {
-    const page = await api.listAssets({ cursor: assetNextCursor.value })
+    const page = await api.listAssets({ cursor: assetNextCursor.value, ...(section.value === 'purchases' ? { source: 'purchase' as const } : {}) })
+    if (version !== workspaceLoadVersion) return
     const known = new Set(assets.value.map(item => item.id))
     assets.value = [...assets.value, ...page.items.filter(item => !known.has(item.id))]
+    assetTotal.value = page.total
     assetNextCursor.value = page.nextCursor || null
   } catch (reason) {
-    error.value = messageFrom(reason)
+    if (version === workspaceLoadVersion) error.value = messageFrom(reason)
   } finally {
-    assetLoadingMore.value = false
+    if (version === workspaceLoadVersion) assetLoadingMore.value = false
   }
 }
 
 async function loadMoreSavedWorks() {
-  if (!savedWorkNextCursor.value || savedWorkLoadingMore.value) return
+  if (loading.value || !savedWorkNextCursor.value || savedWorkLoadingMore.value) return
+  const version = workspaceLoadVersion
   savedWorkLoadingMore.value = true
   error.value = ''
   try {
     const page = await api.listSavedWorks({ cursor: savedWorkNextCursor.value })
+    if (version !== workspaceLoadVersion) return
     const known = new Set(savedWorks.value.map(item => item.postId))
     savedWorks.value = [...savedWorks.value, ...page.items.filter(item => !known.has(item.postId))]
     savedWorkNextCursor.value = page.nextCursor || null
   } catch (reason) {
-    error.value = messageFrom(reason)
+    if (version === workspaceLoadVersion) error.value = messageFrom(reason)
   } finally {
-    savedWorkLoadingMore.value = false
+    if (version === workspaceLoadVersion) savedWorkLoadingMore.value = false
   }
 }
 
 async function loadMoreAssetUsages() {
   const item = selectedAsset.value
-  if (!item?.usageNextCursor || assetUsageLoadingMore.value) return
+  if (loading.value || !item?.usageNextCursor || assetUsageLoadingMore.value) return
+  const version = workspaceLoadVersion
   assetUsageLoadingMore.value = true
   error.value = ''
   try {
     const page = await api.listAssetUsages(item.id, { cursor: item.usageNextCursor })
+    if (version !== workspaceLoadVersion) return
     const known = new Set((item.usages || []).map(usage => `${usage.kind}:${usage.resourceId}`))
     selectedAsset.value = {
       ...item,
@@ -617,9 +740,9 @@ async function loadMoreAssetUsages() {
       usageNextCursor: page.nextCursor,
     }
   } catch (reason) {
-    error.value = messageFrom(reason)
+    if (version === workspaceLoadVersion) error.value = messageFrom(reason)
   } finally {
-    assetUsageLoadingMore.value = false
+    if (version === workspaceLoadVersion) assetUsageLoadingMore.value = false
   }
 }
 
@@ -635,34 +758,41 @@ async function toggleAssetFullscreen() {
 }
 
 async function loadMoreGenerations() {
-  if (!generationNextCursor.value || generationLoadingMore.value) return
+  if (loading.value || !generationNextCursor.value || generationLoadingMore.value) return
+  const version = workspaceLoadVersion
   generationLoadingMore.value = true
   error.value = ''
   try {
     const page = await api.listGenerations(generationListQuery(generationNextCursor.value))
+    if (version !== workspaceLoadVersion) return
     const known = new Set(generations.value.map(item => item.id))
     generations.value = [...generations.value, ...page.items.filter(item => !known.has(item.id))]
     generationNextCursor.value = page.nextCursor || null
   } catch (reason) {
-    error.value = messageFrom(reason)
+    if (version === workspaceLoadVersion) error.value = messageFrom(reason)
   } finally {
-    generationLoadingMore.value = false
+    if (version === workspaceLoadVersion) generationLoadingMore.value = false
   }
 }
 
 async function removeSavedWork(item: SavedWork) {
+  if (loading.value) return
+  const version = workspaceLoadVersion
   error.value = ''
   success.value = ''
   try {
     await api.setCommunityReaction(item.postId, 'bookmark', false)
+    if (version !== workspaceLoadVersion) return
     savedWorks.value = savedWorks.value.filter(saved => saved.postId !== item.postId)
     success.value = t('workspace.savedRemoved')
   } catch (reason) {
-    error.value = messageFrom(reason)
+    if (version === workspaceLoadVersion) error.value = messageFrom(reason)
   }
 }
 
 async function changeGeneration(item: Generation, action: 'cancel' | 'retry') {
+  if (loading.value || generationAction.value) return
+  const version = workspaceLoadVersion
   generationAction.value = item.id
   error.value = ''
   success.value = ''
@@ -670,14 +800,16 @@ async function changeGeneration(item: Generation, action: 'cancel' | 'retry') {
     await (action === 'cancel'
       ? api.cancelGeneration(item.id, 'Cancelled from personal generation history.')
       : api.retryGeneration(item.id))
-    const [, statement, pointOverview] = await Promise.all([loadGenerationList(), api.billingStatement(), api.pointOverview()])
+    if (version !== workspaceLoadVersion) return
+    const [, statement, pointOverview] = await Promise.all([loadGenerationList(version), api.billingStatement(), api.pointOverview()])
+    if (version !== workspaceLoadVersion) return
     billing.value = statement
     points.value = pointOverview
     success.value = action === 'cancel' ? t('workspace.generationCancelled') : t('workspace.generationRetried')
   } catch (reason) {
-    error.value = messageFrom(reason)
+    if (version === workspaceLoadVersion) error.value = messageFrom(reason)
   } finally {
-    generationAction.value = ''
+    if (version === workspaceLoadVersion) generationAction.value = ''
   }
 }
 
@@ -692,21 +824,26 @@ function toggleAllGenerations() {
 }
 
 async function toggleGenerationFavorite(item: Generation) {
+  if (loading.value || generationAction.value) return
+  const version = workspaceLoadVersion
   generationAction.value = `${item.id}:favorite`
   error.value = ''
   success.value = ''
   try {
     const updated = await api.favoriteGeneration(item.id, !item.isFavorite)
+    if (version !== workspaceLoadVersion) return
     generations.value = generations.value.map(current => current.id === updated.id ? updated : current)
     success.value = t(updated.isFavorite ? 'workspace.generationFavorited' : 'workspace.generationUnfavorited')
   } catch (reason) {
-    error.value = messageFrom(reason)
+    if (version === workspaceLoadVersion) error.value = messageFrom(reason)
   } finally {
-    generationAction.value = ''
+    if (version === workspaceLoadVersion) generationAction.value = ''
   }
 }
 
 async function applyGenerationBatch(action: 'favorite' | 'unfavorite' | 'cancel') {
+  if (loading.value || generationAction.value) return
+  const version = workspaceLoadVersion
   const ids = [...selectedGenerationIDs.value]
   if (!ids.length) return
   generationAction.value = 'batch'
@@ -714,6 +851,7 @@ async function applyGenerationBatch(action: 'favorite' | 'unfavorite' | 'cancel'
   success.value = ''
   try {
     const result = await api.batchGenerations({ generationIds: ids, action, reason: action === 'cancel' ? 'Cancelled from personal generation history.' : undefined })
+    if (version !== workspaceLoadVersion) return
     const updates = new Map(result.items.map(item => [item.id, item]))
     generations.value = generations.value.map(item => updates.get(item.id) || item)
     selectedGenerationIDs.value = selectedGenerationIDs.value.filter(id => !updates.has(id))
@@ -721,27 +859,27 @@ async function applyGenerationBatch(action: 'favorite' | 'unfavorite' | 'cancel'
       ? t('workspace.generationBatchPartial', { succeeded: result.items.length, failed: result.failures.length })
       : t('workspace.generationBatchComplete', { count: result.items.length })
   } catch (reason) {
-    error.value = messageFrom(reason)
+    if (version === workspaceLoadVersion) error.value = messageFrom(reason)
   } finally {
-    generationAction.value = ''
+    if (version === workspaceLoadVersion) generationAction.value = ''
   }
 }
 
 async function requestRefund(order: Order) {
+  if (loading.value || refunding.value || !order.canRequestRefund || !validRefundReason(refundReasons.value[order.id] || '')) return
+  const version = workspaceLoadVersion
   refunding.value = order.id
   error.value = ''
   success.value = ''
   try {
     const updated = await api.refundOrder(order.id, refundReasons.value[order.id] || '')
+    if (version !== workspaceLoadVersion) return
     orders.value = orders.value.map((item) => item.id === updated.id ? updated : item)
-    const page = await api.listAssets()
-    assets.value = page.items
-    assetNextCursor.value = page.nextCursor || null
     success.value = t(updated.status === 'refund_requested' ? 'workspace.refundPending' : 'workspace.refundComplete')
   } catch (reason) {
-    error.value = messageFrom(reason)
+    if (version === workspaceLoadVersion) error.value = messageFrom(reason)
   } finally {
-    refunding.value = ''
+    if (version === workspaceLoadVersion) refunding.value = ''
   }
 }
 
@@ -757,7 +895,8 @@ function chooseVersion(event: globalThis.Event) {
 }
 
 async function uploadVersion() {
-  if (!selectedAsset.value || !versionFile.value) return
+  if (loading.value || versionUploading.value || !selectedAsset.value || !versionFile.value) return
+  const version = workspaceLoadVersion
   versionUploading.value = true
   error.value = ''
   try {
@@ -766,19 +905,21 @@ async function uploadVersion() {
     form.append('note', versionNote.value)
     form.append('file', versionFile.value)
     const item = await api.uploadAssetVersion(selectedAsset.value.id, form)
+    if (version !== workspaceLoadVersion) return
     versionOpen.value = false
     versionFile.value = null
     versionNote.value = ''
     await router.push(`/workspace/assets/${item.id}`)
   } catch (reason) {
-    error.value = messageFrom(reason)
+    if (version === workspaceLoadVersion) error.value = messageFrom(reason)
   } finally {
-    versionUploading.value = false
+    if (version === workspaceLoadVersion) versionUploading.value = false
   }
 }
 
 async function uploadAsset() {
-  if (!uploadFile.value) return
+  if (loading.value || uploading.value || !uploadFile.value) return
+  const version = workspaceLoadVersion
   uploading.value = true
   error.value = ''
   success.value = ''
@@ -787,24 +928,27 @@ async function uploadAsset() {
     form.append('title', uploadTitle.value)
     form.append('file', uploadFile.value)
     const item = await api.uploadAsset(form)
-    assets.value = [item, ...assets.value]
+    if (version !== workspaceLoadVersion) return
+    assets.value = [item, ...assets.value.filter(existing => existing.id !== item.id)]
     success.value = t('workspace.uploadQueued')
     uploadTitle.value = ''
     uploadFile.value = null
     uploadOpen.value = false
-    void pollUpload(item.id)
+    void pollUpload(item.id, version)
   } catch (reason) {
-    error.value = messageFrom(reason)
+    if (version === workspaceLoadVersion) error.value = messageFrom(reason)
   } finally {
-    uploading.value = false
+    if (version === workspaceLoadVersion) uploading.value = false
   }
 }
 
-async function pollUpload(id: string) {
+async function pollUpload(id: string, version: number) {
   for (let attempt = 0; attempt < 20; attempt += 1) {
     await new Promise(resolve => globalThis.setTimeout(resolve, 750))
+    if (version !== workspaceLoadVersion) return
     try {
       const updated = await api.getAsset(id)
+      if (version !== workspaceLoadVersion) return
       assets.value = assets.value.map(item => item.id === updated.id ? updated : item)
       if (updated.scanStatus !== 'pending') {
         success.value = updated.scanStatus === 'clean' ? t('workspace.uploadReady') : t('workspace.uploadReview')
@@ -816,7 +960,25 @@ async function pollUpload(id: string) {
   }
 }
 
-watch(() => route.fullPath, () => void load())
+function clearPrivateState() {
+  // A different identity must not inherit data, cursors or unsent form contents
+  // from the previous account, even while the new owner's read is still pending.
+  assets.value = []; assetTotal.value = 0; assetNextCursor.value = null
+  savedWorks.value = []; savedWorkNextCursor.value = null
+  orders.value = []; orderNextCursor.value = null; refundReasons.value = {}
+  tasks.value = []; taskTotal.value = 0; nextTaskCursor.value = undefined
+  generations.value = []; generationNextCursor.value = null; selectedGenerationIDs.value = []
+  billing.value = null; billingNextCursor.value = null; points.value = null; paymentProvider.value = null
+  selectedAsset.value = null
+  uploadOpen.value = false; uploadFile.value = null; uploadTitle.value = ''
+  versionOpen.value = false; versionFile.value = null; versionTitle.value = ''; versionNote.value = ''
+  topupAmount.value = '20.00'
+}
+
+watch([() => route.fullPath, () => session.user?.id], (current, previous) => {
+  if (current[1] !== previous[1]) clearPrivateState()
+  void load()
+})
 onMounted(() => void load())
 onBeforeUnmount(() => {
   workspaceLoadVersion++
@@ -834,9 +996,11 @@ onBeforeUnmount(() => {
     />
 
     <template v-else-if="assetID">
-      <RouterLink class="text-link asset-back" :to="contentListReturn('/workspace/assets')">
-        <ArrowLeft :size="17" />{{ t(contentListReturn('/workspace/assets').startsWith('/workspace/purchases') ? 'content.backPurchases' : 'workspace.assetBack') }}
-      </RouterLink>
+      <DetailToolbar>
+        <RouterLink class="text-link asset-back" :to="contentListReturn('/workspace/assets')">
+          <ArrowLeft :size="17" />{{ t(contentListReturn('/workspace/assets').startsWith('/workspace/purchases') ? 'content.backPurchases' : 'workspace.assetBack') }}
+        </RouterLink>
+      </DetailToolbar>
       <div v-if="loading" class="page-state" aria-live="polite">
         {{ t('status.loadingAssets') }}
       </div>
@@ -851,12 +1015,12 @@ onBeforeUnmount(() => {
         <header class="asset-content-heading">
           <h1>{{ selectedAsset.title }}</h1>
           <div class="asset-content-actions">
-            <UiButton v-if="selectedAsset.provenance?.purchase?.orderStatus === 'fulfilled' && selectedAsset.scanStatus === 'clean'" as="RouterLink" class="command-button primary" variant="primary" :to="{ path: creationPath(selectedAsset.kind), query: { sourceAssetId: selectedAsset.id } }">
+            <UiButton v-if="selectedAsset.provenance?.purchase?.canReuse" as="RouterLink" class="command-button primary" variant="primary" :to="{ path: creationPath(selectedAsset.kind), query: { sourceAssetId: selectedAsset.id } }">
               <template #start>
                 <WandSparkles :size="16" />
               </template>{{ t('actions.useInCreate') }}
             </UiButton>
-            <UiButton v-if="selectedAsset.sourceType !== 'purchase' && selectedAsset.scanStatus === 'clean'" class="command-button primary" variant="primary" @click="openPublish(selectedAsset.id)">
+            <UiButton v-if="!['purchase', 'delivery'].includes(selectedAsset.sourceType) && selectedAsset.scanStatus === 'clean'" class="command-button primary" variant="primary" @click="openPublish(selectedAsset.id)">
               <template #start>
                 <Upload :size="16" />
               </template>{{ t('actions.publishAsset') }}
@@ -879,7 +1043,7 @@ onBeforeUnmount(() => {
               </UiIconButton>
             </div>
             <div v-if="selectedAsset.scanStatus === 'clean'" class="asset-detail-media">
-              <AssetMedia :src="selectedAsset.mediaUrl" :kind="selectedAsset.kind" :alt="selectedAsset.title" :width="selectedAsset.width || 1600" :height="selectedAsset.height || 1200" eager />
+              <AssetMedia :src="selectedAsset.mediaUrl" :kind="selectedAsset.kind" :mime-type="selectedAsset.mimeType" :alt="selectedAsset.title" :width="selectedAsset.width || 1600" :height="selectedAsset.height || 1200" eager />
             </div>
             <div v-else class="asset-detail-media asset-scan-state" :data-status="selectedAsset.scanStatus">
               <ShieldCheck :size="28" /><strong>{{ t(`workspace.scanStatus.${selectedAsset.scanStatus}`) }}</strong><p>{{ selectedAsset.scanReason || t('workspace.scanPendingDetail') }}</p>
@@ -909,25 +1073,48 @@ onBeforeUnmount(() => {
             <header class="asset-detail-card-heading">
               <span class="asset-detail-card-icon"><ShoppingBag :size="18" /></span><div><span class="asset-card-eyebrow">{{ t('workspace.purchasedFrom') }}</span><h2>{{ selectedAsset.provenance.purchase.productTitle }}</h2></div>
             </header>
-            <strong>{{ selectedAsset.provenance.purchase.sellerName }} · @{{ selectedAsset.provenance.purchase.sellerHandle }}</strong>
+            <strong v-if="selectedAsset.provenance.purchase.sellerId">{{ selectedAsset.provenance.purchase.sellerName }} · @{{ selectedAsset.provenance.purchase.sellerHandle }}</strong>
+            <strong v-else>{{ t('workspace.unverifiedSeller') }}</strong>
             <p class="asset-detail-muted">
               {{ selectedAsset.provenance.purchase.licenseName }}
             </p>
             <small class="asset-detail-muted">{{ orderPaymentModeLabel({ paymentMode: selectedAsset.provenance.purchase.paymentMode, realCharge: selectedAsset.provenance.purchase.realCharge } as Order) }} · {{ t(`marketplace.orderStatus.${selectedAsset.provenance.purchase.orderStatus}`) }}</small>
             <div class="asset-detail-card-actions">
-              <UiButton v-if="selectedAsset.provenance.purchase.orderStatus === 'fulfilled'" as="a" class="command-button secondary" variant="secondary" :href="selectedAsset.mediaUrl" :download="selectedAsset.title">
+              <UiButton v-if="selectedAsset.provenance.purchase.canDownload" as="a" class="command-button secondary" variant="secondary" :href="selectedAsset.mediaUrl" :download="selectedAsset.title">
                 <template #start>
                   <Download :size="16" />
-                </template>{{ t('actions.downloadLicensed') }}
+                </template>{{ t(selectedAsset.provenance.purchase.delivery ? 'workspace.downloadPackage' : 'actions.downloadLicensed') }}
               </UiButton>
-              <UiButton as="RouterLink" class="command-button secondary" variant="secondary" to="/workspace/orders">
+              <UiButton as="RouterLink" class="command-button secondary" variant="secondary" :to="{ path: '/workspace/orders', query: { orderId: selectedAsset.provenance.purchase.orderId } }">
                 <template #start>
                   <ReceiptText :size="16" />
                 </template>{{ t('marketplace.viewOrder') }}
               </UiButton>
             </div>
+            <UiDataList v-if="selectedAsset.provenance.purchase.delivery" :aria-label="t('workspace.packageFiles')">
+              <UiCardActions v-for="(file, index) in selectedAsset.provenance.purchase.delivery.files" :key="index" :value="file.name" :label="file.mimeType" :description="t('workspace.fileSize', { size: file.sizeBytes })">
+                <UiButton v-if="selectedAsset.provenance.purchase.canDownload" as="a" variant="secondary" size="sm" :href="`/api/v1/assets/${selectedAsset.id}/content?fileIndex=${index}`" :download="file.name" :aria-label="`${t('actions.download')} ${file.name}`">
+                  <template #start>
+                    <Download :size="16" />
+                  </template>{{ t('actions.download') }}
+                </UiButton>
+              </UiCardActions>
+            </UiDataList>
           </UiCard>
 
+          <UiCard v-if="selectedAsset.provenance?.taskGrant" class="asset-detail-card">
+            <h2>{{ t('tasks.deliveryRights') }}</h2>
+            <p>{{ selectedAsset.provenance.taskGrant.rightsTerms }}</p>
+            <p>{{ selectedAsset.provenance.taskGrant.rightsEvidence }}</p>
+            <p>{{ selectedAsset.provenance.taskGrant.aiDisclosure }}</p>
+            <p>{{ t(selectedAsset.provenance.taskGrant.allowDerivativeReuse ? 'tasks.derivativeAllowed' : 'tasks.derivativeRestricted') }}</p>
+            <UiButton as="RouterLink" variant="secondary" :to="`/market/demands/${selectedAsset.provenance.taskGrant.taskId}`">
+              {{ t('tasks.reviewBrief') }}
+            </UiButton>
+            <UiButton v-if="selectedAsset.provenance.taskGrant.allowDerivativeReuse" as="RouterLink" variant="secondary" :to="{ path: creationPath(selectedAsset.kind), query: { sourceAssetId: selectedAsset.id } }">
+              {{ t('actions.useInCreate') }}
+            </UiButton>
+          </UiCard>
           <UiCard v-if="selectedAsset.sourceType === 'upload'" class="asset-detail-card">
             <header class="asset-detail-card-heading">
               <span class="asset-detail-card-icon"><Upload :size="18" /></span><div><span class="asset-card-eyebrow">{{ t('workspace.uploadEvidence') }}</span><h2>{{ selectedAsset.uploadedFilename }}</h2></div>
@@ -961,7 +1148,7 @@ onBeforeUnmount(() => {
                 <span>{{ version.title }}</span><small>{{ version.versionNote || date(version.createdAt) }}</small>
               </RouterLink>
             </div>
-            <UiButton v-if="selectedAsset.isLatestVersion && selectedAsset.sourceType !== 'purchase'" class="command-button secondary wide" variant="secondary" @click="versionOpen = !versionOpen">
+            <UiButton v-if="selectedAsset.isLatestVersion && !['purchase', 'delivery'].includes(selectedAsset.sourceType)" class="command-button secondary wide" variant="secondary" @click="versionOpen = !versionOpen">
               <template #start>
                 <Upload :size="16" />
               </template>{{ t('workspace.uploadVersion') }}
@@ -994,9 +1181,11 @@ onBeforeUnmount(() => {
                 <span>{{ t(`workspace.usageKinds.${usage.kind}`) }} · {{ t('workspace.assetUsageVersion', { version: usage.assetVersion }) }}</span><strong>{{ usage.title }}</strong><small>{{ t(`workspace.usageStatuses.${usage.status}`) }} · {{ date(usage.createdAt) }}</small>
               </div>
             </template>
-            <div v-if="!selectedAsset.usages?.length" class="asset-usage-empty">
-              <span class="asset-usage-illustration"><FolderOpen :size="38" /><GitBranch :size="18" /></span><strong>{{ t('workspace.noAssetUsage') }}</strong>
-            </div>
+            <UiEmptyState v-if="!selectedAsset.usages?.length" density="compact" :title="t('workspace.noAssetUsage')">
+              <template #icon>
+                <GitBranch :size="24" :stroke-width="1.75" />
+              </template>
+            </UiEmptyState>
             <UiButton v-if="selectedAsset.usageNextCursor" class="command-button secondary wide" variant="secondary" :loading="assetUsageLoadingMore" @click="loadMoreAssetUsages">
               {{ t('actions.loadMore') }}
             </UiButton>
@@ -1006,7 +1195,7 @@ onBeforeUnmount(() => {
     </template>
 
     <template v-else>
-      <PageHero
+      <PageHeader
         v-if="workspaceHero"
         :eyebrow="workspaceHero.eyebrow"
         :eyebrow-icon="workspaceHero.eyebrowIcon"
@@ -1015,9 +1204,6 @@ onBeforeUnmount(() => {
         :stats="workspaceHero.stats"
         :stats-label="workspaceHero.statsLabel"
         :artwork-src="workspaceHero.artworkSrc"
-        :artwork-width="1536"
-        :artwork-height="1024"
-        adapt-artwork-for-dark
       >
         <template #actions>
           <UiButton v-if="section === 'assets' && assetView === 'owned'" class="command-button primary" variant="primary" @click="uploadOpen = !uploadOpen">
@@ -1058,8 +1244,8 @@ onBeforeUnmount(() => {
             </UiButton>
           </template>
         </template>
-      </PageHero>
-      <header v-else-if="section !== 'billing'" class="workspace-header">
+      </PageHeader>
+      <PageHeading v-else-if="section !== 'billing'" class="workspace-header">
         <div>
           <span class="status-label"><component :is="sectionMeta.icon" :size="14" />{{ t('workspace.workbenchLabel') }} · {{ t('workspace.itemCount', { count: sectionMeta.count }) }}</span>
           <h1>{{ sectionMeta.title }}</h1><p>{{ sectionMeta.summary }}</p>
@@ -1073,7 +1259,7 @@ onBeforeUnmount(() => {
             <component :is="sectionMeta.actionIcon" :size="17" />
           </template>{{ sectionMeta.actionLabel }}
         </UiButton>
-      </header>
+      </PageHeading>
       <nav v-if="section !== 'assets'" class="section-tabs workspace-switcher" :aria-label="t('workspace.sectionsLabel')">
         <RouterLink to="/workspace/assets" :class="{ active: section === 'assets' }">
           <Boxes :size="17" />{{ t('workspace.assets') }}
@@ -1092,9 +1278,11 @@ onBeforeUnmount(() => {
         </RouterLink>
       </nav>
 
-      <div v-if="section === 'assets'" class="view-switcher-bar assets-view-switcher-bar">
-        <UiTabs class="view-switcher" :model-value="assetView" :items="assetViewTabs" :label="t('workspace.assetViewsLabel')" @update:model-value="selectAssetView" />
-      </div>
+      <UiFilterBar v-if="section === 'assets'" as="div" split class="controls-with-switcher has-switcher asset-view-toolbar">
+        <div class="view-switcher-bar">
+          <UiTabs class="view-switcher" :model-value="assetView" :items="assetViewTabs" :label="t('workspace.assetViewsLabel')" @update:model-value="selectAssetView" />
+        </div>
+      </UiFilterBar>
 
       <form v-if="uploadOpen && section === 'assets' && assetView === 'owned'" class="asset-upload-panel" @submit.prevent="uploadAsset">
         <header>
@@ -1114,10 +1302,10 @@ onBeforeUnmount(() => {
         <FileCheck2 :size="18" />{{ success }}
       </div>
 
-      <div v-if="loading" class="page-state" aria-live="polite">
+      <div v-if="loading && !isAssetCatalog" class="page-state" aria-live="polite">
         {{ t('status.loadingWorkspace') }}
       </div>
-      <div v-else-if="error && section !== 'orders'" class="page-state" role="alert">
+      <div v-else-if="error && section !== 'orders' && !isAssetCatalog" class="page-state" role="alert">
         <p>{{ error }}</p><UiButton class="command-button secondary" variant="secondary" @click="load">
           <template #start>
             <RefreshCw :size="17" />
@@ -1125,121 +1313,109 @@ onBeforeUnmount(() => {
         </UiButton>
       </div>
 
-      <template v-else-if="section === 'assets' || section === 'purchases'">
-        <div class="task-browser-layout asset-browser-layout">
-          <aside class="task-category-panel asset-category-panel" :aria-label="t('workspace.sectionsLabel')">
-            <h2>{{ t('workspace.assets') }}</h2>
-            <nav>
-              <RouterLink class="asset-category-link" to="/workspace/assets" :class="{ active: section === 'assets' && assetView === 'owned' }">
-                <Boxes :size="17" /><span>{{ t('workspace.ownedAssets') }}</span><small>{{ assets.length }}</small>
-              </RouterLink>
-              <RouterLink class="asset-category-link" to="/workspace/assets?view=saved" :class="{ active: section === 'assets' && assetView === 'saved' }">
-                <Bookmark :size="17" /><span>{{ t('workspace.savedWorks') }}</span><small>{{ savedWorks.length }}</small>
-              </RouterLink>
-              <RouterLink class="asset-category-link" to="/workspace/purchases" :class="{ active: section === 'purchases' }">
-                <ShoppingBag :size="17" /><span>{{ t('workspace.purchases') }}</span><small>{{ section === 'purchases' ? visibleAssets.length : assets.filter(item => item.sourceType === 'purchase').length }}</small>
-              </RouterLink>
-            </nav>
-            <section class="asset-category-note">
-              <span><ShieldCheck :size="18" /></span><div><strong>{{ t('workspace.localScanLabel') }}</strong><p>{{ t('workspace.assetsSummary') }}</p></div>
-            </section>
-          </aside>
-
-          <div class="task-results asset-results">
+      <template v-else-if="isAssetCatalog">
+        <div class="asset-browser-layout">
+          <div class="task-results asset-results" :aria-busy="loading">
             <div v-if="section === 'assets'" class="task-results-meta">
               <div><strong>{{ sectionMeta.count }} {{ t('workspace.assets') }}</strong><span>{{ sectionMeta.summary }}</span></div>
+              <UiLayoutSwitcher v-model="assetLayout" :label="t('workspace.assetLayout')" :list-label="t('workspace.listView')" :grid-label="t('workspace.gridView')" />
             </div>
-
-            <div v-if="assetView === 'saved'" class="saved-rights-notice" role="note">
-              <ShieldCheck :size="19" /><div><strong>{{ t('workspace.savedRightsTitle') }}</strong><p>{{ t('workspace.savedRightsSummary') }}</p></div>
+            <div v-if="loading" class="page-state" aria-live="polite">
+              {{ t('status.loadingWorkspace') }}
             </div>
+            <div v-else-if="error" class="page-state" role="alert">
+              <p>{{ error }}</p><UiButton variant="secondary" @click="load">
+                <RefreshCw :size="17" />{{ t('actions.retry') }}
+              </UiButton>
+            </div>
+            <template v-else>
+              <div v-if="assetView === 'saved'" class="saved-rights-notice" role="note">
+                <ShieldCheck :size="19" /><div><strong>{{ t('workspace.savedRightsTitle') }}</strong><p>{{ t('workspace.savedRightsSummary') }}</p></div>
+              </div>
 
-            <div class="task-result-list asset-result-list">
-              <template v-if="assetView === 'saved'">
-                <article v-for="item in savedWorks" :key="item.postId" class="task-row asset-row" data-type="saved">
-                  <RouterLink class="task-row-media asset-row-media" :to="`/works/${item.workId}`">
-                    <AssetMedia :src="item.mediaUrl" :kind="item.mediaKind" :alt="item.title" :width="item.width || 800" :height="item.height || 800" :controls="false" />
-                  </RouterLink>
-                  <div class="task-row-copy">
-                    <div class="task-row-heading">
-                      <span class="task-type-badge asset-type-badge"><Bookmark :size="13" />{{ t('workspace.referenceOnly') }}</span>
-                    </div>
-                    <strong>{{ item.title }}</strong><small>{{ licenseLabel(item.licenseCode) }}</small>
-                    <div class="task-row-byline">
-                      <span>@{{ item.authorHandle }}</span><span>{{ date(item.savedAt) }}</span>
-                    </div>
-                  </div>
-                  <div class="task-row-commercial">
-                    <span class="task-row-data"><small>{{ t('workspace.referenceOnly') }}</small><strong>{{ t('workspace.savedWorks') }}</strong></span>
-                    <div class="asset-row-action-stack">
-                      <UiButton as="RouterLink" class="command-button primary task-row-action" variant="primary" :to="`/works/${item.workId}`">
+              <UiCatalog class="task-result-list asset-result-list" :grid="section === 'assets' && assetLayout === 'grid'">
+                <template v-if="assetView === 'saved'">
+                  <UiContentCard v-for="item in savedWorks" :key="item.postId" layout="media" class="task-row asset-row" data-type="saved">
+                    <UiCardMedia class="asset-row-media" :to="`/works/${item.workId}`">
+                      <AssetMedia :src="item.mediaUrl" :kind="item.mediaKind" :alt="item.title" :width="item.width || 800" :height="item.height || 800" :controls="false" />
+                    </UiCardMedia>
+                    <UiCardContent class="task-card-content" :title="item.title" :summary="licenseLabel(item.licenseCode)" :to="`/works/${item.workId}`">
+                      <template #tags>
+                        <UiCardTag><Bookmark :size="13" aria-hidden="true" />{{ t('workspace.referenceOnly') }}</UiCardTag>
+                      </template>
+                      <template #meta>
+                        <span>@{{ item.authorHandle }}</span><span>{{ date(item.savedAt) }}</span>
+                      </template>
+                    </UiCardContent>
+                    <UiCardActions class="task-row-commercial" :label="t('workspace.referenceOnly')" :value="t('workspace.savedWorks')">
+                      <UiButton as="RouterLink" variant="secondary" size="sm" :to="`/works/${item.workId}`">
                         {{ t('actions.viewDetails') }}<template #end>
                           <ArrowRight :size="16" />
                         </template>
                       </UiButton>
-                      <UiIconButton class="icon-button" :label="t('workspace.removeSaved')" @click="removeSavedWork(item)">
+                      <UiIconButton size="sm" variant="outline" :label="t('workspace.removeSaved')" @click="removeSavedWork(item)">
                         <BookmarkX :size="16" />
                       </UiIconButton>
-                    </div>
-                  </div>
-                </article>
-              </template>
-              <template v-else>
-                <article v-for="asset in visibleAssets" :key="asset.id" class="task-row asset-row" :data-type="asset.sourceType">
-                  <RouterLink class="task-row-media asset-row-media" :to="`/workspace/assets/${asset.id}`">
-                    <AssetMedia v-if="asset.scanStatus === 'clean'" :src="asset.mediaUrl" :kind="asset.kind" :alt="asset.title" :width="asset.width || 800" :height="asset.height || 800" :controls="false" />
-                    <span v-else class="asset-row-scan-state"><ShieldCheck :size="24" /><strong>{{ t(`workspace.scanStatus.${asset.scanStatus}`) }}</strong></span>
-                  </RouterLink>
-                  <div class="task-row-copy">
-                    <div class="task-row-heading">
-                      <span class="task-type-badge asset-type-badge"><Boxes :size="13" />{{ t(`workspace.sourceTypes.${asset.sourceType}`) }}</span><span class="task-status" :data-status="asset.scanStatus">{{ t(`workspace.scanStatus.${asset.scanStatus}`) }}</span>
-                    </div>
-                    <strong>{{ asset.title }}</strong>
-                    <div class="task-row-byline">
-                      <span>{{ date(asset.createdAt) }}</span><span>{{ t(`create.modes.${asset.kind === 'audio' ? 'music' : asset.kind === 'document' ? 'chat' : asset.kind}`) }}</span>
-                    </div>
-                  </div>
-                  <div class="task-row-commercial">
-                    <span class="task-row-data"><small>{{ t('workspace.assetVersion') }}</small><strong>v{{ asset.versionNumber }}</strong></span>
-                    <span class="task-row-data"><small>{{ t('marketplace.license') }}</small><strong>{{ licenseLabel(asset.licenseCode) }}</strong></span>
-                    <div class="asset-row-action-stack">
-                      <UiButton as="RouterLink" class="command-button primary task-row-action" variant="primary" :to="`/workspace/assets/${asset.id}`">
+                    </UiCardActions>
+                  </UiContentCard>
+                </template>
+                <template v-else>
+                  <UiContentCard v-for="asset in visibleAssets" :key="asset.id" layout="media" class="task-row asset-row" :data-type="asset.sourceType">
+                    <UiCardMedia class="asset-row-media" :to="`/workspace/assets/${asset.id}`">
+                      <AssetMedia v-if="asset.scanStatus === 'clean'" :src="asset.mediaUrl" :kind="asset.kind" :mime-type="asset.mimeType" :alt="asset.title" :width="asset.width || 800" :height="asset.height || 800" :controls="false" />
+                      <span v-else class="asset-row-scan-state"><ShieldCheck :size="24" /><strong>{{ t(`workspace.scanStatus.${asset.scanStatus}`) }}</strong></span>
+                    </UiCardMedia>
+                    <UiCardContent class="task-card-content" :title="asset.title" :to="`/workspace/assets/${asset.id}`">
+                      <template #tags>
+                        <UiCardTag><Boxes :size="13" aria-hidden="true" />{{ t(`workspace.sourceTypes.${asset.sourceType}`) }}</UiCardTag>
+                        <UiCardTag :variant="asset.scanStatus === 'clean' ? 'success' : asset.scanStatus === 'rejected' ? 'danger' : 'warning'">
+                          {{ t(`workspace.scanStatus.${asset.scanStatus}`) }}
+                        </UiCardTag>
+                      </template>
+                      <template #meta>
+                        <span>{{ date(asset.createdAt) }}</span><span>{{ t(`create.modes.${asset.kind === 'audio' ? 'music' : asset.kind === 'document' ? 'chat' : asset.kind}`) }}</span>
+                      </template>
+                    </UiCardContent>
+                    <UiCardActions class="task-row-commercial" :label="t('workspace.assetVersion')" :value="`v${asset.versionNumber}`" :description="`${t('marketplace.license')} · ${licenseLabel(asset.licenseCode)}`">
+                      <UiButton as="RouterLink" variant="secondary" size="sm" :to="`/workspace/assets/${asset.id}`">
                         {{ t('actions.viewDetails') }}<template #end>
                           <ArrowRight :size="16" />
                         </template>
                       </UiButton>
-                      <UiIconButton v-if="asset.sourceType !== 'purchase' && asset.scanStatus === 'clean'" class="icon-button asset-publish-action" :label="t('actions.publishAsset')" @click="openPublish(asset.id)">
+                      <UiIconButton v-if="!['purchase', 'delivery'].includes(asset.sourceType) && asset.scanStatus === 'clean'" size="sm" variant="outline" class="asset-publish-action" :label="t('actions.publishAsset')" @click="openPublish(asset.id)">
                         <Upload :size="16" />
                       </UiIconButton>
-                      <UiIconButton v-if="asset.sourceType === 'purchase' && asset.scanStatus === 'clean' && asset.provenance?.purchase?.orderStatus === 'fulfilled'" as="RouterLink" class="icon-button" :to="{ path: creationPath(asset.kind), query: { sourceAssetId: asset.id } }" :label="t('actions.useInCreate')">
+                      <UiIconButton v-if="asset.sourceType === 'purchase' && asset.provenance?.purchase?.canReuse" as="RouterLink" size="sm" variant="outline" :to="{ path: creationPath(asset.kind), query: { sourceAssetId: asset.id } }" :label="t('actions.useInCreate')">
                         <WandSparkles :size="16" />
                       </UiIconButton>
-                    </div>
-                  </div>
-                </article>
-              </template>
+                    </UiCardActions>
+                  </UiContentCard>
+                </template>
 
-              <div v-if="(assetView === 'saved' ? !savedWorks.length : !visibleAssets.length)" class="task-market-state task-market-empty">
-                <span><Bookmark v-if="assetView === 'saved'" :size="20" /><ShoppingBag v-else-if="section === 'purchases'" :size="20" /><Boxes v-else :size="20" /></span>
-                <strong>{{ assetView === 'saved' ? t('workspace.noSavedTitle') : section === 'purchases' ? t('workspace.noPurchasesTitle') : t('workspace.noAssetsTitle') }}</strong>
-                <p>{{ assetView === 'saved' ? t('workspace.noSaved') : section === 'purchases' ? t('workspace.noPurchases') : t('workspace.noAssets') }}</p>
-                <UiButton v-if="assetView === 'saved'" as="RouterLink" class="command-button secondary" variant="secondary" to="/community">
-                  {{ t('workspace.browseCommunity') }}<ArrowRight :size="16" />
-                </UiButton>
-                <UiButton v-else-if="section !== 'purchases'" as="RouterLink" class="command-button secondary" variant="secondary" to="/create/image">
-                  {{ t('actions.startCreating') }}<ArrowRight :size="16" />
-                </UiButton>
-              </div>
-            </div>
-            <UiButton v-if="assetView === 'saved' ? savedWorkNextCursor : assetNextCursor" class="command-button secondary generation-load-more" variant="secondary" :loading="assetView === 'saved' ? savedWorkLoadingMore : assetLoadingMore" @click="assetView === 'saved' ? loadMoreSavedWorks() : loadMoreAssets()">
-              {{ t('actions.loadMore') }}
-            </UiButton>
+                <UiEmptyState v-if="(assetView === 'saved' ? !savedWorks.length : !visibleAssets.length)" class="task-market-empty" :title="assetView === 'saved' ? t('workspace.noSavedTitle') : section === 'purchases' ? t('workspace.noPurchasesTitle') : t('workspace.noAssetsTitle')" :message="assetView === 'saved' ? t('workspace.noSaved') : section === 'purchases' ? t('workspace.noPurchases') : t('workspace.noAssets')">
+                  <template #icon>
+                    <Bookmark v-if="assetView === 'saved'" :size="20" /><ShoppingBag v-else-if="section === 'purchases'" :size="20" /><Boxes v-else :size="20" />
+                  </template>
+                  <template #actions>
+                    <UiButton v-if="assetView === 'saved'" as="RouterLink" class="command-button secondary" variant="secondary" to="/community">
+                      {{ t('workspace.browseCommunity') }}<ArrowRight :size="16" />
+                    </UiButton>
+                    <UiButton v-else-if="section !== 'purchases'" as="RouterLink" class="command-button secondary" variant="secondary" to="/create/image">
+                      {{ t('actions.startCreating') }}<ArrowRight :size="16" />
+                    </UiButton>
+                  </template>
+                </UiEmptyState>
+              </UiCatalog>
+              <UiButton v-if="assetView === 'saved' ? savedWorkNextCursor : assetNextCursor" class="command-button secondary generation-load-more" variant="secondary" :loading="assetView === 'saved' ? savedWorkLoadingMore : assetLoadingMore" @click="assetView === 'saved' ? loadMoreSavedWorks() : loadMoreAssets()">
+                {{ t('actions.loadMore') }}
+              </UiButton>
+            </template>
           </div>
         </div>
       </template>
 
       <div v-else-if="section === 'generations'" class="generation-list">
-        <form class="generation-filters" @submit.prevent="applyGenerationFilters">
+        <UiFilterBar fields density="compact" layout="grid" class="generation-filters" @submit.prevent="applyGenerationFilters">
           <label><span>{{ t('workspace.generationModeFilter') }}</span><UiSelect v-model="generationMode">
             <option value="">{{ t('workspace.allModes') }}</option><option value="chat">{{ t('create.modes.chat') }}</option><option value="image">{{ t('create.modes.image') }}</option><option value="video">{{ t('create.modes.video') }}</option><option value="music">{{ t('create.modes.music') }}</option>
           </UiSelect></label>
@@ -1256,7 +1432,7 @@ onBeforeUnmount(() => {
           <UiIconButton class="icon-button" :label="t('actions.clearFilters')" @click="clearGenerationFilters">
             <X :size="16" />
           </UiIconButton>
-        </form>
+        </UiFilterBar>
         <div v-if="success" class="task-feedback success" role="status">
           <FileCheck2 :size="18" />{{ success }}
         </div>
@@ -1266,17 +1442,17 @@ onBeforeUnmount(() => {
         <div v-if="generations.length" class="generation-bulk-toolbar">
           <label class="generation-select-all"><UiCheckbox :model-value="allGenerationsSelected" @update:model-value="toggleAllGenerations" /><span>{{ t('workspace.selectGenerations', { count: selectedGenerations.length }) }}</span></label>
           <div v-if="selectedGenerations.length" class="generation-bulk-actions">
-            <UiButton class="command-button secondary" variant="secondary" :loading="generationAction === 'batch'" @click="applyGenerationBatch('favorite')">
+            <UiButton class="command-button secondary" variant="secondary" :loading="generationAction === 'batch'" :disabled="generationAction !== ''" @click="applyGenerationBatch('favorite')">
               <template #start>
                 <Bookmark v-if="generationAction !== 'batch'" :size="15" />
               </template>{{ t('workspace.favoriteSelected') }}
             </UiButton>
-            <UiButton class="command-button secondary" variant="secondary" :loading="generationAction === 'batch'" @click="applyGenerationBatch('unfavorite')">
+            <UiButton class="command-button secondary" variant="secondary" :loading="generationAction === 'batch'" :disabled="generationAction !== ''" @click="applyGenerationBatch('unfavorite')">
               <template #start>
                 <BookmarkX v-if="generationAction !== 'batch'" :size="15" />
               </template>{{ t('workspace.unfavoriteSelected') }}
             </UiButton>
-            <UiButton class="command-button secondary" variant="secondary" :loading="generationAction === 'batch'" @click="applyGenerationBatch('cancel')">
+            <UiButton class="command-button secondary" variant="secondary" :loading="generationAction === 'batch'" :disabled="generationAction !== ''" @click="applyGenerationBatch('cancel')">
               <template #start>
                 <Ban v-if="generationAction !== 'batch'" :size="15" />
               </template>{{ t('workspace.cancelSelected') }}
@@ -1294,13 +1470,13 @@ onBeforeUnmount(() => {
           </div><span class="generation-row-data model-cell"><small>{{ t('workspace.model') }}</small><strong>{{ item.modelName }}</strong></span><span class="generation-row-data created-cell"><small>{{ t('workspace.created') }}</small><strong>{{ date(item.createdAt) }}</strong></span><span class="generation-row-data cost-cell"><small>{{ t('workspace.pointsUsed') }}</small><strong>{{ (item.chargedPoints || item.estimatedPoints).toLocaleString(locale) }} {{ t('workspace.pointsUnit') }}</strong></span><div class="generation-row-status" :data-status="item.status">
             <strong>{{ generationStatusLabel(item) }}</strong><span>{{ item.progress }}%</span>
           </div><div class="generation-actions">
-            <UiIconButton class="icon-button" :label="item.isFavorite ? t('workspace.unfavoriteGeneration') : t('workspace.favoriteGeneration')" :disabled="generationAction === `${item.id}:favorite`" @click="toggleGenerationFavorite(item)">
+            <UiIconButton class="icon-button" :label="item.isFavorite ? t('workspace.unfavoriteGeneration') : t('workspace.favoriteGeneration')" :disabled="generationAction !== ''" @click="toggleGenerationFavorite(item)">
               <MotionFavoriteIcon :active="item.isFavorite" kind="bookmark" :size="16" />
             </UiIconButton>
-            <UiIconButton v-if="item.actions.canCancel" class="icon-button" :label="t('actions.cancel')" :disabled="generationAction === item.id" @click="changeGeneration(item, 'cancel')">
+            <UiIconButton v-if="item.actions.canCancel" class="icon-button" :label="t('actions.cancel')" :disabled="generationAction !== ''" @click="changeGeneration(item, 'cancel')">
               <Ban :size="16" />
             </UiIconButton>
-            <UiIconButton v-if="item.actions.canRetry" class="icon-button" :label="t('actions.retry')" :disabled="generationAction === item.id" @click="changeGeneration(item, 'retry')">
+            <UiIconButton v-if="item.actions.canRetry" class="icon-button" :label="t('actions.retry')" :disabled="generationAction !== ''" @click="changeGeneration(item, 'retry')">
               <RotateCcw :size="16" />
             </UiIconButton>
             <UiIconButton v-if="item.actions.canDownload && item.actions.downloadPath" as="a" class="icon-button" :href="item.actions.downloadPath" :download="item.prompt" :label="t('actions.download')">
@@ -1330,17 +1506,23 @@ onBeforeUnmount(() => {
             </template>
           </div>
         </article>
-        <div v-if="!generations.length" class="workspace-empty">
-          <Clock3 :size="22" /><h2>{{ t('workspace.noGenerationsTitle') }}</h2><p>{{ t('workspace.noGenerations') }}</p><UiButton as="RouterLink" class="command-button secondary" variant="secondary" to="/create/image">
-            {{ t('actions.startCreating') }}<ArrowRight :size="16" />
-          </UiButton>
-        </div>
+        <UiEmptyState v-if="!generations.length" class="workspace-empty" :title="t('workspace.noGenerationsTitle')" :message="t('workspace.noGenerations')">
+          <template #icon>
+            <Clock3 :size="22" />
+          </template>
+          <template #actions>
+            <UiButton as="RouterLink" class="command-button secondary" variant="secondary" to="/create/image">
+              {{ t('actions.startCreating') }}<ArrowRight :size="16" />
+            </UiButton>
+          </template>
+        </UiEmptyState>
         <UiButton v-if="generationNextCursor" class="command-button secondary generation-load-more" variant="secondary" :loading="generationLoadingMore" @click="loadMoreGenerations">
           {{ t('actions.loadMore') }}
         </UiButton>
       </div>
 
       <div v-else-if="section === 'orders'" class="orders-workspace">
+        <ProductPaymentStatus v-if="productPaymentReturn" :order-id="returnedOrderID" :payment-id="returnedPaymentID" :return-kind="String(route.query.payment)" @updated="updateReturnedOrder" />
         <div v-if="success" class="task-feedback success" role="status">
           <FileCheck2 :size="18" />{{ success }}
         </div>
@@ -1359,6 +1541,7 @@ onBeforeUnmount(() => {
               </div>
               <div class="order-card-amount">
                 <strong>{{ formatCurrency(order.amountCents, order.currency, locale) }}</strong><span>{{ orderPaymentModeLabel(order) }}</span>
+                <ProductOrderDeliveryLink :order="order" size="sm" />
               </div>
             </header>
             <dl class="order-summary-grid">
@@ -1366,6 +1549,9 @@ onBeforeUnmount(() => {
               <div><dt>{{ t('workspace.paymentMode') }}</dt><dd>{{ orderPaymentModeLabel(order) }}</dd></div>
               <div><dt>{{ t('workspace.placedAt') }}</dt><dd>{{ date(order.createdAt) }}</dd></div>
               <div><dt>{{ t('marketplace.refundWindow') }}</dt><dd>{{ t('marketplace.refundDays', { count: order.refundWindowDays }) }}</dd></div>
+              <div v-if="order.refundDeadlineAt">
+                <dt>{{ t('workspace.refundDeadline') }}</dt><dd>{{ date(order.refundDeadlineAt) }}</dd>
+              </div>
             </dl>
             <div class="order-evidence">
               <section class="order-license-panel">
@@ -1386,17 +1572,23 @@ onBeforeUnmount(() => {
                 </ol>
               </section>
             </div>
-            <form v-if="order.status === 'fulfilled'" class="refund-form" @submit.prevent="requestRefund(order)">
-              <label>{{ t('workspace.refundReason') }}<UiTextarea v-model="refundReasons[order.id]" rows="2" minlength="10" maxlength="500" required :placeholder="t('workspace.refundPlaceholder')" /></label><UiButton class="command-button secondary" variant="secondary" type="submit" :loading="refunding === order.id">
+            <ProductCheckoutClosure :order="order" @updated="updateClosedOrder" />
+            <form v-if="order.canRequestRefund" class="refund-form" @submit.prevent="requestRefund(order)">
+              <label>{{ t('workspace.refundReason') }}<UiTextarea v-model="refundReasons[order.id]" rows="2" required :placeholder="t('workspace.refundPlaceholder')" /><small>{{ t('workspace.refundReasonLength') }}</small></label><UiButton class="command-button secondary" variant="secondary" type="submit" :loading="refunding === order.id" :disabled="refunding !== '' || !validRefundReason(refundReasons[order.id] || '')">
                 <template #start>
                   <RotateCcw v-if="refunding !== order.id" :size="17" />
                 </template>{{ t(order.paymentMode === 'test' ? 'workspace.requestRefund' : 'workspace.requestProviderRefund') }}
               </UiButton>
             </form>
+            <p v-else-if="order.status === 'fulfilled' && order.refundUnavailableReason" class="muted">
+              {{ t(`workspace.refundUnavailable.${order.refundUnavailableReason}`) }}
+            </p>
           </article>
-          <div v-if="!orders.length" class="task-market-state task-market-empty">
-            <span><ReceiptText :size="24" /></span><strong>{{ t('workspace.noOrdersTitle') }}</strong><p>{{ t('workspace.noOrders') }}</p>
-          </div>
+          <UiEmptyState v-if="!orders.length" class="task-market-empty" :title="t('workspace.noOrdersTitle')" :message="t('workspace.noOrders')">
+            <template #icon>
+              <ReceiptText :size="24" />
+            </template>
+          </UiEmptyState>
           <UiButton v-if="orderNextCursor" class="command-button secondary generation-load-more" variant="secondary" :loading="ordersLoadingMore" @click="loadMoreOrders">
             {{ t('actions.loadMore') }}
           </UiButton>
@@ -1404,12 +1596,12 @@ onBeforeUnmount(() => {
       </div>
 
       <div v-else-if="section === 'billing' && billing && points" class="billing-dashboard">
-        <header class="billing-account-overview" aria-labelledby="billing-dashboard-title">
+        <PageHeading class="billing-account-overview" aria-labelledby="billing-dashboard-title">
           <div class="billing-account-heading">
             <div>
               <span class="wallet-kicker">{{ t('workspace.billing') }}</span>
               <h1 id="billing-dashboard-title">
-                <span class="billing-greeting-mark" aria-hidden="true">👋</span>{{ t('workspace.billingGreeting', { name: session.user?.displayName || points.currentSubscription?.planName || t('workspace.noActiveSubscription') }) }}
+                {{ t('workspace.billingGreeting', { name: session.user?.displayName || points.currentSubscription?.planName || t('workspace.noActiveSubscription') }) }}
               </h1>
               <p><ShieldCheck :size="15" />{{ t('workspace.billingAccountStatus') }}</p>
             </div>
@@ -1429,10 +1621,17 @@ onBeforeUnmount(() => {
               <div><span>{{ t('workspace.walletBalance') }}</span><strong>{{ formatCurrency(billing.account.availableCents, billing.account.currency, locale) }}</strong><small>{{ t('workspace.subscriptionPaymentBalance') }}</small></div>
             </article>
           </div>
-        </header>
+        </PageHeading>
 
         <div v-if="success" class="task-feedback success" role="status">
           <FileCheck2 :size="18" />{{ success }}
+        </div>
+
+        <div v-if="billingActionError" class="task-feedback error" role="alert">
+          <RefreshCw :size="18" />{{ billingActionError }}
+          <UiButton v-if="!topupSettings" :disabled="topupAction || subscriptionAction !== ''" @click="load">
+            {{ t('actions.retry') }}
+          </UiButton>
         </div>
 
         <div class="billing-dashboard-columns">
@@ -1493,11 +1692,19 @@ onBeforeUnmount(() => {
                   <div><dt>{{ t('workspace.reservedCredits') }}</dt><dd>{{ formatCurrency(billing.account.reservedCents, billing.account.currency, locale) }}</dd></div>
                   <div><dt>{{ t('workspace.paymentMode') }}</dt><dd>{{ billingPaymentModeLabel }}</dd></div>
                 </dl>
-                <form v-if="paymentProvider?.enabled" class="billing-topup-form" @submit.prevent="topUpWallet">
-                  <label><span>{{ t('workspace.topupAmount') }}</span><UiInput v-model.number="topupAmount" type="number" min="0.5" max="999999.99" step="0.01" /></label>
-                  <UiButton class="command-button primary" variant="primary" type="submit" :loading="topupAction" :disabled="topupAction || topupAmount < 0.5">
+                <form v-if="paymentProvider?.enabled && topupSettings" class="billing-topup-form" @submit.prevent="topUpWallet">
+                  <div v-if="topupSettings.presetAmountsCents.length" class="billing-topup-presets" role="group" :aria-label="t('workspace.topupPresets')">
+                    <UiButton v-for="amount in topupSettings.presetAmountsCents" :key="amount" type="button" variant="secondary" :disabled="topupAction" @click="topupAmount = (amount / 100).toFixed(2)">
+                      {{ formatCurrency(amount, 'USD', locale) }}
+                    </UiButton>
+                  </div>
+                  <label><span>{{ t('workspace.topupAmount') }}</span><UiInput v-model="topupAmount" inputmode="decimal" required :disabled="topupAction" aria-describedby="topup-limits" /></label>
+                  <UiButton class="command-button primary" variant="primary" type="submit" :loading="topupAction" :disabled="topupAction || !topupAmountValid">
                     <Coins :size="16" />{{ t('workspace.topUpWallet') }}
                   </UiButton>
+                  <p id="topup-limits" class="billing-topup-limits">
+                    {{ t('workspace.topupLimits', { minimum: formatCurrency(topupSettings.minimumAmountCents, 'USD', locale), maximum: formatCurrency(topupSettings.maximumAmountCents, 'USD', locale) }) }}
+                  </p>
                 </form>
 
                 <UiButton as="RouterLink" class="command-button secondary billing-support-link" variant="secondary" to="/support">
@@ -1569,7 +1776,7 @@ onBeforeUnmount(() => {
               </h2>
             </div><span>{{ billing.entries.length }} {{ t('workspace.entriesLoaded') }}</span>
           </header>
-          <form class="billing-filters" @submit.prevent="applyBillingFilters">
+          <UiFilterBar fields density="compact" layout="grid" class="billing-filters" @submit.prevent="applyBillingFilters">
             <label><span>{{ t('workspace.billingDirection') }}</span><UiSelect v-model="billingDirection"><option value="">{{ t('workspace.allDirections') }}</option><option value="debit">{{ t('workspace.billingDirections.debit') }}</option><option value="credit">{{ t('workspace.billingDirections.credit') }}</option></UiSelect></label>
             <label><span>{{ t('workspace.billingEntryType') }}</span><UiSelect v-model="billingEntryType"><option value="">{{ t('workspace.allEntryTypes') }}</option><option v-for="entryType in billingEntryTypes" :key="entryType" :value="entryType">{{ t(`workspace.billingEntryTypes.${entryType}`) }}</option></UiSelect></label>
             <label><span>{{ t('workspace.dateFrom') }}</span><UiInput v-model="billingDateFrom" type="date" /></label>
@@ -1582,16 +1789,18 @@ onBeforeUnmount(() => {
             <UiIconButton class="icon-button" :label="t('actions.clearFilters')" @click="clearBillingFilters">
               <X :size="16" />
             </UiIconButton>
-          </form>
+          </UiFilterBar>
           <article v-for="entry in billing.entries" :key="entry.id" class="billing-entry">
             <span :data-direction="entry.direction">{{ entry.direction === 'credit' ? '+' : '-' }}</span>
             <div><strong>{{ entry.description }}</strong><small>{{ date(entry.createdAt) }} · {{ t(`workspace.billingEntryTypes.${entry.entryType}`) }}</small></div>
             <strong>{{ formatCurrency(entry.amountCents, entry.currency, locale) }}</strong>
             <small>{{ formatCurrency(entry.balanceAfterCents, entry.currency, locale) }}</small>
           </article>
-          <div v-if="!billing.entries.length" class="workspace-empty">
-            <WalletCards :size="22" /><h2>{{ t('workspace.noBillingEntries') }}</h2>
-          </div>
+          <UiEmptyState v-if="!billing.entries.length" class="workspace-empty" :title="t('workspace.noBillingEntries')">
+            <template #icon>
+              <WalletCards :size="22" />
+            </template>
+          </UiEmptyState>
           <UiButton v-if="billingNextCursor" class="command-button secondary billing-load-more" variant="secondary" :loading="billingLoadingMore" @click="loadMoreBilling">
             {{ t('actions.loadMore') }}
           </UiButton>
@@ -1602,7 +1811,7 @@ onBeforeUnmount(() => {
         <div class="workspace-task-list">
           <RouterLink v-for="item in tasks" :key="item.id" class="workspace-task-card" :data-status="item.status" :data-type="item.deliverableType" :to="`/market/demands/${item.id}`">
             <div class="workspace-task-card-main">
-              <span class="workspace-task-card-labels"><span class="task-type-badge"><ClipboardList :size="13" />{{ t(`tasks.types.${item.deliverableType}`) }}</span><span class="task-status" :data-status="item.status">{{ t(`tasks.status.${item.status}`) }}</span></span>
+              <span class="workspace-task-card-labels"><UiCardTag><ClipboardList :size="13" aria-hidden="true" />{{ t(`tasks.types.${item.deliverableType}`) }}</UiCardTag><span class="task-status" :data-status="item.status">{{ t(`tasks.status.${item.status}`) }}</span></span>
               <h2>{{ item.title }}</h2>
               <p>{{ item.summary }}</p>
               <span class="workspace-task-card-byline"><strong>{{ taskRoleLabel(item) }}</strong><span>@{{ item.client.handle }}</span><span v-if="item.assignee">{{ t('workspace.taskAssignee') }} · @{{ item.assignee.handle }}</span></span>
@@ -1614,9 +1823,14 @@ onBeforeUnmount(() => {
             </dl>
             <span class="workspace-task-card-action">{{ taskNextAction(item) }}<ArrowRight :size="16" /></span>
           </RouterLink>
-          <div v-if="!tasks.length" class="task-market-state task-market-empty">
-            <span><ClipboardList :size="24" /></span><strong>{{ t('workspace.noTasksTitle') }}</strong><p>{{ t('workspace.noTasks') }}</p>
-          </div>
+          <UiButton v-if="nextTaskCursor" variant="secondary" :loading="loadingMoreTasks" @click="loadMoreTasks">
+            {{ t('actions.loadMore') }}
+          </UiButton>
+          <UiEmptyState v-if="!tasks.length" class="task-market-empty" :title="t('workspace.noTasksTitle')" :message="t('workspace.noTasks')">
+            <template #icon>
+              <ClipboardList :size="24" />
+            </template>
+          </UiEmptyState>
         </div>
       </div>
     </template>

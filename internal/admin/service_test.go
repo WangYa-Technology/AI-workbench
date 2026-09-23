@@ -48,7 +48,7 @@ func TestControlledOperationsAndStateHistory(t *testing.T) {
 	assetID, workID := uuid.New(), uuid.New()
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,scan_status,source_type,license_code)
-		VALUES($1,$2,'image','Moderation source','/media/test.jpg','image/jpeg','clean','demo','demo')`, assetID, userID); err != nil {
+		VALUES($1,$2,'image','Moderation source','/media/test.jpg','image/jpeg','clean','delivery','personal')`, assetID, userID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -56,7 +56,7 @@ func TestControlledOperationsAndStateHistory(t *testing.T) {
 		VALUES($1,$2,$3,'Moderated work','Test work','Local','published','Local test disclosure',now())`, workID, userID, assetID); err != nil {
 		t.Fatal(err)
 	}
-	moderated, err := service.UpdateContent(ctx, adminID, workID, admin.ContentUpdate{Status: "hidden"}, "request-content")
+	moderated, err := service.UpdateContent(ctx, adminID, workID, admin.ContentUpdate{Reason: "Reviewed the evidence and selected this decision.", Confirm: true, ExpectedVersion: 1, Status: "hidden"}, "request-content")
 	if err != nil || moderated.Status != "hidden" {
 		t.Fatalf("content moderation failed: %#v %v", moderated, err)
 	}
@@ -69,7 +69,7 @@ func TestControlledOperationsAndStateHistory(t *testing.T) {
 		t.Fatalf("expected fail-closed external provider, got %v", err)
 	}
 
-	adjusted, err := service.AdjustFinance(ctx, adminID, userID, admin.FinanceAdjustment{DeltaCents: 500, Currency: "USD"}, "request-finance")
+	adjusted, err := service.AdjustFinance(ctx, adminID, userID, admin.FinanceAdjustment{DeltaCents: 500, Currency: "USD"}, "command-finance", "request-finance")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,20 +188,20 @@ func TestAdminTaskOperationsResolveDisputesAtomically(t *testing.T) {
 	if err != nil || len(page.Items) != 2 || page.Items[0].DisputeVersion == nil {
 		t.Fatalf("task operations inventory mismatch: %#v %v", page, err)
 	}
-	if _, err := service.ResolveTaskDispute(ctx, adminID, releaseTaskID, admin.TaskDisputeResolution{
+	if _, err := service.ResolveTaskDispute(ctx, adminID, releaseTaskID, admin.TaskDisputeResolution{Reason: "Reviewed the task evidence and funding before this decision.", Confirm: true,
 		Decision: "release_creator", ExpectedVersion: 2}, "task-stale"); !errors.Is(err, admin.ErrConflict) {
 		t.Fatalf("stale task decision did not conflict: %v", err)
 	}
-	released, err := service.ResolveTaskDispute(ctx, adminID, releaseTaskID, admin.TaskDisputeResolution{
+	released, err := service.ResolveTaskDispute(ctx, adminID, releaseTaskID, admin.TaskDisputeResolution{Reason: "Reviewed the task evidence and funding before this decision.", Confirm: true,
 		Decision: "release_creator", ExpectedVersion: 1}, "task-release")
 	if err != nil || released.Status != "accepted" || released.DisputeStatus == nil || *released.DisputeStatus != "resolved_creator" || released.SettlementID == nil || released.DisputeVersion == nil || *released.DisputeVersion != 2 {
 		t.Fatalf("creator release mismatch: %#v %v", released, err)
 	}
-	if _, err := service.ResolveTaskDispute(ctx, adminID, releaseTaskID, admin.TaskDisputeResolution{
+	if _, err := service.ResolveTaskDispute(ctx, adminID, releaseTaskID, admin.TaskDisputeResolution{Reason: "Reviewed the task evidence and funding before this decision.", Confirm: true,
 		Decision: "release_creator", ExpectedVersion: 2}, "task-replay"); !errors.Is(err, admin.ErrConflict) {
 		t.Fatalf("terminal task dispute remained actionable: %v", err)
 	}
-	cancelled, err := service.ResolveTaskDispute(ctx, adminID, cancelTaskID, admin.TaskDisputeResolution{
+	cancelled, err := service.ResolveTaskDispute(ctx, adminID, cancelTaskID, admin.TaskDisputeResolution{Reason: "Reviewed the task evidence and funding before this decision.", Confirm: true,
 		Decision: "cancel_without_settlement", ExpectedVersion: 1}, "task-cancel")
 	if err != nil || cancelled.Status != "cancelled" || cancelled.DisputeStatus == nil || *cancelled.DisputeStatus != "resolved_client" || cancelled.SettlementID != nil {
 		t.Fatalf("client resolution mismatch: %#v %v", cancelled, err)
@@ -290,12 +290,12 @@ func TestAdminProviderTaskDisputesQueueTransferOrRefund(t *testing.T) {
 	releaseTaskID, _, releasePaymentID := createProviderDispute("Provider release task", 42_000)
 	cancelTaskID, _, cancelPaymentID := createProviderDispute("Provider refund task", 31_000)
 	service := admin.NewService(pool, true)
-	released, err := service.ResolveTaskDispute(ctx, adminID, releaseTaskID, admin.TaskDisputeResolution{
+	released, err := service.ResolveTaskDispute(ctx, adminID, releaseTaskID, admin.TaskDisputeResolution{Reason: "Reviewed the task evidence and funding before this decision.", Confirm: true,
 		Decision: "release_creator", ExpectedVersion: 1}, "provider-task-release")
 	if err != nil || released.Status != "accepted" || released.SettlementID == nil {
 		t.Fatalf("Provider creator release mismatch: operation=%#v err=%v", released, err)
 	}
-	cancelled, err := service.ResolveTaskDispute(ctx, adminID, cancelTaskID, admin.TaskDisputeResolution{
+	cancelled, err := service.ResolveTaskDispute(ctx, adminID, cancelTaskID, admin.TaskDisputeResolution{Reason: "Reviewed the task evidence and funding before this decision.", Confirm: true,
 		Decision: "cancel_without_settlement", ExpectedVersion: 1}, "provider-task-cancel")
 	if err != nil || cancelled.Status != "cancelled" || cancelled.SettlementID != nil {
 		t.Fatalf("Provider commissioner resolution mismatch: operation=%#v err=%v", cancelled, err)
@@ -378,7 +378,7 @@ func TestDiscoveryCandidateEvaluationRolloutAndIndexEvidence(t *testing.T) {
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,scan_status,source_type,license_code)
-		VALUES($1,$2,'image','Indexed product source','/media/indexed.jpg','image/jpeg','clean','demo','hcai-commercial-standard-v1')`, assetID, creatorID); err != nil {
+		VALUES($1,$2,'image','Indexed product source','/media/indexed.jpg','image/jpeg','clean','delivery','hcai-commercial-standard-v1')`, assetID, creatorID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `

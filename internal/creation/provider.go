@@ -12,6 +12,12 @@ import (
 
 var ErrRuntimeUnavailable = providerFailure{code: "provider_unavailable", retryable: true}
 
+// Inactive accounts cannot dispatch or persist generation results.
+var ErrAccountUnavailable = providerFailure{code: "generation_account_unavailable", retryable: false}
+
+// Losing reference permission is terminal; retries must not bypass the entitlement.
+var ErrReferenceUnavailable = providerFailure{code: "reference_unavailable", retryable: false}
+
 type providerFailure struct {
 	code       string
 	retryAfter time.Duration

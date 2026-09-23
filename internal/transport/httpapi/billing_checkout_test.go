@@ -26,7 +26,19 @@ func TestExternalBillingCheckoutHTTPContract(t *testing.T) {
 	const version = "2026-02-25.clover"
 	checkoutCalls := 0
 	stripe := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/checkout/sessions" || r.Header.Get("Authorization") != "Bearer sk_test_billing_http_contract" || r.Header.Get("Stripe-Version") != version || r.ParseForm() != nil {
+		if r.Header.Get("Authorization") != "Bearer sk_test_billing_http_contract" || r.Header.Get("Stripe-Version") != version {
+			http.Error(w, "invalid fixture request", http.StatusBadRequest)
+			return
+		}
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/account" {
+			fmt.Fprint(w, `{"id":"acct_billing_http","object":"account"}`)
+			return
+		}
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/balance" {
+			fmt.Fprint(w, `{"object":"balance","livemode":false}`)
+			return
+		}
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/checkout/sessions" || r.ParseForm() != nil {
 			http.Error(w, "invalid fixture request", http.StatusBadRequest)
 			return
 		}
@@ -113,6 +125,17 @@ func TestExternalBillingCheckoutHTTPContract(t *testing.T) {
 		t.Fatalf("top-up checkout mismatch: status=%d checkout=%#v calls=%d", response.StatusCode, topup, checkoutCalls)
 	}
 	var topupReplay payments.BillingCheckout
+	if _, err := pool.Exec(t.Context(), `UPDATE wallet_topup_settings SET minimum_amount_cents=5000,preset_amounts_cents=ARRAY[5000,10000],version=version+1`); err != nil {
+		t.Fatal(err)
+	}
+	var minimumError struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if rejected := requestPaymentJSON(t, ownerClient, http.MethodPost, server.URL+"/api/v1/billing/topups/checkout", "billing-new-below-minimum", map[string]any{"amountCents": 4200}, &minimumError); rejected.StatusCode != 422 || minimumError.Error.Code != "wallet_topup_amount_out_of_range" || checkoutCalls != 1 {
+		t.Fatalf("minimum status=%d error=%+v calls=%d", rejected.StatusCode, minimumError, checkoutCalls)
+	}
 	response = requestPaymentJSON(t, ownerClient, http.MethodPost, server.URL+"/api/v1/billing/topups/checkout", "billing-topup-001", map[string]any{"amountCents": 4200}, &topupReplay)
 	if response.StatusCode != http.StatusOK || !topupReplay.AlreadyCreated || topupReplay.PaymentID != topup.PaymentID || checkoutCalls != 1 {
 		t.Fatalf("top-up replay mismatch: status=%d checkout=%#v calls=%d", response.StatusCode, topupReplay, checkoutCalls)

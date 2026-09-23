@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { textWithin } from '../../lib/unicodeText'
 import { Save, Send, ShieldCheck, Trash2, Upload, X } from 'lucide-vue-next'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -25,13 +26,15 @@ const category = ref('')
 const route = useRoute()
 const router = useRouter()
 const asset = ref<Asset | null>(null)
+const capabilities = ref<Awaited<ReturnType<typeof api.communityCapabilities>> | null>(null)
 const drafts = ref<ContentDraft[]>([])
 const draftNextCursor = ref<string | null>(null)
 const draftId = ref('')
 const title = ref('')
 const summary = ref('')
 const prompt = ref('')
-const promptVisibility = ref<'public' | 'partial' | 'private'>('public')
+const legacyVisibility = ref(false)
+const promptVisibility = ref<'public' | 'private'>('public')
 const disclosure = ref('')
 const body = ref('')
 const loading = ref(false)
@@ -45,10 +48,16 @@ let loadSequence = 0
 
 const assetDrafts = computed(() => drafts.value.filter((item) => item.assetId === props.assetId))
 const activeDraft = computed(() => assetDrafts.value.find((item) => item.id === draftId.value))
-const canPublish = computed(() => asset.value?.sourceType !== 'purchase' && asset.value?.scanStatus === 'clean')
+const canSaveDraft = computed(() => Boolean(asset.value) && capabilities.value?.canSaveDraft && asset.value?.sourceType !== 'purchase' && asset.value?.licenseCode !== 'task-contract')
+const canPublish = computed(() => canSaveDraft.value && capabilities.value?.canPublish && asset.value?.scanStatus === 'clean')
+function validFields(draft: boolean) {
+  return textWithin(title.value, draft ? 0 : 3, 120) && textWithin(body.value, 0, 2000)
+    && textWithin(summary.value, 0, 500) && textWithin(prompt.value, 0, 2000) && textWithin(disclosure.value, draft ? 0 : 10, 500)
+}
 
 function resetForm() {
   draftId.value = ''
+  legacyVisibility.value = false
   title.value = asset.value?.title || ''
   summary.value = ''
   prompt.value = String(route.query.prompt || '')
@@ -66,7 +75,8 @@ function applyDraft(draft?: ContentDraft) {
   title.value = draft.title
   summary.value = draft.summary
   prompt.value = draft.prompt
-  promptVisibility.value = draft.promptVisibility
+  legacyVisibility.value = draft.promptVisibility === 'partial'
+  promptVisibility.value = draft.promptVisibility === 'public' ? 'public' : 'private'
   disclosure.value = draft.aiDisclosure
   body.value = draft.body
   category.value = draft.category || categories.value[0]?.code || ''
@@ -83,19 +93,21 @@ async function load() {
     const requestedDraftId = String(route.query.draftId || '')
     categories.value = (await api.listTaskTypes('community')).items
     category.value = categories.value[0]?.code || ''
-    const [selectedAsset, draftPage, requestedDraft] = await Promise.all([
+    const [selectedAsset, draftPage, requestedDraft, ability] = await Promise.all([
       api.getAsset(props.assetId),
       api.listContentDrafts(),
       requestedDraftId ? api.getContentDraft(requestedDraftId) : Promise.resolve(null),
+      api.communityCapabilities(),
     ])
     if (sequence !== loadSequence) return
+    capabilities.value = ability
     asset.value = selectedAsset
     drafts.value = requestedDraft && !draftPage.items.some((item) => item.id === requestedDraft.id)
       ? [requestedDraft, ...draftPage.items]
       : draftPage.items
     draftNextCursor.value = draftPage.nextCursor || null
     resetForm()
-    if (!canPublish.value) {
+    if (!canSaveDraft.value) {
       error.value = t('publish.assetUnavailable')
       return
     }
@@ -152,8 +164,14 @@ function draftPayload(expectedVersion?: number): ContentDraftSave {
   }
 }
 
+async function refreshCategories() {
+  try { categories.value = (await api.listTaskTypes('community')).items }
+  catch (reason) { error.value = messageFrom(reason) }
+}
+
 async function saveDraft() {
-  if (!canPublish.value) return null
+  if (!canSaveDraft.value) return null
+  if (!validFields(true)) { error.value = t('community.textLengthError'); return null }
   error.value = ''
   success.value = ''
   saving.value = true
@@ -193,6 +211,7 @@ async function discardDraft() {
 
 async function submit() {
   if (!canPublish.value) return
+  if (!validFields(false)) { error.value = t('community.textLengthError'); return }
   error.value = ''
   success.value = ''
   submitting.value = true
@@ -238,7 +257,7 @@ watch(() => [props.open, props.assetId] as const, ([open]) => {
         <template v-else>
           <section v-if="asset" class="asset-publish-source" :aria-label="t('publish.assetSection')">
             <div class="asset-publish-thumbnail">
-              <AssetMedia v-if="asset.scanStatus === 'clean'" :src="asset.mediaUrl" :kind="asset.kind" :alt="asset.title" :width="asset.width || 800" :height="asset.height || 800" :controls="false" />
+              <AssetMedia v-if="asset.scanStatus === 'clean'" :src="asset.mediaUrl" :kind="asset.kind" :mime-type="asset.mimeType" :alt="asset.title" :width="asset.width || 800" :height="asset.height || 800" :controls="false" />
               <ShieldCheck v-else :size="26" />
             </div>
             <div>
@@ -288,36 +307,39 @@ watch(() => [props.open, props.assetId] as const, ([open]) => {
               </option>
             </UiSelect>
             <label for="asset-publish-title">{{ t('publish.titleLabel') }}</label>
-            <UiInput id="asset-publish-title" v-model="title" required minlength="3" maxlength="120" />
+            <UiInput id="asset-publish-title" v-model="title" required />
             <label for="asset-publish-summary">{{ t('publish.summaryLabel') }}</label>
-            <UiTextarea id="asset-publish-summary" v-model="summary" rows="3" maxlength="500" />
+            <UiTextarea id="asset-publish-summary" v-model="summary" rows="3" />
             <label for="asset-publish-body">{{ t('publish.postLabel') }}</label>
-            <UiTextarea id="asset-publish-body" v-model="body" rows="4" maxlength="2000" />
+            <UiTextarea id="asset-publish-body" v-model="body" rows="4" />
           </fieldset>
 
           <fieldset class="asset-publish-section">
             <legend>{{ t('publish.disclosureSection') }}</legend>
             <label for="asset-publish-prompt">{{ t('publish.promptLabel') }}</label>
-            <UiTextarea id="asset-publish-prompt" v-model="prompt" rows="4" maxlength="2000" />
+            <UiTextarea id="asset-publish-prompt" v-model="prompt" rows="4" />
             <label for="asset-publish-visibility">{{ t('publish.visibilityLabel') }}</label>
             <UiSelect id="asset-publish-visibility" v-model="promptVisibility">
               <option value="public">
                 {{ t('publish.visibility.public') }}
               </option>
-              <option value="partial">
-                {{ t('publish.visibility.partial') }}
-              </option>
               <option value="private">
                 {{ t('publish.visibility.private') }}
               </option>
             </UiSelect>
+            <p v-if="legacyVisibility">
+              {{ t('inspiration.legacyDraft') }}
+            </p>
             <label for="asset-publish-disclosure">{{ t('publish.disclosureLabel') }}</label>
-            <UiTextarea id="asset-publish-disclosure" v-model="disclosure" required minlength="10" rows="3" maxlength="500" />
+            <UiTextarea id="asset-publish-disclosure" v-model="disclosure" required rows="3" />
           </fieldset>
 
           <p v-if="error" class="form-error" role="alert">
             {{ error }}
           </p>
+          <UiButton v-if="error" variant="ghost" type="button" @click="refreshCategories">
+            {{ t('community.refreshCategories') }}
+          </UiButton>
           <p v-if="success" class="task-feedback success" role="status">
             {{ success }}
           </p>
@@ -325,7 +347,7 @@ watch(() => [props.open, props.assetId] as const, ([open]) => {
       </div>
 
       <footer class="asset-publish-drawer-footer">
-        <UiButton variant="secondary" :disabled="loading || !canPublish" :loading="saving" @click="saveDraft">
+        <UiButton variant="secondary" :disabled="loading || !canSaveDraft" :loading="saving" @click="saveDraft">
           <template #start>
             <Save v-if="!saving" :size="16" />
           </template>{{ t('publish.saveDraft') }}

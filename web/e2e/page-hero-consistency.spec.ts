@@ -1,3 +1,4 @@
+import { fixtureCredentials } from './helpers/identity'
 import { expect, test, type Page } from '@playwright/test'
 
 const heroPages = [
@@ -18,9 +19,18 @@ async function measureHero(page: Page, path: string) {
   await page.goto(path)
   const hero = page.locator('.ui-page-hero')
   await expect(hero).toBeVisible()
-  await expect(hero.locator('.page-hero-stats article')).toHaveCount(3)
+  if (['/discover', '/community', '/market'].includes(path)) {
+    await expect(hero.locator('.page-hero-stats')).toHaveCount(0)
+  }
   await expect(hero.locator('.page-hero-account')).toHaveCount(0)
 
+  await hero.evaluate(async (element) => {
+    const animations = []
+    for (let node: Element | null = element; node; node = node.parentElement) {
+      animations.push(...node.getAnimations())
+    }
+    await Promise.all(animations.map(animation => animation.finished.catch(() => {})))
+  })
   return hero.evaluate((element) => {
     const root = element.getBoundingClientRect()
     const box = (selector: string): Box => {
@@ -39,12 +49,12 @@ async function measureHero(page: Page, path: string) {
   })
 }
 
-test('uses one Hero geometry across marketplace and workspace pages', async ({ page }) => {
-  const session = await page.request.post('/api/v1/auth/demo', { data: { actor: 'creator' } })
+test('keeps compact shared headers and illustrations within bounds across pages', async ({ page }) => {
+  const session = await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('creator') })
   expect(session.ok()).toBeTruthy()
   await page.addInitScript(() => localStorage.setItem('hcai-theme', 'light'))
 
-  for (const viewport of [{ width: 1287, height: 904 }, { width: 390, height: 844 }]) {
+  for (const viewport of [{ width: 1287, height: 904 }, { width: 1024, height: 900 }, { width: 768, height: 900 }, { width: 360, height: 844 }]) {
     await page.setViewportSize(viewport)
     const measurements = []
     for (const path of heroPages) {
@@ -56,27 +66,30 @@ test('uses one Hero geometry across marketplace and workspace pages', async ({ p
     const baseline = measurements[1]!
     for (const [index, measurement] of measurements.entries()) {
       expect(measurement.root.width).toBe(baseline.root.width)
-      if (viewport.width >= 768) {
-        expect(measurement.root.height).toBe(baseline.root.height)
-        for (const key of ['copy', 'stats', 'artwork'] as const) {
-          // Task rewards intentionally have wider copy and statistic columns.
-          if (index === 0 && key !== 'artwork') {
-            expect(measurement[key]?.y).toBe(baseline[key]?.y)
-            expect(measurement[key]?.width).toBeGreaterThanOrEqual(baseline[key]?.width || 0)
-          } else expect(measurement[key]).toEqual(baseline[key])
-        }
-      } else {
-        expect(measurement.root.height).toBeGreaterThanOrEqual(320)
-        if (measurement.actions) {
-          expect(measurement.actions.y + measurement.actions.height).toBeLessThanOrEqual(measurement.root.height)
-        }
+      for (const key of ['copy', 'stats', 'actions', 'artwork'] as const) {
+        const part = measurement[key]
+        if (!part) continue
+        expect(part.x, heroPages[index]).toBeGreaterThanOrEqual(0)
+        expect(part.y, heroPages[index]).toBeGreaterThanOrEqual(0)
+        expect(part.x + part.width).toBeLessThanOrEqual(measurement.root.width + 1)
+        expect(part.y + part.height).toBeLessThanOrEqual(measurement.root.height + 1)
+      }
+      expect(measurement.artwork).not.toBeNull()
+      expect(measurement.artwork!.width).toBe(viewport.width >= 768 ? 112 : 64)
+      expect(measurement.artwork!.x).toBe(0)
+      expect(measurement.artwork!.x + measurement.artwork!.width).toBeLessThanOrEqual(measurement.copy!.x)
+      if (viewport.width >= 1101 && measurement.actions) {
+        expect(measurement.copy!.x + measurement.copy!.width).toBeLessThanOrEqual(measurement.actions.x)
+      }
+      if (viewport.width >= 1101 && ['/community', '/discover'].includes(heroPages[index]!)) {
+        expect(measurement.root.height).toBeLessThanOrEqual(160)
       }
     }
   }
 })
 
 test('keeps shared Hero artwork visible and dimensions stable in dark mode', async ({ page }) => {
-  const session = await page.request.post('/api/v1/auth/demo', { data: { actor: 'creator' } })
+  const session = await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('creator') })
   expect(session.ok()).toBeTruthy()
   await page.addInitScript(() => localStorage.setItem('hcai-theme', 'dark'))
   await page.setViewportSize({ width: 1287, height: 904 })
@@ -86,12 +99,13 @@ test('keeps shared Hero artwork visible and dimensions stable in dark mode', asy
     const hero = page.locator('.ui-page-hero')
     await expect(hero).toBeVisible()
     await expect(hero.locator('.page-hero-art')).toBeVisible()
-    await expect(hero).toHaveCSS('height', '272px')
+    await expect(hero.locator('.page-hero-art')).toHaveCSS('width', '112px')
+    expect((await hero.boundingBox())!.height).toBeLessThan(320)
   }
 })
 
 test('shows the current page title in the content scrollport after the Hero leaves view', async ({ page }) => {
-  const session = await page.request.post('/api/v1/auth/demo', { data: { actor: 'creator' } })
+  const session = await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('creator') })
   expect(session.ok()).toBeTruthy()
   await page.addInitScript(() => localStorage.setItem('hcai-theme', 'light'))
   await page.setViewportSize({ width: 1287, height: 904 })
@@ -110,6 +124,8 @@ test('shows the current page title in the content scrollport after the Hero leav
   await expect(contextBar).toBeVisible()
   await expect(contextBar).toHaveText('Notifications')
   await expect(contextBar).toHaveCSS('backdrop-filter', /blur\(18px\)/)
+  const headerLeft = await page.locator('.ui-page-header').evaluate(element => element.getBoundingClientRect().left)
+  await expect.poll(() => contextBar.locator('span').evaluate(element => element.getBoundingClientRect().left)).toBeCloseTo(headerLeft, 0)
 
   await main.evaluate(element => { element.scrollTop = 0 })
   await expect(contextBar).toBeHidden()

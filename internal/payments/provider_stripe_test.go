@@ -66,6 +66,23 @@ func TestStripeCreateCheckoutContract(t *testing.T) {
 }
 
 func TestStripeRefundAndTransferContracts(t *testing.T) {
+	t.Run("legacy refund parameters", func(t *testing.T) {
+		operationID := uuid.New()
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			assertStripeHeaders(t, r, "refund-"+operationID.String())
+			if err := r.ParseForm(); err != nil {
+				t.Fatal(err)
+			}
+			if r.PostForm.Has("metadata[hcai_refund_operation_id]") {
+				t.Fatal("retry changed the parameters of a legacy idempotency key")
+			}
+			fmt.Fprint(w, `{"id":"re_legacy123","payment_intent":"pi_contract123","amount":625,"currency":"usd","status":"pending"}`)
+		}))
+		defer server.Close()
+		if _, err := testStripeRuntime(server).CreateRefund(context.Background(), RefundRequest{PaymentID: testPaymentID, OperationID: operationID, ProviderPaymentID: "pi_contract123", AmountCents: 625}); err != nil {
+			t.Fatal(err)
+		}
+	})
 	t.Run("refund", func(t *testing.T) {
 		operationID := uuid.New()
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -79,10 +96,13 @@ func TestStripeRefundAndTransferContracts(t *testing.T) {
 			if r.PostForm.Get("payment_intent") != "pi_contract123" || r.PostForm.Get("amount") != "625" || r.PostForm.Get("reason") != "requested_by_customer" {
 				t.Fatalf("unexpected refund form: %v", r.PostForm)
 			}
+			if r.PostForm.Get("metadata[hcai_refund_operation_id]") != operationID.String() || r.PostForm.Get("metadata[hcai_payment_id]") != testPaymentID.String() {
+				t.Fatal("refund request omitted durable correlation metadata")
+			}
 			fmt.Fprint(w, `{"id":"re_contract123","payment_intent":"pi_contract123","amount":625,"currency":"usd","status":"succeeded"}`)
 		}))
 		defer server.Close()
-		refund, err := testStripeRuntime(server).CreateRefund(context.Background(), RefundRequest{PaymentID: testPaymentID, OperationID: operationID, ProviderPaymentID: "pi_contract123", AmountCents: 625})
+		refund, err := testStripeRuntime(server).CreateRefund(context.Background(), RefundRequest{PaymentID: testPaymentID, OperationID: operationID, IncludeOperationMetadata: true, ProviderPaymentID: "pi_contract123", AmountCents: 625})
 		if err != nil || refund.ProviderID != "re_contract123" || refund.Currency != "USD" {
 			t.Fatalf("unexpected refund: %#v err=%v", refund, err)
 		}
@@ -100,7 +120,7 @@ func TestStripeRefundAndTransferContracts(t *testing.T) {
 			if r.PostForm.Get("source_transaction") != "ch_contract123" || r.PostForm.Get("destination") != "acct_contract123" || r.PostForm.Get("amount") != "1000" || r.PostForm.Get("transfer_group") != transferGroup(testPaymentID) {
 				t.Fatalf("unexpected transfer form: %v", r.PostForm)
 			}
-			fmt.Fprintf(w, `{"id":"tr_contract123","destination":"acct_contract123","amount":1000,"currency":"usd","transfer_group":%q}`, transferGroup(testPaymentID))
+			fmt.Fprintf(w, `{"id":"tr_contract123","object":"transfer","destination":"acct_contract123","source_transaction":"ch_contract123","amount":1000,"currency":"usd","transfer_group":%q,"livemode":false,"created":%d,"reversed":false,"amount_reversed":0,"metadata":{"hcai_payment_id":%q}}`, transferGroup(testPaymentID), time.Now().Unix(), testPaymentID.String())
 		}))
 		defer server.Close()
 		transfer, err := testStripeRuntime(server).CreateTransfer(context.Background(), TransferRequest{PaymentID: testPaymentID, ProviderChargeID: "ch_contract123", DestinationID: "acct_contract123", AmountCents: 1000, Currency: "USD"})
@@ -118,12 +138,14 @@ func TestStripeConnectAccountAndOnboardingLinkContracts(t *testing.T) {
 			t.Fatal(err)
 		}
 		switch r.URL.Path {
+		case "/v1/balance":
+			fmt.Fprint(w, `{"object":"balance","livemode":false}`)
 		case "/v1/accounts":
 			assertStripeHeaders(t, r, "connect-account-"+userID.String())
 			if r.PostForm.Get("type") != "express" || r.PostForm.Get("capabilities[card_payments][requested]") != "true" || r.PostForm.Get("capabilities[transfers][requested]") != "true" || r.PostForm.Get("metadata[hcai_user_id]") != userID.String() || r.PostForm.Get("email") != "creator@example.test" {
 				t.Fatalf("unexpected Connect account form: %v", r.PostForm)
 			}
-			fmt.Fprint(w, `{"id":"acct_connect_contract","charges_enabled":false,"payouts_enabled":false,"details_submitted":false,"livemode":false,"requirements":{"currently_due":["individual.first_name"],"past_due":[],"pending_verification":[]}}`)
+			fmt.Fprintf(w, `{"id":"acct_connect_contract","object":"account","type":"express","metadata":{"hcai_user_id":%q},"charges_enabled":false,"payouts_enabled":false,"details_submitted":false,"requirements":{"currently_due":["individual.first_name"],"past_due":[],"pending_verification":[]}}`, userID.String())
 		case "/v1/account_links":
 			if !strings.HasPrefix(r.Header.Get("Idempotency-Key"), "connect-link-") || r.Header.Get("Authorization") != "Bearer sk_test_contract" || r.Header.Get("Stripe-Version") != "2026-02-25.clover" {
 				t.Fatalf("unexpected Account Link headers: %v", r.Header)

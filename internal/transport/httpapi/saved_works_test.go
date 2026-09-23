@@ -29,7 +29,7 @@ func TestSavedWorksHTTPContract(t *testing.T) {
 	assetID, workID, postID, secondWorkID, secondPostID := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	if _, err := pool.Exec(context.Background(), `
 		INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,scan_status,source_type,license_code)
-		VALUES($1,$2,'image','HTTP saved source','/media/http-saved.jpg','image/jpeg','clean','demo','personal')`, assetID, author.ID); err != nil {
+		VALUES($1,$2,'image','HTTP saved source','/media/http-saved.jpg','image/jpeg','clean','delivery','personal')`, assetID, author.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(context.Background(), `

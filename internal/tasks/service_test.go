@@ -27,9 +27,20 @@ type taskPaymentRuntime struct {
 	checkoutCalls int
 	transferCalls int
 	refundCalls   int
+	identity      payments.ProductCheckoutIdentity
 }
 
 func (*taskPaymentRuntime) Provider() string { return "stripe" }
+
+func (r *taskPaymentRuntime) ProductCheckoutIdentity(context.Context) (payments.ProductCheckoutIdentity, error) {
+	if r.identity.Provider != "" {
+		return r.identity, nil
+	}
+	return payments.ProductCheckoutIdentity{
+		Provider: "stripe", MerchantID: "acct_task_test", Endpoint: "https://api.stripe.com/v1",
+		APIVersion: "2026-02-25.clover", RequestVersion: "stripe-product-checkout-v1",
+	}, nil
+}
 
 func (r *taskPaymentRuntime) CreateCheckout(_ context.Context, input payments.CheckoutRequest) (payments.CheckoutSession, error) {
 	r.checkoutCalls++
@@ -118,7 +129,7 @@ func TestTaskProposalRevisionDeliveryAndSettlement(t *testing.T) {
 		t.Fatalf("unexpected assignment: %#v", assigned.Summary)
 	}
 
-	delivered, err := service.Deliver(ctx, creatorID, created.ID, tasks.DeliverInput{AssetID: assetID, Note: "First review-ready delivery."}, "delivery-command-001")
+	delivered, err := service.Deliver(ctx, creatorID, created.ID, tasks.DeliverInput{RightsEvidence: "Original assets with the rights required by this brief.", AIDisclosure: "Model and source evidence supplied for review.", RightsConfirmed: true, AssetID: assetID, Note: "First review-ready delivery."}, "delivery-command-001")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +144,7 @@ func TestTaskProposalRevisionDeliveryAndSettlement(t *testing.T) {
 		t.Fatalf("expected revision, got %s", revision.Status)
 	}
 
-	second, err := service.Deliver(ctx, creatorID, created.ID, tasks.DeliverInput{AssetID: assetID, Note: "Revised delivery with artifact removed."}, "delivery-command-002")
+	second, err := service.Deliver(ctx, creatorID, created.ID, tasks.DeliverInput{RightsEvidence: "Original assets with the rights required by this brief.", AIDisclosure: "Model and source evidence supplied for review.", RightsConfirmed: true, AssetID: assetID, Note: "Revised delivery with artifact removed."}, "delivery-command-002")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,7 +191,7 @@ func TestTaskDirectClaimAndDispute(t *testing.T) {
 	if _, err := service.Claim(ctx, creatorID, created.ID, "direct-claim-001"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.Deliver(ctx, creatorID, created.ID, tasks.DeliverInput{AssetID: assetID, Note: "Delivery ready for dispute path."}, "direct-delivery-001"); err != nil {
+	if _, err := service.Deliver(ctx, creatorID, created.ID, tasks.DeliverInput{RightsEvidence: "Original assets with the rights required by this brief.", AIDisclosure: "Model and source evidence supplied for review.", RightsConfirmed: true, AssetID: assetID, Note: "Delivery ready for dispute path."}, "direct-delivery-001"); err != nil {
 		t.Fatal(err)
 	}
 	disputed, err := service.OpenDispute(ctx, creatorID, created.ID, "The acceptance interpretation conflicts with the published rule wording.", "direct-dispute-001")
@@ -309,8 +320,8 @@ func TestProviderFundedTaskAssignmentAndTransfer(t *testing.T) {
 		t.Fatalf("commissioner funding projection mismatch: funding=%#v err=%v", clientView.Funding, err)
 	}
 	publicView, err := taskService.Get(ctx, outsiderID, created.ID)
-	if err != nil || publicView.Funding == nil || publicView.Funding.Status != "checkout_open" || publicView.Funding.CheckoutURL != nil || publicView.Funding.CheckoutExpiresAt != nil {
-		t.Fatalf("public funding projection leaked checkout evidence: funding=%#v err=%v", publicView.Funding, err)
+	if err != nil || publicView.Funding != nil {
+		t.Fatalf("public view exposed private proposal funding: funding=%#v err=%v", publicView.Funding, err)
 	}
 
 	receipt := receiveTaskPaymentEvent(t, paymentService, taskPaymentSucceededEvent(checkout.PaymentID, created.ID, proposalInput.AmountCents), webhookSecret)
@@ -325,7 +336,7 @@ func TestProviderFundedTaskAssignmentAndTransfer(t *testing.T) {
 	if err != nil || assigned.Status != "assigned" || assigned.Assignee == nil || assigned.Assignee.ID != creatorID {
 		t.Fatalf("funded proposal assignment failed: task=%#v err=%v", assigned.Summary, err)
 	}
-	if _, err := taskService.Deliver(ctx, creatorID, created.ID, tasks.DeliverInput{AssetID: assetID, Note: "Provider-funded delivery ready for review."}, "provider-task-delivery-001"); err != nil {
+	if _, err := taskService.Deliver(ctx, creatorID, created.ID, tasks.DeliverInput{RightsEvidence: "Original assets with the rights required by this brief.", AIDisclosure: "Model and source evidence supplied for review.", RightsConfirmed: true, AssetID: assetID, Note: "Provider-funded delivery ready for review."}, "provider-task-delivery-001"); err != nil {
 		t.Fatal(err)
 	}
 	accepted, err := taskService.Review(ctx, clientID, created.ID, tasks.ReviewInput{Decision: "accept", Note: "All funded acceptance rules are satisfied."}, "provider-task-review-001")
@@ -346,8 +357,9 @@ func TestProviderFundedTaskAssignmentAndTransfer(t *testing.T) {
 		t.Fatalf("Provider-funded task wrote Local Test entries: %d", localEntries)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO payment_destinations(provider,user_id,destination_id,status,charges_enabled,payouts_enabled,details_submitted,verified_at)
-		VALUES('stripe',$1,'acct_task_contract','verified',true,true,true,now())`, creatorID); err != nil {
+		INSERT INTO payment_destinations(provider,user_id,destination_id,status,charges_enabled,payouts_enabled,details_submitted,
+		  original_merchant_id,original_store_id,original_live_mode,original_endpoint,original_api_version,original_request_version,verified_at)
+		VALUES('stripe',$1,'acct_task_contract','verified',true,true,true,'acct_task_test','',false,'https://api.stripe.com/v1','2026-02-25.clover','stripe-product-checkout-v1',now())`, creatorID); err != nil {
 		t.Fatal(err)
 	}
 	if err := paymentService.HandleTaskTransferJob(ctx, transferJob); err != nil {
@@ -462,6 +474,194 @@ func TestProviderFundedOpenTaskCancellationRefund(t *testing.T) {
 	}
 }
 
+func TestProviderFundedTaskTransferIdentityMismatchRequiresRecovery(t *testing.T) {
+	pool, cleanup := taskTestPool(t)
+	defer cleanup()
+	ctx := context.Background()
+	runtime := &taskPaymentRuntime{}
+	paymentService := payments.NewServiceWithRuntimes(pool, payments.ServiceConfig{
+		Enabled: true, APIVersion: "2026-02-25.clover", WebhookSecret: "whsec_task_identity_transfer", WebhookTolerance: 5 * time.Minute,
+	}, payments.NewRuntimeCatalog(runtime))
+	cases := []struct {
+		name   string
+		mutate func(*payments.ProductCheckoutIdentity)
+	}{
+		{name: "merchant", mutate: func(identity *payments.ProductCheckoutIdentity) { identity.MerchantID = "acct_changed" }},
+		{name: "store", mutate: func(identity *payments.ProductCheckoutIdentity) { identity.StoreID = "store_changed" }},
+		{name: "live_mode", mutate: func(identity *payments.ProductCheckoutIdentity) { identity.LiveMode = true }},
+		{name: "endpoint", mutate: func(identity *payments.ProductCheckoutIdentity) { identity.Endpoint = "https://api.changed.example/v1" }},
+		{name: "api_version", mutate: func(identity *payments.ProductCheckoutIdentity) { identity.APIVersion = "2026-03-01.clover" }},
+		{name: "request_version", mutate: func(identity *payments.ProductCheckoutIdentity) { identity.RequestVersion = "stripe-task-checkout-v2" }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			runtime.identity = payments.ProductCheckoutIdentity{}
+			_, creatorID, checkout, taskID := prepareProviderFundedAcceptedTask(t, pool, paymentService, runtime, "transfer-identity-"+tc.name)
+			identity := payments.ProductCheckoutIdentity{Provider: "stripe", MerchantID: "acct_task_test", Endpoint: "https://api.stripe.com/v1", APIVersion: "2026-02-25.clover", RequestVersion: "stripe-product-checkout-v1"}
+			tc.mutate(&identity)
+			runtime.identity = identity
+			if _, err := pool.Exec(ctx, `
+				INSERT INTO payment_destinations(provider,user_id,destination_id,status,charges_enabled,payouts_enabled,details_submitted,
+				  original_merchant_id,original_store_id,original_live_mode,original_endpoint,original_api_version,original_request_version,verified_at)
+				VALUES('stripe',$1,$2,'verified',true,true,true,'acct_task_test','',false,'https://api.stripe.com/v1','2026-02-25.clover','stripe-product-checkout-v1',now())`, creatorID, "acct_identity_"+tc.name); err != nil {
+				t.Fatal(err)
+			}
+			beforeCalls := runtime.transferCalls
+			job := jobs.Job{Kind: payments.TaskTransferJobKind, Payload: []byte(fmt.Sprintf(`{"paymentId":%q}`, checkout.PaymentID.String()))}
+			if err := paymentService.HandleTaskTransferJob(ctx, job); err == nil {
+				t.Fatal("identity mismatch unexpectedly dispatched a transfer")
+			}
+			assertTaskPaymentRecovery(t, pool, checkout.PaymentID, taskID, "transfer.reconciliation_required", "provider_identity_mismatch", beforeCalls, runtime.transferCalls)
+			if err := paymentService.HandleTaskTransferJob(ctx, job); err != nil {
+				t.Fatalf("recovery-required transfer replay failed: %v", err)
+			}
+			if runtime.transferCalls != beforeCalls {
+				t.Fatalf("recovery replay dispatched transfer: before=%d after=%d", beforeCalls, runtime.transferCalls)
+			}
+		})
+	}
+}
+
+func TestProviderFundedTaskRefundIdentityMismatchRequiresRecovery(t *testing.T) {
+	pool, cleanup := taskTestPool(t)
+	defer cleanup()
+	ctx := context.Background()
+	runtime := &taskPaymentRuntime{}
+	paymentService := payments.NewServiceWithRuntimes(pool, payments.ServiceConfig{
+		Enabled: true, APIVersion: "2026-02-25.clover", WebhookSecret: "whsec_task_identity_refund", WebhookTolerance: 5 * time.Minute,
+	}, payments.NewRuntimeCatalog(runtime))
+	cases := []struct {
+		name   string
+		mutate func(*payments.ProductCheckoutIdentity)
+	}{
+		{name: "merchant", mutate: func(identity *payments.ProductCheckoutIdentity) { identity.MerchantID = "acct_changed" }},
+		{name: "store", mutate: func(identity *payments.ProductCheckoutIdentity) { identity.StoreID = "store_changed" }},
+		{name: "live_mode", mutate: func(identity *payments.ProductCheckoutIdentity) { identity.LiveMode = true }},
+		{name: "endpoint", mutate: func(identity *payments.ProductCheckoutIdentity) { identity.Endpoint = "https://api.changed.example/v1" }},
+		{name: "api_version", mutate: func(identity *payments.ProductCheckoutIdentity) { identity.APIVersion = "2026-03-01.clover" }},
+		{name: "request_version", mutate: func(identity *payments.ProductCheckoutIdentity) { identity.RequestVersion = "stripe-task-checkout-v2" }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			runtime.identity = payments.ProductCheckoutIdentity{}
+			checkout, taskID := prepareProviderFundedOpenTask(t, pool, paymentService, runtime, "refund-identity-"+tc.name)
+			identity := payments.ProductCheckoutIdentity{Provider: "stripe", MerchantID: "acct_task_test", Endpoint: "https://api.stripe.com/v1", APIVersion: "2026-02-25.clover", RequestVersion: "stripe-product-checkout-v1"}
+			tc.mutate(&identity)
+			runtime.identity = identity
+			beforeCalls := runtime.refundCalls
+			job := jobs.Job{Kind: payments.TaskRefundJobKind, Payload: []byte(fmt.Sprintf(`{"paymentId":%q}`, checkout.PaymentID.String()))}
+			if err := paymentService.HandleTaskRefundJob(ctx, job); err == nil {
+				t.Fatal("identity mismatch unexpectedly dispatched a refund")
+			}
+			assertTaskPaymentRecovery(t, pool, checkout.PaymentID, taskID, "refund.reconciliation_required", "provider_identity_mismatch", beforeCalls, runtime.refundCalls)
+			if err := paymentService.HandleTaskRefundJob(ctx, job); err == nil {
+				t.Fatal("recovery-required refund replay unexpectedly succeeded")
+			}
+			if runtime.refundCalls != beforeCalls {
+				t.Fatalf("recovery replay dispatched refund: before=%d after=%d", beforeCalls, runtime.refundCalls)
+			}
+		})
+	}
+}
+
+func prepareProviderFundedAcceptedTask(t *testing.T, pool *pgxpool.Pool, paymentService *payments.Service, runtime *taskPaymentRuntime, key string) (uuid.UUID, uuid.UUID, payments.TaskCheckout, uuid.UUID) {
+	t.Helper()
+	ctx := context.Background()
+	clientID, creatorID, outsiderID, assetID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	seedTaskUsers(t, pool, clientID, creatorID, outsiderID, assetID)
+	taskService := tasks.NewServiceWithPayments(pool, true)
+	input := validTaskInput()
+	input.AllowDirectAccept = true
+	created, err := taskService.Create(ctx, clientID, input, key+"-create")
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkout, _, err := paymentService.BeginTaskCheckout(ctx, clientID, created.ID, nil, key+"-funding", "request-"+key, "https://app.example.test/success", "https://app.example.test/cancel")
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt := receiveTaskPaymentEvent(t, paymentService, taskPaymentSucceededEvent(checkout.PaymentID, created.ID, input.BudgetCents), "whsec_task_identity_transfer")
+	if err := paymentService.HandlePaymentEventJob(ctx, jobs.Job{Kind: payments.PaymentEventJobKind, Payload: []byte(fmt.Sprintf(`{"eventId":%q}`, receipt.EventID.String()))}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskService.Claim(ctx, creatorID, created.ID, key+"-claim"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskService.Deliver(ctx, creatorID, created.ID, tasks.DeliverInput{RightsEvidence: "Original assets with the rights required by this brief.", AIDisclosure: "Model and source evidence supplied for review.", RightsConfirmed: true, AssetID: assetID, Note: "Identity mismatch transfer test delivery."}, key+"-delivery"); err != nil {
+		t.Fatal(err)
+	}
+	accepted, err := taskService.Review(ctx, clientID, created.ID, tasks.ReviewInput{Decision: "accept", Note: "Identity mismatch transfer test acceptance."}, key+"-review")
+	if err != nil || accepted.Funding == nil || accepted.Funding.Status != "transfer_pending" {
+		t.Fatalf("task did not enter transfer_pending: detail=%#v err=%v", accepted, err)
+	}
+	_ = runtime
+	return clientID, creatorID, checkout, created.ID
+}
+
+func prepareProviderFundedOpenTask(t *testing.T, pool *pgxpool.Pool, paymentService *payments.Service, runtime *taskPaymentRuntime, key string) (payments.TaskCheckout, uuid.UUID) {
+	t.Helper()
+	ctx := context.Background()
+	clientID, creatorID, outsiderID, assetID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	seedTaskUsers(t, pool, clientID, creatorID, outsiderID, assetID)
+	taskService := tasks.NewServiceWithPayments(pool, true)
+	input := validTaskInput()
+	input.AllowDirectAccept = true
+	created, err := taskService.Create(ctx, clientID, input, key+"-create")
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkout, _, err := paymentService.BeginTaskCheckout(ctx, clientID, created.ID, nil, key+"-funding", "request-"+key, "https://app.example.test/success", "https://app.example.test/cancel")
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt := receiveTaskPaymentEvent(t, paymentService, taskPaymentSucceededEvent(checkout.PaymentID, created.ID, input.BudgetCents), "whsec_task_identity_refund")
+	if err := paymentService.HandlePaymentEventJob(ctx, jobs.Job{Kind: payments.PaymentEventJobKind, Payload: []byte(fmt.Sprintf(`{"eventId":%q}`, receipt.EventID.String()))}); err != nil {
+		t.Fatal(err)
+	}
+	taskService = tasks.NewServiceWithPayments(pool, true)
+	cancelled, err := taskService.Cancel(ctx, clientID, created.ID, "Identity mismatch refund test cancellation.", key+"-cancel")
+	if err != nil || cancelled.Funding == nil || cancelled.Funding.Status != "refund_pending" {
+		t.Fatalf("task did not enter refund_pending: detail=%#v err=%v", cancelled, err)
+	}
+	_ = creatorID
+	_ = assetID
+	_ = runtime
+	return checkout, created.ID
+}
+
+func assertTaskPaymentRecovery(t *testing.T, pool *pgxpool.Pool, paymentID, taskID uuid.UUID, eventType, reason string, beforeCalls, afterCalls int) {
+	t.Helper()
+	ctx := context.Background()
+	var status string
+	if err := pool.QueryRow(ctx, `SELECT status FROM payment_intents WHERE id=$1`, paymentID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "recovery_required" || beforeCalls != afterCalls {
+		t.Fatalf("payment was not held for recovery: status=%s beforeCalls=%d afterCalls=%d", status, beforeCalls, afterCalls)
+	}
+	var count int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM payment_intent_events WHERE payment_id=$1 AND event_type=$2 AND evidence->>'reason'=$3`, paymentID, eventType, reason).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("missing identity recovery event: payment=%s event=%s reason=%s count=%d", paymentID, eventType, reason, count)
+	}
+	if strings.HasPrefix(eventType, "transfer.") {
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM payment_intent_events WHERE payment_id=$1 AND event_type='transfer.completed'`, paymentID).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 0 {
+			t.Fatalf("identity mismatch created transfer completion event: %d", count)
+		}
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM notifications WHERE resource_type='task' AND resource_id=$1 AND kind='task.payout_transferred'`, taskID).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 0 {
+			t.Fatalf("identity mismatch created payout notification: %d", count)
+		}
+	}
+}
+
 func receiveTaskPaymentEvent(t *testing.T, service *payments.Service, body []byte, secret string) payments.Receipt {
 	t.Helper()
 	now := time.Now().UTC().Unix()
@@ -497,7 +697,7 @@ func seedTaskUsers(t *testing.T, pool *pgxpool.Pool, clientID, creatorID, outsid
 			t.Fatal(err)
 		}
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,width,height,scan_status,source_type,license_code) VALUES($1,$2,'image','Owned delivery','/api/v1/assets/test/content','image/jpeg',1200,1200,'clean','demo','test')`, assetID, creatorID); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,width,height,scan_status,source_type,license_code) VALUES($1,$2,'image','Owned delivery','/api/v1/assets/test/content','image/jpeg',1200,1200,'clean','delivery','test')`, assetID, creatorID); err != nil {
 		t.Fatal(err)
 	}
 }

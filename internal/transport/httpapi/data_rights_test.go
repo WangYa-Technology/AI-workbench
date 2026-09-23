@@ -2,6 +2,8 @@ package httpapi_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -9,6 +11,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hcai-chat/hcai-chat/internal/datarights"
 	"github.com/hcai-chat/hcai-chat/internal/platform/config"
@@ -34,6 +37,11 @@ func TestDataRightsHTTPContractAndPermissions(t *testing.T) {
 	if response.StatusCode != http.StatusCreated || exportRequest.Status != "queued" {
 		t.Fatalf("create export request: status=%d item=%#v", response.StatusCode, exportRequest)
 	}
+	// Many ordinary owner records make the HTTP package exceed one storage part.
+	if _, err := pool.Exec(context.Background(), `INSERT INTO audit_events(actor_id,action,resource_type,resource_id,reason,request_id)
+ SELECT $1,'export.volume_test','user',$1,repeat('owner evidence ',1000),'export-test-'||n FROM generate_series(1,450) n`, owner.ID); err != nil {
+		t.Fatal(err)
+	}
 	jobRepository := jobs.NewRepository(pool)
 	job := claimHTTPJobKind(t, context.Background(), pool, "http-data-rights", datarights.ExportJobKind)
 	service := datarights.NewService(pool, mediaRoot)
@@ -56,7 +64,94 @@ func TestDataRightsHTTPContractAndPermissions(t *testing.T) {
 	if err != nil || response.StatusCode != http.StatusOK || response.Header.Get("Digest") == "" || strings.Contains(strings.ToLower(string(body)), "token_hash") {
 		t.Fatalf("private export response invalid: status=%d digest=%q body=%s err=%v", response.StatusCode, response.Header.Get("Digest"), body, err)
 	}
+	if len(body) <= 5<<20 || response.ContentLength != int64(len(body)) {
+		t.Fatal("large HTTP export truncated or missing exact content length")
+	}
+	sum := sha256.Sum256(body)
+	encodedDigest := base64.StdEncoding.EncodeToString(sum[:])
+	if response.Header.Get("Digest") != "sha-256="+encodedDigest || response.Header.Get("Content-Digest") != "sha-256=:"+encodedDigest+":" {
+		t.Fatal("download digest does not describe the actual bytes using standard Base64")
+	}
+	var exported struct {
+		Data struct {
+			Marketplace struct {
+				SchemaVersion int                        `json:"schemaVersion"`
+				Data          map[string]json.RawMessage `json:"data"`
+			} `json:"marketplace"`
+		} `json:"data"`
+	}
+	sections := []string{
+		"checkoutCheckDispatches", "checkoutClosures", "checkoutCommands", "checkoutDispatches",
+		"checkoutLookups", "checkoutRequests", "cleanupJobs", "closedCheckoutRecoveries",
+		"closedCheckoutRefundConfirmations", "contracts", "deliveryRepairs", "deliverySnapshots",
+		"entitlements", "identityRecoveries", "listingHistory", "orderEvents", "paymentEvents",
+		"payments", "products", "providerEvents", "refundAttempts", "refundChecks", "refundReadReceipts",
+		"rejectedProviderEventChecks", "rejectedProviderEvents", "sales",
+		"sellerSettlements", "sellerLedger", "sellerRecoveryObligations", "sellerPayoutRequests",
+		"sellerPayoutAllocations", "sellerPayoutBankTargets", "sellerPayoutReviews",
+		"sellerPayoutFundingAdmissions", "sellerPayoutEvents", "sellerPayoutSourceTransfers",
+		"sellerSourceReversalCommands", "sellerSourceReversalReads", "sellerSourceReversalResults", "sellerSourceReversalClosures",
+		"sellerBankPayoutCommands", "sellerBankPayoutResults", "sellerBankPayoutReads", "sellerBankPayoutResumes",
+		"sellerFundsReconciliation", "sellerFundsAccounts", "sellerFundsUnresolvedRecords",
+	}
+	if err := json.Unmarshal(body, &exported); err != nil || exported.Data.Marketplace.SchemaVersion != 1 || len(exported.Data.Marketplace.Data) != len(sections) || response.Header.Get("Cache-Control") != "private, no-store" {
+		t.Fatal("private marketplace export contract missing", err)
+	}
+	for _, name := range sections {
+		rows, ok := exported.Data.Marketplace.Data[name]
+		if !ok {
+			t.Fatalf("missing public export array %s", name)
+		}
+		if name == "sellerFundsReconciliation" {
+			var records []map[string]any
+			if err := json.Unmarshal(rows, &records); err != nil || len(records) != 1 || len(records[0]) != 3 || records[0]["version"] != float64(1) || records[0]["unresolvedRecords"] != float64(0) {
+				t.Fatal("empty owner financial report exposed unexpected metadata", string(rows), err)
+			}
+			if _, err := time.Parse(time.RFC3339Nano, records[0]["asOf"].(string)); err != nil {
+				t.Fatal("financial snapshot timestamp missing", err)
+			}
+			continue
+		}
+		if string(rows) != "[]" {
+			t.Fatalf("new user received unrelated marketplace %s", name)
+		}
+	}
 
+	// A real server's ordinary API write deadline must not cut off the large
+	// download while its verified private spool is being prepared.
+	shortServer := httptest.NewUnstartedServer(server.Config.Handler)
+	shortServer.Config.WriteTimeout = time.Millisecond
+	shortServer.Start()
+	defer shortServer.Close()
+	shortResponse, err := client.Get(shortServer.URL + "/api/v1/account/data-rights/" + exportRequest.ID.String() + "/export")
+	if err != nil {
+		t.Fatal("large export retained ordinary write deadline", err)
+	}
+	shortBody, err := io.ReadAll(shortResponse.Body)
+	shortResponse.Body.Close()
+	if err != nil || shortResponse.StatusCode != http.StatusOK || string(shortBody) != string(body) {
+		t.Fatal("deadline extension changed or truncated download", err)
+	}
+	firstFile, _, err := service.OpenExport(context.Background(), owner.ID, exportRequest.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer firstFile.Close()
+	secondFile, _, err := service.OpenExport(context.Background(), owner.ID, exportRequest.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer secondFile.Close()
+	response = requestJSON(t, client, http.MethodGet, server.URL+"/api/v1/account/data-rights/"+exportRequest.ID.String()+"/export", nil, nil)
+	if response.StatusCode != http.StatusServiceUnavailable || response.Header.Get("Retry-After") != "5" {
+		t.Fatal("busy download did not fail before streaming", response.StatusCode)
+	}
+	firstFile.Close()
+	secondFile.Close()
+	response = requestJSON(t, testHTTPClient(t), http.MethodGet, server.URL+"/api/v1/account/data-rights/"+exportRequest.ID.String()+"/export", nil, nil)
+	if response.StatusCode != http.StatusUnauthorized {
+		t.Fatal("anonymous download", response.StatusCode)
+	}
 	otherClient := testHTTPClient(t)
 	registerGovernanceUser(t, otherClient, server.URL, "rights_other")
 	response = requestJSON(t, otherClient, http.MethodGet, server.URL+"/api/v1/account/data-rights/"+exportRequest.ID.String()+"/export", nil, nil)
@@ -77,6 +172,20 @@ func TestDataRightsHTTPContractAndPermissions(t *testing.T) {
 	administrator := registerGovernanceUser(t, adminClient, server.URL, "rights_admin")
 	if _, err := pool.Exec(context.Background(), `UPDATE users SET role='admin' WHERE id=$1`, administrator.ID); err != nil {
 		t.Fatal(err)
+	}
+	for _, endpoint := range []string{"/account/data-rights", "/admin/data-rights", "/admin/data-rights/holds", "/admin/data-rights/media-cleanups"} {
+		for _, query := range []string{"?limit=", "?limit=0", "?limit=-1", "?limit=51", "?limit=1&limit=50"} {
+			response := requestJSON(t, adminClient, http.MethodGet, server.URL+"/api/v1"+endpoint+query, nil, nil)
+			if response.StatusCode != http.StatusUnprocessableEntity {
+				t.Fatal("invalid data-rights pagination accepted", endpoint, query, response.StatusCode)
+			}
+		}
+		for _, query := range []string{"", "?limit=1", "?limit=50"} {
+			response := requestJSON(t, adminClient, http.MethodGet, server.URL+"/api/v1"+endpoint+query, nil, nil)
+			if response.StatusCode != http.StatusOK {
+				t.Fatal("valid data-rights pagination rejected", endpoint, query, response.StatusCode)
+			}
+		}
 	}
 	var inventory struct {
 		Items []datarights.Request `json:"items"`

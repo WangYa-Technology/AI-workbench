@@ -20,6 +20,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/hcai-chat/hcai-chat/internal/notifications"
 	"github.com/hcai-chat/hcai-chat/internal/platform/jobs"
+	"github.com/hcai-chat/hcai-chat/internal/platform/mailer"
+	passwordpolicy "github.com/hcai-chat/hcai-chat/internal/platform/password"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
@@ -103,11 +105,16 @@ type Service struct {
 	mode      string
 	mailRoot  string
 	webOrigin string
+	sender    mailer.Sender
 	now       func() time.Time
 }
 
-func NewService(pool *pgxpool.Pool, key []byte, mode, mediaRoot, webOrigin string) *Service {
-	return &Service{pool: pool, key: append([]byte(nil), key...), mode: mode, mailRoot: filepath.Join(mediaRoot, "mailbox"), webOrigin: strings.TrimRight(webOrigin, "/"), now: time.Now}
+func NewService(pool *pgxpool.Pool, key []byte, mode, mediaRoot, webOrigin string, senders ...mailer.Sender) *Service {
+	s := &Service{pool: pool, key: append([]byte(nil), key...), mode: mode, mailRoot: filepath.Join(mediaRoot, "mailbox"), webOrigin: strings.TrimRight(webOrigin, "/"), now: time.Now}
+	if len(senders) > 0 {
+		s.sender = senders[0]
+	}
+	return s
 }
 
 func (s *Service) RequestVerification(ctx context.Context, userID uuid.UUID, requestID string) (Action, error) {
@@ -216,7 +223,7 @@ func (s *Service) ConfirmVerification(ctx context.Context, token, requestID stri
 }
 
 func (s *Service) ConfirmPasswordReset(ctx context.Context, token, password, requestID string) (int64, error) {
-	if len(password) < 10 || len(password) > 128 {
+	if !passwordpolicy.ValidNew(password) {
 		return 0, ErrInvalid
 	}
 	passwordHash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
@@ -489,11 +496,19 @@ func (s *Service) HandleDeliveryJob(ctx context.Context, job jobs.Job) error {
 		return s.deliveryFailure(ctx, tx, job, actionID, attemptNumber, "token_decryption_failed")
 	}
 	content := s.render(email, locale, kind, token, expiresAt)
-	if err := s.writeMailbox(userID, actionID, content); err != nil {
-		return s.deliveryFailure(ctx, tx, job, actionID, attemptNumber, "local_mailbox_write_failed")
+	if s.mode == "smtp" {
+		if s.sender == nil || s.sender.Send(ctx, actionID.String(), email, content) != nil {
+			return s.deliveryFailure(ctx, tx, job, actionID, attemptNumber, "smtp_delivery_failed")
+		}
+	} else if s.mode == "local_file" {
+		if err := s.writeMailbox(userID, actionID, content); err != nil {
+			return s.deliveryFailure(ctx, tx, job, actionID, attemptNumber, "local_mailbox_write_failed")
+		}
+	} else {
+		return s.deliveryFailure(ctx, tx, job, actionID, attemptNumber, "delivery_disabled")
 	}
 	receipt := sha256.Sum256(content)
-	if _, err := tx.Exec(ctx, `INSERT INTO identity_email_delivery_attempts(action_id,attempt_number,adapter,status,receipt_sha256) VALUES($1,$2,'local_file','delivered',$3)`, actionID, attemptNumber, hex.EncodeToString(receipt[:])); err != nil {
+	if _, err := tx.Exec(ctx, `INSERT INTO identity_email_delivery_attempts(action_id,attempt_number,adapter,status,receipt_sha256) VALUES($1,$2,$3,'delivered',$4)`, actionID, attemptNumber, s.mode, hex.EncodeToString(receipt[:])); err != nil {
 		_ = s.removeMailbox(userID, actionID)
 		return err
 	}

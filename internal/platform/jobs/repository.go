@@ -76,9 +76,10 @@ func (r *Repository) Claim(ctx context.Context, owner string, lease time.Duratio
 		return Job{}, fmt.Errorf("select job: %w", err)
 	}
 	job.LeaseToken = uuid.New()
-	_, err = tx.Exec(ctx, `
-		UPDATE jobs SET status='running',attempts=attempts+1,lease_owner=$2,lease_token=$3,lease_expires_at=now()+$4::interval,updated_at=now()
-		WHERE id=$1`, job.ID, owner, job.LeaseToken, intervalLiteral(lease))
+	var expiresAt time.Time
+	err = tx.QueryRow(ctx, `
+		UPDATE jobs SET status='running',attempts=attempts+1,lease_owner=$2,lease_token=$3,lease_expires_at=clock_timestamp()+$4::interval,updated_at=clock_timestamp()
+		WHERE id=$1 RETURNING lease_expires_at`, job.ID, owner, job.LeaseToken, intervalLiteral(lease)).Scan(&expiresAt)
 	if err != nil {
 		return Job{}, fmt.Errorf("claim job: %w", err)
 	}
@@ -86,8 +87,8 @@ func (r *Repository) Claim(ctx context.Context, owner string, lease time.Duratio
 	ownerHash := sha256.Sum256([]byte(owner))
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO job_attempts(job_id,attempt_number,job_kind,worker_ref_hash,lease_token,lease_expires_at)
-		VALUES($1,$2,$3,$4,$5,now()+$6::interval)`, job.ID, job.Attempts, job.Kind,
-		hex.EncodeToString(ownerHash[:]), job.LeaseToken, intervalLiteral(lease)); err != nil {
+		VALUES($1,$2,$3,$4,$5,$6)`, job.ID, job.Attempts, job.Kind,
+		hex.EncodeToString(ownerHash[:]), job.LeaseToken, expiresAt); err != nil {
 		return Job{}, fmt.Errorf("record job attempt: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -105,19 +106,23 @@ func (r *Repository) Renew(ctx context.Context, job Job, owner string, lease tim
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	result, err := tx.Exec(ctx, `
-		UPDATE jobs SET lease_expires_at=now()+$4::interval,updated_at=now()
-		WHERE id=$1 AND status='running' AND lease_owner=$2 AND lease_token=$3`,
-		job.ID, owner, job.LeaseToken, intervalLiteral(lease))
+	if err := lockLease(ctx, tx, job, owner); err != nil {
+		return err
+	}
+	var expiresAt time.Time
+	err = tx.QueryRow(ctx, `
+		UPDATE jobs SET lease_expires_at=GREATEST(lease_expires_at,clock_timestamp()+$4::interval),updated_at=clock_timestamp()
+		WHERE id=$1 AND status='running' AND lease_owner=$2 AND lease_token=$3 AND isfinite(lease_expires_at) AND lease_expires_at>clock_timestamp()
+		RETURNING lease_expires_at`, job.ID, owner, job.LeaseToken, intervalLiteral(lease)).Scan(&expiresAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrLeaseLost
+	}
 	if err != nil {
 		return fmt.Errorf("renew job lease: %w", err)
 	}
-	if result.RowsAffected() != 1 {
-		return ErrLeaseLost
-	}
-	result, err = tx.Exec(ctx, `
-		UPDATE job_attempts SET lease_expires_at=now()+$2::interval,lease_renewals=lease_renewals+1,updated_at=now()
-		WHERE lease_token=$1 AND status='running'`, job.LeaseToken, intervalLiteral(lease))
+	result, err := tx.Exec(ctx, `
+		UPDATE job_attempts SET lease_expires_at=$2,lease_renewals=lease_renewals+1,updated_at=clock_timestamp()
+		WHERE lease_token=$1 AND status='running'`, job.LeaseToken, expiresAt)
 	if err != nil {
 		return fmt.Errorf("renew job attempt: %w", err)
 	}
@@ -133,16 +138,19 @@ func (r *Repository) Complete(ctx context.Context, job Job, owner string) error 
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err := lockLease(ctx, tx, job, owner); err != nil {
+		return err
+	}
 	result, err := tx.Exec(ctx, `
-		UPDATE jobs SET status='succeeded',lease_owner=NULL,lease_token=NULL,lease_expires_at=NULL,last_error=NULL,last_error_code=NULL,updated_at=now()
-		WHERE id=$1 AND status='running' AND lease_owner=$2 AND lease_token=$3`, job.ID, owner, job.LeaseToken)
+		UPDATE jobs SET status='succeeded',lease_owner=NULL,lease_token=NULL,lease_expires_at=NULL,last_error=NULL,last_error_code=NULL,updated_at=clock_timestamp()
+		WHERE id=$1 AND status='running' AND lease_owner=$2 AND lease_token=$3 AND isfinite(lease_expires_at) AND lease_expires_at>clock_timestamp()`, job.ID, owner, job.LeaseToken)
 	if err != nil {
 		return fmt.Errorf("complete job: %w", err)
 	}
 	if result.RowsAffected() != 1 {
 		return ErrLeaseLost
 	}
-	result, err = tx.Exec(ctx, `UPDATE job_attempts SET status='succeeded',finished_at=now(),updated_at=now() WHERE lease_token=$1 AND status='running'`, job.LeaseToken)
+	result, err = tx.Exec(ctx, `UPDATE job_attempts SET status='succeeded',finished_at=clock_timestamp(),updated_at=clock_timestamp() WHERE lease_token=$1 AND status='running'`, job.LeaseToken)
 	if err != nil {
 		return fmt.Errorf("complete job attempt: %w", err)
 	}
@@ -173,10 +181,13 @@ func (r *Repository) Fail(ctx context.Context, job Job, owner string, cause erro
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err := lockLease(ctx, tx, job, owner); err != nil {
+		return err
+	}
 	result, err := tx.Exec(ctx, `
-		UPDATE jobs SET status=$4,last_error=$5,last_error_code=$5,available_at=now()+$6::interval,
-		       lease_owner=NULL,lease_token=NULL,lease_expires_at=NULL,updated_at=now()
-		WHERE id=$1 AND status='running' AND lease_owner=$2 AND lease_token=$3`,
+		UPDATE jobs SET status=$4,last_error=$5,last_error_code=$5,available_at=clock_timestamp()+$6::interval,
+		       lease_owner=NULL,lease_token=NULL,lease_expires_at=NULL,updated_at=clock_timestamp()
+		WHERE id=$1 AND status='running' AND lease_owner=$2 AND lease_token=$3 AND isfinite(lease_expires_at) AND lease_expires_at>clock_timestamp()`,
 		job.ID, owner, job.LeaseToken, status, errorCode, intervalLiteral(delay))
 	if err != nil {
 		return fmt.Errorf("fail job: %w", err)
@@ -185,7 +196,7 @@ func (r *Repository) Fail(ctx context.Context, job Job, owner string, cause erro
 		return ErrLeaseLost
 	}
 	result, err = tx.Exec(ctx, `
-		UPDATE job_attempts SET status=$2,error_code=$3,finished_at=now(),updated_at=now()
+		UPDATE job_attempts SET status=$2,error_code=$3,finished_at=clock_timestamp(),updated_at=clock_timestamp()
 		WHERE lease_token=$1 AND status='running'`, job.LeaseToken, attemptStatus, errorCode)
 	if err != nil {
 		return fmt.Errorf("fail job attempt: %w", err)
@@ -199,8 +210,11 @@ func (r *Repository) Fail(ctx context.Context, job Job, owner string, cause erro
 func (r *Repository) RecoverExpired(ctx context.Context) error {
 	_, err := r.pool.Exec(ctx, `
 		WITH expired AS (
-		  SELECT id,lease_token,attempts,max_attempts FROM jobs
-		  WHERE status='running' AND lease_expires_at < now()
+		  SELECT id,lease_token,attempts,max_attempts FROM jobs j
+		  WHERE status='running' AND lease_expires_at <= now() AND isfinite(lease_expires_at)
+		    AND lease_owner IS NOT NULL AND btrim(lease_owner)<>'' AND lease_token IS NOT NULL
+		    AND EXISTS(SELECT 1 FROM job_attempts a WHERE a.job_id=j.id AND a.lease_token=j.lease_token AND a.attempt_number=j.attempts AND a.status='running')
+		  ORDER BY lease_expires_at,id LIMIT 100
 		  FOR UPDATE SKIP LOCKED
 		), attempts AS (
 		  UPDATE job_attempts a SET status='lease_expired',error_code='worker_lease_expired',finished_at=now(),updated_at=now()
@@ -210,6 +224,17 @@ func (r *Repository) RecoverExpired(ctx context.Context) error {
 		       available_at=now(),lease_owner=NULL,lease_token=NULL,lease_expires_at=NULL,updated_at=now(),
 		       last_error='worker_lease_expired',last_error_code='worker_lease_expired'
 		FROM expired e WHERE j.id=e.id`)
+	return err
+}
+
+// Lock before checking wall time in the following UPDATE. A time predicate in
+// the locking SELECT alone can be evaluated before waiting for a row lock.
+func lockLease(ctx context.Context, tx pgx.Tx, job Job, owner string) error {
+	var id uuid.UUID
+	err := tx.QueryRow(ctx, `SELECT id FROM jobs WHERE id=$1 AND status='running' AND lease_owner=$2 AND lease_token=$3 FOR UPDATE`, job.ID, owner, job.LeaseToken).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrLeaseLost
+	}
 	return err
 }
 

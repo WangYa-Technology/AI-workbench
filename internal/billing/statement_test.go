@@ -57,7 +57,7 @@ func TestStatementFiltersStableCursorAndOwnerIsolation(t *testing.T) {
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO billing_entries(user_id,operation_id,entry_type,direction,amount_cents,currency,balance_after_cents,description,created_at)
-		VALUES($1,$2,'admin_adjustment','credit',50,'USD',5050,'Foreign statement entry',$3)`, outsiderID, uuid.New(), base.Add(10*time.Minute)); err != nil {
+		VALUES($1,$2,'product_sale','credit',50,'USD',5050,'Foreign statement entry',$3)`, outsiderID, uuid.New(), base.Add(10*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 

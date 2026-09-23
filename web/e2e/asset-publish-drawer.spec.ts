@@ -1,9 +1,10 @@
+import { fixtureCredentials } from './helpers/identity'
 import { expect, test } from '@playwright/test'
 
 const seededAssetID = '00000000-0000-4000-8000-000000000102'
 
 test('publishes from an individual asset drawer instead of a global page', async ({ page }) => {
-  const session = await page.request.post('/api/v1/auth/demo', { data: { actor: 'creator' } })
+  const session = await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('creator') })
   expect(session.ok()).toBeTruthy()
 
   await page.goto('/workspace/assets')
@@ -21,6 +22,11 @@ test('publishes from an individual asset drawer instead of a global page', async
   await expect(drawer.getByLabel('Source Asset').getByText('Creator delivery study', { exact: true })).toBeVisible()
   await expect(drawer.getByLabel('Work title', { exact: true })).toHaveValue('Creator delivery study')
   await expect(drawer.getByLabel('Asset', { exact: true })).toHaveCount(0)
+  await drawer.locator('#asset-publish-visibility').click()
+  await expect(page.getByRole('option', { name: 'Public prompt', exact: true })).toBeVisible()
+  await expect(page.getByRole('option', { name: 'Private prompt', exact: true })).toBeVisible()
+  await expect(page.getByRole('option', { name: 'Partial prompt', exact: true })).toHaveCount(0)
+  await page.getByRole('option', { name: 'Public prompt', exact: true }).click()
 
   await drawer.getByRole('button', { name: 'Close', exact: true }).click()
   await expect(drawer).toHaveCount(0)
@@ -40,7 +46,7 @@ test('publishes from an individual asset drawer instead of a global page', async
 
 test('uses a full-width asset publishing drawer on mobile', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
-  await page.request.post('/api/v1/auth/demo', { data: { actor: 'creator' } })
+  await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('creator') })
   await page.goto(`/workspace/assets?publish=${seededAssetID}`)
 
   const drawer = page.getByRole('dialog', { name: 'Publish work' })

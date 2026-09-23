@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -201,6 +202,9 @@ func requestJSON(t *testing.T, client *http.Client, method, target string, input
 		t.Fatal(err)
 	}
 	request.Header.Set("User-Agent", "HCAI HTTP Contract Test")
+	if method == http.MethodPost && (strings.Contains(target, "/community/posts") || strings.Contains(target, "/admin/finance/accounts/") && strings.HasSuffix(target, "/adjust")) {
+		request.Header.Set("Idempotency-Key", uuid.NewString())
+	}
 	if input != nil {
 		request.Header.Set("Content-Type", "application/json")
 	}

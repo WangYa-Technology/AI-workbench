@@ -1,3 +1,4 @@
+import { fixtureCredentials } from './helpers/identity'
 import { expect, test, type Locator, type Page } from '@playwright/test'
 
 async function chooseOption(page: Page, trigger: Locator, optionName: string) {
@@ -19,7 +20,7 @@ test('restores Admin user filters and updates the precise account', async ({ pag
   } })
   expect(registration.ok()).toBeTruthy()
 
-  const adminSession = await page.request.post('/api/v1/auth/demo', { data: { actor: 'admin' } })
+  const adminSession = await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('admin') })
   expect(adminSession.ok()).toBeTruthy()
   await page.setViewportSize({ width: 390, height: 844 })
   await page.goto(`/admin?tab=users&q=${runID}&role=member&status=active`)

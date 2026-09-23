@@ -1,8 +1,9 @@
+import { fixtureCredentials } from './helpers/identity'
 import { expect, test } from '@playwright/test'
 
 test('community counts ignore pagination/category but respect search and mine', async ({ page }) => {
   const token = `count-${Date.now()}`
-  await page.request.post('/api/v1/auth/demo', { data: { actor: 'creator' } })
+  await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('creator') })
   const directory = await (await page.request.get('/api/v1/task-types?scope=community')).json()
   const categories = directory.items.slice(0, 2).map((item: { code: string }) => item.code)
   expect(categories).toHaveLength(2)
@@ -19,7 +20,7 @@ test('community counts ignore pagination/category but respect search and mine', 
   const next = await (await page.request.get(`/api/v1/community/posts?q=${token}&mine=true&limit=1&cursor=${encodeURIComponent(first.nextCursor)}`)).json()
   expect(next.categoryCounts).toEqual(first.categoryCounts)
   expect(next.items[0].id).not.toBe(first.items[0].id)
-  await page.request.post('/api/v1/auth/demo', { data: { actor: 'publisher' } })
+  await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('publisher') })
   const mine = await (await page.request.get(`/api/v1/community/posts?q=${token}&mine=true`)).json()
   expect(mine.items).toEqual([])
   expect(mine.categoryCounts).toEqual({})
@@ -41,7 +42,7 @@ test('market category counts stay stable across category selection and narrow wi
 
 test('discussed order includes older posts and preserves its cursor and return context', async ({ page }) => {
   const token = `rank-${Date.now()}`
-  await page.request.post('/api/v1/auth/demo', { data: { actor: 'creator' } })
+  await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('creator') })
   const directory = await (await page.request.get('/api/v1/task-types?scope=community')).json()
   const ids: string[] = []
   for (const suffix of ['older', 'newer']) {

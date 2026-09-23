@@ -1,0 +1,2 @@
+DROP INDEX data_rights_hold_subject_history;
+DROP INDEX data_rights_hold_expiry;

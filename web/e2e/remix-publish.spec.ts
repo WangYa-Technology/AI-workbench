@@ -1,3 +1,4 @@
+import { fixtureCredentials } from './helpers/identity'
 import { expect, test } from '@playwright/test'
 
 const seededWorkID = '00000000-0000-4000-8000-000000000201'
@@ -7,10 +8,10 @@ test('remixes a discovered work, saves an asset, and publishes to Community', as
   const title = `E2E Coral Observatory ${runID}`
   const prompt = `Editorial observatory above a quiet coast, coral sunrise, local E2E run ${runID}`
 
-  await page.request.post('/api/v1/auth/demo', { data: { actor: 'creator' } })
+  await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('creator') })
   await page.goto(`/works/${seededWorkID}`)
   await expect(page.getByRole('heading', { name: 'Signal Architecture' })).toBeVisible()
-  await page.getByRole('link', { name: 'Remix', exact: true }).click()
+  await page.getByRole('link', { name: 'Create with reference', exact: true }).click()
 
   await expect(page).toHaveURL(new RegExp(`/create/image\\?sourceWorkId=${seededWorkID}`))
   const promptField = page.locator('.creation-composer textarea')
@@ -34,6 +35,7 @@ test('remixes a discovered work, saves an asset, and publishes to Community', as
   await expect(page).toHaveURL(/\/works\/[0-9a-f-]+$/)
   await expect(page.getByRole('heading', { name: title, exact: true })).toBeVisible()
   await expect(page.locator('.prompt-text')).toContainText(prompt)
+  await expect(page.locator('.work-sources').getByRole('link', { name: 'Signal Architecture' })).toHaveAttribute('href', `/works/${seededWorkID}`)
 
   await page.getByLabel('Primary navigation').getByRole('link', { name: 'Community', exact: true }).click()
   await expect(page).toHaveURL(/\/community$/)

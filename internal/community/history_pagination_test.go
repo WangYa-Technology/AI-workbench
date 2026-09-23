@@ -27,7 +27,7 @@ func TestCommentHistoryStablePaginationAndVisibility(t *testing.T) {
 		t.Fatal(err)
 	}
 	assetID, workID, postID := uuid.New(), uuid.New(), uuid.New()
-	if _, err := pool.Exec(ctx, `INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,scan_status,source_type) VALUES($1,$2,'image','Comment source','/media/comment.jpg','image/jpeg','clean','demo')`, assetID, authorID); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,scan_status,source_type) VALUES($1,$2,'image','Comment source','/media/comment.jpg','image/jpeg','clean','delivery')`, assetID, authorID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO works(id,author_id,asset_id,title,model_name,status,ai_disclosure,published_at) VALUES($1,$2,$3,'Comment work','Imported asset','published','Owner supplied source.',now())`, workID, authorID, assetID); err != nil {
@@ -102,12 +102,12 @@ func TestContentDraftHistoryStablePaginationAndOwnership(t *testing.T) {
 	for index := 0; index < 106; index++ {
 		assetID, workID, postID := uuid.New(), uuid.New(), uuid.New()
 		updatedAt := base.Add(-time.Duration(index) * time.Second)
-		batch.Queue(`INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,scan_status,source_type) VALUES($1,$2,'image',$3,'/media/draft-history.jpg','image/jpeg','clean','demo')`, assetID, ownerID, "Draft source")
+		batch.Queue(`INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,scan_status,source_type) VALUES($1,$2,'image',$3,'/media/draft-history.jpg','image/jpeg','clean','delivery')`, assetID, ownerID, "Draft source")
 		batch.Queue(`INSERT INTO works(id,author_id,asset_id,title,model_name,status,ai_disclosure,created_at,updated_at) VALUES($1,$2,$3,$4,'Imported asset','draft','Private draft evidence.',$5,$5)`, workID, ownerID, assetID, "Draft history", updatedAt)
 		batch.Queue(`INSERT INTO posts(id,author_id,work_id,body,status,created_at,updated_at) VALUES($1,$2,$3,'Private body','draft',$4,$4)`, postID, ownerID, workID, updatedAt)
 	}
 	outsiderAssetID, outsiderWorkID := uuid.New(), uuid.New()
-	batch.Queue(`INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,scan_status,source_type) VALUES($1,$2,'image','Outsider source','/media/outsider.jpg','image/jpeg','clean','demo')`, outsiderAssetID, outsiderID)
+	batch.Queue(`INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,scan_status,source_type) VALUES($1,$2,'image','Outsider source','/media/outsider.jpg','image/jpeg','clean','delivery')`, outsiderAssetID, outsiderID)
 	batch.Queue(`INSERT INTO works(id,author_id,asset_id,title,model_name,status,ai_disclosure) VALUES($1,$2,$3,'Invisible draft','Imported asset','draft','Private draft evidence.')`, outsiderWorkID, outsiderID, outsiderAssetID)
 	batch.Queue(`INSERT INTO posts(author_id,work_id,body,status) VALUES($1,$2,'Invisible','draft')`, outsiderID, outsiderWorkID)
 	results := pool.SendBatch(ctx, batch)
@@ -157,7 +157,7 @@ func TestPostFeedStablePaginationAndVisibility(t *testing.T) {
 	batch := &pgx.Batch{}
 	for index := 0; index < 106; index++ {
 		assetID, workID, postID := uuid.New(), uuid.New(), uuid.New()
-		batch.Queue(`INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,scan_status,source_type) VALUES($1,$2,'image',$3,'/media/feed.jpg','image/jpeg','clean','demo')`, assetID, authorID, "Feed source")
+		batch.Queue(`INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,scan_status,source_type) VALUES($1,$2,'image',$3,'/media/feed.jpg','image/jpeg','clean','delivery')`, assetID, authorID, "Feed source")
 		batch.Queue(`INSERT INTO works(id,author_id,asset_id,title,model_name,status,ai_disclosure,published_at) VALUES($1,$2,$3,$4,'Imported asset','published','Owner supplied source.',$5)`, workID, authorID, assetID, "Feed work", base)
 		batch.Queue(`INSERT INTO posts(id,author_id,work_id,body,status,published_at) VALUES($1,$2,$3,'Visible feed post','published',$4)`, postID, authorID, workID, base)
 	}
@@ -171,7 +171,7 @@ func TestPostFeedStablePaginationAndVisibility(t *testing.T) {
 		{assetStatus: "clean", workStatus: "published", postStatus: "hidden"},
 	} {
 		assetID, workID := uuid.New(), uuid.New()
-		batch.Queue(`INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,scan_status,source_type) VALUES($1,$2,'image','Hidden source','/media/hidden.jpg','image/jpeg',$3,'demo')`, assetID, authorID, hidden.assetStatus)
+		batch.Queue(`INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,scan_status,source_type) VALUES($1,$2,'image','Hidden source','/media/hidden.jpg','image/jpeg',$3,'delivery')`, assetID, authorID, hidden.assetStatus)
 		batch.Queue(`INSERT INTO works(id,author_id,asset_id,title,model_name,status,ai_disclosure,published_at) VALUES($1,$2,$3,'Hidden work','Imported asset',$4,'Owner supplied source.',$5)`, workID, authorID, assetID, hidden.workStatus, base.Add(time.Hour))
 		batch.Queue(`INSERT INTO posts(author_id,work_id,body,status,published_at) VALUES($1,$2,'Hidden feed post',$3,$4)`, authorID, workID, hidden.postStatus, base.Add(time.Hour))
 	}

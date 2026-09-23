@@ -53,7 +53,7 @@ export { default as UiNotificationBadge } from './UiNotificationBadge.vue'
 export { default as UiNumberField } from './UiNumberField.vue'
 export { default as UiOtpField } from './UiOtpField.vue'
 export { default as UiPagination } from './UiPagination.vue'
-export { default as PageHero } from './PageHero.vue'
+export { default as PageHeader } from './PageHeader.vue'
 export { default as UiPanel } from './UiPanel.vue'
 export { default as UiPopover } from './UiPopover.vue'
 export { default as UiPreviewCard } from './UiPreviewCard.vue'
@@ -83,3 +83,19 @@ export { default as UiToggle } from './UiToggle.vue'
 export { default as UiToggleGroup } from './UiToggleGroup.vue'
 export { default as UiToolbar } from './UiToolbar.vue'
 export { default as UiTooltip } from './UiTooltip.vue'
+
+export { default as UiLayoutSwitcher } from './UiLayoutSwitcher.vue'
+
+export { default as UiFilterSearch } from './UiFilterSearch.vue'
+
+export { default as UiSidebarItem } from './UiSidebarItem.vue'
+export { default as UiSidebarGroup } from './UiSidebarGroup.vue'
+
+export { default as UiCardContent } from './UiCardContent.vue'
+export { default as UiCardMedia } from './UiCardMedia.vue'
+export { default as UiCardActions } from './UiCardActions.vue'
+export { default as UiCardTag } from './UiCardTag.vue'
+
+export { default as UiActionBanner } from './UiActionBanner.vue'
+export { default as UiActionCard } from './UiActionCard.vue'
+export { default as UiCategorySidebar } from './UiCategorySidebar.vue'

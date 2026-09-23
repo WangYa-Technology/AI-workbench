@@ -65,12 +65,12 @@ separator="?"
 [[ "$base_database_url" == *"?"* ]] && separator="&"
 export APP_ENV=test DATABASE_URL="${base_database_url}${separator}search_path=${schema}" HTTP_ADDR="127.0.0.1:${api_port}"
 export WEB_ORIGIN="http://127.0.0.1:${api_port}" MEDIA_ROOT="$root/media" LOCAL_PROVIDER_SOURCE="$project_root/web/public/media/home-cinematic.jpg"
-export LOCAL_PROVIDER_ENABLED=true DEMO_DATA_ENABLED=true EMAIL_DELIVERY_MODE=disabled
+export LOCAL_PROVIDER_ENABLED=true EMAIL_DELIVERY_MODE=disabled
 export STRIPE_ENABLED=true STRIPE_LIVE_MODE=false STRIPE_LIVE_MODE_APPROVED=false STRIPE_SECRET_KEY="$key" STRIPE_WEBHOOK_SECRET="$secret"
 export STRIPE_BASE_URL="http://127.0.0.1:${fixture_port}/v1" STRIPE_API_VERSION="$version" STRIPE_WEBHOOK_TOLERANCE_SECONDS=300
 
 go run ./cmd/migrate >/dev/null
-go run ./cmd/seed >/dev/null
+go run ./internal/testfixtures/cmd/seed >/dev/null
 go build -o "$root/hcai-api" ./cmd/api
 go build -o "$root/hcai-worker" ./cmd/worker
 go build -o "$root/stripe-fixture" ./cmd/stripefixture
@@ -98,7 +98,7 @@ rg -q '"msg":"worker started"' "$root/worker.log"
 
 api_url="http://127.0.0.1:${api_port}/api/v1"
 buyer_jar="$root/buyer.cookies"
-curl -fsS -c "$buyer_jar" -b "$buyer_jar" -H 'Content-Type: application/json' -d '{"actor":"creator"}' "$api_url/auth/demo" >/dev/null
+curl -fsS -c "$buyer_jar" -b "$buyer_jar" -H 'Content-Type: application/json' -d '{"email":"creator@fixture.hcai.test","password":"fixture-password-2026"}' "$api_url/auth/login" >/dev/null
 
 statement=$(curl -fsS -c "$buyer_jar" -b "$buyer_jar" "$api_url/billing/statement")
 initial_balance=$(jq -er '.account.balanceCents' <<<"$statement")

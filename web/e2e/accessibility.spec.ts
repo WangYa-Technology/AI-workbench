@@ -1,3 +1,4 @@
+import { fixtureCredentials } from './helpers/identity'
 import AxeBuilder from '@axe-core/playwright'
 import { expect, test, type Page } from '@playwright/test'
 
@@ -39,7 +40,7 @@ test('critical user and operations routes pass automated WCAG 2.2 AA checks', as
     }
   }
 
-  const session = await page.request.post('/api/v1/auth/demo', { data: { actor: 'creator' } })
+  const session = await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('creator') })
   expect(session.ok()).toBeTruthy()
 
   const userRoutes = [
@@ -63,7 +64,7 @@ test('critical user and operations routes pass automated WCAG 2.2 AA checks', as
     }
   }
 
-  const adminSession = await page.request.post('/api/v1/auth/demo', { data: { actor: 'admin' } })
+  const adminSession = await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('admin') })
   expect(adminSession.ok()).toBeTruthy()
   for (const theme of ['light', 'dark'] as const) {
     await page.evaluate((value) => globalThis.localStorage.setItem('hcai-theme', value), theme)

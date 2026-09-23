@@ -35,7 +35,7 @@ func TestAdminRankingPolicyChangesPublicSearchScore(t *testing.T) {
 	title := "Ranking Signal " + productID.String()[:8]
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,scan_status,source_type,license_code)
-		VALUES($1,$2,'image',$3,'/media/ranking.jpg','image/jpeg','clean','demo','hcai-commercial-standard-v1')`,
+		VALUES($1,$2,'image',$3,'/media/ranking.jpg','image/jpeg','clean','delivery','hcai-commercial-standard-v1')`,
 		assetID, member.ID, title); err != nil {
 		t.Fatal(err)
 	}

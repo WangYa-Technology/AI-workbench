@@ -8,16 +8,20 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/hcai-chat/hcai-chat/internal/generationoutput"
 	"github.com/hcai-chat/hcai-chat/internal/identity"
 	"github.com/hcai-chat/hcai-chat/internal/notifications"
+	"github.com/hcai-chat/hcai-chat/internal/platform/config"
 	"github.com/hcai-chat/hcai-chat/internal/platform/jobs"
 	"github.com/hcai-chat/hcai-chat/internal/platform/media"
+	"github.com/hcai-chat/hcai-chat/internal/uploadwrite"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -26,7 +30,6 @@ const (
 	ExportJobKind       = "data_rights.export"
 	DeletionJobKind     = "data_rights.delete"
 	ExportExpiryJobKind = "data_rights.export_expire"
-	maximumExportBytes  = 5 << 20
 	deletionGrace       = 30 * 24 * time.Hour
 	exportLifetime      = 7 * 24 * time.Hour
 	recentSessionAge    = 15 * time.Minute
@@ -41,8 +44,6 @@ var (
 	ErrNotCancelable = errors.New("data rights request cannot be cancelled")
 	ErrNotReady      = errors.New("data export is not ready")
 	ErrExpired       = errors.New("data export expired")
-	ErrTooLarge      = errors.New("data export exceeds maximum size")
-	ErrDemoAccount   = errors.New("demo accounts cannot create data rights requests")
 	ErrHoldCutoff    = errors.New("legal hold cutoff passed")
 	ErrInvalidList   = errors.New("invalid data rights list filter")
 	ErrInvalidHolds  = errors.New("invalid data rights hold filter")
@@ -131,17 +132,27 @@ type holdCursor struct {
 }
 
 type Service struct {
-	pool      *pgxpool.Pool
-	mediaRoot string
-	stores    *media.Catalog
+	exportLimits           config.DataExportConfig
+	pool                   *pgxpool.Pool
+	mediaRoot              string
+	stores                 *media.Catalog
+	holdExpiry             holdExpiryScan
+	holdCleanup            holdExpiryScan
+	productCleanup         holdExpiryScan
+	deletionReconciliation holdExpiryScan
+	originalMediaCleanup   holdExpiryScan
 }
 
 func NewService(pool *pgxpool.Pool, mediaRoot string) *Service {
 	return NewServiceWithMedia(pool, mediaRoot, media.NewCatalog(media.NewLocalStore(mediaRoot)))
 }
 
-func NewServiceWithMedia(pool *pgxpool.Pool, mediaRoot string, stores *media.Catalog) *Service {
-	return &Service{pool: pool, mediaRoot: mediaRoot, stores: stores}
+func NewServiceWithMedia(pool *pgxpool.Pool, mediaRoot string, stores *media.Catalog, limits ...config.DataExportConfig) *Service {
+	cfg := config.DataExportConfig{}
+	if len(limits) > 0 {
+		cfg = limits[0]
+	}
+	return &Service{pool: pool, mediaRoot: mediaRoot, stores: stores, exportLimits: cfg.WithDefaults()}
 }
 
 func (s *Service) Create(ctx context.Context, userID uuid.UUID, sessionToken string, input CreateInput, requestID string) (Request, error) {
@@ -150,14 +161,16 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, sessionToken str
 	if userID == uuid.Nil || !oneOf(input.RequestType, "data_export", "account_deletion") || input.IdentityConfirmation == "" {
 		return Request{}, ErrInvalid
 	}
-	if isDemoUser(userID) {
-		return Request{}, ErrDemoAccount
-	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return Request{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if input.RequestType == "account_deletion" {
+		if err := lockDeletionSubject(ctx, tx, userID); err != nil {
+			return Request{}, err
+		}
+	}
 	var handle string
 	if err := tx.QueryRow(ctx, `SELECT handle FROM users WHERE id=$1 AND status='active' FOR UPDATE`, userID).Scan(&handle); errors.Is(err, pgx.ErrNoRows) {
 		return Request{}, ErrNotFound
@@ -202,6 +215,11 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, sessionToken str
 	}
 	if err != nil {
 		return Request{}, err
+	}
+	if item.RequestType == "account_deletion" && item.Status == "blocked" {
+		if _, err := tx.Exec(ctx, `UPDATE data_rights_legal_holds SET request_id=$2 WHERE user_id=$1 AND status='active' AND expires_at>now()`, userID, item.ID); err != nil {
+			return Request{}, err
+		}
 	}
 	if _, err := tx.Exec(ctx, `INSERT INTO jobs(kind,payload,max_attempts,available_at) VALUES($1,jsonb_build_object('requestId',$2::text),5,$3)`, jobKind, item.ID, executeAfter); err != nil {
 		return Request{}, err
@@ -296,6 +314,9 @@ func (s *Service) CreateHold(ctx context.Context, actorID uuid.UUID, input HoldI
 		return Hold{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err := lockDeletionSubject(ctx, tx, input.UserID); err != nil {
+		return Hold{}, err
+	}
 	var handle string
 	if err := tx.QueryRow(ctx, `SELECT handle FROM users WHERE id=$1 FOR UPDATE`, input.UserID).Scan(&handle); errors.Is(err, pgx.ErrNoRows) {
 		return Hold{}, ErrNotFound
@@ -310,6 +331,18 @@ func (s *Service) CreateHold(ctx context.Context, actorID uuid.UUID, input HoldI
 	}
 	if linkedStatus != nil && *linkedStatus == "processing" {
 		return Hold{}, ErrHoldCutoff
+	}
+	// Natural expiry must free the active-hold uniqueness slot even if the
+	// maintenance worker has not run yet. A replacement hold in this same
+	// transaction keeps any blocked request blocked; it does not resume deletion.
+	var expiredHold uuid.UUID
+	err = tx.QueryRow(ctx, `SELECT id FROM data_rights_legal_holds WHERE user_id=$1 AND status='active' AND expires_at<=now() FOR UPDATE`, input.UserID).Scan(&expiredHold)
+	if err == nil {
+		if err = expireHoldRecord(ctx, tx, expiredHold); err != nil {
+			return Hold{}, err
+		}
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return Hold{}, err
 	}
 	now := time.Now().UTC()
 	referenceHash := sha256.Sum256([]byte(input.AuthorityReference))
@@ -347,6 +380,15 @@ func (s *Service) ReleaseHold(ctx context.Context, actorID, holdID uuid.UUID) (H
 		return Hold{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	var userID uuid.UUID
+	if err := tx.QueryRow(ctx, `SELECT user_id FROM data_rights_legal_holds WHERE id=$1`, holdID).Scan(&userID); errors.Is(err, pgx.ErrNoRows) {
+		return Hold{}, ErrNotFound
+	} else if err != nil {
+		return Hold{}, err
+	}
+	if err := lockDeletionSubject(ctx, tx, userID); err != nil {
+		return Hold{}, err
+	}
 	var item Hold
 	if err := tx.QueryRow(ctx, `SELECT h.id,h.user_id,h.request_id,u.handle,h.authority_reference_hash,h.status,h.review_at,h.expires_at,h.created_at FROM data_rights_legal_holds h JOIN users u ON u.id=h.user_id WHERE h.id=$1 FOR UPDATE`, holdID).Scan(&item.ID, &item.UserID, &item.RequestID, &item.OwnerHandle, &item.AuthorityReferenceHash, &item.Status, &item.ReviewAt, &item.ExpiresAt, &item.CreatedAt); errors.Is(err, pgx.ErrNoRows) {
 		return Hold{}, ErrNotFound
@@ -360,27 +402,12 @@ func (s *Service) ReleaseHold(ctx context.Context, actorID, holdID uuid.UUID) (H
 		return Hold{}, err
 	}
 	item.Status = "released"
-	if item.RequestID != nil {
-		var executeAfter time.Time
-		var status string
-		if err := tx.QueryRow(ctx, `SELECT status,execute_after FROM data_rights_requests WHERE id=$1 FOR UPDATE`, *item.RequestID).Scan(&status, &executeAfter); err != nil {
-			return Hold{}, err
-		}
-		if status == "blocked" {
-			if _, err := tx.Exec(ctx, `UPDATE data_rights_requests SET status='scheduled',version=version+1,updated_at=now() WHERE id=$1`, *item.RequestID); err != nil {
-				return Hold{}, err
-			}
-			availableAt := executeAfter
-			if availableAt.Before(time.Now()) {
-				availableAt = time.Now()
-			}
-			if _, err := tx.Exec(ctx, `INSERT INTO jobs(kind,payload,max_attempts,available_at) VALUES($1,jsonb_build_object('requestId',$2::text),5,$3)`, DeletionJobKind, *item.RequestID, availableAt); err != nil {
-				return Hold{}, err
-			}
-			if err := appendEvent(ctx, tx, *item.RequestID, &actorID, "legal_hold_released", "blocked", "scheduled", "Administrative legal hold released", map[string]any{"holdId": holdID}); err != nil {
-				return Hold{}, err
-			}
-		}
+	requestID, err := resumeHeldDeletion(ctx, tx, item.UserID, holdID, &actorID, "legal_hold_released", "Administrative legal hold released")
+	if err != nil {
+		return Hold{}, err
+	}
+	if requestID != nil {
+		item.RequestID = requestID
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Hold{}, err
@@ -482,6 +509,9 @@ func (s *Service) Cancel(ctx context.Context, userID, requestID uuid.UUID, reque
 		return Request{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err := lockDeletionRequest(ctx, tx, requestID); err != nil {
+		return Request{}, err
+	}
 	var status string
 	var cancelUntil *time.Time
 	if err := tx.QueryRow(ctx, `SELECT status,cancel_until FROM data_rights_requests WHERE id=$1 AND user_id=$2 FOR UPDATE`, requestID, userID).Scan(&status, &cancelUntil); errors.Is(err, pgx.ErrNoRows) {
@@ -508,33 +538,44 @@ func (s *Service) Cancel(ctx context.Context, userID, requestID uuid.UUID, reque
 	return s.Get(ctx, userID, requestID)
 }
 
+// Download materializes a package for in-process callers. HTTP uses OpenExport
+// so large exports are never buffered as a whole in application memory.
 func (s *Service) Download(ctx context.Context, userID, requestID uuid.UUID) ([]byte, string, error) {
-	var body []byte
-	var checksum, status string
-	var expiresAt time.Time
-	var purgedAt *time.Time
-	err := s.pool.QueryRow(ctx, `SELECT a.body,a.checksum_sha256,a.expires_at,a.purged_at,r.status FROM data_rights_requests r JOIN data_rights_export_artifacts a ON a.request_id=r.id WHERE r.id=$1 AND r.user_id=$2 AND r.request_type='data_export'`, requestID, userID).Scan(&body, &checksum, &expiresAt, &purgedAt, &status)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, "", ErrNotReady
-	}
+	file, checksum, err := s.OpenExport(ctx, userID, requestID)
 	if err != nil {
 		return nil, "", err
 	}
-	if purgedAt != nil || time.Now().After(expiresAt) || len(body) == 0 {
-		return nil, "", ErrExpired
-	}
-	if status != "ready" {
-		return nil, "", ErrNotReady
-	}
-	return body, checksum, nil
+	defer file.Close()
+	body, err := io.ReadAll(file)
+	return body, checksum, err
 }
 
 func (s *Service) HandleExportJob(ctx context.Context, job jobs.Job) error {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	defer cancel()
 	requestID, err := payloadRequestID(job.Payload)
 	if err != nil {
 		return err
 	}
-	tx, err := s.pool.Begin(ctx)
+	// A replay whose request is already ready/cancelled/completed needs no
+	// temporary capacity. Otherwise an unrelated storage outage would turn a
+	// successful or cancelled export into a misleading failed job. The locked
+	// transaction below still rechecks status before generating anything.
+	var pending bool
+	if err := s.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM data_rights_requests WHERE id=$1 AND request_type='data_export' AND status='queued')`, requestID).Scan(&pending); err != nil {
+		return err
+	}
+	if !pending {
+		return nil
+	}
+	file, err := newExportFile(ctx, s.exportLimits)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	// Orders, rights, refunds and their evidence must describe one committed
+	// point in time, even if a payment worker advances them during this export.
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
 	if err != nil {
 		return err
 	}
@@ -552,18 +593,18 @@ func (s *Service) HandleExportJob(ctx context.Context, job jobs.Job) error {
 	if _, err := tx.Exec(ctx, `UPDATE data_rights_requests SET status='processing',version=version+1,updated_at=now() WHERE id=$1`, requestID); err != nil {
 		return err
 	}
-	generatedAt := time.Now().UTC()
-	data, err := s.exportSnapshot(ctx, tx, requestID, userID, subject, generatedAt)
-	if err != nil {
+	// Deletion or suspension cannot publish a newly readable PII package.
+	var active bool
+	if err := tx.QueryRow(ctx, `SELECT status='active' FROM users WHERE id=$1 FOR SHARE`, userID).Scan(&active); err != nil {
 		return err
 	}
-	if len(data) > maximumExportBytes {
-		return ErrTooLarge
+	if !active {
+		return ErrNotReady
 	}
-	sum := sha256.Sum256(data)
-	checksum := hex.EncodeToString(sum[:])
+	generatedAt := time.Now().UTC()
 	expiresAt := generatedAt.Add(exportLifetime)
-	if _, err := tx.Exec(ctx, `INSERT INTO data_rights_export_artifacts(request_id,body,checksum_sha256,size_bytes,expires_at) VALUES($1,$2,$3,$4,$5)`, requestID, data, checksum, len(data), expiresAt); err != nil {
+	checksum, size, err := s.storeExport(ctx, tx, file, requestID, userID, subject, generatedAt, expiresAt)
+	if err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `UPDATE data_rights_requests SET status='ready',version=version+1,updated_at=now() WHERE id=$1`, requestID); err != nil {
@@ -572,7 +613,7 @@ func (s *Service) HandleExportJob(ctx context.Context, job jobs.Job) error {
 	if _, err := tx.Exec(ctx, `INSERT INTO jobs(kind,payload,max_attempts,available_at) VALUES($1,jsonb_build_object('requestId',$2::text),5,$3)`, ExportExpiryJobKind, requestID, expiresAt); err != nil {
 		return err
 	}
-	if err := appendEvent(ctx, tx, requestID, nil, "export_ready", "processing", "ready", "Bounded private export package generated", map[string]any{"checksumSha256": checksum, "sizeBytes": len(data), "expiresAt": expiresAt}); err != nil {
+	if err := appendEvent(ctx, tx, requestID, nil, "export_ready", "processing", "ready", "Bounded private export package generated", map[string]any{"checksumSha256": checksum, "sizeBytes": size, "expiresAt": expiresAt}); err != nil {
 		return err
 	}
 	if err := notifications.CreateTx(ctx, tx, notifications.CreateInput{UserID: userID, Kind: "account.data_rights", Title: "Your data export is ready", Body: "The private export is available for seven days in Account settings.", TargetPath: "/settings", ResourceType: "data_rights_request", ResourceID: &requestID, SourceKey: "data-export-ready:" + requestID.String()}); err != nil {
@@ -601,6 +642,9 @@ func (s *Service) HandleExportExpiryJob(ctx context.Context, job jobs.Job) error
 	if result.RowsAffected() == 0 {
 		return tx.Commit(ctx)
 	}
+	if _, err := tx.Exec(ctx, `UPDATE data_rights_export_parts SET body=NULL,purged_at=now() WHERE request_id=$1 AND purged_at IS NULL`, requestID); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(ctx, `UPDATE data_rights_requests SET status='completed',completed_at=now(),version=version+1,updated_at=now() WHERE id=$1 AND status='ready'`, requestID); err != nil {
 		return err
 	}
@@ -620,6 +664,9 @@ func (s *Service) HandleDeletionJob(ctx context.Context, job jobs.Job) error {
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err := lockDeletionRequest(ctx, tx, requestID); err != nil {
+		return err
+	}
 	var userID uuid.UUID
 	var status, subject string
 	var executeAfter time.Time
@@ -627,6 +674,15 @@ func (s *Service) HandleDeletionJob(ctx context.Context, job jobs.Job) error {
 		return nil
 	} else if err != nil {
 		return err
+	}
+	if allowed, err := reconciledDeletionMayExecute(ctx, tx, requestID); err != nil || !allowed {
+		return err
+	}
+	if status == "processing" {
+		if err := tx.Commit(ctx); err != nil {
+			return err
+		}
+		return s.finishDeletion(ctx, requestID)
 	}
 	if !oneOf(status, "scheduled", "blocked") || time.Now().Before(executeAfter) {
 		return tx.Commit(ctx)
@@ -651,7 +707,10 @@ func (s *Service) HandleDeletionJob(ctx context.Context, job jobs.Job) error {
 	if _, err := tx.Exec(ctx, `UPDATE data_rights_requests SET status='processing',version=version+1,updated_at=now() WHERE id=$1`, requestID); err != nil {
 		return err
 	}
-	if err := s.removeOwnedMedia(ctx, tx, userID); err != nil {
+	if err := prepareMediaDeletion(ctx, tx, userID); err != nil {
+		return err
+	}
+	if err := cancelAccountGenerations(ctx, tx, userID); err != nil {
 		return err
 	}
 	deletedLabel := strings.ReplaceAll(userID.String(), "-", "")[:16]
@@ -671,15 +730,18 @@ func (s *Service) HandleDeletionJob(ctx context.Context, job jobs.Job) error {
 		`DELETE FROM notification_preferences WHERE user_id=$1`,
 		`DELETE FROM notifications WHERE user_id=$1`,
 		`UPDATE works SET status='removed',prompt=NULL,prompt_visibility='private',summary='',updated_at=now() WHERE author_id=$1`,
-		`UPDATE posts SET status='removed',body='[Deleted by account owner]',updated_at=now() WHERE author_id=$1`,
+		`DELETE FROM community_commands WHERE actor_id=$1`,
+		`DELETE FROM community_feed_snapshots WHERE viewer_id=$1`,
+		`UPDATE posts SET status='removed',owner_removed=true,body='[Deleted by account owner]',updated_at=now() WHERE author_id=$1`,
 		`UPDATE comments SET status='removed',body='[Deleted by account owner]' WHERE author_id=$1`,
-		`UPDATE products SET status='removed',description='[Deleted by account owner]',updated_at=now() WHERE seller_id=$1`,
-		`UPDATE generations SET prompt='[Deleted by account owner]',error_message=NULL,updated_at=now() WHERE owner_id=$1`,
-		`UPDATE assets SET scan_status='rejected',uploaded_filename=NULL,version_note=NULL,scan_reason='Account deletion completed.',scanned_at=now() WHERE owner_id=$1`,
+		`UPDATE generations SET prompt='[Deleted by account owner]',output_text=NULL,parameters='{}'::jsonb,cancel_reason=NULL,error_message=NULL,updated_at=now() WHERE owner_id=$1`,
 	} {
 		if _, err := tx.Exec(ctx, statement, userID); err != nil {
 			return err
 		}
+	}
+	if err := preserveContractedAssetState(ctx, tx, userID); err != nil {
+		return err
 	}
 	if err := redactSupportData(ctx, tx, userID); err != nil {
 		return err
@@ -693,16 +755,63 @@ func (s *Service) HandleDeletionJob(ctx context.Context, job jobs.Job) error {
 	if err := redactIdentityEmailActions(ctx, tx, userID); err != nil {
 		return err
 	}
-	if err := os.RemoveAll(filepath.Join(s.mediaRoot, "mailbox", userID.String())); err != nil {
-		return fmt.Errorf("remove identity email mailbox: %w", err)
-	}
 	if _, err := tx.Exec(ctx, `UPDATE users SET email=$2,handle=$3,display_name='Deleted account',password_hash=NULL,role='member',status='deleted',locale='en-US',timezone='UTC',updated_at=now() WHERE id=$1`, userID, "deleted+"+deletedLabel+"@hcai.invalid", "deleted_"+deletedLabel); err != nil {
 		return err
+	}
+	if err := appendEvent(ctx, tx, requestID, nil, "deletion_prepared", status, "processing", "Account data redacted; physical cleanup pending", nil); err != nil {
+		return err
+	}
+	// Persist loss of access before irreversible storage operations. The durable
+	// deletion job resumes processing requests after a failure or worker restart.
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	return s.finishDeletion(ctx, requestID)
+}
+
+func (s *Service) finishDeletion(ctx context.Context, requestID uuid.UUID) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := lockDeletionRequest(ctx, tx, requestID); err != nil {
+		return err
+	}
+	var userID uuid.UUID
+	var status, subject string
+	if err := tx.QueryRow(ctx, `SELECT user_id,status,subject_ref FROM data_rights_requests
+		WHERE id=$1 AND request_type='account_deletion' FOR UPDATE`, requestID).Scan(&userID, &status, &subject); err != nil {
+		return err
+	}
+	if status != "processing" {
+		return tx.Commit(ctx)
+	}
+	if allowed, err := reconciledDeletionMayExecute(ctx, tx, requestID); err != nil || !allowed {
+		return err
+	}
+	if err := lockAccountCleanupPayments(ctx, tx, userID); err != nil {
+		return err
+	}
+	if err := lockAccountCleanupSubjects(ctx, tx, userID); err != nil {
+		return err
+	}
+	if err := uploadwrite.CleanupOwnerTx(ctx, tx, s.stores, userID); err != nil {
+		return err
+	}
+	if err := generationoutput.CleanupOwnerTx(ctx, tx, s.stores, userID); err != nil {
+		return err
+	}
+	if err := s.cleanupDeletedAccountMedia(ctx, tx, userID, nil, &requestID); err != nil {
+		return err
+	}
+	if err := os.RemoveAll(filepath.Join(s.mediaRoot, "mailbox", userID.String())); err != nil {
+		return fmt.Errorf("remove identity email mailbox: %w", err)
 	}
 	domains := []map[string]string{
 		{"domain": "identity", "disposition": "anonymized"}, {"domain": "sessions", "disposition": "erased"},
 		{"domain": "profile", "disposition": "anonymized"}, {"domain": "community", "disposition": "anonymized"},
-		{"domain": "tasks", "disposition": "retained_minimal"}, {"domain": "media", "disposition": "erased"},
+		{"domain": "tasks", "disposition": "retained_minimal"}, {"domain": "media", "disposition": "erased_except_required_task_and_product_contracts"},
 		{"domain": "creative", "disposition": "anonymized"}, {"domain": "asset_versions", "disposition": "redacted_minimal"},
 		{"domain": "notifications", "disposition": "erased"},
 		{"domain": "developer_webhooks", "disposition": "redacted_minimal"},
@@ -711,7 +820,8 @@ func (s *Service) HandleDeletionJob(ctx context.Context, job jobs.Job) error {
 		{"domain": "identity_email_tokens", "disposition": "erased"},
 		{"domain": "billing", "disposition": "retained_minimal"}, {"domain": "audit", "disposition": "retained_minimal"},
 		{"domain": "safety", "disposition": "retained_minimal"}, {"domain": "support", "disposition": "redacted_minimal"},
-		{"domain": "external_providers", "disposition": "not_configured_local_only"},
+		{"domain": "marketplace_transactions", "disposition": "retained_contract_payment_and_recovery_evidence"},
+		{"domain": "external_providers", "disposition": "not_erased_by_local_deletion"},
 	}
 	receiptBody, _ := json.Marshal(map[string]any{"schemaVersion": 1, "requestId": requestID, "subjectRef": subject, "domains": domains, "productionBackupExpiry": "externally_blocked"})
 	sum := sha256.Sum256(receiptBody)
@@ -729,100 +839,6 @@ func (s *Service) HandleDeletionJob(ctx context.Context, job jobs.Job) error {
 		return err
 	}
 	return tx.Commit(ctx)
-}
-
-func (s *Service) exportSnapshot(ctx context.Context, tx pgx.Tx, requestID, userID uuid.UUID, subject string, generatedAt time.Time) ([]byte, error) {
-	queries := map[string]string{
-		"account":  `SELECT jsonb_build_object('id',id,'email',email,'handle',handle,'displayName',display_name,'role',role,'status',status,'locale',locale,'timezone',timezone,'createdAt',created_at,'updatedAt',updated_at) FROM users WHERE id=$1`,
-		"sessions": `SELECT COALESCE(jsonb_agg(jsonb_build_object('id',id,'clientLabel',client_label,'createdAt',created_at,'lastSeenAt',last_seen_at,'expiresAt',expires_at,'revokedAt',revoked_at) ORDER BY created_at),'[]') FROM sessions WHERE user_id=$1`,
-		"assets":   `SELECT COALESCE(jsonb_agg(to_jsonb(a)-'media_url' ORDER BY created_at),'[]') FROM assets a WHERE owner_id=$1`,
-		"assetVersionEvents": `SELECT COALESCE(jsonb_agg(jsonb_build_object('id',e.id,'familyId',e.family_id,'assetId',e.asset_id,'previousAssetId',e.previous_asset_id,'eventType',e.event_type,'reason',e.reason,'createdAt',e.created_at) ORDER BY e.created_at,e.id),'[]'::jsonb)
-			FROM asset_version_events e WHERE e.actor_id=$1`,
-		"works":             `SELECT COALESCE(jsonb_agg(to_jsonb(w) ORDER BY created_at),'[]') FROM works w WHERE author_id=$1`,
-		"generations":       `SELECT COALESCE(jsonb_agg(to_jsonb(g) ORDER BY created_at),'[]') FROM generations g WHERE owner_id=$1`,
-		"communityPosts":    `SELECT COALESCE(jsonb_agg(to_jsonb(p) ORDER BY created_at),'[]') FROM posts p WHERE author_id=$1`,
-		"communityComments": `SELECT COALESCE(jsonb_agg(to_jsonb(c) ORDER BY created_at),'[]') FROM comments c WHERE author_id=$1`,
-		"savedWorks": `SELECT COALESCE(jsonb_agg(jsonb_build_object(
-			'postId',pr.post_id,'workId',p.work_id,'savedAt',pr.created_at
-		) ORDER BY pr.created_at,pr.post_id),'[]'::jsonb)
-			FROM post_reactions pr JOIN posts p ON p.id=pr.post_id
-			WHERE pr.user_id=$1 AND pr.kind='bookmark'`,
-		"communityFollows": `SELECT COALESCE(jsonb_agg(jsonb_build_object(
-			'followingId',f.following_id,'createdAt',f.created_at
-		) ORDER BY f.created_at,f.following_id),'[]'::jsonb)
-			FROM user_follows f WHERE f.follower_id=$1`,
-		"orders":     `SELECT COALESCE(jsonb_agg(to_jsonb(o) ORDER BY created_at),'[]') FROM orders o WHERE buyer_id=$1`,
-		"tasks":      `SELECT COALESCE(jsonb_agg(to_jsonb(d) ORDER BY created_at),'[]') FROM demands d WHERE client_id=$1 OR assignee_id=$1`,
-		"proposals":  `SELECT COALESCE(jsonb_agg(to_jsonb(p) ORDER BY created_at),'[]') FROM proposals p WHERE creator_id=$1`,
-		"deliveries": `SELECT COALESCE(jsonb_agg(to_jsonb(d) ORDER BY created_at),'[]') FROM deliveries d WHERE creator_id=$1`,
-		"billing":    `SELECT COALESCE(jsonb_agg(to_jsonb(l) ORDER BY created_at),'[]') FROM ledger_entries l WHERE account_id=$1`,
-		"notifications": `SELECT COALESCE(jsonb_agg(jsonb_build_object(
-			'id',n.id,'kind',n.kind,'title',n.title,'body',n.body,'targetPath',n.target_path,
-			'resourceType',n.resource_type,'resourceId',n.resource_id,'readAt',n.read_at,
-			'deliveryStatus',n.delivery_status,'deliveryErrorCode',n.delivery_error_code,
-			'deliveredAt',n.delivered_at,'suppressedAt',n.suppressed_at,'createdAt',n.created_at
-		) ORDER BY n.created_at,n.id),'[]'::jsonb) FROM notifications n WHERE n.user_id=$1`,
-		"developerWebhookEndpoints": `SELECT COALESCE(jsonb_agg(jsonb_build_object(
-			'id',e.id,'name',e.name,'url',e.url,'eventTypes',e.event_types,'status',e.status,
-			'currentSecretVersion',e.current_secret_version,'version',e.version,
-			'createdAt',e.created_at,'updatedAt',e.updated_at,'revokedAt',e.revoked_at
-		) ORDER BY e.created_at,e.id),'[]'::jsonb) FROM developer_webhook_endpoints e WHERE e.owner_id=$1`,
-		"developerWebhookEvents": `SELECT COALESCE(jsonb_agg(jsonb_build_object(
-			'id',e.id,'eventType',e.event_type,'resourceType',e.resource_type,'resourceId',e.resource_id,
-			'payload',e.payload,'createdAt',e.created_at
-		) ORDER BY e.created_at,e.id),'[]'::jsonb) FROM developer_webhook_events e WHERE e.owner_id=$1`,
-		"developerWebhookDeliveries": `SELECT COALESCE(jsonb_agg(jsonb_build_object(
-			'id',d.id,'endpointId',d.endpoint_id,'eventId',d.event_id,'status',d.status,'version',d.version,
-			'attemptCount',d.attempt_count,'nextAttemptAt',d.next_attempt_at,'lastStatusCode',d.last_status_code,
-			'lastErrorCode',d.last_error_code,'originalDeliveryId',d.original_delivery_id,
-			'createdAt',d.created_at,'updatedAt',d.updated_at,'succeededAt',d.succeeded_at,'deadLetteredAt',d.dead_lettered_at,
-			'attempts',COALESCE((SELECT jsonb_agg(jsonb_build_object(
-				'attemptNumber',a.attempt_number,'statusCode',a.status_code,'errorCode',a.error_code,
-				'responseSha256',a.response_sha256,'durationMs',a.duration_ms,'attemptedAt',a.attempted_at
-			) ORDER BY a.attempt_number) FROM developer_webhook_delivery_attempts a WHERE a.delivery_id=d.id),'[]'::jsonb)
-		) ORDER BY d.created_at,d.id),'[]'::jsonb)
-		FROM developer_webhook_deliveries d
-		JOIN developer_webhook_endpoints e ON e.id=d.endpoint_id WHERE e.owner_id=$1`,
-		"identityEmailActions": `SELECT COALESCE(jsonb_agg(jsonb_build_object(
-			'id',a.id,'kind',a.kind,'status',a.status,'locale',a.locale,'version',a.version,
-			'attemptCount',a.attempt_count,'originalActionId',a.original_action_id,'expiresAt',a.expires_at,
-			'createdAt',a.created_at,'updatedAt',a.updated_at,'deliveredAt',a.delivered_at,
-			'consumedAt',a.consumed_at,'cancelledAt',a.cancelled_at,'deadLetteredAt',a.dead_lettered_at,
-			'attempts',COALESCE((SELECT jsonb_agg(jsonb_build_object(
-				'attemptNumber',d.attempt_number,'adapter',d.adapter,'status',d.status,'errorCode',d.error_code,
-				'receiptSha256',d.receipt_sha256,'attemptedAt',d.attempted_at
-			) ORDER BY d.attempt_number) FROM identity_email_delivery_attempts d WHERE d.action_id=a.id),'[]'::jsonb)
-		) ORDER BY a.created_at,a.id),'[]'::jsonb) FROM identity_email_actions a WHERE a.user_id=$1`,
-		"supportCases": `SELECT COALESCE(jsonb_agg(jsonb_build_object(
-			'id',c.id,'category',c.category,'subject',c.subject,'details',c.details,
-			'relatedResourceType',c.related_resource_type,'relatedResourceId',c.related_resource_id,
-			'locale',c.locale,'claimantRelationship',c.claimant_relationship,'rightsStatement',c.rights_statement,
-			'status',c.status,'version',c.version,'resolutionCode',c.resolution_code,'resolutionReason',c.resolution_reason,
-			'createdAt',c.created_at,'updatedAt',c.updated_at,'resolvedAt',c.resolved_at,
-			'messages',COALESCE((SELECT jsonb_agg(jsonb_build_object(
-				'id',m.id,'authorRole',m.author_role,'body',m.body,'createdAt',m.created_at
-			) ORDER BY m.created_at,m.id) FROM support_messages m WHERE m.case_id=c.id),'[]'::jsonb),
-			'events',COALESCE((SELECT jsonb_agg(jsonb_build_object(
-				'id',e.id,'kind',e.kind,'fromStatus',e.from_status,'toStatus',e.to_status,
-				'reason',e.reason,'metadata',e.metadata,'createdAt',e.created_at
-			) ORDER BY e.created_at,e.id) FROM support_events e WHERE e.case_id=c.id),'[]'::jsonb)
-		) ORDER BY c.created_at,c.id),'[]'::jsonb) FROM support_cases c WHERE c.requester_id=$1`,
-		"riskSignals": `SELECT COALESCE(jsonb_agg(jsonb_build_object(
-			'id',s.id,'resourceType',s.resource_type,'resourceId',s.resource_id,'signalType',s.signal_type,
-			'severity',s.severity,'score',s.score,'status',s.status,'summary',s.summary,'evidence',s.evidence,
-			'detectedAt',s.detected_at,'updatedAt',s.updated_at,'resolvedAt',s.resolved_at
-		) ORDER BY s.detected_at,s.id),'[]'::jsonb) FROM risk_signals s WHERE s.subject_user_id=$1`,
-		"audit": `SELECT COALESCE(jsonb_agg(jsonb_build_object('id',id,'action',action,'resourceType',resource_type,'resourceId',resource_id,'reason',reason,'requestId',request_id,'createdAt',created_at) ORDER BY created_at),'[]') FROM audit_events WHERE actor_id=$1`,
-	}
-	data := make(map[string]json.RawMessage, len(queries))
-	for key, query := range queries {
-		var value []byte
-		if err := tx.QueryRow(ctx, query, userID).Scan(&value); err != nil {
-			return nil, fmt.Errorf("export %s: %w", key, err)
-		}
-		data[key] = value
-	}
-	return json.Marshal(map[string]any{"schemaVersion": 1, "requestId": requestID, "subjectRef": subject, "generatedAt": generatedAt, "data": data})
 }
 
 func redactSupportData(ctx context.Context, tx pgx.Tx, userID uuid.UUID) error {
@@ -924,33 +940,12 @@ func redactIdentityEmailActions(ctx context.Context, tx pgx.Tx, userID uuid.UUID
 	return nil
 }
 
-func (s *Service) removeOwnedMedia(ctx context.Context, tx pgx.Tx, userID uuid.UUID) error {
-	rows, err := tx.Query(ctx, `SELECT storage_backend,storage_key FROM assets WHERE owner_id=$1 AND source_type IN ('generation','upload')`, userID)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var backend, key string
-		if err := rows.Scan(&backend, &key); err != nil {
-			return err
-		}
-		store, err := s.stores.Get(backend)
-		if err != nil {
-			return fmt.Errorf("resolve owned media storage: %w", err)
-		}
-		if err := store.Delete(ctx, key); err != nil {
-			return fmt.Errorf("remove owned media: %w", err)
-		}
-	}
-	return rows.Err()
-}
-
 const requestSelect = `
-	SELECT r.id,r.user_id,r.request_type,r.status,r.subject_ref,r.execute_after,r.cancel_until,r.completed_at,r.failure_code,r.version,r.created_at,r.updated_at,
+	SELECT r.id,r.user_id,r.request_type,CASE WHEN r.status='queued' AND execution.job_status='failed' THEN 'failed' ELSE r.status END,r.subject_ref,r.execute_after,r.cancel_until,r.completed_at,CASE WHEN r.status='queued' AND execution.job_status='failed' THEN CASE WHEN execution.last_error_code IN ('data_export_too_large','data_export_record_too_large','data_export_storage_unavailable','data_export_busy') THEN execution.last_error_code ELSE 'export_job_failed' END ELSE r.failure_code END,r.version,r.created_at,GREATEST(r.updated_at,execution.updated_at),
 	       u.handle,u.email,a.checksum_sha256,a.size_bytes,a.expires_at,a.purged_at,
 	       dr.id,dr.checksum_sha256,dr.completed_at,dr.receipt->'domains'
 	FROM data_rights_requests r JOIN users u ON u.id=r.user_id
+	LEFT JOIN data_export_execution execution ON execution.request_id=r.id
 	LEFT JOIN data_rights_export_artifacts a ON a.request_id=r.id
 	LEFT JOIN data_rights_deletion_receipts dr ON dr.request_id=r.id`
 
@@ -1007,10 +1002,6 @@ func safeRequestID(value string) string {
 		return "data-rights"
 	}
 	return value
-}
-
-func isDemoUser(id uuid.UUID) bool {
-	return id.String() == identity.DemoUserID || id.String() == identity.DemoPublisherID || id.String() == identity.DemoAdminID
 }
 
 func isUniqueViolation(err error) bool {

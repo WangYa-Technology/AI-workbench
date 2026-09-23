@@ -13,6 +13,20 @@ function setTabElement(value: string, element: unknown) {
   else tabElements.delete(value)
 }
 
+function onKeydown(event: globalThis.KeyboardEvent, value: string) {
+  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+  const enabled = props.items.filter(item => !item.disabled)
+  if (!enabled.length) return
+  const index = enabled.findIndex(item => item.value === value)
+  const direction = root.value && globalThis.getComputedStyle(root.value).direction === 'rtl' ? -1 : 1
+  const step = (event.key === 'ArrowRight' ? 1 : -1) * direction
+  const nextIndex = event.key === 'Home' ? 0 : event.key === 'End' ? enabled.length - 1 : (index + step + enabled.length) % enabled.length
+  const next = enabled[nextIndex]!
+  event.preventDefault()
+  tabElements.get(next.value)?.focus()
+  emit('update:modelValue', next.value)
+}
+
 function updateIndicator() {
   const element = tabElements.get(props.modelValue)
   if (!element) return
@@ -35,7 +49,7 @@ defineExpose({
 <template>
   <div ref="root" class="ui-tabs" :data-variant="variant" :data-ready="ready ? 'true' : 'false'" role="tablist" :aria-label="label || undefined">
     <span class="ui-tabs__indicator" :style="indicatorStyle" aria-hidden="true"></span>
-    <button v-for="item in items" :key="item.value" :ref="element => setTabElement(item.value, element)" class="ui-tabs__tab" type="button" role="tab" :data-value="item.value" :aria-selected="item.value === modelValue" :disabled="item.disabled" @click="emit('update:modelValue', item.value)">
+    <button v-for="item in items" :key="item.value" :ref="element => setTabElement(item.value, element)" class="ui-tabs__tab" type="button" role="tab" :data-value="item.value" :aria-selected="item.value === modelValue" :disabled="item.disabled" :tabindex="item.value === modelValue || (!items.some(tab => tab.value === modelValue && !tab.disabled) && item === items.find(tab => !tab.disabled)) ? 0 : -1" @keydown="onKeydown($event, item.value)" @click="emit('update:modelValue', item.value)">
       <component :is="item.icon" v-if="item.icon" :size="16" aria-hidden="true" />{{ item.label }}
     </button>
   </div>

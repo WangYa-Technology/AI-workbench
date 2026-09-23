@@ -1,5 +1,19 @@
 # HCAI CHAT progress
 
+## Physical fixture cleanup and live authentication verification (2026-09-18)
+
+The four retired shared identities and their local historical rows are now physically deleted: four assets, one work, one post, four products, three tasks, their account balances/subscriptions, task events and six audit events. The explicit development-only maintenance command is `scripts/purge-retired-demo.sh --apply`; it is not a startup step or a production migration. Foreign keys remain enabled, unexpected dependencies abort the transaction, and the remaining audit chain is rebaselined with its mutation guards restored. Other users and site configuration values are preserved. Obsolete shared-login request observations are removed as well.
+
+Real SMTP verification used a user-specified inbox and recipient-supplied codes/link. Registration, invalid-code rejection, email verification, password login, invalid-password rejection, persistent sessions, logout revocation, email-code login, code replay rejection, password reset, reset-time session revocation, and new-password login were exercised. The temporary live test identity, its challenges, delivery attempts, email jobs, sessions and audit records were physically removed afterwards. No live credentials are retained in this document.
+
+The new `identity-full-flow.spec.ts` and password-boundary browser tests pass (3/3); targeted Go database/authentication/HTTP suites, frontend lint/build and backend build pass. The cleanup regression checks rollback on unexpected references, idempotency, preservation of unrelated data, audit-chain validity and restored immutable guards. A missing registration icon import was also fixed. Live-browser checks now wait for the login response and match the destination pathname, preventing a returnTo query parameter from being mistaken for successful navigation.
+
+## Identity retirement update (2026-09-17)
+
+Shared account login, actor switching, and fixed sessions have been removed. Migration 0070 anonymizes the retired identities and invalidates their credentials while retaining foreign keys and immutable transaction evidence. Browser and drill fixtures now live under `internal/testfixtures`, use separate test identities, and authenticate normally in an isolated test schema. Earlier entries below describe historical checkpoints, not currently available shared-account features.
+
+Verification: the full Go suite with required PostgreSQL integration tests, 93 frontend unit tests, frontend lint/build, and six focused Chromium tests (registration, authentication, email verification/reset, and creator discovery) pass. Migration 0070 has been applied to the local development database: all four legacy identities are anonymized, with no remaining sessions or email-action tokens; the four other user records are retained. The removed login endpoint and retired public creator/work endpoints return 404. Automated fixtures remain test-only; historical migrations and the guest homepage product preview are not account login paths.
+
 ## Current checkpoint
 
 `CP-73 final browser regression is green after creation-surface interaction and accessibility fixes; approved external runs pending; overall goal active`
@@ -336,6 +350,12 @@ CP-60 local verification: the application-media command's isolated-schema valida
 - `cmd/mediaappcheck` exercises the real HTTP handler and durable Asset scan service against the configured Store/Scanner. It verifies two disposable-account registrations, S3-backed upload persistence, pending-content isolation, exactly one scan attempt, clean-state evidence, byte-identical full and single-Range reads, cross-account denial, upload/scan audits, owner notification, and object deletion/post-delete absence.
 - `scripts/media-application-staging-check.sh` requires the exact `MEDIA_APPLICATION_ACCEPTANCE_CONFIRM=I_APPROVE_MEDIA_APPLICATION_ACCEPTANCE_CALLS` and a separate `MEDIA_APPLICATION_DATABASE_URL`. It refuses an existing `search_path`, creates a random `hcai_media_acceptance_*` schema, injects it into the command, and drops the schema on every exit path.
 - The Go command independently requires `APP_ENV=staging`, S3 plus HTTP Scanner modes, disabled local AI Provider mode, and an exact isolated-schema match. Its four-minute context and cleanup path bound the run; safe output excludes database/bucket endpoints, object keys, account identifiers, tokens, credentials, and content bodies. An approved external run remains pending.
+
+## Task Marketplace lifecycle hardening — 2026-09-18
+
+- Completed the G01–G14 implementation in [任务广场全链路与验收记录](task-marketplace-flows.md): member publication, participant privacy, multi-file delivery and immutable grants, explicit derivative permission, deadline expiry/refund and bilateral extension, pre-delivery disputes, idempotent commands, complete pagination/counts, payment refresh, and reasoned/audited operator decisions.
+- Relevant Go domain package regressions pass. The final uncached HTTP package run passes after the funded-proposal visibility correction; frontend unit tests pass 9/9 and focused Chromium task/admin workflows pass 8/8. Frontend build/lint, API/Worker builds, and whitespace checks pass.
+- Applied migrations `0071`/`0072` and restarted the local API/Worker. Health/readiness/frontend/proxied task list return 200; the development database still contains zero tasks. Stripe remains disabled with live mode off. Real Provider sandbox payment, Connect, refund, and transfer acceptance remains an external release gate.
 
 ## Remaining
 

@@ -3,11 +3,16 @@ package observability
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
 
+	"github.com/hcai-chat/hcai-chat/internal/assets"
+	"github.com/hcai-chat/hcai-chat/internal/creation"
+	"github.com/hcai-chat/hcai-chat/internal/datarights"
+	"github.com/hcai-chat/hcai-chat/internal/payments"
 	"github.com/hcai-chat/hcai-chat/internal/platform/httputil"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -98,6 +103,34 @@ func (m *Metrics) Render(ctx context.Context, pool *pgxpool.Pool) (string, error
 	output.WriteString("# HELP hcai_jobs_oldest_queued_age_seconds Age of the oldest runnable queued job.\n")
 	output.WriteString("# TYPE hcai_jobs_oldest_queued_age_seconds gauge\n")
 	output.WriteString("hcai_jobs_oldest_queued_age_seconds " + formatFloat(oldestAge) + "\n")
+	var expiredLeases, invalidLeases int64
+	var expiredAge float64
+	if err := pool.QueryRow(ctx, `SELECT
+ count(*) FILTER(WHERE lease_expires_at<=now() AND isfinite(lease_expires_at)),
+ count(*) FILTER(WHERE lease_owner IS NULL OR btrim(lease_owner)='' OR lease_token IS NULL OR lease_expires_at IS NULL OR NOT isfinite(lease_expires_at)
+ OR NOT EXISTS(SELECT 1 FROM job_attempts a WHERE a.job_id=j.id AND a.lease_token=j.lease_token AND a.attempt_number=j.attempts AND a.status='running')),
+ COALESCE(max(extract(epoch FROM now()-lease_expires_at)) FILTER(WHERE lease_expires_at<=now() AND isfinite(lease_expires_at)),0)::float8
+ FROM jobs j WHERE status='running'`).Scan(&expiredLeases, &invalidLeases, &expiredAge); err != nil {
+		return output.String(), err
+	}
+	output.WriteString("# HELP hcai_jobs_expired_leases Running jobs with finite expired leases.\n# TYPE hcai_jobs_expired_leases gauge\n")
+	output.WriteString("hcai_jobs_expired_leases " + strconv.FormatInt(expiredLeases, 10) + "\n")
+	output.WriteString("# HELP hcai_jobs_oldest_expired_lease_age_seconds Longest time a running job has remained past lease expiry.\n# TYPE hcai_jobs_oldest_expired_lease_age_seconds gauge\n")
+	output.WriteString("hcai_jobs_oldest_expired_lease_age_seconds " + formatFloat(expiredAge) + "\n")
+	output.WriteString("# HELP hcai_jobs_invalid_leases Running jobs with missing or invalid lease or active-attempt evidence.\n# TYPE hcai_jobs_invalid_leases gauge\n")
+	output.WriteString("hcai_jobs_invalid_leases " + strconv.FormatInt(invalidLeases, 10) + "\n")
+	output.WriteString("# HELP hcai_product_webhook_quarantines Signed product receipts awaiting verification.\n# TYPE hcai_product_webhook_quarantines gauge\n")
+	output.WriteString("# HELP hcai_product_webhook_quarantine_oldest_age_seconds Age of oldest retained pending signed product receipt.\n# TYPE hcai_product_webhook_quarantine_oldest_age_seconds gauge\n")
+	for _, mode := range []string{"live", "test"} {
+		var count int64
+		var age float64
+		if err := pool.QueryRow(ctx, `SELECT count(*),COALESCE(max(GREATEST(0,extract(epoch FROM now()-received_at))),0)::float8 FROM product_webhook_quarantines WHERE state='pending' AND live_mode=$1`, mode == "live").Scan(&count, &age); err != nil {
+			return output.String(), err
+		}
+		labels := "{mode=\"" + mode + "\"} "
+		output.WriteString("hcai_product_webhook_quarantines" + labels + strconv.FormatInt(count, 10) + "\n")
+		output.WriteString("hcai_product_webhook_quarantine_oldest_age_seconds" + labels + formatFloat(age) + "\n")
+	}
 
 	attemptStatuses, err := attemptStatusMetrics(ctx, pool)
 	if err != nil {
@@ -108,6 +141,133 @@ func (m *Metrics) Render(ctx context.Context, pool *pgxpool.Pool) (string, error
 	for _, item := range attemptStatuses {
 		output.WriteString("hcai_job_attempts_total{status=\"" + escapeLabel(item.Status) + "\",window=\"24h\"} " + strconv.FormatInt(item.Count, 10) + "\n")
 	}
+	recoveryFailures, err := datarights.RecoveryFailureCounts(ctx, pool)
+	if err != nil {
+		return output.String(), err
+	}
+	output.WriteString("# HELP hcai_recovery_jobs_failed Failed cleanup, export and deletion jobs without a linked replacement or closed subject.\n")
+	output.WriteString("# TYPE hcai_recovery_jobs_failed gauge\n")
+	kinds := make([]string, 0, len(recoveryFailures))
+	for kind := range recoveryFailures {
+		kinds = append(kinds, kind)
+	}
+	sort.Strings(kinds)
+	for _, kind := range kinds {
+		output.WriteString("hcai_recovery_jobs_failed{kind=\"" + escapeLabel(kind) + "\"} " + strconv.FormatInt(recoveryFailures[kind], 10) + "\n")
+	}
+
+	financial, err := payments.ProductOperationalMetrics(ctx, pool)
+	if err != nil {
+		return output.String(), err
+	}
+	output.WriteString("# HELP hcai_product_payment_backlog Current product transaction backlog by stage and mode.\n")
+	output.WriteString("# TYPE hcai_product_payment_backlog gauge\n")
+	output.WriteString("# HELP hcai_product_payment_oldest_age_seconds Oldest backlog age from original evidence or scheduled due time.\n")
+	output.WriteString("# TYPE hcai_product_payment_oldest_age_seconds gauge\n")
+	for _, item := range financial.Backlogs {
+		labels := "{kind=\"" + escapeLabel(item.Kind) + "\",mode=\"" + escapeLabel(item.Mode) + "\"} "
+		output.WriteString("hcai_product_payment_backlog" + labels + strconv.FormatInt(item.Count, 10) + "\n")
+		output.WriteString("hcai_product_payment_oldest_age_seconds" + labels + formatFloat(item.OldestAgeSeconds) + "\n")
+	}
+	output.WriteString("# HELP hcai_product_payment_problems Product transaction failures and evidence gaps requiring investigation.\n")
+	output.WriteString("# TYPE hcai_product_payment_problems gauge\n")
+	for _, item := range financial.Problems {
+		output.WriteString("hcai_product_payment_problems{kind=\"" + escapeLabel(item.Kind) + "\",mode=\"" + escapeLabel(item.Mode) + "\"} " + strconv.FormatInt(item.Count, 10) + "\n")
+	}
+
+	var outputFailures, outputDue int64
+	writes, err := mediaWriteBacklogs(ctx, pool)
+	if err != nil {
+		return output.String(), err
+	}
+	for _, item := range writes {
+		prefix := "hcai_" + item.kind
+		output.WriteString("# HELP " + prefix + "_pending Unattached pending write intents without an active legal hold.\n# TYPE " + prefix + "_pending gauge\n")
+		output.WriteString(prefix + "_pending " + strconv.FormatInt(item.pending, 10) + "\n")
+		output.WriteString("# HELP " + prefix + "_oldest_pending_age_seconds Age from original pending write registration, unaffected by retry scheduling.\n# TYPE " + prefix + "_oldest_pending_age_seconds gauge\n")
+		output.WriteString(prefix + "_oldest_pending_age_seconds " + formatFloat(item.oldestAge) + "\n")
+		output.WriteString("# HELP " + prefix + "_pending_invalid_timestamps Pending write intents with future or non-finite registration times.\n# TYPE " + prefix + "_pending_invalid_timestamps gauge\n")
+		output.WriteString(prefix + "_pending_invalid_timestamps " + strconv.FormatInt(item.invalid, 10) + "\n")
+	}
+	var outputAge float64
+	if err := pool.QueryRow(ctx, `SELECT count(*) FILTER(WHERE last_error_code IN ('generation_output_cleanup_failed','generation_output_conflict')),
+ count(*) FILTER(WHERE next_check_at<=now()),COALESCE(max(GREATEST(0,extract(epoch FROM now()-next_check_at))),0)::float8
+ FROM generation_output_writes WHERE status<>'attached'`).Scan(&outputFailures, &outputDue, &outputAge); err != nil {
+		return output.String(), err
+	}
+	output.WriteString("# HELP hcai_generation_output_cleanup_failed Recorded generation media cleanup failures or conflicting references.\n# TYPE hcai_generation_output_cleanup_failed gauge\n")
+	output.WriteString("hcai_generation_output_cleanup_failed " + strconv.FormatInt(outputFailures, 10) + "\n")
+	output.WriteString("# HELP hcai_generation_output_cleanup_due Unattached output locations due for cleanup or recheck.\n# TYPE hcai_generation_output_cleanup_due gauge\n")
+	output.WriteString("hcai_generation_output_cleanup_due " + strconv.FormatInt(outputDue, 10) + "\n")
+	output.WriteString("# HELP hcai_generation_output_cleanup_oldest_due_age_seconds Oldest overdue output cleanup check.\n# TYPE hcai_generation_output_cleanup_oldest_due_age_seconds gauge\n")
+	output.WriteString("hcai_generation_output_cleanup_oldest_due_age_seconds " + formatFloat(outputAge) + "\n")
+
+	var uploadFailures, uploadDue int64
+	var uploadAge float64
+	if err := pool.QueryRow(ctx, `SELECT count(*) FILTER(WHERE last_error_code IN ('upload_write_cleanup_failed','upload_write_conflict')),
+ count(*) FILTER(WHERE next_check_at<=now()),COALESCE(max(GREATEST(0,extract(epoch FROM now()-next_check_at))),0)::float8
+ FROM upload_writes WHERE status<>'attached'`).Scan(&uploadFailures, &uploadDue, &uploadAge); err != nil {
+		return output.String(), err
+	}
+	output.WriteString("# HELP hcai_upload_write_cleanup_failed Recorded uploaded media cleanup failures or conflicting references.\n# TYPE hcai_upload_write_cleanup_failed gauge\n")
+	output.WriteString("hcai_upload_write_cleanup_failed " + strconv.FormatInt(uploadFailures, 10) + "\n")
+	output.WriteString("# HELP hcai_upload_write_cleanup_due Unattached upload locations due for cleanup or recheck.\n# TYPE hcai_upload_write_cleanup_due gauge\n")
+	output.WriteString("hcai_upload_write_cleanup_due " + strconv.FormatInt(uploadDue, 10) + "\n")
+	output.WriteString("# HELP hcai_upload_write_cleanup_oldest_due_age_seconds Oldest overdue upload cleanup check.\n# TYPE hcai_upload_write_cleanup_oldest_due_age_seconds gauge\n")
+	output.WriteString("hcai_upload_write_cleanup_oldest_due_age_seconds " + formatFloat(uploadAge) + "\n")
+
+	executions, err := creation.ExecutionMetrics(ctx, pool)
+	if err != nil {
+		return output.String(), err
+	}
+	for _, metric := range []struct{ name, help, value string }{
+		{"hcai_generation_recovery_failed", "Unfinished generations with a failed recovery check.", strconv.FormatInt(executions.Failed, 10)},
+		{"hcai_generation_recovery_due", "Generations with evidenced terminal execution awaiting recovery.", strconv.FormatInt(executions.Due, 10)},
+		{"hcai_generation_recovery_unresolved", "Unfinished generations with missing or ambiguous execution evidence.", strconv.FormatInt(executions.Unresolved, 10)},
+		{"hcai_generation_recovery_oldest_due_age_seconds", "Age of oldest due generation recovery.", formatFloat(executions.OldestDueAge)},
+	} {
+		output.WriteString("# HELP " + metric.name + " " + metric.help + "\n# TYPE " + metric.name + " gauge\n" + metric.name + " " + metric.value + "\n")
+	}
+
+	scans, err := assets.ScanExecutionMetrics(ctx, pool)
+	if err != nil {
+		return output.String(), err
+	}
+	for _, metric := range []struct{ name, help, value string }{
+		{"hcai_asset_scan_pending", "Uploaded assets awaiting a verified scan or review.", strconv.FormatInt(scans.Pending, 10)},
+		{"hcai_asset_scan_oldest_pending_age_seconds", "Age of oldest pending upload.", formatFloat(scans.OldestPendingAge)},
+		{"hcai_asset_scan_recovery_failed", "Pending scans whose last recovery check failed.", strconv.FormatInt(scans.Failed, 10)},
+		{"hcai_asset_scan_recovery_due", "Pending scans with evidenced terminal jobs due for recovery.", strconv.FormatInt(scans.Due, 10)},
+		{"hcai_asset_scan_recovery_unresolved", "Pending scans with missing or inconsistent execution evidence or invalid creation times.", strconv.FormatInt(scans.Unresolved, 10)},
+		{"hcai_asset_scan_recovery_oldest_due_age_seconds", "Age since oldest due scan recovery check.", formatFloat(scans.OldestDueAge)},
+	} {
+		output.WriteString("# HELP " + metric.name + " " + metric.help + "\n# TYPE " + metric.name + " gauge\n" + metric.name + " " + metric.value + "\n")
+	}
+
+	maintenance, err := maintenanceMetrics(ctx, pool)
+	if err != nil {
+		return output.String(), err
+	}
+	for _, definition := range []struct{ name, kind, help string }{
+		{"hcai_maintenance_passes_total", "counter", "Recorded maintenance pass completions across workers."},
+		{"hcai_maintenance_failures_total", "counter", "Recorded failed maintenance passes across workers."},
+		{"hcai_maintenance_success_seen", "gauge", "Whether a successful pass has ever been recorded."},
+		{"hcai_maintenance_last_pass_failed", "gauge", "Whether the most recently recorded pass failed."},
+		{"hcai_maintenance_invalid_timestamps", "gauge", "Whether maintenance timestamps are ahead of database time."},
+		{"hcai_maintenance_last_success_age_seconds", "gauge", "Age of the last successful recorded pass; consult success_seen for missing history."},
+	} {
+		output.WriteString("# HELP " + definition.name + " " + definition.help + "\n# TYPE " + definition.name + " " + definition.kind + "\n")
+	}
+	for _, item := range maintenance {
+		labels := "{kind=\"" + escapeLabel(item.Kind) + "\"} "
+		output.WriteString("hcai_maintenance_passes_total" + labels + strconv.FormatInt(item.Passes, 10) + "\n")
+		output.WriteString("hcai_maintenance_failures_total" + labels + strconv.FormatInt(item.Failures, 10) + "\n")
+		output.WriteString("hcai_maintenance_success_seen" + labels + boolMetric(item.SuccessSeen) + "\n")
+		output.WriteString("hcai_maintenance_last_pass_failed" + labels + boolMetric(item.LastFailed) + "\n")
+		output.WriteString("hcai_maintenance_invalid_timestamps" + labels + boolMetric(item.InvalidTimestamps) + "\n")
+		output.WriteString("hcai_maintenance_last_success_age_seconds" + labels + formatFloat(item.SuccessAgeSeconds) + "\n")
+	}
+
 	auditValid, err := auditChainValid(ctx, pool)
 	if err != nil {
 		return output.String(), err
@@ -195,6 +355,13 @@ func auditChainValid(ctx context.Context, pool *pgxpool.Pool) (bool, error) {
 
 func formatFloat(value float64) string {
 	return strconv.FormatFloat(value, 'f', 6, 64)
+}
+
+func boolMetric(value bool) string {
+	if value {
+		return "1"
+	}
+	return "0"
 }
 
 func escapeLabel(value string) string {

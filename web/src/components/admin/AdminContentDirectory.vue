@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import UiEmptyState from '../ui/UiEmptyState.vue'
+import UiFilterBar from '../ui/UiFilterBar.vue'
 import type { AdminContent } from '../../api/client'
 import { ListFilter, LoaderCircle, ShieldCheck, X } from 'lucide-vue-next'
 import UiButton from '../ui/UiButton.vue'
@@ -15,7 +17,7 @@ const emit = defineEmits<{ 'update:query':[string]; 'update:type':[string]; 'upd
 </script>
 <template>
   <div class="admin-content-directory">
-    <form class="admin-user-filters" @submit.prevent="emit('apply')">
+    <UiFilterBar fields density="compact" layout="grid" class="admin-user-filters" @submit.prevent="emit('apply')">
       <label>{{ t('admin.contentSearch') }}<UiInput :model-value="query" type="search" maxlength="120" :placeholder="t('admin.contentSearchPlaceholder')" @update:model-value="emit('update:query', String($event))" /></label>
       <label>{{ t('admin.resourceType') }}<UiSelect :model-value="type" @update:model-value="emit('update:type', String($event))"><option value="">{{ t('admin.allContentTypes') }}</option><option value="work">{{ localizedLabel(resourceTypeKeys, 'work') }}</option></UiSelect></label>
       <label>{{ t('admin.status') }}<UiSelect :model-value="status" @update:model-value="emit('update:status', String($event))"><option value="">{{ t('admin.allStatuses') }}</option><option v-for="item in ['draft','published','hidden','removed']" :key="item" :value="item">{{ t(`admin.states.${item}`) }}</option></UiSelect></label>
@@ -25,7 +27,7 @@ const emit = defineEmits<{ 'update:query':[string]; 'update:type':[string]; 'upd
       <UiIconButton class="icon-button" type="button" :title="t('actions.clearFilters')" :label="t('actions.clearFilters')" @click="emit('clear')">
         <X :size="16" />
       </UiIconButton>
-    </form>
+    </UiFilterBar>
     <div class="admin-list">
       <article v-for="item in items" :key="item.id">
         <div><strong>{{ item.title }}</strong><span>@{{ item.authorHandle }} · {{ item.aiDisclosure }}</span></div><span>{{ localizedLabel(resourceTypeKeys, item.resourceType) }}</span><span :data-status="item.status">{{ t(`admin.states.${item.status}`) }}</span><small>{{ date(item.updatedAt) }}</small><UiButton class="command-button secondary" type="button" variant="secondary" @click="emit('open', item)">
@@ -33,9 +35,7 @@ const emit = defineEmits<{ 'update:query':[string]; 'update:type':[string]; 'upd
         </UiButton>
       </article>
     </div>
-    <p v-if="!items.length" class="inline-empty">
-      {{ t('admin.noContent') }}
-    </p>
+    <UiEmptyState v-if="!items.length" density="compact" :title="t('admin.noContent')" />
     <UiButton v-if="nextCursor" class="command-button secondary admin-load-more" type="button" :disabled="loadingMore" variant="secondary" @click="emit('more')">
       <LoaderCircle v-if="loadingMore" class="spin" :size="16" /><ListFilter v-else :size="16" />{{ t('actions.loadMore') }}
     </UiButton>

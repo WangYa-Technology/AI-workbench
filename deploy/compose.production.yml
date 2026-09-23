@@ -21,11 +21,21 @@ services:
     env_file: ${HCAI_PRODUCTION_ENV_FILE:-../.env.production}
     environment:
       HTTP_ADDR: :8080
+      DATA_EXPORT_TEMP_DIR: /run/hcai-exports
+      MEDIA_STAGE_TEMP_DIR: /run/hcai-media-stage
     depends_on:
       migrate: { condition: service_completed_successfully }
     restart: unless-stopped
     read_only: true
-    tmpfs: [/tmp]
+    # Exports share two process slots (2 x 512 MiB). This dedicated tmpfs has
+    # a hard 1280 MiB ceiling and consumes RAM; size container/host memory for
+    # that ceiling plus application memory. Raising export limits requires
+    # reviewing this mount and the deployment memory budget together.
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+      - /run/hcai-exports:size=1280m,mode=0700,uid=10001,gid=10001
+      # 512 MiB process reservation + 64 MiB free floor; tmpfs consumes RAM.
+      - /run/hcai-media-stage:size=768m,mode=0700,uid=10001,gid=10001
     security_opt: [no-new-privileges:true]
     cap_drop: [ALL]
     healthcheck:
@@ -41,11 +51,22 @@ services:
       dockerfile: deploy/Dockerfile.runtime
       args: { APP: worker }
     env_file: ${HCAI_PRODUCTION_ENV_FILE:-../.env.production}
+    environment:
+      DATA_EXPORT_TEMP_DIR: /run/hcai-exports
+      MEDIA_STAGE_TEMP_DIR: /run/hcai-media-stage
     depends_on:
       migrate: { condition: service_completed_successfully }
     restart: unless-stopped
     read_only: true
-    tmpfs: [/tmp]
+    # Exports share two process slots (2 x 512 MiB). This dedicated tmpfs has
+    # a hard 1280 MiB ceiling and consumes RAM; size container/host memory for
+    # that ceiling plus application memory. Raising export limits requires
+    # reviewing this mount and the deployment memory budget together.
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+      - /run/hcai-exports:size=1280m,mode=0700,uid=10001,gid=10001
+      # 512 MiB process reservation + 64 MiB free floor; tmpfs consumes RAM.
+      - /run/hcai-media-stage:size=768m,mode=0700,uid=10001,gid=10001
     security_opt: [no-new-privileges:true]
     cap_drop: [ALL]
 
@@ -58,6 +79,11 @@ services:
     ports: ["${HCAI_WEB_PORT:-8080}:8080"]
     restart: unless-stopped
     read_only: true
-    tmpfs: [/tmp, /var/cache/nginx, /var/run]
+    # Mounts hide image-layer ownership. Keep the cache writable by nginx
+    # (UID/GID 101); a root-owned default tmpfs prevents Nginx from starting.
+    tmpfs:
+      - /tmp:mode=1777
+      - /var/cache/nginx:mode=0700,uid=101,gid=101
+      - /var/run:mode=0700,uid=101,gid=101
     security_opt: [no-new-privileges:true]
     cap_drop: [ALL]

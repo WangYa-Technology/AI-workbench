@@ -1,21 +1,19 @@
+import { fixtureCredentials } from './helpers/identity'
 import { expect, test } from '@playwright/test'
 
 test('controls, issues, authenticates, rotates, and revokes a hash-only Developer API key', async ({ page }) => {
   const suffix = Date.now().toString(36)
   await page.setViewportSize({ width: 390, height: 844 })
-  await page.request.post('/api/v1/auth/demo', { data: { actor: 'admin' } })
+  await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('admin') })
   const initialResponse = await page.request.get('/api/v1/admin/developer/access')
   expect(initialResponse.ok()).toBeTruthy()
   const initial = await initialResponse.json()
-  const reason = `Enable bounded browser Developer Access verification ${suffix}.`
   const enabled = await page.request.put('/api/v1/admin/developer/control', { data: {
     enabled: true,
     maxServiceAccounts: initial.control.maxServiceAccounts,
     maxActiveKeys: initial.control.maxActiveKeys,
     defaultTtlDays: initial.control.defaultTtlDays,
     expectedVersion: initial.control.version,
-    reason,
-    confirmed: true,
   } })
   expect(enabled.ok()).toBeTruthy()
 
@@ -31,7 +29,7 @@ test('controls, issues, authenticates, rotates, and revokes a hash-only Develope
   expect(registered.status()).toBe(201)
 
   await page.goto('/settings?section=developer')
-  await expect(page.getByRole('heading', { name: 'Developer Access' })).toBeVisible()
+  await expect(page.locator('.settings-aside-title').filter({ hasText: 'Developer Access' })).toBeVisible()
   await page.getByLabel('Service Account name').fill(`Render pipeline ${suffix}`)
   await page.getByRole('button', { name: 'Create Service Account' }).click()
   const account = page.locator('.developer-account-row').filter({ hasText: `Render pipeline ${suffix}` })
@@ -70,27 +68,16 @@ test('controls, issues, authenticates, rotates, and revokes a hash-only Develope
   expect(emergencySecret).not.toBe(replacement)
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390)
 
-  await page.request.post('/api/v1/auth/demo', { data: { actor: 'admin' } })
+  await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('admin') })
   await page.goto('/admin?tab=developer')
   await expect(page.getByRole('heading', { name: 'Developer Access control' })).toBeVisible()
   const adminAccount = page.locator('.developer-admin-account').filter({ hasText: `Render pipeline ${suffix}` })
-  const emergencyForm = page.locator('.developer-emergency-form')
-  await emergencyForm.getByLabel('Reason').fill(`Revoke the exposed browser credential ${suffix}.`)
-  await emergencyForm.getByLabel(/selected credential must lose access immediately/).check()
   await adminAccount.locator('.developer-admin-key').filter({ hasText: 'Active' }).getByRole('button', { name: /Revoke API key/ }).click()
-  await expect(page.getByText('API key was revoked with audit evidence.')).toBeVisible()
+  await expect(page.getByText('API key was revoked.')).toBeVisible()
   expect((await page.request.get('/api/v1/principal', { headers: { Authorization: `Bearer ${emergencySecret}` } })).status()).toBe(401)
 
-  await emergencyForm.getByLabel('Reason').fill(`Revoke the browser Service Account after incident ${suffix}.`)
-  await emergencyForm.getByLabel(/selected credential must lose access immediately/).check()
   await adminAccount.getByRole('button', { name: `Revoke Service Account Render pipeline ${suffix}` }).click()
-  await expect(page.getByText('Service Account and its active keys were revoked with audit evidence.')).toBeVisible()
-
-  await page.goto('/admin?tab=audit')
-  await expect(page.getByText('developer.api_key_rotated', { exact: true }).first()).toBeVisible()
-  await expect(page.getByText('developer.api_key_revoked', { exact: true }).first()).toBeVisible()
-  await expect(page.getByText('admin.developer_api_key_revoked', { exact: true }).first()).toBeVisible()
-  await expect(page.getByText('admin.developer_service_account_revoked', { exact: true }).first()).toBeVisible()
+  await expect(page.getByText('Service Account and its active keys were revoked.')).toBeVisible()
 
   const current = await (await page.request.get('/api/v1/admin/developer/access')).json()
   const restored = await page.request.put('/api/v1/admin/developer/control', { data: {
@@ -99,8 +86,6 @@ test('controls, issues, authenticates, rotates, and revokes a hash-only Develope
     maxActiveKeys: initial.control.maxActiveKeys,
     defaultTtlDays: initial.control.defaultTtlDays,
     expectedVersion: current.control.version,
-    reason: `Restore Developer Access after browser verification ${suffix}.`,
-    confirmed: true,
   } })
   expect(restored.ok()).toBeTruthy()
 })

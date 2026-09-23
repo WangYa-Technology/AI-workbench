@@ -16,17 +16,17 @@ async function navigate(event: globalThis.KeyboardEvent) {
   const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : index < 0 ? (event.key === 'ArrowUp' ? items.length - 1 : 0) : (index + (event.key === 'ArrowUp' ? -1 : 1) + items.length) % items.length
   items[next]?.focus()
 }
-withDefaults(defineProps<{ label?: string }>(), { label: '' })
+withDefaults(defineProps<{ label?: string; triggerClass?: string; transitionName?: string }>(), { label: '', triggerClass: '', transitionName: 'ui-dropdown' })
 </script>
 
 <template>
   <div ref="root" class="ui-dropdown-menu" @keydown="navigate" @keydown.esc.stop.prevent="close" @focusout="event => { if (!root?.contains(event.relatedTarget as globalThis.Node)) open = false }">
-    <button class="ui-button" type="button" :aria-label="label || undefined" aria-haspopup="menu" :aria-expanded="open" @click="open = !open">
+    <button class="ui-button" :class="triggerClass" type="button" :aria-label="label || undefined" aria-haspopup="menu" :aria-expanded="open" @click="open = !open">
       <slot name="trigger">
         {{ label }}
       </slot>
-    </button><Transition name="ui-dropdown">
-      <div v-if="open" class="ui-dropdown-menu__content ui-menu-surface" role="menu" @click="open = false">
+    </button><Transition :name="transitionName">
+      <div v-if="open" class="ui-dropdown-menu__content ui-menu-surface" role="menu" @click="close">
         <slot></slot>
       </div>
     </Transition>

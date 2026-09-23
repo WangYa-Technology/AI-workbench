@@ -18,7 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func TestPurchaseProvenanceReuseAndRefund(t *testing.T) {
+func TestHistoricalPurchaseProvenanceReuseAndRefund(t *testing.T) {
 	pool, cleanup := marketplaceTestPool(t)
 	defer cleanup()
 	ctx := context.Background()
@@ -26,31 +26,12 @@ func TestPurchaseProvenanceReuseAndRefund(t *testing.T) {
 	seedMarketplaceProduct(t, pool, sellerID, buyerID, sourceAssetID, productID)
 	service := marketplace.NewService(pool)
 
-	items, err := service.ListProducts(ctx, buyerID, marketplace.ListFilter{Query: "workflow", ProductType: "workflow"})
+	page, err := service.ListProducts(ctx, buyerID, marketplace.ListFilter{Query: "workflow", ProductType: "workflow"})
+	items := page.Items
 	if err != nil || len(items) != 1 || items[0].ID != productID {
 		t.Fatalf("filtered marketplace product missing: %#v, %v", items, err)
 	}
-	if _, _, err := service.Purchase(ctx, sellerID, productID, "seller-buy-001", "test", true); !errors.Is(err, marketplace.ErrSellerPurchase) {
-		t.Fatalf("seller purchase should be forbidden: %v", err)
-	}
-	purchase, created, err := service.Purchase(ctx, buyerID, productID, "buyer-purchase-001", "request-purchase", true)
-	if err != nil || !created || purchase.RealCharge || purchase.PaymentMode != "test" {
-		t.Fatalf("unexpected purchase: %#v, created=%v, err=%v", purchase, created, err)
-	}
-	replay, created, err := service.Purchase(ctx, buyerID, productID, "buyer-purchase-001", "request-replay", true)
-	if err != nil || created || replay.OrderID != purchase.OrderID || !replay.AlreadyOwned {
-		t.Fatalf("purchase replay was not idempotent: %#v, created=%v, err=%v", replay, created, err)
-	}
-	var fulfilledNotificationCount int
-	var fulfilledTarget string
-	if err := pool.QueryRow(ctx, `
-		SELECT count(*),COALESCE(max(target_path),'') FROM notifications
-		WHERE user_id=$1 AND kind='marketplace.order_fulfilled' AND resource_id=$2`, buyerID, purchase.OrderID).Scan(&fulfilledNotificationCount, &fulfilledTarget); err != nil {
-		t.Fatal(err)
-	}
-	if fulfilledNotificationCount != 1 || fulfilledTarget != "/workspace/assets/"+purchase.AssetID.String() {
-		t.Fatalf("purchase notification is not idempotent or deep-linked: count=%d target=%q", fulfilledNotificationCount, fulfilledTarget)
-	}
+	purchase := testutil.SeedLegacyProductOrder(t, pool, buyerID, productID)
 
 	assetService := assets.NewService(pool, t.TempDir())
 	purchasedAsset, err := assetService.GetOwned(ctx, buyerID, purchase.AssetID)
@@ -90,17 +71,17 @@ func TestPurchaseProvenanceReuseAndRefund(t *testing.T) {
 	if _, err := pool.Exec(ctx, `UPDATE orders SET created_at=now()-interval '8 days' WHERE id=$1`, purchase.OrderID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.RequestRefund(ctx, buyerID, purchase.OrderID, "refund-expired-001", "refund-expired", "The asset is no longer needed for this local test project."); !errors.Is(err, marketplace.ErrRefundWindowExpired) {
+	if _, err := service.RefundLegacyOrder(ctx, buyerID, purchase.OrderID, "refund-expired-001", "refund-expired", "The asset is no longer needed for this local test project."); !errors.Is(err, marketplace.ErrRefundWindowExpired) {
 		t.Fatalf("expired refund should fail: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `UPDATE orders SET created_at=now() WHERE id=$1`, purchase.OrderID); err != nil {
 		t.Fatal(err)
 	}
-	refunded, err := service.RequestRefund(ctx, buyerID, purchase.OrderID, "refund-valid-001", "refund-valid", "The included workflow does not fit the intended local test project.")
+	refunded, err := service.RefundLegacyOrder(ctx, buyerID, purchase.OrderID, "refund-valid-001", "refund-valid", "The included workflow does not fit the intended local test project.")
 	if err != nil || refunded.Status != "test_refunded" || refunded.RefundedAt == nil {
 		t.Fatalf("refund failed: %#v, %v", refunded, err)
 	}
-	replayedRefund, err := service.RequestRefund(ctx, buyerID, purchase.OrderID, "refund-valid-001", "refund-replay", "The included workflow does not fit the intended local test project.")
+	replayedRefund, err := service.RefundLegacyOrder(ctx, buyerID, purchase.OrderID, "refund-valid-001", "refund-replay", "The included workflow does not fit the intended local test project.")
 	if err != nil || replayedRefund.Status != "test_refunded" {
 		t.Fatalf("refund replay failed: %#v, %v", replayedRefund, err)
 	}
@@ -158,7 +139,7 @@ func seedMarketplaceProduct(t *testing.T, pool *pgxpool.Pool, sellerID, buyerID,
 			t.Fatal(err)
 		}
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,width,height,scan_status,source_type,license_code) VALUES($1,$2,'image','Source workflow preview','/media/test.jpg','image/jpeg',1600,1200,'clean','demo','hcai-commercial-standard-v1')`, sourceAssetID, sellerID); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,width,height,scan_status,source_type,license_code) VALUES($1,$2,'image','Source workflow preview','/media/test.jpg','image/jpeg',1600,1200,'clean','delivery','hcai-commercial-standard-v1')`, sourceAssetID, sellerID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `

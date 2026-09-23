@@ -29,7 +29,7 @@ func TestCommunityPostDetailHTTPContract(t *testing.T) {
 	ctx := context.Background()
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,scan_status,source_type,license_code)
-		VALUES($1,$2,'image','Detail source','/media/community-detail.jpg','image/jpeg','clean','demo','personal')`, assetID, author.ID); err != nil {
+		VALUES($1,$2,'image','Detail source','/media/community-detail.jpg','image/jpeg','clean','delivery','personal')`, assetID, author.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `

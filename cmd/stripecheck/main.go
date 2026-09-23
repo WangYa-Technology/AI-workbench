@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,12 +17,11 @@ import (
 
 const (
 	stripeAcceptanceConfirmation = "I_APPROVE_STRIPE_STAGING_CALLS"
-	stripeAcceptanceMaxCalls     = "5"
 )
 
 func main() {
-	if os.Getenv("STRIPE_ACCEPTANCE_CONFIRM") != stripeAcceptanceConfirmation || os.Getenv("STRIPE_ACCEPTANCE_MAX_CALLS") != stripeAcceptanceMaxCalls {
-		fmt.Fprintln(os.Stderr, "Stripe staging acceptance disabled: explicit confirmation and STRIPE_ACCEPTANCE_MAX_CALLS=5 are required")
+	if os.Getenv("STRIPE_ACCEPTANCE_CONFIRM") != stripeAcceptanceConfirmation || os.Getenv("STRIPE_ACCEPTANCE_MAX_CALLS") != strconv.Itoa(payments.StripeStagingAcceptanceRequestCount) {
+		fmt.Fprintf(os.Stderr, "Stripe staging acceptance disabled: explicit confirmation and STRIPE_ACCEPTANCE_MAX_CALLS=%d are required\n", payments.StripeStagingAcceptanceRequestCount)
 		os.Exit(1)
 	}
 	cfg, err := config.Load()
@@ -42,12 +42,14 @@ func main() {
 		LiveMode: false, HTTPClient: &http.Client{Timeout: 20 * time.Second},
 	})
 	result, err := payments.RunStripeStagingAcceptance(ctx, runtime)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "Stripe staging acceptance failed:", err)
+	// Failure summaries retain only disposable IDs and command references so
+	// operators can find uncertain resources without a hidden cleanup retry.
+	if encodeErr := json.NewEncoder(os.Stdout).Encode(result); encodeErr != nil {
+		fmt.Fprintln(os.Stderr, "encode Stripe staging acceptance summary:", encodeErr)
 		os.Exit(1)
 	}
-	if err := json.NewEncoder(os.Stdout).Encode(result); err != nil {
-		fmt.Fprintln(os.Stderr, "encode Stripe staging acceptance summary:", err)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Stripe staging acceptance failed:", err)
 		os.Exit(1)
 	}
 }

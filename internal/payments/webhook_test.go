@@ -50,12 +50,12 @@ func TestStripeWebhookVerifierSupportsRotatedSignaturesAndTolerance(t *testing.T
 }
 
 func TestPaymentWebhookReceiptIsMinimizedAndIdempotent(t *testing.T) {
-	pool, cleanup := paymentTestPool(t)
-	defer cleanup()
+	service, pool, checkout, _, product := pendingStripeWebhookFixture(t)
 	now := time.Now().UTC().Truncate(time.Second)
-	service := NewService(pool, ServiceConfig{Enabled: true, LiveMode: false, APIVersion: testStripeAPIVersion, WebhookSecret: testStripeWebhookSecret, WebhookTolerance: 5 * time.Minute})
 	service.verifier.now = func() time.Time { return now }
-	body := stripeCheckoutEvent("evt_contract123", "checkout.session.completed", now.Unix(), 1250)
+	// Exercise admission against a real original checkout. A signed unknown
+	// product claim now belongs in the separate quarantine, not this queue.
+	body := []byte(strings.NewReplacer(testPaymentID.String(), checkout.PaymentID.String(), testResourceID.String(), product.String(), "cs_test_contract", "cs_workflow123").Replace(string(stripeCheckoutEvent("evt_contract123", "checkout.session.completed", now.Unix(), checkout.AmountCents))))
 	header := "t=" + fmt.Sprint(now.Unix()) + ",v1=" + stripeSignature(testStripeWebhookSecret, now.Unix(), body)
 
 	receipt, err := service.ReceiveStripeWebhook(context.Background(), body, header)
@@ -84,7 +84,7 @@ func TestPaymentWebhookReceiptIsMinimizedAndIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	hash := sha256.Sum256(body)
-	if count != 1 || paymentID != testPaymentID || resourceID != testResourceID || purpose != "product" || amount != 1250 || currency != "USD" || providerPaymentID != "pi_contract123" || payloadHash != hex.EncodeToString(hash[:]) {
+	if count != 1 || paymentID != checkout.PaymentID || resourceID != product || purpose != "product" || amount != checkout.AmountCents || currency != "USD" || providerPaymentID != "pi_contract123" || payloadHash != hex.EncodeToString(hash[:]) {
 		t.Fatalf("minimized event evidence mismatch: count=%d payment=%s resource=%s purpose=%s amount=%d currency=%s providerPayment=%s hash=%s", count, paymentID, resourceID, purpose, amount, currency, providerPaymentID, payloadHash)
 	}
 	var unsafeColumns int
@@ -95,7 +95,7 @@ func TestPaymentWebhookReceiptIsMinimizedAndIdempotent(t *testing.T) {
 		t.Fatalf("payment event table exposes unsafe payload columns: count=%d err=%v", unsafeColumns, err)
 	}
 
-	changed := stripeCheckoutEvent("evt_contract123", "checkout.session.completed", now.Unix(), 1300)
+	changed := append(append([]byte{}, body...), ' ')
 	changedHeader := "t=" + fmt.Sprint(now.Unix()) + ",v1=" + stripeSignature(testStripeWebhookSecret, now.Unix(), changed)
 	if _, err := service.ReceiveStripeWebhook(context.Background(), changed, changedHeader); !errors.Is(err, ErrEventConflict) {
 		t.Fatalf("same provider event ID with different bytes did not fail closed: %v", err)

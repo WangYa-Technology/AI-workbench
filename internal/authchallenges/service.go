@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -21,6 +22,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/hcai-chat/hcai-chat/internal/identity"
 	"github.com/hcai-chat/hcai-chat/internal/platform/jobs"
+	"github.com/hcai-chat/hcai-chat/internal/platform/mailer"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -30,6 +32,7 @@ const (
 	ExpiryJobKind     = "identity.auth_challenge.expire"
 	LoginCode         = "login_code"
 	RegistrationCode  = "registration_code"
+	ResendInterval    = 30 * time.Second
 	challengeLifetime = 10 * time.Minute
 	maxVerifyAttempts = 10
 )
@@ -56,11 +59,16 @@ type Service struct {
 	key      []byte
 	mode     string
 	mailRoot string
+	sender   mailer.Sender
 	now      func() time.Time
 }
 
-func NewService(pool *pgxpool.Pool, key []byte, mode, mediaRoot string) *Service {
-	return &Service{pool: pool, key: append([]byte(nil), key...), mode: mode, mailRoot: filepath.Join(mediaRoot, "mailbox"), now: time.Now}
+func NewService(pool *pgxpool.Pool, key []byte, mode, mediaRoot string, senders ...mailer.Sender) *Service {
+	s := &Service{pool: pool, key: append([]byte(nil), key...), mode: mode, mailRoot: filepath.Join(mediaRoot, "mailbox"), now: time.Now}
+	if len(senders) > 0 {
+		s.sender = senders[0]
+	}
+	return s
 }
 
 func (s *Service) Start(ctx context.Context, email, purpose, locale, requestID string) (Challenge, error) {
@@ -68,6 +76,29 @@ func (s *Service) Start(ctx context.Context, email, purpose, locale, requestID s
 	locale = strings.TrimSpace(locale)
 	if !validEmail(email) || (purpose != LoginCode && purpose != RegistrationCode) || (locale != "en-US" && locale != "zh-CN") || len(s.key) != 32 {
 		return Challenge{}, ErrInvalid
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Challenge{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	// Serialize the resend decision across API instances, including the first
+	// request when there is no challenge row to lock. Do not queue a burst of
+	// clients behind an in-flight request or its pending delivery cancellation.
+	var acquired bool
+	if err := tx.QueryRow(ctx, `SELECT pg_try_advisory_xact_lock(hashtextextended($1,0))`,
+		"identity-auth-challenge:"+purpose+":"+email).Scan(&acquired); err != nil {
+		return Challenge{}, err
+	}
+	if !acquired {
+		return Challenge{}, ErrRateLimited
+	}
+	var recentlyRequested bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM identity_auth_challenges WHERE lower(email_snapshot)=lower($1) AND purpose=$2 AND created_at > now()-$3::integer*interval '1 second')`, email, purpose, int(ResendInterval/time.Second)).Scan(&recentlyRequested); err != nil {
+		return Challenge{}, err
+	}
+	if recentlyRequested {
+		return Challenge{}, ErrRateLimited
 	}
 	code, err := newCode()
 	if err != nil {
@@ -79,18 +110,6 @@ func (s *Service) Start(ctx context.Context, email, purpose, locale, requestID s
 		return Challenge{}, err
 	}
 	expiresAt := s.now().UTC().Add(challengeLifetime)
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return Challenge{}, err
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	var recentlyRequested bool
-	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM identity_auth_challenges WHERE lower(email_snapshot)=lower($1) AND purpose=$2 AND created_at > now()-interval '30 seconds')`, email, purpose).Scan(&recentlyRequested); err != nil {
-		return Challenge{}, err
-	}
-	if recentlyRequested {
-		return Challenge{}, ErrRateLimited
-	}
 	rows, err := tx.Query(ctx, `
 		UPDATE identity_auth_challenges
 		SET status='cancelled',code_hash=NULL,code_nonce=NULL,code_ciphertext=NULL,cancelled_at=now(),updated_at=now()
@@ -117,7 +136,7 @@ func (s *Service) Start(ctx context.Context, email, purpose, locale, requestID s
 			return Challenge{}, err
 		}
 	}
-	if _, err := tx.Exec(ctx, `INSERT INTO identity_auth_challenges(id,email_snapshot,purpose,locale,code_hash,code_nonce,code_ciphertext,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, challengeID, email, purpose, locale, hashCode(code), nonce, ciphertext, expiresAt); err != nil {
+	if _, err := tx.Exec(ctx, `INSERT INTO identity_auth_challenges(id,email_snapshot,purpose,locale,code_hash,code_nonce,code_ciphertext,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, challengeID, email, purpose, locale, s.codeDigest(challengeID, purpose, code), nonce, ciphertext, expiresAt); err != nil {
 		return Challenge{}, err
 	}
 	payload, _ := json.Marshal(map[string]any{"challengeId": challengeID})
@@ -140,7 +159,7 @@ func (s *Service) Start(ctx context.Context, email, purpose, locale, requestID s
 	for _, id := range stale {
 		_ = s.removeMailbox(id)
 	}
-	return Challenge{ID: challengeID, Purpose: purpose, EmailHint: maskEmail(email), ExpiresAt: expiresAt, ResendAfterSec: 30}, nil
+	return Challenge{ID: challengeID, Purpose: purpose, EmailHint: maskEmail(email), ExpiresAt: expiresAt, ResendAfterSec: int(ResendInterval / time.Second)}, nil
 }
 
 func (s *Service) ConfirmLogin(ctx context.Context, challengeID uuid.UUID, email, code string, client identity.ClientInfo) (identity.User, string, error) {
@@ -154,9 +173,10 @@ func (s *Service) ConfirmLogin(ctx context.Context, challengeID uuid.UUID, email
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	var storedEmail, purpose, status string
+	var codeHash *string
 	var expiresAt time.Time
 	var verifyAttempts int
-	err = tx.QueryRow(ctx, `SELECT email_snapshot,purpose,status,expires_at,verify_attempt_count FROM identity_auth_challenges WHERE id=$1 FOR UPDATE`, challengeID).Scan(&storedEmail, &purpose, &status, &expiresAt, &verifyAttempts)
+	err = tx.QueryRow(ctx, `SELECT email_snapshot,purpose,status,code_hash,expires_at,verify_attempt_count FROM identity_auth_challenges WHERE id=$1 FOR UPDATE`, challengeID).Scan(&storedEmail, &purpose, &status, &codeHash, &expiresAt, &verifyAttempts)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return identity.User{}, "", ErrNotFound
 	}
@@ -177,7 +197,7 @@ func (s *Service) ConfirmLogin(ctx context.Context, challengeID uuid.UUID, email
 	if verifyAttempts >= maxVerifyAttempts {
 		return identity.User{}, "", ErrRateLimited
 	}
-	if hashCode(code) != currentCodeHash(ctx, tx, challengeID) {
+	if codeHash == nil || !s.matchesCode(challengeID, purpose, code, *codeHash) {
 		_, _ = tx.Exec(ctx, `UPDATE identity_auth_challenges SET verify_attempt_count=verify_attempt_count+1,updated_at=now() WHERE id=$1`, challengeID)
 		_ = tx.Commit(ctx)
 		return identity.User{}, "", ErrInvalidCode
@@ -246,7 +266,7 @@ func (s *Service) CompleteRegistration(ctx context.Context, challengeID uuid.UUI
 	if attempts >= maxVerifyAttempts {
 		return identity.User{}, "", ErrRateLimited
 	}
-	if codeHash == nil || hashCode(code) != *codeHash {
+	if codeHash == nil || !s.matchesCode(challengeID, purpose, code, *codeHash) {
 		_, _ = tx.Exec(ctx, `UPDATE identity_auth_challenges SET verify_attempt_count=verify_attempt_count+1,updated_at=now() WHERE id=$1`, challengeID)
 		_ = tx.Commit(ctx)
 		return identity.User{}, "", ErrInvalidCode
@@ -306,11 +326,19 @@ func (s *Service) HandleDeliveryJob(ctx context.Context, job jobs.Job) error {
 		return s.deliveryFailure(ctx, tx, job, id, attemptNumber, "code_decryption_failed")
 	}
 	content := s.render(email, locale, purpose, code, expiresAt)
-	if err := s.writeMailbox(id, content); err != nil {
-		return s.deliveryFailure(ctx, tx, job, id, attemptNumber, "local_mailbox_write_failed")
+	if s.mode == "smtp" {
+		if s.sender == nil || s.sender.Send(ctx, id.String(), email, content) != nil {
+			return s.deliveryFailure(ctx, tx, job, id, attemptNumber, "smtp_delivery_failed")
+		}
+	} else if s.mode == "local_file" {
+		if err := s.writeMailbox(id, content); err != nil {
+			return s.deliveryFailure(ctx, tx, job, id, attemptNumber, "local_mailbox_write_failed")
+		}
+	} else {
+		return s.deliveryFailure(ctx, tx, job, id, attemptNumber, "delivery_disabled")
 	}
 	receipt := sha256.Sum256(content)
-	if _, err := tx.Exec(ctx, `INSERT INTO identity_auth_challenge_delivery_attempts(challenge_id,attempt_number,adapter,status,receipt_sha256) VALUES($1,$2,'local_file','delivered',$3)`, id, attemptNumber, hex.EncodeToString(receipt[:])); err != nil {
+	if _, err := tx.Exec(ctx, `INSERT INTO identity_auth_challenge_delivery_attempts(challenge_id,attempt_number,adapter,status,receipt_sha256) VALUES($1,$2,$3,'delivered',$4)`, id, attemptNumber, s.mode, hex.EncodeToString(receipt[:])); err != nil {
 		_ = s.removeMailbox(id)
 		return err
 	}
@@ -439,11 +467,6 @@ func (s *Service) removeMailbox(id uuid.UUID) error {
 	return err
 }
 
-func currentCodeHash(ctx context.Context, tx pgx.Tx, id uuid.UUID) string {
-	var value string
-	_ = tx.QueryRow(ctx, `SELECT code_hash FROM identity_auth_challenges WHERE id=$1`, id).Scan(&value)
-	return value
-}
 func challengeIDFromJob(job jobs.Job) (uuid.UUID, error) {
 	var payload struct {
 		ChallengeID uuid.UUID `json:"challengeId"`
@@ -478,6 +501,28 @@ func validEmail(value string) bool {
 func hashCode(value string) string {
 	sum := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(sum[:])
+}
+
+func (s *Service) codeDigest(id uuid.UUID, purpose, code string) string {
+	// Derive a domain-separated MAC key from the existing deployment secret;
+	// the AES-GCM key and ciphertext format used for delivery stay unchanged.
+	derive := hmac.New(sha256.New, s.key)
+	_, _ = derive.Write([]byte("hcai-auth-challenge-verification-key:v1"))
+	mac := hmac.New(sha256.New, derive.Sum(nil))
+	_, _ = mac.Write([]byte("hcai-auth-challenge-code:v1:" + id.String() + ":" + purpose + ":" + code))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+func (s *Service) matchesCode(id uuid.UUID, purpose, code, stored string) bool {
+	if len(s.key) != 32 || id == uuid.Nil || !validCode(code) || (purpose != LoginCode && purpose != RegistrationCode) {
+		return false
+	}
+	current := hmac.Equal([]byte(stored), []byte(s.codeDigest(id, purpose, code)))
+	// Already-issued codes keep their original ten-minute deadline and attempt
+	// cap. Accept their legacy digest during rollout; never write it for new
+	// requests. Neither path searches for a code outside the locked challenge.
+	legacy := hmac.Equal([]byte(stored), []byte(hashCode(code)))
+	return current || legacy
 }
 func maskEmail(value string) string {
 	parts := strings.SplitN(value, "@", 2)

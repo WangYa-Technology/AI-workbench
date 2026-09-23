@@ -26,6 +26,9 @@ type waffoBillingCheckoutRuntime struct {
 }
 
 func (*waffoBillingCheckoutRuntime) Provider() string { return "waffo_pancake" }
+func (*waffoBillingCheckoutRuntime) ProductCheckoutIdentity(context.Context) (ProductCheckoutIdentity, error) {
+	return ProductCheckoutIdentity{Provider: "waffo_pancake", MerchantID: "MER_test", StoreID: "STO_test", Endpoint: "https://connector.example.test", APIVersion: waffoProductCheckoutAPI, RequestVersion: waffoProductCheckoutVersion}, nil
+}
 func (r *waffoBillingCheckoutRuntime) CreateCheckout(_ context.Context, input CheckoutRequest) (CheckoutSession, error) {
 	r.calls++
 	r.lastSuccessURL = input.SuccessURL
@@ -45,6 +48,10 @@ func (*waffoBillingCheckoutRuntime) CreateConnectAccount(context.Context, Connec
 }
 func (*waffoBillingCheckoutRuntime) CreateAccountLink(context.Context, AccountLinkRequest) (AccountLink, error) {
 	return AccountLink{}, ErrProviderUnavailable
+}
+
+func (*productCheckoutRuntime) ProductCheckoutIdentity(context.Context) (ProductCheckoutIdentity, error) {
+	return ProductCheckoutIdentity{Provider: "stripe", MerchantID: "acct_workflow", Endpoint: "https://api.stripe.com/v1", APIVersion: "2026-02-25.clover", RequestVersion: stripeProductCheckoutVersion}, nil
 }
 
 func (*productCheckoutRuntime) Provider() string { return "stripe" }
@@ -94,8 +101,8 @@ func TestProductCheckoutSignedFulfillmentWorkflow(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,scan_status,source_type,license_code)
-		VALUES($1,$2,'image','Provider source Asset',$3,'image/jpeg','clean','demo','hcai-commercial-standard-v1')`,
+		INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,scan_status,source_type,license_code,storage_backend,storage_key)
+		VALUES($1,$2,'image','Provider source Asset',$3,'image/jpeg','clean','upload','hcai-commercial-standard-v1','local_file',$1::uuid::text||'.jpg')`,
 		sourceAssetID, sellerID, "/api/v1/assets/"+sourceAssetID.String()+"/content"); err != nil {
 		t.Fatal(err)
 	}
@@ -105,14 +112,15 @@ func TestProductCheckoutSignedFulfillmentWorkflow(t *testing.T) {
 		productID, sellerID, sourceAssetID); err != nil {
 		t.Fatal(err)
 	}
+	replacePaymentFixtureBytes(t, pool, sourceAssetID, []byte("payment workflow source"))
 	runtime := &productCheckoutRuntime{}
 	config := ServiceConfig{Enabled: true, LiveMode: false, APIVersion: testStripeAPIVersion, WebhookSecret: testStripeWebhookSecret, WebhookTolerance: 5 * time.Minute}
-	service := NewServiceWithRuntimes(pool, config, NewRuntimeCatalog(runtime))
-	checkout, created, err := service.BeginProductCheckout(ctx, buyerID, productID, "product-workflow-001", "checkout-request", "https://app.example.test/workspace/orders?payment=success", "https://app.example.test/market/products/one?payment=cancelled", true)
+	service := newPaymentTestService(t, pool, config, NewRuntimeCatalog(runtime))
+	checkout, created, err := service.BeginProductCheckout(ctx, buyerID, productID, "product-workflow-001", "checkout-request", "https://app.example.test/workspace/orders?payment=success", "https://app.example.test/market/products/one?payment=cancelled", true, productOfferVersion(t, pool, productID))
 	if err != nil || !created || checkout.Status != "checkout_open" || checkout.OrderID == uuid.Nil || checkout.PaymentID == uuid.Nil || runtime.calls != 1 {
 		t.Fatalf("create product checkout: checkout=%#v created=%t calls=%d err=%v", checkout, created, runtime.calls, err)
 	}
-	replayed, created, err := service.BeginProductCheckout(ctx, buyerID, productID, "product-workflow-001", "checkout-replay", "https://app.example.test/workspace/orders?payment=success", "https://app.example.test/market/products/one?payment=cancelled", true)
+	replayed, created, err := service.BeginProductCheckout(ctx, buyerID, productID, "product-workflow-001", "checkout-replay", "https://app.example.test/workspace/orders?payment=success", "https://app.example.test/market/products/one?payment=cancelled", true, productOfferVersion(t, pool, productID))
 	if err != nil || created || !replayed.AlreadyCreated || replayed.PaymentID != checkout.PaymentID || runtime.calls != 1 {
 		t.Fatalf("idempotent checkout mismatch: checkout=%#v created=%t calls=%d err=%v", replayed, created, runtime.calls, err)
 	}
@@ -184,8 +192,11 @@ func TestProductCheckoutSignedFulfillmentWorkflow(t *testing.T) {
 	}
 
 	started, err := service.BeginProductRefund(ctx, buyerID, checkout.OrderID, "product-refund-001", "refund-request", "The licensed workflow did not fit the documented production requirement.")
-	if err != nil || !started || runtime.refundCalls != 1 {
+	if err != nil || !started || runtime.refundCalls != 0 {
 		t.Fatalf("start Provider refund: started=%t calls=%d err=%v", started, runtime.refundCalls, err)
+	}
+	if err := service.HandleProductRefundJob(ctx, currentProductRefundJob(t, pool, checkout.PaymentID)); err != nil {
+		t.Fatal(err)
 	}
 	replayedRefund, err := service.BeginProductRefund(ctx, buyerID, checkout.OrderID, "product-refund-001", "refund-replay", "The licensed workflow did not fit the documented production requirement.")
 	if err != nil || replayedRefund || runtime.refundCalls != 1 {
@@ -213,8 +224,11 @@ func TestProductCheckoutSignedFulfillmentWorkflow(t *testing.T) {
 	}
 
 	started, err = service.BeginProductRefund(ctx, buyerID, checkout.OrderID, "product-refund-002", "refund-retry", "Retry after the Provider confirmed that the first refund did not complete.")
-	if err != nil || !started || runtime.refundCalls != 2 {
+	if err != nil || !started || runtime.refundCalls != 1 {
 		t.Fatalf("retry failed Provider refund: started=%t calls=%d err=%v", started, runtime.refundCalls, err)
+	}
+	if err := service.HandleProductRefundJob(ctx, currentProductRefundJob(t, pool, checkout.PaymentID)); err != nil {
+		t.Fatal(err)
 	}
 	succeededBody := productRefundEvent("evt_refundsucceeded", "re_workflow456", "succeeded", checkout.PaymentID, productID, now.Unix(), checkout.AmountCents)
 	succeededReceipt := receivePaymentWorkflowEvent(t, service, succeededBody, now)
@@ -258,7 +272,7 @@ func TestExternalBillingCheckoutFulfillmentWorkflow(t *testing.T) {
 	}
 
 	runtime := &productCheckoutRuntime{}
-	service := NewServiceWithRuntimes(pool, ServiceConfig{
+	service := newPaymentTestService(t, pool, ServiceConfig{
 		Enabled: true, Provider: "stripe", LiveMode: false,
 		APIVersion: testStripeAPIVersion, WebhookSecret: testStripeWebhookSecret,
 		WebhookTolerance: 5 * time.Minute,
@@ -275,7 +289,7 @@ func TestExternalBillingCheckoutFulfillmentWorkflow(t *testing.T) {
 
 	now := time.Now().UTC().Truncate(time.Second)
 	service.verifier.now = func() time.Time { return now }
-	walletBody := billingStripeCheckoutEvent("evt_wallet_topup_001", topup.PaymentID, topup.ResourceID, "wallet_topup", topup.AmountCents, "pi_wallet_topup_001", now.Unix())
+	walletBody := billingStripeCheckoutEvent(t, pool, "evt_wallet_topup_001", topup.PaymentID, topup.ResourceID, "wallet_topup", topup.AmountCents, "pi_wallet_topup_001", now.Unix())
 	walletReceipt, err := service.ReceiveStripeWebhook(ctx, walletBody, "t="+fmt.Sprint(now.Unix())+",v1="+stripeSignature(testStripeWebhookSecret, now.Unix(), walletBody))
 	if err != nil || walletReceipt.Status != "received" || walletReceipt.Duplicate {
 		t.Fatalf("receive wallet top-up webhook: receipt=%#v err=%v", walletReceipt, err)
@@ -308,7 +322,7 @@ func TestExternalBillingCheckoutFulfillmentWorkflow(t *testing.T) {
 	if err != nil || created || !subscriptionReplay.AlreadyCreated || subscriptionReplay.PaymentID != subscription.PaymentID || runtime.calls != 2 {
 		t.Fatalf("subscription idempotency mismatch: checkout=%#v created=%t calls=%d err=%v", subscriptionReplay, created, runtime.calls, err)
 	}
-	subscriptionBody := billingStripeCheckoutEvent("evt_subscription_001", subscription.PaymentID, planID, "subscription", subscription.AmountCents, "pi_subscription_001", now.Add(time.Second).Unix())
+	subscriptionBody := billingStripeCheckoutEvent(t, pool, "evt_subscription_001", subscription.PaymentID, planID, "subscription", subscription.AmountCents, "pi_subscription_001", now.Add(time.Second).Unix())
 	subscriptionReceipt, err := service.ReceiveStripeWebhook(ctx, subscriptionBody, "t="+fmt.Sprint(now.Add(time.Second).Unix())+",v1="+stripeSignature(testStripeWebhookSecret, now.Add(time.Second).Unix(), subscriptionBody))
 	if err != nil || subscriptionReceipt.Status != "received" || subscriptionReceipt.Duplicate {
 		t.Fatalf("receive subscription webhook: receipt=%#v err=%v", subscriptionReceipt, err)
@@ -372,7 +386,7 @@ func TestWaffoSubscriptionActivationAndRenewalWorkflow(t *testing.T) {
 	}
 
 	runtime := &waffoBillingCheckoutRuntime{}
-	service := NewServiceWithRuntimes(pool, ServiceConfig{
+	service := newPaymentTestService(t, pool, ServiceConfig{
 		Enabled: true, Provider: "waffo_pancake", WaffoEnvironment: "test", WaffoMerchantID: "MER_test",
 		WaffoStoreID: "STO_test", WaffoProductIDOnetime: "PROD_onetime", WaffoProductIDSubscription: "PROD_subscription",
 	}, NewRuntimeCatalog(runtime))
@@ -387,6 +401,8 @@ func TestWaffoSubscriptionActivationAndRenewalWorkflow(t *testing.T) {
 	activationPaymentID := "PAY_waffo_initial_123"
 	activation := minimizedProviderEvent{
 		ProviderEventID: "delivery_waffo_activation_123", EventType: "subscription.activated", APIVersion: "waffo-pancake-v1",
+		WaffoVerificationVersion: waffoWebhookContractVersion, WaffoStoreID: "STO_test",
+		WaffoOrderExternalID: checkout.PaymentID.String(), WaffoBuyerIdentity: userID.String(),
 		OccurredAt: now, PayloadSHA256: strings.Repeat("a", 64), ObjectID: "ORD_waffo_subscription_123", ObjectType: "order",
 		PaymentID: &checkout.PaymentID, ResourceID: &planID, Purpose: &purpose, AmountCents: &activationAmount, Currency: &currency,
 		PaymentStatus: &succeeded, ProviderPaymentID: &activationPaymentID, Supported: true,
@@ -417,6 +433,18 @@ func TestWaffoSubscriptionActivationAndRenewalWorkflow(t *testing.T) {
 	if err != nil || !duplicate.Duplicate || duplicate.EventID != renewalReceipt.EventID {
 		t.Fatalf("Waffo renewal replay was not idempotent: receipt=%#v err=%v", duplicate, err)
 	}
+	var endAfterFirstRenewal time.Time
+	if err := pool.QueryRow(ctx, `SELECT current_period_end FROM user_subscriptions WHERE purchase_operation_id=$1`, checkout.PaymentID).Scan(&endAfterFirstRenewal); err != nil {
+		t.Fatal(err)
+	}
+	// A provider may assign a new delivery ID to the same captured payment.
+	renewal.ProviderEventID = "delivery_waffo_renewal_redelivered"
+	renewal.PayloadSHA256 = strings.Repeat("c", 64)
+	redelivery, err := service.receiveProviderEvent(ctx, "waffo_pancake", renewal)
+	if err != nil || redelivery.Duplicate {
+		t.Fatalf("receive distinct renewal delivery: receipt=%#v err=%v", redelivery, err)
+	}
+	processPaymentEventJob(t, pool, service, "waffo-renewal-redelivery-worker")
 
 	var pointsAfter int64
 	var renewedPeriodEnd time.Time
@@ -438,6 +466,9 @@ func TestWaffoSubscriptionActivationAndRenewalWorkflow(t *testing.T) {
 	}
 	if pointsAfter != pointsBefore+2*planPoints || pointCredits != 2 || activeSubscriptions != 1 || renewalEvents != 1 || !renewedPeriodEnd.After(initialPeriodEnd) {
 		t.Fatalf("Waffo subscription lifecycle mismatch: pointsBefore=%d pointsAfter=%d expected=%d credits=%d active=%d renewals=%d initialEnd=%s renewedEnd=%s", pointsBefore, pointsAfter, pointsBefore+2*planPoints, pointCredits, activeSubscriptions, renewalEvents, initialPeriodEnd, renewedPeriodEnd)
+	}
+	if !renewedPeriodEnd.Equal(endAfterFirstRenewal) {
+		t.Fatalf("same payment extended subscription again: first=%s after=%s", endAfterFirstRenewal, renewedPeriodEnd)
 	}
 }
 
@@ -472,8 +503,13 @@ func processPaymentEventJob(t *testing.T, pool *pgxpool.Pool, service *Service, 
 	t.Fatal("payment event job was not claimed")
 }
 
-func billingStripeCheckoutEvent(eventID string, paymentID, resourceID uuid.UUID, purpose string, amount int, providerPaymentID string, created int64) []byte {
-	return []byte(fmt.Sprintf(`{"id":%q,"object":"event","api_version":%q,"created":%d,"livemode":false,"type":"checkout.session.completed","data":{"object":{"id":"cs_%s","object":"checkout.session","status":"complete","payment_status":"paid","amount_total":%d,"currency":"usd","payment_intent":%q,"metadata":{"hcai_payment_id":%q,"hcai_resource_id":%q,"hcai_purpose":%q}}}}`, eventID, testStripeAPIVersion, created, strings.TrimPrefix(eventID, "evt_"), amount, providerPaymentID, paymentID.String(), resourceID.String(), purpose))
+func billingStripeCheckoutEvent(t *testing.T, pool *pgxpool.Pool, eventID string, paymentID, resourceID uuid.UUID, purpose string, amount int, providerPaymentID string, created int64) []byte {
+	t.Helper()
+	var checkoutID string
+	if err := pool.QueryRow(t.Context(), `SELECT provider_checkout_id FROM payment_intents WHERE id=$1`, paymentID).Scan(&checkoutID); err != nil {
+		t.Fatal(err)
+	}
+	return []byte(fmt.Sprintf(`{"id":%q,"object":"event","api_version":%q,"created":%d,"livemode":false,"type":"checkout.session.completed","data":{"object":{"id":%q,"object":"checkout.session","status":"complete","payment_status":"paid","amount_total":%d,"currency":"usd","payment_intent":%q,"metadata":{"hcai_payment_id":%q,"hcai_resource_id":%q,"hcai_purpose":%q}}}}`, eventID, testStripeAPIVersion, created, checkoutID, amount, providerPaymentID, paymentID.String(), resourceID.String(), purpose))
 }
 
 func productPaidEvent(paymentID, productID uuid.UUID, created int64, amount int) []byte {

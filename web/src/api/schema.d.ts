@@ -178,7 +178,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** @description Receives a bounded, signed Stripe event. The endpoint is disabled unless the payment Provider is explicitly configured. */
+        /** @description Receives a bounded, signed Stripe event using the retained deployment verifier, API version and environment. Known product payment and refund events are matched to the original local payment independently of new-sales provider selection; the worker rechecks that binding before applying funds or rights. Financial events carrying a Connect account or organization context are rejected because outbound charges use the platform account; valid connected-account status updates remain supported. Other events retain the enabled-provider routing policy. The global payment-processing switch remains mandatory. This does not recover missing original merchant credentials or permit changing the signing secret to another account. */
         post: operations["receiveStripeWebhook"];
         delete?: never;
         options?: never;
@@ -195,7 +195,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** @description Receives a bounded Waffo Pancake event. The raw body is verified by the isolated Pancake connector before durable event insertion. */
+        /** @description Receives a bounded Waffo Pancake event. The isolated connector attests to the exact raw-body digest and deployment environment. Product events must match the immutable original store, buyer, order, resource and amount, independently of current new-sales settings. The binding is persisted with the event and rechecked before processing. Missing original evidence requires reconciliation; signature verification and the global processing switch remain mandatory. */
         post: operations["receiveWaffoWebhook"];
         delete?: never;
         options?: never;
@@ -228,6 +228,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
+        /**
+         * @deprecated
+         * @description Legacy test-fixture registration. Outside APP_ENV=test use /auth/unified/register with an email code.
+         */
         post: operations["registerAccount"];
         delete?: never;
         options?: never;
@@ -310,23 +314,6 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["completeUnifiedRegistration"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/auth/demo": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** @description Starts a clearly labeled local-development session. The endpoint is unavailable in production. */
-        post: operations["startDemoSession"];
         delete?: never;
         options?: never;
         head?: never;
@@ -713,7 +700,7 @@ export interface paths {
         };
         get: operations["listDataRightsRequests"];
         put?: never;
-        /** @description Requires a session created within 15 minutes and exact handle confirmation. Shared demo accounts are excluded. */
+        /** @description Requires a session created within 15 minutes and exact handle confirmation. */
         post: operations["createDataRightsRequest"];
         delete?: never;
         options?: never;
@@ -986,7 +973,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** @description Returns the public projection of an active creator with public work or active products. */
+        /** @description Returns public profile fields of an active user, including users with only discussions or no published portfolio. Works and products have independent pages with totals from the same read snapshot. */
         get: operations["getCreator"];
         put?: never;
         post?: never;
@@ -1140,6 +1127,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/billing/topup-settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getWalletTopupSettings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/billing/points": {
         parameters: {
             query?: never;
@@ -1165,7 +1168,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** @description Creates a hosted payment checkout for adding USD wallet balance. The balance is credited only after a verified Provider webhook is processed by the Worker. */
+        /** @description Creates a hosted payment checkout for adding equal USD wallet balance. New intents must satisfy the current wallet top-up minimum; suggestions are optional, not an allowlist. Existing intents retain their accepted amount. A concurrent settings change may return retryable 409 payment_checkout_busy; retry using the same idempotency key. Below-minimum new requests return 422 wallet_topup_amount_out_of_range. The balance is credited only after a verified Provider webhook is processed by the Worker. */
         post: operations["checkoutWalletTopup"];
         delete?: never;
         options?: never;
@@ -1232,7 +1235,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** @description Stores one file through the configured private media backend and queues durable scanning. Content remains unavailable until the scan status is clean. */
+        /** @description Stores one file through the configured private media backend and queues durable scanning. Content remains unavailable until the scan status is clean. Account status is rechecked under the account lifecycle lock before storage writes. The same account/key and normalized title, filename, bytes and target recover the original asset without repeating storage, scan or audit. Changed content returns 409. Each failed attempt retains a separate write journal; uncertain results do not authorize file deletion. */
         post: operations["uploadAsset"];
         delete?: never;
         options?: never;
@@ -1298,8 +1301,513 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** @description Uploads new media bytes into the same logical Asset family. Every version is scanned independently and preserves its predecessor evidence. */
+        /** @description Uploads new media bytes into the same logical Asset family. Every version is scanned independently and preserves its predecessor evidence. The account-scoped retry key also binds the base asset, note, title, filename and actual bytes; matching replays return the original version, while changed inputs conflict. */
         post: operations["uploadAssetVersion"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/seller/sales": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Private sales by accepted contract seller (legacy fallback to payment payee). A snapshot-consistent total and descending keyset page. No buyer identity or payment credentials. Order amounts are not seller earnings or payouts. */
+        get: operations["listSellerSales"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/seller/sales/{orderID}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Own historical sale and accepted license snapshots. Foreign sales return 404. This read does not authorize buyer assets or refunds. */
+        get: operations["getSellerSale"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/seller/sales/{orderID}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Own sale status transitions in ascending sequence order. Excludes actor identities and private reasons; cursor bound to actor and order. */
+        get: operations["listSellerSaleEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/seller/funds": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Private server-calculated ledger accounts, separated by immutable provider, merchant, store, endpoint, environment and currency. No cross-account monetary total. Withdrawable is a ledger ceiling, not bank cash or a guarantee of payout eligibility; active reservations and same-account recovery block it. Unclassified evidence blocks all new withdrawals pending reconciliation. */
+        get: operations["getSellerFunds"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/seller-payout-requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Finance-only directory. Includes the latest independent review and test/live environment. Approval does not enqueue funding or bank payout. */
+        get: operations["listSellerPayoutReviews"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/seller-payout-requests/{requestID}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                requestID: string;
+            };
+            cookie?: never;
+        };
+        get: operations["getSellerPayoutReview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/seller-payout-requests/{requestID}/review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                requestID: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Records an independent finance decision against an explicit revision and frozen selection. Self-review is forbidden. Rejection cancels an unstarted request and releases its reservation atomically with the audit; approval retains the reservation and does not dispatch funds. An approved review can be superseded by rejection before any source transfer exists. Idempotency is operator-scoped and remains replayable when new payments are disabled, subject to current finance authority. */
+        post: operations["reviewSellerPayout"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/seller-payout-requests/{requestID}/funding": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Explicit finance admission of one platform-to-connected-account transfer against the exact latest approval and frozen bank. Requires current independent finance authority and revalidates financial eligibility transactionally. Durably queues one source job; approval alone never queues it. This does not create a bank payout. Replays return the original admission and current request, even when new funding is disabled. */
+        post: operations["admitSellerPayoutFunding"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/seller-payout-requests/{requestID}/bank-payout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Private no-store finance view of current bank command, dispatch and accepted provider status. A queued or successful job and a source transfer are not bank arrival evidence. canSubmit is only a read-time hint; POST rechecks under financial locks. */
+        get: operations["getSellerBankPayoutOperation"];
+        put?: never;
+        /** @description Explicit bank-payout confirmation after original source funding succeeds. Freezes the original source, approved revision, bank, full USD amount and reason and queues one job in the same transaction. No provider request is made by this endpoint. Current independent finance authority is required on every attempt. Same-key replay returns the original command/job and current operation even when new writes are disabled; it never revives stopped jobs or sends another payout. */
+        post: operations["submitSellerBankPayout"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/seller-payout-requests/{requestID}/bank-payout/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Explicitly continue an unstarted stopped bank command within its original 23-hour window. Requires current independent finance authority and revalidates original authorization and funds. Atomically appends a new execution job and immutable predecessor, event and audit; never resets the original job or first-send marker. Started or unknown commands require read-only reconciliation instead. Same-key replay returns the original continuation, including when new writes are disabled. No provider request is made by this endpoint. */
+        post: operations["resumeSellerBankPayout"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/seller-payout-requests/{requestID}/source-reversal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Finance-only no-store consistent snapshot of source return and closure. Performs no provider calls or financial writes. Eligibility flags are hints; commands revalidate current authority and all financial evidence under locks. Query parameters are rejected. */
+        get: operations["getSellerSourceReversalOperation"];
+        put?: never;
+        /** @description Independent finance confirmation of the current source, request version and resolved bank obligation. Atomically stores one immutable command, job, event and audit. Does not call the provider or release funds. Same-key replay returns the original job without restarting it. Request body is limited to 16 KiB; one Idempotency-Key is required and query parameters are rejected. */
+        post: operations["submitSellerSourceReversal"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/seller-source-reversals/{commandID}/close": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Independent finance confirmation consuming an accepted complete source return. Rechecks original bank, refund and debt evidence and the current request version. Atomically releases the reservation or settles full refund recovery; never creates new income or contacts the provider. Same-key replay returns the original closure. Available after new external writes are disabled. Query parameters are rejected; body limit 16 KiB and exactly one Idempotency-Key required. */
+        post: operations["closeSellerSourceReversal"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/seller/payout-options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Lists the current seller's eligible complete settlements. Availability is a mode/configuration hint, not a guarantee of funds or bank payout. */
+        get: operations["listSellerPayoutOptions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/seller/payout-requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Lists the current seller's payout history, including cancelled requests. Action hints are rechecked by write endpoints. */
+        get: operations["listSellerPayoutRequests"];
+        put?: never;
+        /** @description Reserves one explicitly selected complete settlement for review. Reusing the key with a different settlement or amount conflicts. This does not dispatch funds or claim bank settlement. */
+        post: operations["createSellerPayoutRequest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/seller/payout-requests/{requestID}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Private owner-only request including current status and the latest seller-visible decision. Internal review notes and operator identifiers are excluded. Foreign or missing requests return 404. No query parameters accepted. */
+        get: operations["getSellerPayoutRequest"];
+        put?: never;
+        post?: never;
+        /** @description Cancels a requested or under-review payout and records an immutable release entry. Provider-processing requests cannot be cancelled locally. */
+        delete: operations["cancelSellerPayoutRequest"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/seller/payout-requests/{requestID}/banks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Reads a complete authenticated bank directory for an eligible unbound request. Only safe bank labels and last four digits are returned. No bank or funds are modified. */
+        get: operations["listSellerPayoutBanks"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/seller/payout-requests/{requestID}/bank-destination": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                requestID: string;
+            };
+            cookie?: never;
+        };
+        /** @description Returns only the owner's frozen bank selection, including after cancellation. This is historical verification, not current payout eligibility. No selection or another owner's request returns 404. */
+        get: operations["getSellerPayoutBankTarget"];
+        /** @description Verifies the explicitly selected Stripe bank belongs to the original connected account and freezes it on an unstarted payout request. Same selection replays the original record; replacement conflicts. No bank number, remote write, source transfer or bank payout is accepted or performed. Verification does not require a funded connected balance. A cancelled unstarted request may be replaced by a new request; its old bank evidence remains immutable. */
+        put: operations["bindSellerPayoutBankTarget"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/seller/licenses": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Private seller or authorized content-review projection; no storage locations. Mutations bind an idempotency key to the exact command and use the observed version. Replays return current state without repeating effects. */
+        get: operations["listSellerLicenses"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/seller/products": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Private seller or authorized content-review projection; no storage locations. Mutations bind an idempotency key to the exact command and use the observed version. Replays return current state without repeating effects. */
+        get: operations["listSellerProducts"];
+        put?: never;
+        /** @description Private seller or authorized content-review projection; no storage locations. Mutations bind an idempotency key to the exact command and use the observed version. Replays return current state without repeating effects. */
+        post: operations["createSellerProduct"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/seller/products/{productId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Private seller or authorized content-review projection; no storage locations. Mutations bind an idempotency key to the exact command and use the observed version. Replays return current state without repeating effects. */
+        get: operations["getSellerProduct"];
+        /** @description Private seller or authorized content-review projection; no storage locations. Mutations bind an idempotency key to the exact command and use the observed version. Replays return current state without repeating effects. */
+        put: operations["editSellerProduct"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/seller/products/{productId}/submit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Private seller or authorized content-review projection; no storage locations. Mutations bind an idempotency key to the exact command and use the observed version. Replays return current state without repeating effects. */
+        post: operations["submitSellerProduct"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/seller/products/{productId}/pause": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Private seller or authorized content-review projection; no storage locations. Mutations bind an idempotency key to the exact command and use the observed version. Replays return current state without repeating effects. */
+        post: operations["pauseSellerProduct"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/products": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Private seller or authorized content-review projection; no storage locations. Mutations bind an idempotency key to the exact command and use the observed version. Replays return current state without repeating effects. */
+        get: operations["listReviewProducts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/products/{productId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Private seller or authorized content-review projection; no storage locations. Mutations bind an idempotency key to the exact command and use the observed version. Replays return current state without repeating effects. */
+        get: operations["getReviewProduct"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/products/{productId}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Private seller or authorized content-review projection; no storage locations. Mutations bind an idempotency key to the exact command and use the observed version. Replays return current state without repeating effects. */
+        post: operations["approveReviewProduct"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/products/{productId}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Private seller or authorized content-review projection; no storage locations. Mutations bind an idempotency key to the exact command and use the observed version. Replays return current state without repeating effects. */
+        post: operations["rejectReviewProduct"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/products/{productId}/block": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Private seller or authorized content-review projection; no storage locations. Mutations bind an idempotency key to the exact command and use the observed version. Replays return current state without repeating effects. */
+        post: operations["blockReviewProduct"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/products/{productId}/reopen": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Private seller or authorized content-review projection; no storage locations. Mutations bind an idempotency key to the exact command and use the observed version. Replays return current state without repeating effects. */
+        post: operations["reopenReviewProduct"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/products/{productId}/content": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Audited attachment download for admin:content, limited to the file referenced by the observed listing version; private, no-store. A multi-file source requires fileIndex; omitting it cannot silently review only the first file. The asset service still enforces scan and storage checks. */
+        get: operations["reviewProductContent"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1313,6 +1821,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
+        /** @description Keyset pagination by creation time and ID, or price followed by creation time and ID. Items, total and categoryCounts share one snapshot per response; later requests re-evaluate current visibility and prices. */
         get: operations["listProducts"];
         put?: never;
         post?: never;
@@ -1338,6 +1847,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/products/{productId}/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** @description Seller-only selection of a separate clean owned upload or generation as the public sample. Null removes the sample. The accepted offer version protects against stale edits. */
+        put: operations["setProductPreview"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/products/{productId}/checkout": {
         parameters: {
             query?: never;
@@ -1347,7 +1873,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** @description Creates or resumes an external-provider hosted checkout. Entitlement is granted only after a signed payment event is processed. */
+        /** @description Creates or resumes an external-provider hosted checkout. New product requests and original merchant identity are persisted before dispatch. An uncertain request with missing evidence, changed merchant or serialization contract, or an expired safe retry window returns 409 payment_reconciliation_required; retain the original command key and inspect the order. Entitlement is granted only after verified payment evidence (a signed event or authenticated provider query) is processed. */
         post: operations["checkoutProduct"];
         delete?: never;
         options?: never;
@@ -1381,6 +1907,23 @@ export interface paths {
         get: operations["getOrder"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orders/{orderId}/close-checkout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Close only a guarded product order proven never dispatched. No remote payment call. An uncertain checkout cannot be closed locally. */
+        post: operations["closeProductCheckout"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1491,6 +2034,54 @@ export interface paths {
             cookie?: never;
         };
         get: operations["getCommunityPost"];
+        put?: never;
+        post?: never;
+        delete: operations["deleteCommunityPost"];
+        options?: never;
+        head?: never;
+        patch: operations["updateCommunityPost"];
+        trace?: never;
+    };
+    "/community/posts/{postId}/owned": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getOwnedCommunityPost"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/community/capabilities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["communityCapabilities"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/community/reports/{reportId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getCommunityReport"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1621,6 +2212,22 @@ export interface paths {
         get: operations["getTask"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{taskId}/deadline": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["changeTaskDeadline"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2076,6 +2683,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/wallet-topup-settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Requires admin:finance. */
+        get: operations["getAdminWalletTopupSettings"];
+        /** @description Requires current admin:finance and expected version. Applies only to newly accepted USD top-ups, with equal charged and credited amounts. Suggestions do not restrict custom amounts. */
+        put: operations["updateAdminWalletTopupSettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/subscription-models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Requires admin:finance. Minimal plan model labels without provider configuration. Includes disabled models; excludes archived models and providers. */
+        get: operations["listAdminSubscriptionModels"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/subscription-plans": {
         parameters: {
             query?: never;
@@ -2197,6 +2839,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
+        /** @description Atomically records a manual wallet adjustment and audit. The key is scoped to the operator; reuse with a different target or amount is a conflict. Replays require current finance permission and return the original operationId with the account observed during this request. No external transfer is made. */
         post: operations["adjustAdminFinanceAccount"];
         delete?: never;
         options?: never;
@@ -2220,6 +2863,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/payments/webhook-quarantines": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List signed product callbacks rejected by local transaction verification */
+        get: operations["listProductWebhookQuarantines"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/payments/webhook-quarantines/{quarantineID}/recheck": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reverify immutable signed evidence without changing its fields */
+        post: operations["recheckProductWebhookQuarantine"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/payments": {
         parameters: {
             query?: never;
@@ -2228,6 +2905,71 @@ export interface paths {
             cookie?: never;
         };
         get: operations["listAdminPayments"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/payments/{paymentId}/refund-history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getAdminRefundHistory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/payments/{paymentId}/refund-checks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listAdminRefundChecks"];
+        put?: never;
+        /** @description Requires current active admin:finance authority. Authority is checked in the command transaction and locked with the account and role grant before any write. Revocation committed during a lock wait causes a conflict without queuing a check or changing prior evidence; refresh before retrying. Later revocations wait for the authorized command to finish. Automatic reconciliation is independent of operator authority. */
+        post: operations["requestAdminRefundCheck"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/payments/{paymentId}/refund-checks/{checkId}/receipts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listAdminRefundReadReceipts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/payments/{paymentId}/refund-checks/{checkId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getAdminRefundCheck"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2652,6 +3394,200 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/product-deliveries/evidence-gaps": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Read-only admin:media inventory of historical or inconsistent delivery evidence. Scans at most 500 orders per page (plus one lookahead); empty items can still have nextCursor. Does not read file bytes, infer original checksums, migrate orders or grant rights. Active scope means a non-deleted buyer has active rights or a recorded checkout payment is pending. Unsettled scope uses the shared product funds retention rule, including pending refunds and financial review after account deletion. Neither scope is a complete deletion eligibility decision or a directory of all payments. */
+        get: operations["listProductDeliveryEvidenceGaps"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/product-deliveries/{orderID}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["inspectProductDelivery"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/product-deliveries/{orderID}/repair": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["repairProductDelivery"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/product-deliveries/{orderID}/repair-upload": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["prepareProductDeliveryUpload"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/product-deliveries/{orderID}/repairs/{repairID}/content": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** @description Upload exact accepted bytes, at most 100 MiB. SHA-256 and size must match the immutable order. No ordinary asset or persistent upload source is created. Interrupted uploads restart at byte zero against the same repairId; resume can finish an already written target. */
+        put: operations["uploadProductDeliveryRepair"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/product-deliveries/{orderID}/repairs/{repairID}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["resumeProductDeliveryRepair"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/data-rights/deletion-jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listAdminDeletionJobs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/data-rights/deletion-jobs/{jobId}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["retryAdminDeletionJob"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/data-rights/export-jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listAdminExportJobs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/data-rights/export-jobs/{jobId}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["retryAdminExportJob"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/data-rights/media-cleanups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listAdminMediaCleanups"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/data-rights/media-cleanups/{jobId}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["retryAdminMediaCleanup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/data-rights/holds": {
         parameters: {
             query?: never;
@@ -2886,7 +3822,6 @@ export interface components {
             defaultLocale: string;
             supportedLocales: string[];
             defaultCurrency: string;
-            localDemoAvailable: boolean;
             localProvider: {
                 enabled: boolean;
                 label: string;
@@ -2954,6 +3889,7 @@ export interface components {
             code: string;
             /** Format: email */
             email: string;
+            /** @description At least 10 Unicode characters and at most 72 UTF-8 bytes. */
             password: string;
             handle: string;
             displayName?: string;
@@ -2964,6 +3900,7 @@ export interface components {
         RegisterRequest: {
             /** Format: email */
             email: string;
+            /** @description At least 10 Unicode characters and at most 72 UTF-8 bytes. */
             password: string;
             handle: string;
             displayName: string;
@@ -2982,6 +3919,7 @@ export interface components {
         };
         PasswordResetConfirm: {
             token: string;
+            /** @description At least 10 Unicode characters and at most 72 UTF-8 bytes. */
             password: string;
         };
         EmailActionToken: {
@@ -2998,8 +3936,11 @@ export interface components {
             /** @enum {string} */
             provider: "stripe";
             liveMode: boolean;
-            /** @enum {string} */
-            status: "not_started" | "pending_onboarding" | "pending_verification" | "verified" | "restricted" | "disabled";
+            /**
+             * @description creation_pending preserves an uncertain original account creation and permits only a guarded retry; recovery_required forbids automatic account recreation.
+             * @enum {string}
+             */
+            status: "not_started" | "creation_pending" | "recovery_required" | "pending_onboarding" | "pending_verification" | "verified" | "restricted" | "disabled";
             destinationId?: string;
             /** @enum {string} */
             accountType?: "manual" | "express";
@@ -3153,6 +4094,7 @@ export interface components {
             cancelUntil?: string;
             /** Format: date-time */
             completedAt?: string;
+            /** @description export_job_failed indicates a queued export whose latest durable generation job failed with no active replacement; request status is projected as failed until recovery or owner cancellation */
             failureCode?: string;
             version: number;
             export?: components["schemas"]["DataRightsExportEvidence"];
@@ -3192,6 +4134,186 @@ export interface components {
             expiresAt: string;
             /** Format: date-time */
             createdAt: string;
+        };
+        ProductDeliveryEvidencePage: {
+            items: components["schemas"]["ProductDeliveryEvidenceGap"][];
+            /** @description Orders examined in this page */
+            scanned: number;
+            nextCursor?: string;
+        };
+        ProductDeliveryEvidenceGap: {
+            /** Format: uuid */
+            orderId: string;
+            /** @description Original order title; never today's offer */
+            title: string;
+            orderStatus: string;
+            /** @enum {string} */
+            environment: "live" | "test" | "unknown";
+            /** @enum {string} */
+            gap: "contract_missing" | "legacy_unfrozen" | "required_snapshot_missing" | "legacy_snapshot_unbound";
+            hasActiveRights: boolean;
+            hasPendingPayment: boolean;
+            /** @description Shared financial retention requirement */
+            hasUnsettledFunds: boolean;
+            /** @description Database evidence only */
+            hasSnapshot: boolean;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        ProductDeliveryStatus: {
+            /** Format: uuid */
+            orderId: string;
+            title: string;
+            sha256: string;
+            /** Format: int64 */
+            sizeBytes: number;
+            /** @enum {string} */
+            state: "prepared" | "ready" | "removed";
+            revision: number;
+            needed: boolean;
+            /** @enum {string} */
+            health: "healthy" | "missing" | "corrupt" | "unavailable";
+            canRepair: boolean;
+            /** Format: uuid */
+            pendingId?: string;
+            /** @enum {string} */
+            pendingSource?: "stored" | "upload" | "bundle";
+            /**
+             * Format: date-time
+             * @description Latest ready repair time; may precede a pending attempt
+             */
+            repairedAt?: string;
+        };
+        ProductDeliveryUploadInput: {
+            expectedRevision: number;
+            reason: string;
+            /** @enum {boolean} */
+            confirmed: true;
+        };
+        ProductDeliveryRepairInput: {
+            expectedRevision: number;
+            /**
+             * Format: uuid
+             * @description Optional scan-clean independent private upload owned by the operator; omit to use the frozen original
+             */
+            sourceAssetId?: string;
+            reason: string;
+            /** @enum {boolean} */
+            confirmed: true;
+        };
+        DeletionJob: {
+            /** Format: uuid */
+            id: string;
+            /**
+             * Format: uuid
+             * @description Deletion subject; absent when the original request is missing
+             */
+            userId?: string;
+            /**
+             * Format: uuid
+             * @description Original owner-requested account deletion
+             */
+            requestId?: string;
+            /** @enum {string} */
+            kind: "prepare" | "cleanup";
+            /** @enum {string} */
+            status: "failed" | "queued" | "running" | "succeeded" | "cancelled";
+            attempts: number;
+            maxAttempts: number;
+            errorCode?: string;
+            /** Format: uuid */
+            retryJobId?: string;
+            /** Format: uuid */
+            retryOf?: string;
+            canRetry: boolean;
+            /** @enum {string} */
+            unavailableReason: "" | "not_failed" | "already_retried" | "active_job" | "missing_subject" | "request_closed" | "inconsistent_stage" | "grace_period" | "legal_hold";
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        DeletionJobPage: {
+            items: components["schemas"]["DeletionJob"][];
+            nextCursor?: string;
+        };
+        ExportJob: {
+            /** Format: uuid */
+            id: string;
+            /**
+             * Format: uuid
+             * @description Export owner; absent when the original request is missing
+             */
+            userId?: string;
+            /**
+             * Format: uuid
+             * @description Original owner-requested data export
+             */
+            requestId?: string;
+            /** @enum {string} */
+            kind: "export" | "expiry";
+            /** @enum {string} */
+            status: "failed" | "queued" | "running" | "succeeded" | "cancelled";
+            attempts: number;
+            maxAttempts: number;
+            errorCode?: string;
+            /** Format: uuid */
+            retryJobId?: string;
+            /** Format: uuid */
+            retryOf?: string;
+            canRetry: boolean;
+            /** @enum {string} */
+            unavailableReason: "" | "not_failed" | "already_retried" | "active_job" | "missing_subject" | "request_closed" | "owner_inactive" | "already_purged" | "not_expired";
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        ExportJobPage: {
+            items: components["schemas"]["ExportJob"][];
+            nextCursor?: string;
+        };
+        MediaCleanup: {
+            /** Format: uuid */
+            id: string;
+            /**
+             * Format: uuid
+             * @description Account cleanup subject or purchased delivery buyer; absent when job evidence has no matching subject
+             */
+            userId?: string;
+            /**
+             * Format: uuid
+             * @description Product delivery order when it exists
+             */
+            orderId?: string;
+            /** @enum {string} */
+            kind: "account" | "product";
+            /** @enum {string} */
+            status: "failed" | "queued" | "running" | "succeeded" | "cancelled";
+            attempts: number;
+            maxAttempts: number;
+            errorCode?: string;
+            /** Format: uuid */
+            retryJobId?: string;
+            /** Format: uuid */
+            retryOf?: string;
+            canRetry: boolean;
+            /** @enum {string} */
+            unavailableReason: "" | "not_failed" | "already_retried" | "account_active" | "legal_hold" | "active_job" | "missing_subject" | "already_removed" | "delivery_required" | "order_unresolved" | "inconsistent_stage";
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        MediaCleanupPage: {
+            items: components["schemas"]["MediaCleanup"][];
+            nextCursor?: string;
+        };
+        MediaCleanupRetry: {
+            expectedAttempts: number;
+            reason: string;
+            /** @enum {boolean} */
+            confirmed: true;
         };
         DataRightsLegalHoldPage: {
             items: components["schemas"]["DataRightsLegalHold"][];
@@ -3353,6 +4475,20 @@ export interface components {
             displayName: string;
         };
         Work: {
+            /**
+             * Format: uuid
+             * @description Currently visible associated community discussion; detail only.
+             */
+            postId?: string;
+            /** @description Current viewer bookmark on the associated discussion. */
+            viewerBookmarked?: boolean;
+            /** @description Nearest-to-oldest public source chain. Traversal stops at invisible or deleted sources; no private prompt or source media is returned. */
+            sources?: {
+                /** Format: uuid */
+                id: string;
+                title: string;
+                author: components["schemas"]["Author"];
+            }[];
             /** Format: uuid */
             id: string;
             title: string;
@@ -3374,8 +4510,10 @@ export interface components {
             author: components["schemas"]["Author"];
         };
         WorkPage: {
+            /** @description All matching works in the same read snapshot as items and categoryCounts. */
+            total: number;
             /** @description Counts across all pages matching search and prompt visibility, independent of selected media kind and cursor. */
-            categoryCounts?: {
+            categoryCounts: {
                 [key: string]: number;
             };
             items: components["schemas"]["Work"][];
@@ -3426,6 +4564,11 @@ export interface components {
             aiDisclosure: string;
         };
         CreatorProfile: {
+            worksTotal: number;
+            productsTotal: number;
+            worksPage: number;
+            productsPage: number;
+            limit: number;
             /** Format: uuid */
             id: string;
             handle: string;
@@ -3536,7 +4679,10 @@ export interface components {
             parameters?: components["schemas"]["GenerationParameters"];
             /** Format: uuid */
             modelId?: string | null;
-            /** Format: uuid */
+            /**
+             * Format: uuid
+             * @description Attribution only. New submissions and manual retries require a currently public work; this does not authorize media reuse or reveal a private prompt.
+             */
             sourceWorkId?: string | null;
             /** Format: uuid */
             sourceAssetId?: string | null;
@@ -3665,6 +4811,8 @@ export interface components {
             createdAt: string;
         };
         AssetPage: {
+            /** @description Count of all assets matching ownership */
+            total: number;
             items: components["schemas"]["Asset"][];
             nextCursor?: string;
         };
@@ -3745,28 +4893,60 @@ export interface components {
             items: components["schemas"]["AssetUsage"][];
             nextCursor?: string;
         };
+        TaskDeliveryGrant: {
+            /** Format: uuid */
+            taskId: string;
+            /** Format: uuid */
+            deliveryId: string;
+            rightsTerms: string;
+            rightsEvidence: string;
+            aiDisclosure: string;
+            allowDerivativeReuse: boolean;
+        };
         AssetProvenance: {
+            taskGrant?: components["schemas"]["TaskDeliveryGrant"];
             purchase?: components["schemas"]["PurchaseProvenance"];
             generation?: components["schemas"]["GenerationProvenance"];
         };
         PurchaseProvenance: {
+            delivery?: components["schemas"]["PurchaseBundleDelivery"];
             /** Format: uuid */
             orderId: string;
             /** Format: uuid */
             productId: string;
             productTitle: string;
-            /** Format: uuid */
-            sellerId: string;
-            sellerName: string;
-            sellerHandle: string;
+            /**
+             * Format: uuid
+             * @description Accepted seller from contract or original payment evidence; absent when unverified
+             */
+            sellerId?: string;
+            sellerName?: string;
+            sellerHandle?: string;
             licenseCode: string;
             licenseName: string;
             orderStatus: string;
+            /** @description Current entitlement and scan permission; rechecked when accessing content */
+            canDownload: boolean;
+            /** @description Current entitlement */
+            canReuse: boolean;
             /** Format: date-time */
             grantedAt: string;
             /** @enum {string} */
-            paymentMode: "test" | "stripe" | "waffo_pancake" | "epay";
+            paymentMode: "test" | "unverified" | "stripe" | "waffo_pancake" | "epay";
             realCharge: boolean;
+        };
+        /** @description Accepted package evidence; metadata does not grant download or online model reuse. File positions are stable indices for getAssetContent. No private source IDs or storage locators are returned. */
+        PurchaseBundleDelivery: {
+            /** @constant */
+            format: "zip-v1";
+            sizeBytes: number;
+            sha256: string;
+            files: {
+                name: string;
+                mimeType: string;
+                sizeBytes: number;
+                sha256: string;
+            }[];
         };
         SourceAssetReference: {
             /** Format: uuid */
@@ -3798,7 +4978,593 @@ export interface components {
             attributionRequired: boolean;
             refundWindowDays: number;
         };
+        ProductPreviewUpdate: {
+            /** Format: uuid */
+            previewAssetId: string | null;
+            offerVersion: string;
+        };
+        ProductFile: {
+            /** Format: uuid */
+            assetId: string;
+            /** @description NFC UTF-8 filename of at most 200 bytes; no paths */
+            name: string;
+        };
+        /** @description A single-file listing or an ordered multi-file product. Nonempty files requires 2–20 independently owned sources with distinct IDs and safe names. assetId must equal the first source and includedFiles must equal the ordered names. Multi-file products use the same submission and approval workflow, with all members included in review and offer versions. Accepted orders receive a ZIP package with whole-package and individual authorized downloads. An existing multi-file draft requires explicit files on edit; use an empty array to intentionally return to a single-file listing. */
+        ProductDraft: {
+            title: string;
+            description: string;
+            /** @enum {string} */
+            productType: "prompt" | "workflow" | "asset" | "work";
+            category: string;
+            /** Format: uuid */
+            assetId: string;
+            /** Format: uuid */
+            previewAssetId: string | null;
+            priceCents: number;
+            currency: string;
+            licenseCode: string;
+            aiDisclosure: string;
+            /** @description One label without files; otherwise exactly the ordered real file names. Historical descriptive lists do not supply source evidence. */
+            includedFiles: string[];
+            files?: components["schemas"]["ProductFile"][];
+            compatibility: string;
+        };
+        SellerSale: {
+            /** Format: uuid */
+            orderId: string;
+            /** Format: uuid */
+            productId: string;
+            /** @description Accepted order title snapshot */
+            title: string;
+            /** @description Gross order amount; not earnings or available payout */
+            amountCents: number;
+            currency: string;
+            status: string;
+            /** @description Empty when no external payment evidence exists */
+            paymentStatus: string;
+            /** @enum {string} */
+            environment: "live" | "test" | "unknown";
+            hasContract: boolean;
+            /** @description Missing or inconsistent payment or settlement evidence */
+            needsReview: boolean;
+            settlement?: components["schemas"]["SellerSettlement"];
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+            /** Format: date-time */
+            licenseAcceptedAt?: string;
+            /** Format: date-time */
+            paidAt?: string;
+            /** Format: date-time */
+            refundRequestedAt?: string;
+            /** Format: date-time */
+            refundedAt?: string;
+        };
+        /** @description Frozen economics for this seller and original transaction. Omitted if absent or inconsistent with ownership or payment bindings. Transfer confirmation is not bank payout confirmation. No destination, provider reference or private operational evidence is exposed. */
+        SellerSettlement: {
+            /** @enum {string} */
+            status: "pending_hold" | "available" | "transfer_pending" | "transferred" | "refund_hold" | "recovery_required" | "provider_unsupported" | "cancelled";
+            /** @enum {string} */
+            environment: "live" | "test";
+            grossAmountCents: number;
+            feeBps: number;
+            feeCents: number;
+            /** @description Frozen amount after fees; not an available balance */
+            netAmountCents: number;
+            /** @description Recorded unresolved recovery obligation */
+            recoveryAmountCents: number;
+            /** @enum {string} */
+            currency: "USD";
+            /**
+             * Format: date-time
+             * @description Earliest eligibility time
+             */
+            availableAt?: string;
+            /**
+             * Format: date-time
+             * @description Recorded provider transfer time
+             */
+            transferredAt?: string;
+        };
+        SellerSaleDetail: components["schemas"]["SellerSale"] & {
+            licenseName: string;
+            licenseVersion: string;
+            licenseTerms: string;
+        };
+        SellerSalesPage: {
+            items: components["schemas"]["SellerSale"][];
+            total: number;
+            nextCursor?: string;
+        };
+        SellerFundsBalance: {
+            /** Format: uuid */
+            sellerId: string;
+            accounts: components["schemas"]["SellerFundsAccount"][];
+            /** @description Unclassified financial records. Excluded from all account totals and block new withdrawals. */
+            unresolvedRecords: number;
+            /** Format: date-time */
+            asOf: string;
+        };
+        SellerFundsAccount: {
+            /** @description Opaque financial scope ID. Does not expose merchant credentials or endpoints. */
+            accountId: string;
+            /** @enum {string} */
+            provider: "stripe" | "waffo_pancake";
+            /** @enum {string} */
+            environment: "test" | "live";
+            /** @enum {string} */
+            currency: "USD";
+            pendingCents: number;
+            /** @description Available settlement credits before active reservations. */
+            availableCents: number;
+            reservedCents: number;
+            recoveryDueCents: number;
+            /** @description Unreserved ledger ceiling. Same-account recovery or any unclassified evidence makes this zero; further payout eligibility checks still apply. */
+            withdrawableCents: number;
+        };
+        SellerPayoutReview: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            payoutRequestId: string;
+            revision: number;
+            /** Format: uuid */
+            actorId: string;
+            /** @enum {string} */
+            decision: "approved" | "rejected";
+            reason: string;
+            /** @description Explicit seller-visible explanation. Omitted for historical reviews without one. */
+            sellerMessage?: string;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        /** @description Seller-visible latest decision. Never includes internal reason, operator identity, command keys or private financial evidence. */
+        SellerPayoutDecision: {
+            revision: number;
+            /** @enum {string} */
+            decision: "approved" | "rejected";
+            /** @description Omitted for historical decisions; never inferred from internal notes. */
+            sellerMessage?: string;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        SellerPayoutReviewItem: {
+            /** @description Read-time eligibility hint; the explicit funding command must revalidate authority and funds under locks. Never authorizes automatic dispatch. */
+            canAdmitFunding: boolean;
+            funding?: components["schemas"]["SellerPayoutFundingSummary"];
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            sellerId: string;
+            /**
+             * Format: uuid
+             * @description Nil UUID indicates historical missing allocation evidence and cannot authorize a review.
+             */
+            settlementId: string;
+            amountCents: number;
+            /** @enum {string} */
+            currency: "USD";
+            /** @enum {string} */
+            status: "requested" | "under_review" | "cancelled" | "processing" | "succeeded" | "failed" | "reconciliation_required";
+            /** @enum {string} */
+            environment: "test" | "live" | "unknown";
+            bankDestinationId: string;
+            /** @description Provider-verified name frozen at binding; omitted for legacy records or unnamed banks. */
+            bankName?: string;
+            /** @description Frozen bank account last four digits; omitted for legacy records. */
+            last4?: string;
+            /** Format: date-time */
+            createdAt: string;
+            latestReview?: components["schemas"]["SellerPayoutReview"];
+        };
+        /** @description Private finance projection of existing source evidence. Source success is not a bank payout. Optional absent admission/job fields identify historical evidence that must not be automatically re-admitted. */
+        SellerPayoutFundingSummary: {
+            /** Format: uuid */
+            transferId: string;
+            /** @enum {string} */
+            status: "requested" | "processing" | "succeeded" | "failed" | "reconciliation_required";
+            /** Format: uuid */
+            admissionId?: string;
+            /** Format: uuid */
+            jobId?: string;
+            /** @enum {string} */
+            jobStatus?: "queued" | "running" | "succeeded" | "failed" | "cancelled";
+            /** Format: date-time */
+            startedAt?: string;
+            providerTransferId?: string;
+        };
+        SellerFundingAdmission: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            payoutRequestId: string;
+            /** Format: uuid */
+            reviewId: string;
+            /** Format: uuid */
+            transferId: string;
+            /** Format: uuid */
+            actorId: string;
+            reason: string;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        SellerFundingAdmissionResult: {
+            admission: components["schemas"]["SellerFundingAdmission"];
+            /** Format: uuid */
+            jobId: string;
+            request: components["schemas"]["SellerPayoutReviewItem"];
+            replayed: boolean;
+        };
+        SellerBankPayoutCommand: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            payoutRequestId: string;
+            /** Format: uuid */
+            sourceTransferId: string;
+            /** Format: uuid */
+            reviewId: string;
+            reviewRevision: number;
+            amountCents: number;
+            /** @enum {string} */
+            currency: "USD";
+            bankDestinationId: string;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        SellerBankPayoutSummary: {
+            /** Format: uuid */
+            commandId: string;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: uuid */
+            jobId?: string;
+            /** @enum {string} */
+            jobStatus?: "queued" | "running" | "succeeded" | "failed" | "cancelled";
+            /** Format: date-time */
+            startedAt?: string;
+            /** @enum {string} */
+            providerStatus?: "pending" | "in_transit" | "paid" | "failed" | "canceled";
+            /** Format: date-time */
+            checkedAt?: string;
+            requiresReview: boolean;
+            resume?: components["schemas"]["SellerBankPayoutResume"] & {
+                /** @enum {string} */
+                jobStatus: "queued" | "running" | "succeeded" | "failed" | "cancelled";
+            };
+        };
+        SellerSourceReversalInput: {
+            /** Format: uuid */
+            sourceTransferId: string;
+            /** Format: date-time */
+            expectedUpdatedAt: string;
+            /** Format: uuid */
+            bankCommandId?: string | null;
+            /** Format: uuid */
+            bankResultId?: string | null;
+            reason: string;
+            /** @enum {boolean} */
+            confirmed: true;
+        };
+        SellerSourceClosureInput: {
+            /** Format: uuid */
+            readId: string;
+            /** Format: date-time */
+            expectedUpdatedAt: string;
+            reason: string;
+            /** @enum {boolean} */
+            confirmed: true;
+        };
+        SellerSourceReversalCommand: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            payoutRequestId: string;
+            /** Format: uuid */
+            sourceTransferId: string;
+            /** Format: date-time */
+            requestUpdatedAt: string;
+            /** Format: uuid */
+            bankCommandId?: string;
+            /** Format: uuid */
+            bankResultId?: string;
+            /** @enum {string} */
+            bankDisposition: "not_reserved" | "not_started" | "failed" | "returned";
+            amountCents: number;
+            /** @enum {string} */
+            currency: "USD";
+            /** Format: uuid */
+            jobId: string;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        SellerSourceClosure: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            commandId: string;
+            /** Format: uuid */
+            payoutRequestId: string;
+            /** Format: uuid */
+            readId: string;
+            /** @enum {string} */
+            resolution: "released" | "refund_recovered";
+            /** Format: date-time */
+            createdAt: string;
+        };
+        SellerSourceReversalOperation: {
+            request: components["schemas"]["SellerPayoutReviewItem"];
+            /** Format: date-time */
+            expectedUpdatedAt: string;
+            requiresReview: boolean;
+            canSubmit: boolean;
+            canClose: boolean;
+            /** @enum {string} */
+            closeResolution?: "released" | "refund_recovered";
+            bank?: {
+                /** Format: uuid */
+                commandId?: string;
+                /** Format: uuid */
+                resultId?: string;
+                /** @enum {string} */
+                disposition: "not_reserved" | "not_started" | "failed" | "returned";
+            };
+            command?: components["schemas"]["SellerSourceReversalCommand"];
+            /** @enum {string} */
+            jobStatus?: "queued" | "running" | "succeeded" | "failed" | "cancelled";
+            /** Format: date-time */
+            startedAt?: string;
+            /** Format: uuid */
+            acceptedReadId?: string;
+            latestRead?: {
+                /** Format: uuid */
+                id: string;
+                /** @enum {string} */
+                kind: "create" | "query";
+                /** Format: date-time */
+                startedAt: string;
+                /** Format: date-time */
+                finishedAt?: string;
+                /** @enum {string} */
+                outcome?: "found" | "not_found" | "incomplete" | "ambiguous" | "error" | "superseded";
+                requiresReview: boolean;
+            };
+            closure?: components["schemas"]["SellerSourceClosure"];
+        };
+        SellerSourceReversalSubmission: {
+            command: components["schemas"]["SellerSourceReversalCommand"];
+            replayed: boolean;
+        };
+        SellerSourceClosureSubmission: {
+            closure: components["schemas"]["SellerSourceClosure"];
+            replayed: boolean;
+        };
+        SellerBankPayoutOperation: {
+            request: components["schemas"]["SellerPayoutReviewItem"];
+            canSubmit: boolean;
+            /** @description Read-time hint only; continuation revalidates the current job and financial evidence under locks. */
+            canResume: boolean;
+            bank?: components["schemas"]["SellerBankPayoutSummary"];
+        };
+        SellerBankPayoutResume: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            commandId: string;
+            revision: number;
+            /** Format: uuid */
+            predecessorJobId: string;
+            /** Format: uuid */
+            jobId: string;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        SellerBankPayoutResumeResult: {
+            resume: components["schemas"]["SellerBankPayoutResume"];
+            operation: components["schemas"]["SellerBankPayoutOperation"];
+            replayed: boolean;
+        };
+        SellerBankPayoutSubmission: {
+            command: components["schemas"]["SellerBankPayoutCommand"];
+            /** Format: uuid */
+            jobId: string;
+            operation: components["schemas"]["SellerBankPayoutOperation"];
+            replayed: boolean;
+        };
+        SellerPayoutReviewPage: {
+            items: components["schemas"]["SellerPayoutReviewItem"][];
+            /** Format: uuid */
+            nextCursor?: string;
+        };
+        SellerPayoutReviewResult: {
+            review: components["schemas"]["SellerPayoutReview"];
+            request: components["schemas"]["SellerPayoutReviewItem"];
+            replayed: boolean;
+        };
+        SellerPayoutRequest: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            sellerId: string;
+            amountCents: number;
+            /** @enum {string} */
+            currency: "USD";
+            idempotencyKey: string;
+            /** @enum {string} */
+            status: "requested" | "under_review" | "cancelled" | "processing" | "succeeded" | "failed" | "reconciliation_required";
+            failureCode?: string;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        /** @description Seller-only accepted bank result. A missing result is unconfirmed; source funding and job status do not prove bank arrival. Later pending observations cannot replace paid or a confirmed return. No operator, command key or raw provider evidence is exposed. */
+        SellerBankPayoutStatus: {
+            /** @enum {string} */
+            status: "unconfirmed" | "pending" | "in_transit" | "paid" | "failed" | "canceled";
+            requiresReview: boolean;
+            /**
+             * Format: date-time
+             * @description Time the displayed bank result was recorded locally
+             */
+            observedAt?: string;
+            /**
+             * Format: date-time
+             * @description Most recent completed read; may include an inconclusive or conflicting observation.
+             */
+            checkedAt?: string;
+        };
+        /** @description Seller-only safe projection of a payout source-return operation. Provider evidence, finance identities, reasons and command keys are never exposed. */
+        SellerSourceReturnStatus: {
+            /** @enum {string} */
+            status: "pending" | "observed" | "requires_review" | "closed";
+            requiresReview: boolean;
+            /** Format: date-time */
+            observedAt?: string;
+            /** Format: date-time */
+            closedAt?: string;
+            /** @enum {string} */
+            resolution?: "released" | "refund_recovered";
+        };
+        SellerPayoutItem: components["schemas"]["SellerPayoutRequest"] & {
+            /** @enum {string} */
+            environment: "live" | "test" | "unknown";
+            canCancel: boolean;
+            canSelectBank: boolean;
+            bankTarget?: components["schemas"]["SellerPayoutBankTarget"];
+            latestReview?: components["schemas"]["SellerPayoutDecision"];
+            bankPayout?: components["schemas"]["SellerBankPayoutStatus"];
+            sourceReturn?: components["schemas"]["SellerSourceReturnStatus"];
+        };
+        SellerPayoutPage: {
+            items: components["schemas"]["SellerPayoutItem"][];
+            /** Format: uuid */
+            nextCursor?: string;
+        };
+        SellerPayoutOption: {
+            /** Format: uuid */
+            settlementId: string;
+            /** Format: uuid */
+            orderId: string;
+            title: string;
+            amountCents: number;
+            /** @enum {string} */
+            currency: "USD";
+            /** @enum {string} */
+            environment: "live" | "test";
+            /** Format: date-time */
+            availableAt: string;
+        };
+        SellerPayoutOptions: {
+            items: components["schemas"]["SellerPayoutOption"][];
+            /** @enum {string} */
+            availability: "available" | "automatic" | "unavailable";
+            /** Format: uuid */
+            nextCursor?: string;
+        };
+        SellerPayoutBankOption: {
+            bankDestinationId: string;
+            bankName: string;
+            last4: string;
+            /** @enum {string} */
+            currency: "USD";
+        };
+        SellerPayoutBankDirectory: {
+            items: components["schemas"]["SellerPayoutBankOption"][];
+            /** Format: date-time */
+            observedAt: string;
+        };
+        SellerPayoutBankTarget: {
+            /** Format: uuid */
+            payoutRequestId: string;
+            destinationId: string;
+            bankDestinationId: string;
+            /** @description Provider-verified name frozen at binding; omitted for legacy records or unnamed banks. */
+            bankName?: string;
+            /** @description Frozen bank account last four digits; omitted for legacy records. */
+            last4?: string;
+            /** @enum {string} */
+            currency: "USD";
+            /** Format: date-time */
+            observedAt: string;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        SellerSaleEvent: {
+            sequence: number;
+            fromStatus?: string;
+            toStatus: string;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        SellerSaleEventsPage: {
+            items: components["schemas"]["SellerSaleEvent"][];
+            nextCursor?: string;
+        };
+        /** @description Private current record, including legacy values that must be corrected before submission. Input constraints belong to ProductDraft. */
+        SellerProduct: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            sellerId: string;
+            title: string;
+            description: string;
+            /** @enum {string} */
+            productType: "prompt" | "workflow" | "asset" | "work";
+            category: string;
+            /** Format: uuid */
+            assetId: string;
+            /** Format: uuid */
+            previewAssetId: string | null;
+            priceCents: number;
+            currency: string;
+            licenseCode: string;
+            aiDisclosure: string;
+            includedFiles: string[];
+            /** @description Real ordered sources when present; empty or absent for a legacy single-file listing. Contains no storage locator. */
+            files?: components["schemas"]["ProductFile"][];
+            compatibility: string;
+            /** @enum {string} */
+            status: "draft" | "active" | "paused" | "removed";
+            /** @enum {string} */
+            reviewStatus: "legacy" | "draft" | "pending" | "approved" | "rejected" | "blocked";
+            reviewReason: string;
+            version: string;
+            contentVersion: string;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        ListingMutation: {
+            /** @description Required for every action except create */
+            expectedVersion?: string;
+            draft?: components["schemas"]["ProductDraft"];
+            /** @description Must be true when submitting for review */
+            rightsConfirmed?: boolean;
+            /** @description Must be true for reviewer decisions */
+            confirmed?: boolean;
+            /** @description Reviewer decisions require 10 to 2000 Unicode code points */
+            reason?: string;
+        };
+        ListingPage: {
+            items: components["schemas"]["SellerProduct"][];
+            total: number;
+            nextCursor?: string;
+        };
+        ListingLicensePage: {
+            items: components["schemas"]["MarketplaceLicense"][];
+        };
         Product: {
+            /** @description Seller publication uses the versioned draft and review workflow */
+            listingManaged?: boolean;
+            offerVersion: string;
+            /**
+             * Format: uuid
+             * @description Separate public sample asset; absent when unavailable
+             */
+            previewAssetId?: string;
             category?: string;
             /** Format: uuid */
             id: string;
@@ -3813,6 +5579,7 @@ export interface components {
             status: "active";
             /** Format: uuid */
             assetId: string;
+            /** @description URL of the separate public sample */
             mediaUrl: string;
             mediaKind: string;
             width?: number;
@@ -3851,8 +5618,40 @@ export interface components {
             licenseVersion: string;
             licenseTerms: string;
             refundWindowDays: number;
+            /**
+             * Format: date-time
+             * @description Exclusive refund deadline calculated from order creation and the accepted refund window
+             */
+            refundDeadlineAt?: string;
+            /** @description Current state */
+            canRequestRefund: boolean;
+            /**
+             * Format: uuid
+             * @description Original external payment intent; absent for legacy local orders
+             */
+            paymentId?: string;
             /** @enum {string} */
-            paymentMode: "test" | "stripe" | "waffo_pancake" | "epay";
+            paymentStatus?: "checkout_pending" | "checkout_open" | "paid" | "payment_failed" | "transfer_pending" | "transferred" | "refund_pending" | "refund_failed" | "refunded" | "cancelled";
+            /**
+             * Format: int64
+             * @description Observed payment version required for guarded closure
+             */
+            paymentVersion?: number;
+            /** @description Current local pre-dispatch closure eligibility; rechecked under lock on submission */
+            canCloseCheckout: boolean;
+            /** @description Pending checkout requires original transaction reconciliation; do not create another payment session */
+            checkoutReconciliationRequired?: boolean;
+            /** @description Immutable evidence that this order was closed before checkout dispatch */
+            checkoutClosedBeforePayment: boolean;
+            /**
+             * Format: date-time
+             * @description Session expiry only; not evidence that no payment was received
+             */
+            checkoutExpiresAt?: string;
+            /** @enum {string} */
+            refundUnavailableReason?: "order_state" | "window_expired" | "provider_unavailable" | "reconciliation_required";
+            /** @enum {string} */
+            paymentMode: "test" | "unverified" | "stripe" | "waffo_pancake" | "epay";
             realCharge: boolean;
             /** Format: date-time */
             refundRequestedAt?: string;
@@ -3902,7 +5701,7 @@ export interface components {
             summary: string;
             prompt: string;
             /** @enum {string} */
-            promptVisibility: "public" | "partial" | "private";
+            promptVisibility: "public" | "private";
             aiDisclosure: string;
             body: string;
         };
@@ -3920,7 +5719,7 @@ export interface components {
             summary?: string;
             prompt?: string;
             /** @enum {string} */
-            promptVisibility: "public" | "partial" | "private";
+            promptVisibility: "public" | "private";
             aiDisclosure?: string;
             body?: string;
             expectedVersion?: number;
@@ -3959,6 +5758,9 @@ export interface components {
             nextCursor?: string;
         };
         CommunityPost: {
+            /** @enum {string} */
+            status: "draft" | "published" | "hidden" | "removed";
+            version: number;
             category?: string;
             /** Format: uuid */
             id: string;
@@ -3983,13 +5785,35 @@ export interface components {
             viewerBookmarked: boolean;
             viewerFollowing: boolean;
         };
+        /** @description Unicode code point limits after trimming. Publishing requires title 3–120 and body 2–2000; draft=true permits incomplete text. */
         CommunityPostCreate: {
+            /**
+             * @description Save privately; incomplete title and body are allowed only for drafts.
+             * @default false
+             */
+            draft: boolean;
             category?: string;
             title: string;
             body: string;
         };
+        /** @description Owner-only standalone discussion update. Unicode limits match create; published discussions cannot revert to drafts. */
+        CommunityPostUpdate: {
+            title: string;
+            body: string;
+            category?: string;
+            draft?: boolean;
+            expectedVersion: number;
+        };
+        CommunityCapabilities: {
+            canPublish: boolean;
+            canSaveDraft: boolean;
+            canInteract: boolean;
+            canReport: boolean;
+            publishingEnabled: boolean;
+        };
         CommunityPostPage: {
-            categoryCounts?: {
+            total: number;
+            categoryCounts: {
                 [key: string]: number;
             };
             items: components["schemas"]["CommunityPost"][];
@@ -4079,6 +5903,32 @@ export interface components {
             category: "spam" | "harassment" | "copyright" | "sexual" | "violence" | "misleading" | "other";
             details: string;
         };
+        TaskDeadlineChange: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            proposedBy: string;
+            /** Format: date-time */
+            deadline: string;
+            reason: string;
+        };
+        TaskDeadlineInput: {
+            /** @enum {string} */
+            decision: "propose" | "accept" | "reject";
+            /** Format: uuid */
+            changeId?: string;
+            /** Format: date-time */
+            deadline?: string;
+            reason?: string;
+        };
+        TaskPage: {
+            items: components["schemas"]["TaskSummary"][];
+            total: number;
+            typeCounts: {
+                [key: string]: number;
+            };
+            nextCursor?: string;
+        };
         TaskSummary: {
             /** Format: uuid */
             id: string;
@@ -4119,6 +5969,15 @@ export interface components {
             updatedAt: string;
         };
         TaskDelivery: {
+            rightsEvidence?: string;
+            aiDisclosure?: string;
+            assets?: {
+                /** Format: uuid */
+                id: string;
+                title: string;
+                mediaUrl: string;
+                kind: string;
+            }[];
             /** Format: uuid */
             id: string;
             /** Format: uuid */
@@ -4215,13 +6074,16 @@ export interface components {
             alreadyCreated: boolean;
         };
         TaskDetail: components["schemas"]["TaskSummary"] & {
+            deadlineChange?: components["schemas"]["TaskDeadlineChange"];
+            /** @default false */
+            allowDerivativeReuse: boolean;
             brief: string;
             deliverables: string[];
             acceptanceRules: string[];
             rightsTerms: string;
             aiDisclosureRequirement: string;
             /** @enum {string} */
-            viewerRole: "viewer" | "client" | "assignee";
+            viewerRole: "viewer" | "client" | "assignee" | "operator";
             proposals: components["schemas"]["TaskProposal"][];
             deliveries: components["schemas"]["TaskDelivery"][];
             events: components["schemas"]["TaskEvent"][];
@@ -4229,6 +6091,8 @@ export interface components {
             settlement?: components["schemas"]["TaskSettlement"];
         };
         TaskCreate: {
+            /** @default false */
+            allowDerivativeReuse: boolean;
             title: string;
             summary: string;
             brief: string;
@@ -4253,9 +6117,16 @@ export interface components {
             timelineDays: number;
         };
         TaskDeliveryCreate: {
-            /** Format: uuid */
-            assetId: string;
+            /**
+             * Format: uuid
+             * @description Legacy single asset; supply this or assetIds.
+             */
+            assetId?: string;
+            assetIds?: string[];
             note: string;
+            rightsEvidence: string;
+            aiDisclosure: string;
+            rightsConfirmed: boolean;
         };
         TaskReview: {
             /** @enum {string} */
@@ -4305,6 +6176,24 @@ export interface components {
             account: components["schemas"]["BillingAccount"];
             entries: components["schemas"]["BillingEntry"][];
             nextCursor?: string;
+        };
+        WalletTopupSettings: {
+            /** Format: int64 */
+            version: number;
+            /** @enum {string} */
+            currency: "USD";
+            minimumAmountCents: number;
+            /** @constant */
+            maximumAmountCents: 99999999;
+            presetAmountsCents: number[];
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        WalletTopupSettingsUpdate: {
+            /** Format: int64 */
+            expectedVersion: number;
+            minimumAmountCents: number;
+            presetAmountsCents: number[];
         };
         BillingCheckout: {
             /** Format: uuid */
@@ -4369,6 +6258,14 @@ export interface components {
             /** Format: date-time */
             createdAt: string;
         };
+        SubscriptionModel: {
+            /** Format: uuid */
+            id: string;
+            displayName: string;
+            /** @enum {string} */
+            mode: "chat" | "image" | "video" | "music";
+            providerName: string;
+        };
         SubscriptionPlan: {
             /** Format: uuid */
             id: string;
@@ -4384,6 +6281,8 @@ export interface components {
             sortOrder: number;
             active: boolean;
             modelIds: string[];
+            /** Format: int64 */
+            version: number;
             /** Format: date-time */
             createdAt: string;
             /** Format: date-time */
@@ -4431,6 +6330,8 @@ export interface components {
             modelIds: string[];
         };
         SubscriptionPlanUpdate: {
+            /** Format: int64 */
+            expectedVersion: number;
             tierCode?: string;
             name?: string;
             description?: string;
@@ -4491,6 +6392,7 @@ export interface components {
             status: "active" | "suspended" | "deleted";
         };
         AdminContent: {
+            version: number;
             /** Format: uuid */
             id: string;
             /** @enum {string} */
@@ -4508,6 +6410,9 @@ export interface components {
             updatedAt: string;
         };
         AdminContentUpdate: {
+            reason: string;
+            confirm: boolean;
+            expectedVersion: number;
             /** @enum {string} */
             status: "published" | "hidden" | "removed";
         };
@@ -4588,6 +6493,9 @@ export interface components {
             updatedAt: string;
         };
         AdminTaskDisputeResolution: {
+            reason: string;
+            /** @enum {boolean} */
+            confirm: true;
             /** @enum {string} */
             decision: "release_creator" | "cancel_without_settlement";
             expectedVersion: number;
@@ -4766,6 +6674,11 @@ export interface components {
             handle: string;
             displayName: string;
         };
+        AdminFinanceAdjustmentResult: components["schemas"]["AdminFinanceAccount"] & {
+            /** Format: uuid */
+            operationId: string;
+            replayed: boolean;
+        };
         AdminFinanceAdjustment: {
             deltaCents: number;
             /** @enum {string} */
@@ -4910,7 +6823,162 @@ export interface components {
             /** Format: date-time */
             updatedAt?: string;
         };
+        AdminRefundObservation: {
+            providerId: string;
+            providerPaymentId: string;
+            amountCents: number;
+            currency: string;
+            /** @enum {string} */
+            status: "pending" | "requires_action" | "succeeded" | "failed" | "canceled";
+            /** Format: uuid */
+            operationId?: string;
+        };
+        AdminRefundAttempt: {
+            /** Format: uuid */
+            operationId: string;
+            provider: string;
+            providerRefundId?: string;
+            amountCents: number;
+            currency: string;
+            /** @enum {string} */
+            status: "requested" | "pending" | "failed" | "succeeded";
+            reconciliationRequired: boolean;
+            /** Format: date-time */
+            requestedAt: string;
+        };
+        AdminRefundCheck: {
+            /** Format: uuid */
+            id: string;
+            /**
+             * @description Whether an operator or the background reconciliation scheduler requested this read-only check.
+             * @enum {string}
+             */
+            origin: "operator" | "automatic";
+            /** @enum {string} */
+            status: "requested" | "observed" | "completed" | "failed";
+            unresolvedCount: number;
+            errorCode?: string;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            observedAt?: string;
+            /** Format: date-time */
+            completedAt?: string;
+            observations: components["schemas"]["AdminRefundObservation"][];
+        };
+        AdminRefundCheckSummary: {
+            /** Format: uuid */
+            id: string;
+            /** @enum {string} */
+            origin: "operator" | "automatic";
+            /** @enum {string} */
+            status: "requested" | "observed" | "completed" | "failed";
+            /** @description Historical follow-up count when the check completed. */
+            unresolvedCount: number;
+            /** @description Saved observations still require binding or successful-result reconciliation now. */
+            requiresReview: boolean;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            observedAt?: string;
+            /** Format: date-time */
+            completedAt?: string;
+        };
+        AdminRefundCheckPage: {
+            items: components["schemas"]["AdminRefundCheckSummary"][];
+            nextCursor?: string;
+        };
+        AdminRefundReadReceipt: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            checkId: string;
+            attemptNumber: number;
+            /** @description Whether the remote read finished; does not mean money movement was applied. */
+            complete: boolean;
+            errorCode?: string;
+            /** Format: date-time */
+            createdAt: string;
+            observations: components["schemas"]["AdminRefundObservation"][];
+            unresolvedProviderRefundIds: string[];
+        };
+        AdminRefundReadReceiptPage: {
+            items: components["schemas"]["AdminRefundReadReceipt"][];
+            /** Format: uuid */
+            nextCursor?: string;
+        };
+        AdminRefundCheckDetail: components["schemas"]["AdminRefundCheck"] & {
+            lateReceiptCount: number;
+            unrecordedReadCount: number;
+            recoveredReadCount: number;
+            /** @description Original provider refund IDs still requiring review; recomputed from current bindings. */
+            unresolvedProviderRefundIds: string[];
+        };
+        AdminRefundHistory: {
+            items: components["schemas"]["AdminRefundAttempt"][];
+            nextCursor?: string;
+            latestCheck?: components["schemas"]["AdminRefundCheck"];
+            canCheck: boolean;
+            paymentVersion: number;
+        };
+        ProductWebhookQuarantine: {
+            /** Format: uuid */
+            id: string;
+            /** @enum {string} */
+            provider: "stripe" | "waffo_pancake";
+            providerEventId: string;
+            eventType: string;
+            liveMode: boolean;
+            /**
+             * Format: uuid
+             * @description Unverified local payment ID claimed by the callback
+             */
+            claimedPaymentId?: string;
+            /**
+             * Format: uuid
+             * @description Original remote transaction matched when the rejection was recorded
+             */
+            candidatePaymentId?: string;
+            /** @description This pending receipt currently matches the original remote transaction and requires financial review */
+            hasReviewHold: boolean;
+            /** Format: int64 */
+            amountCents?: number;
+            currency?: string;
+            /** @enum {string} */
+            state: "pending" | "admitted";
+            /** @enum {string} */
+            rejectionCode: "payment_binding_conflict" | "event_identity_conflict" | "original_identity_missing" | "payment_unknown" | "provider_routing_unavailable";
+            /** @enum {string} */
+            lastErrorCode?: "payment_binding_conflict" | "event_identity_conflict" | "original_identity_missing" | "payment_unknown" | "provider_routing_unavailable";
+            /** Format: uuid */
+            admittedEventId?: string;
+            /** Format: date-time */
+            receivedAt: string;
+            /** Format: date-time */
+            checkedAt?: string;
+            version: number;
+        };
+        ProductWebhookQuarantinePage: {
+            items: components["schemas"]["ProductWebhookQuarantine"][];
+            nextCursor?: string;
+        };
+        ProductWebhookRecheck: {
+            expectedVersion: number;
+            reason: string;
+        };
         AdminPaymentOperation: {
+            /** @description Whether a pending Stripe checkout with its original request but no saved session ID can be located through authenticated read-only queries. */
+            canLocateCheckout?: boolean;
+            /** @enum {string} */
+            checkoutLookupOutcome?: "found" | "not_found" | "ambiguous" | "incomplete" | "state_changed";
+            /** @description Matching session IDs from the latest bounded lookup; excludes unrelated transactions and hosted checkout URLs. */
+            checkoutLookupMatches?: string[];
+            /** Format: date-time */
+            checkoutLookupAt?: string;
+            /** @description Whether a saved Stripe transaction without original identity evidence can be queued for authenticated merchant verification. */
+            canVerifyIdentity?: boolean;
+            /** @description Whether an expired Stripe product checkout can be queued for an authenticated status check. */
+            canCheckCheckout?: boolean;
             /** Format: uuid */
             id: string;
             /** @enum {string} */
@@ -4945,7 +7013,7 @@ export interface components {
             providerRefundId?: string;
             providerTransferId?: string;
             /** @enum {string} */
-            attentionCode: "none" | "refund_failed" | "event_processing_failed" | "destination_missing" | "transfer_job_failed" | "transfer_job_missing" | "refund_job_failed" | "refund_job_missing" | "checkout_expired";
+            attentionCode: "none" | "identity_verification_required" | "checkout_reconciliation_required" | "refund_reconciliation_required" | "refund_failed" | "event_processing_failed" | "destination_missing" | "transfer_job_failed" | "transfer_job_missing" | "refund_job_failed" | "refund_job_missing" | "checkout_expired";
             version: number;
             /** Format: date-time */
             paidAt?: string;
@@ -4969,7 +7037,7 @@ export interface components {
         };
         AdminPaymentRecovery: {
             /** @enum {string} */
-            action: "retry_transfer" | "retry_refund";
+            action: "retry_transfer" | "retry_refund" | "check_checkout" | "verify_identity" | "locate_checkout";
             expectedVersion: number;
         };
         AdminPaymentEventReplay: {
@@ -5248,6 +7316,7 @@ export interface components {
             asOf: string;
         };
         AdminGovernanceReport: {
+            version: number;
             /** Format: uuid */
             id: string;
             /** Format: uuid */
@@ -5281,10 +7350,14 @@ export interface components {
             resolvedAt?: string;
         };
         AdminReportResolution: {
+            reason: string;
+            confirm: boolean;
+            expectedVersion: number;
             /** @enum {string} */
             outcome: "no_action" | "hidden" | "removed";
         };
         AdminGovernanceAppeal: {
+            version: number;
             /** Format: uuid */
             id: string;
             /** Format: uuid */
@@ -5309,6 +7382,9 @@ export interface components {
             resolvedAt?: string;
         };
         AdminAppealResolution: {
+            reason: string;
+            confirm: boolean;
+            expectedVersion: number;
             /** @enum {string} */
             decision: "upheld" | "denied";
         };
@@ -5493,6 +7569,17 @@ export interface components {
         };
     };
     responses: {
+        /** @description A request for this email and purpose is in progress or within the resend window. The error code is auth_code_resend_limited; this does not prove email delivery. Retry after the indicated delay. */
+        AuthCodeResendLimited: {
+            headers: {
+                /** @description Seconds to wait before requesting another code. */
+                "Retry-After"?: number;
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ErrorEnvelope"];
+            };
+        };
         /** @description Invalid request */
         BadRequest: {
             headers: {
@@ -5513,6 +7600,15 @@ export interface components {
         };
         /** @description Access denied */
         Forbidden: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ErrorEnvelope"];
+            };
+        };
+        /** @description Available funds are insufficient for the requested operation */
+        PaymentRequired: {
             headers: {
                 [name: string]: unknown;
             };
@@ -5575,6 +7671,8 @@ export interface components {
         DataRightsRequestId: string;
         DataRightsHoldId: string;
         SupportCaseId: string;
+        /** @description Retain for retries of the same upload, including response loss. Scoped to the authenticated account across ordinary and version uploads. Reuse with changed bytes or fields returns 409; intentionally new uploads use a new key. */
+        UploadIdempotencyKey: string;
         IdempotencyKey: string;
     };
     requestBodies: never;
@@ -5995,6 +8093,13 @@ export interface operations {
                 };
             };
             409: components["responses"]["Conflict"];
+            /** @description Email verification registration required */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             422: components["responses"]["ValidationFailed"];
         };
     };
@@ -6047,6 +8152,7 @@ export interface operations {
                 };
             };
             422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["AuthCodeResendLimited"];
         };
     };
     sendUnifiedAuthCode: {
@@ -6075,6 +8181,7 @@ export interface operations {
             };
             404: components["responses"]["NotFound"];
             422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["AuthCodeResendLimited"];
         };
     };
     confirmUnifiedLoginCode: {
@@ -6141,35 +8248,6 @@ export interface operations {
                 content?: never;
             };
             422: components["responses"]["ValidationFailed"];
-        };
-    };
-    startDemoSession: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: {
-            content: {
-                "application/json": {
-                    /** @enum {string} */
-                    actor?: "creator" | "publisher" | "admin";
-                };
-            };
-        };
-        responses: {
-            /** @description Demo session established */
-            200: {
-                headers: {
-                    "Set-Cookie"?: string;
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Session"];
-                };
-            };
-            404: components["responses"]["NotFound"];
         };
     };
     endSession: {
@@ -6877,7 +8955,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Private JSON export package; SHA-256 appears in the Digest header */
+            /** @description Private JSON export package from one repeatable-read database snapshot; SHA-256 appears as Base64 in Digest and Content-Digest headers. data.marketplace has schemaVersion 1, evidenceScope and data arrays for deliveryRepairs, products, listingHistory, sales, entitlements, orderEvents, contracts, deliverySnapshots, payments, paymentEvents, providerEvents, refundAttempts, refundChecks, checkoutCommands, checkoutRequests, checkoutDispatches, checkoutClosures, identityRecoveries, checkoutLookups and cleanupJobs. Buyer transaction evidence and seller sales summaries have separate ownership scopes. Private storage locations, payment URLs, raw provider payloads and staff recovery notes are excluded. No file contents are included. Packages are persisted atomically in parts of at most 5 MiB; the complete download remains one JSON file, including packages larger than 5 MiB. Each part and the full package are verified before any bytes are served. The package expires after seven days; expiry purges every part body while retaining checksum evidence. Preparation and streaming have a ten-minute response budget. Capacity is limited per process; busy responses return Retry-After and do not expose a partial file. Preparation is subject to configured package and temporary-storage budgets. A stored package exceeding a reduced server budget remains unchanged but cannot be downloaded until capacity is restored; no truncated download is returned. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -6889,6 +8967,13 @@ export interface operations {
             404: components["responses"]["NotFound"];
             /** @description Export package expired and its body was purged */
             410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description data_export_busy or data_export_storage_unavailable includes Retry-After; data_export_too_large requires operator capacity adjustment and is not automatically retryable. No partial file is returned. */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -7192,7 +9277,7 @@ export interface operations {
     listWorks: {
         parameters: {
             query?: {
-                /** @description Search published work metadata */
+                /** @description Literal substring search of public work metadata (Unicode code points) */
                 q?: string;
                 kind?: "image" | "video" | "audio" | "document";
                 promptVisibility?: "public" | "partial" | "purchased" | "private";
@@ -7215,6 +9300,7 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
+            422: components["responses"]["ValidationFailed"];
         };
     };
     getWork: {
@@ -7269,7 +9355,11 @@ export interface operations {
     };
     getCreator: {
         parameters: {
-            query?: never;
+            query?: {
+                worksPage?: number;
+                productsPage?: number;
+                limit?: number;
+            };
             header?: never;
             path: {
                 handle: string;
@@ -7288,6 +9378,7 @@ export interface operations {
                 };
             };
             404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationFailed"];
         };
     };
     listConversations: {
@@ -7604,6 +9695,27 @@ export interface operations {
             422: components["responses"]["ValidationFailed"];
         };
     };
+    getWalletTopupSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current USD top-up limits and optional suggested amounts; custom amounts are allowed within limits */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WalletTopupSettings"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
     getPointOverview: {
         parameters: {
             query?: never;
@@ -7711,8 +9823,12 @@ export interface operations {
     listAssets: {
         parameters: {
             query?: {
-                /** @description Opaque stable Asset cursor */
+                /** @description Opaque stable Asset cursor bound to the owner and source and purpose filters */
                 cursor?: string;
+                /** @description Filter active purchased assets before pagination; omitted means all owned assets */
+                source?: "purchase";
+                /** @description Filter eligible independent product samples or private delivery originals before pagination; cannot be combined with source; selection alone does not publish anything */
+                purpose?: "product_preview" | "product_source";
                 limit?: number;
             };
             header?: never;
@@ -7763,7 +9879,10 @@ export interface operations {
     uploadAsset: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                /** @description Retain for retries of the same upload, including response loss. Scoped to the authenticated account across ordinary and version uploads. Reuse with changed bytes or fields returns 409; intentionally new uploads use a new key. */
+                "Idempotency-Key": components["parameters"]["UploadIdempotencyKey"];
+            };
             path?: never;
             cookie?: never;
         };
@@ -7777,6 +9896,15 @@ export interface operations {
             };
         };
         responses: {
+            /** @description Replayed upload with the original asset ID and current scan status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Asset"];
+                };
+            };
             /** @description Uploaded Asset persisted with pending scan status and durable scan job */
             201: {
                 headers: {
@@ -7784,6 +9912,17 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Asset"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description Upload key already belongs to different file content or metadata */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             /** @description Upload exceeds 10 MiB */
@@ -7854,7 +9993,10 @@ export interface operations {
     };
     getAssetContent: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Zero-based index in the accepted purchased ZIP manifest. Only one canonical decimal index is accepted; unavailable for single-file or unpurchased assets. Omitting it downloads the whole asset. All bundle members are verified even for a range of one file. */
+                fileIndex?: number;
+            };
             header?: {
                 /** @description One RFC 9110 byte range. Multiple ranges are rejected. */
                 Range?: string;
@@ -7866,16 +10008,19 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Complete Asset media. Private assets require their owner session; published assets are public. Only scan-clean content is delivered. */
+            /** @description Complete Asset media or one accepted ZIP member. Purchased packages and members require the active buyer and entitlement, clean scans for every accepted source, and a ready verified snapshot. They are attachment downloads with private/no-store caching. */
             200: {
                 headers: {
                     "Accept-Ranges"?: "bytes";
                     "Content-Length"?: number;
                     ETag?: string;
                     "Last-Modified"?: string;
+                    /** @description Attachment with a safe accepted filename for a purchased ZIP or member. */
+                    "Content-Disposition"?: string;
                     [name: string]: unknown;
                 };
                 content: {
+                    "application/zip": string;
                     "image/jpeg": string;
                     "image/png": string;
                     "video/mp4": string;
@@ -7884,7 +10029,7 @@ export interface operations {
                     "text/plain": string;
                 };
             };
-            /** @description One authorized byte range from scan-clean Asset media. */
+            /** @description One authorized byte range from scan-clean Asset media, a complete purchased ZIP, or an indexed member. Purchased files are private/no-store attachments. */
             206: {
                 headers: {
                     "Accept-Ranges"?: "bytes";
@@ -7895,6 +10040,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    "application/zip": string;
                     "image/jpeg": string;
                     "image/png": string;
                     "video/mp4": string;
@@ -7914,12 +10060,16 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            422: components["responses"]["ValidationFailed"];
         };
     };
     uploadAssetVersion: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                /** @description Retain for retries of the same upload, including response loss. Scoped to the authenticated account across ordinary and version uploads. Reuse with changed bytes or fields returns 409; intentionally new uploads use a new key. */
+                "Idempotency-Key": components["parameters"]["UploadIdempotencyKey"];
+            };
             path: {
                 assetId: components["parameters"]["AssetId"];
             };
@@ -7936,6 +10086,15 @@ export interface operations {
             };
         };
         responses: {
+            /** @description Replayed version with the original asset ID and current scan status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Asset"];
+                };
+            };
             /** @description New pending Asset version and durable scan job created */
             201: {
                 headers: {
@@ -7945,6 +10104,7 @@ export interface operations {
                     "application/json": components["schemas"]["Asset"];
                 };
             };
+            401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
@@ -7960,15 +10120,1162 @@ export interface operations {
             422: components["responses"]["ValidationFailed"];
         };
     };
+    listSellerSales: {
+        parameters: {
+            query?: {
+                status?: "test_pending" | "test_paid" | "payment_pending" | "payment_paid" | "payment_failed" | "fulfilled" | "refund_requested" | "test_refunded" | "refunded" | "cancelled";
+                environment?: "live" | "test" | "unknown";
+                productId?: string;
+                cursor?: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Private sales page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SellerSalesPage"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    getSellerSale: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                orderID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Private sale detail */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SellerSaleDetail"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    listSellerSaleEvents: {
+        parameters: {
+            query?: {
+                cursor?: string;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                orderID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Private status history */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SellerSaleEventsPage"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    getSellerFunds: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Seller funds balance */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SellerFundsBalance"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    listSellerPayoutReviews: {
+        parameters: {
+            query?: {
+                cursor?: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Private review directory */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SellerPayoutReviewPage"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    getSellerPayoutReview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                requestID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current request and latest review */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SellerPayoutReviewItem"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    reviewSellerPayout: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path: {
+                requestID: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description Zero before the first decision; otherwise the latest review revision. */
+                    expectedRevision: number;
+                    /** Format: uuid */
+                    settlementId: string;
+                    amountCents: number;
+                    /** @description Must match the bound bank. Required and nonempty for approval; empty only when rejecting a request with no bank. */
+                    bankDestinationId?: string;
+                    /** @enum {string} */
+                    decision: "approved" | "rejected";
+                    reason: string;
+                    /** @description Explicit seller-visible explanation of 10–1000 trimmed Unicode code points required for every new decision. May be absent or empty only when replaying an original pre-0161 decision. Internal reason is never exposed to sellers. */
+                    sellerMessage?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Durable decision and current request */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SellerPayoutReviewResult"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    admitSellerPayoutFunding: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path: {
+                requestID: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: uuid */
+                    reviewId: string;
+                    expectedRevision: number;
+                    /** Format: uuid */
+                    settlementId: string;
+                    amountCents: number;
+                    bankDestinationId: string;
+                    reason: string;
+                    /** @enum {boolean} */
+                    confirmed: true;
+                };
+            };
+        };
+        responses: {
+            /** @description Durable source admission and current request */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SellerFundingAdmissionResult"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    getSellerBankPayoutOperation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                requestID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current bank operation */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SellerBankPayoutOperation"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    submitSellerBankPayout: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path: {
+                requestID: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: uuid */
+                    reviewId: string;
+                    expectedRevision: number;
+                    /** Format: uuid */
+                    sourceTransferId: string;
+                    amountCents: number;
+                    bankDestinationId: string;
+                    reason: string;
+                    /** @enum {boolean} */
+                    confirmed: true;
+                };
+            };
+        };
+        responses: {
+            /** @description Durable bank command */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SellerBankPayoutSubmission"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    resumeSellerBankPayout: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path: {
+                requestID: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: uuid */
+                    commandId: string;
+                    /** Format: uuid */
+                    expectedJobId: string;
+                    reason: string;
+                    /** @enum {boolean} */
+                    confirmed: true;
+                };
+            };
+        };
+        responses: {
+            /** @description Durable continuation and current bank operation */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SellerBankPayoutResumeResult"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    getSellerSourceReversalOperation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                requestID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current source return operation */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SellerSourceReversalOperation"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    submitSellerSourceReversal: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path: {
+                requestID: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SellerSourceReversalInput"];
+            };
+        };
+        responses: {
+            /** @description Original or newly queued source return command */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SellerSourceReversalSubmission"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    closeSellerSourceReversal: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path: {
+                commandID: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SellerSourceClosureInput"];
+            };
+        };
+        responses: {
+            /** @description Original or newly consumed source return closure */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SellerSourceClosureSubmission"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    listSellerPayoutOptions: {
+        parameters: {
+            query?: {
+                cursor?: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Private settlement directory */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SellerPayoutOptions"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    listSellerPayoutRequests: {
+        parameters: {
+            query?: {
+                cursor?: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Private payout history */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SellerPayoutPage"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    createSellerPayoutRequest: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: uuid */
+                    settlementId: string;
+                    amountCents: number;
+                };
+            };
+        };
+        responses: {
+            /** @description Payout request reserved for review */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SellerPayoutRequest"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            402: components["responses"]["PaymentRequired"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    getSellerPayoutRequest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                requestID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current owner request */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SellerPayoutItem"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    cancelSellerPayoutRequest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                requestID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Cancelled payout request */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SellerPayoutRequest"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    listSellerPayoutBanks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                requestID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Eligible USD banks */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SellerPayoutBankDirectory"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    getSellerPayoutBankTarget: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                requestID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Frozen bank selection */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SellerPayoutBankTarget"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    bindSellerPayoutBankTarget: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                requestID: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    bankDestinationId: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Verified and frozen bank selection */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SellerPayoutBankTarget"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    listSellerLicenses: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current private listing result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListingLicensePage"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    listSellerProducts: {
+        parameters: {
+            query?: {
+                status?: "draft" | "active" | "paused" | "removed" | "pending" | "rejected" | "blocked";
+                cursor?: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current private listing result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListingPage"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    createSellerProduct: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ListingMutation"];
+            };
+        };
+        responses: {
+            /** @description Current private listing result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SellerProduct"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    getSellerProduct: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                productId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current private listing result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SellerProduct"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    editSellerProduct: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                productId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ListingMutation"];
+            };
+        };
+        responses: {
+            /** @description Current private listing result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SellerProduct"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    submitSellerProduct: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                productId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ListingMutation"];
+            };
+        };
+        responses: {
+            /** @description Current private listing result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SellerProduct"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    pauseSellerProduct: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                productId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ListingMutation"];
+            };
+        };
+        responses: {
+            /** @description Current private listing result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SellerProduct"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    listReviewProducts: {
+        parameters: {
+            query?: {
+                status?: "draft" | "active" | "paused" | "removed" | "pending" | "rejected" | "blocked";
+                cursor?: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current private listing result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListingPage"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    getReviewProduct: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                productId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current private listing result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SellerProduct"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    approveReviewProduct: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                productId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ListingMutation"];
+            };
+        };
+        responses: {
+            /** @description Current private listing result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SellerProduct"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    rejectReviewProduct: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                productId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ListingMutation"];
+            };
+        };
+        responses: {
+            /** @description Current private listing result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SellerProduct"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    blockReviewProduct: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                productId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ListingMutation"];
+            };
+        };
+        responses: {
+            /** @description Current private listing result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SellerProduct"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    reopenReviewProduct: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                productId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ListingMutation"];
+            };
+        };
+        responses: {
+            /** @description Current private listing result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SellerProduct"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    reviewProductContent: {
+        parameters: {
+            query: {
+                kind: "source" | "preview";
+                version: string;
+                /** @description Zero-based source member index; required for a multi-file source */
+                fileIndex?: number;
+            };
+            header?: {
+                Range?: string;
+            };
+            path: {
+                productId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Authorized original or sample bytes as an attachment */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description A single authorized byte range */
+            206: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            /** @description Invalid byte range */
+            416: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
     listProducts: {
         parameters: {
             query?: {
+                /** @description Business category code; unknown well-formed codes return no matches. */
                 category?: string;
+                /** @description Case-insensitive literal search; percent and underscore are not wildcards. */
                 q?: string;
                 type?: "prompt" | "workflow" | "asset" | "work";
                 license?: string;
                 sort?: "newest" | "price_asc" | "price_desc";
                 limit?: number;
+                /** @description Opaque continuation bound to the normalized filters */
+                cursor?: string;
             };
             header?: never;
             path?: never;
@@ -7984,12 +11291,16 @@ export interface operations {
                 content: {
                     "application/json": {
                         items: components["schemas"]["Product"][];
-                        categoryCounts?: {
+                        categoryCounts: {
                             [key: string]: number;
                         };
+                        /** @description Matching visible products across all pages. */
+                        total: number;
+                        nextCursor?: string;
                     };
                 };
             };
+            422: components["responses"]["ValidationFailed"];
         };
     };
     getProduct: {
@@ -8015,6 +11326,43 @@ export interface operations {
             404: components["responses"]["NotFound"];
         };
     };
+    setProductPreview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                productId: components["parameters"]["ProductId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProductPreviewUpdate"];
+            };
+        };
+        responses: {
+            /** @description Updated sample and current offer version */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProductPreviewUpdate"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+            /** @description Publishing is temporarily disabled */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     checkoutProduct: {
         parameters: {
             query?: never;
@@ -8030,6 +11378,8 @@ export interface operations {
             content: {
                 "application/json": {
                     licenseAccepted: boolean;
+                    /** @description Opaque version from the displayed product. A changed offer requires review and new acceptance. */
+                    offerVersion: string;
                 };
             };
         };
@@ -8106,6 +11456,43 @@ export interface operations {
             404: components["responses"]["NotFound"];
         };
     };
+    closeProductCheckout: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path: {
+                orderId: components["parameters"]["OrderId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: int64 */
+                    expectedVersion: number;
+                    /** @enum {boolean} */
+                    confirmed: true;
+                };
+            };
+        };
+        responses: {
+            /** @description Closed order or the result of the original idempotent closure */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Order"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
     refundOrder: {
         parameters: {
             query?: never;
@@ -8123,7 +11510,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Local Test refund completed atomically, or Provider refund accepted pending a signed confirmation event */
+            /** @description Verified historical internal balance reversed atomically, or Provider refund accepted pending a signed confirmation event. Missing original internal evidence returns 409 legacy_refund_reconciliation_required. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -8331,10 +11718,11 @@ export interface operations {
     listCommunityPosts: {
         parameters: {
             query?: {
+                view?: "all" | "mine" | "saved" | "following" | "drafts";
                 sort?: "latest" | "discussed";
                 q?: string;
                 category?: string;
-                /** @description Opaque stable reverse-chronological Community feed cursor */
+                /** @description Opaque actor/filter-bound ordering snapshot cursor; expires after 30 minutes */
                 cursor?: string;
                 limit?: number;
                 /** @description Return only the authenticated viewer's published posts */
@@ -8362,7 +11750,9 @@ export interface operations {
     createCommunityPost: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
             path?: never;
             cookie?: never;
         };
@@ -8383,7 +11773,9 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
             422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["Unavailable"];
         };
     };
     getCommunityPost: {
@@ -8406,6 +11798,137 @@ export interface operations {
                     "application/json": components["schemas"]["CommunityPost"];
                 };
             };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    deleteCommunityPost: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                postId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    expectedVersion: number;
+                };
+            };
+        };
+        responses: {
+            /** @description Discussion withdrawn by its owner */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    updateCommunityPost: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                postId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CommunityPostUpdate"];
+            };
+        };
+        responses: {
+            /** @description Owner updated or published a discussion */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommunityPost"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    getOwnedCommunityPost: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                postId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Owner-only discussion including private drafts */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommunityPost"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    communityCapabilities: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Effective permissions and publishing availability */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommunityCapabilities"];
+                };
+            };
+        };
+    };
+    getCommunityReport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                reportId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Role-minimized case with the viewer's own appeal */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommunityReport"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
         };
     };
@@ -8440,7 +11963,9 @@ export interface operations {
     createCommunityComment: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
             path: {
                 postId: string;
             };
@@ -8622,6 +12147,7 @@ export interface operations {
                 sort?: "newest" | "deadline" | "budget_desc";
                 mine?: boolean;
                 limit?: number;
+                cursor?: string;
             };
             header?: never;
             path?: never;
@@ -8635,12 +12161,11 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        items: components["schemas"]["TaskSummary"][];
-                    };
+                    "application/json": components["schemas"]["TaskPage"];
                 };
             };
             401: components["responses"]["Unauthorized"];
+            422: components["responses"]["ValidationFailed"];
         };
     };
     createTask: {
@@ -8692,6 +12217,38 @@ export interface operations {
                 };
             };
             404: components["responses"]["NotFound"];
+        };
+    };
+    changeTaskDeadline: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                taskId: components["parameters"]["TaskId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TaskDeadlineInput"];
+            };
+        };
+        responses: {
+            /** @description Deadline proposal or participant decision recorded */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskDetail"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
         };
     };
     checkoutTask: {
@@ -9530,6 +13087,84 @@ export interface operations {
             404: components["responses"]["NotFound"];
         };
     };
+    getAdminWalletTopupSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current top-up settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WalletTopupSettings"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    updateAdminWalletTopupSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WalletTopupSettingsUpdate"];
+            };
+        };
+        responses: {
+            /** @description Persisted and audited settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WalletTopupSettings"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            /** @description Settings changed; reload and review before saving */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    listAdminSubscriptionModels: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Subscription model selection catalog */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["SubscriptionModel"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
     listAdminSubscriptionPlans: {
         parameters: {
             query?: never;
@@ -9604,6 +13239,7 @@ export interface operations {
                 };
             };
             403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
             422: components["responses"]["ValidationFailed"];
         };
     };
@@ -9773,7 +13409,9 @@ export interface operations {
     adjustAdminFinanceAccount: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
             path: {
                 userId: string;
             };
@@ -9785,15 +13423,25 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Local Test credit balance adjusted */
+            /** @description Adjustment committed or replayed without a second ledger entry */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AdminFinanceAccount"];
+                    "application/json": components["schemas"]["AdminFinanceAdjustmentResult"];
                 };
             };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description Key payload conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            422: components["responses"]["ValidationFailed"];
         };
     };
     listAdminProviderCostReconciliations: {
@@ -9852,6 +13500,121 @@ export interface operations {
             503: components["responses"]["Unavailable"];
         };
     };
+    listProductWebhookQuarantines: {
+        parameters: {
+            query?: {
+                state?: "pending" | "admitted" | "all";
+                provider?: "stripe" | "waffo_pancake";
+                mode?: "live" | "test";
+                cursor?: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Finance-only minimized evidence; admission does not mean funds settled */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProductWebhookQuarantinePage"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Active finance permission required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Invalid filters or cursor */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    recheckProductWebhookQuarantine: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                quarantineID: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProductWebhookRecheck"];
+            };
+        };
+        responses: {
+            /** @description Recheck recorded; successful admission enqueues normal event processing, not a payment or refund request */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProductWebhookQuarantine"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Active finance permission required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Evidence not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Evidence state or version changed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Invalid input */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Payment processing disabled */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     listAdminPayments: {
         parameters: {
             query?: {
@@ -9881,6 +13644,154 @@ export interface operations {
                 };
             };
             403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    getAdminRefundHistory: {
+        parameters: {
+            query?: {
+                cursor?: string;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                paymentId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Refund attempts and latest authenticated provider query */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminRefundHistory"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    listAdminRefundChecks: {
+        parameters: {
+            query?: {
+                /** @description Unresolved selects checks with currently unmatched refund observations */
+                review?: "all" | "unresolved";
+                /** @description Opaque cursor bound to this payment and review filter. */
+                cursor?: string;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                paymentId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Query summaries in descending creation time and ID order; no external calls or observation arrays */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminRefundCheckPage"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    requestAdminRefundCheck: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                paymentId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    expectedVersion: number;
+                };
+            };
+        };
+        responses: {
+            /** @description Read-only provider query queued; no money movement is created */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminRefundHistory"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    listAdminRefundReadReceipts: {
+        parameters: {
+            query?: {
+                /** @description Existing receipt under this exact payment and check. */
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                paymentId: string;
+                checkId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One immutable late receipt per page; finance permission required; no provider calls */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminRefundReadReceiptPage"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    getAdminRefundCheck: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                paymentId: string;
+                checkId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Original saved query evidence with current unmatched refund IDs; finance permission required */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminRefundCheckDetail"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
             422: components["responses"]["ValidationFailed"];
         };
     };
@@ -10641,6 +14552,493 @@ export interface operations {
                 };
             };
             403: components["responses"]["Forbidden"];
+        };
+    };
+    listProductDeliveryEvidenceGaps: {
+        parameters: {
+            query?: {
+                gap?: "contract_missing" | "legacy_unfrozen" | "required_snapshot_missing" | "legacy_snapshot_unbound";
+                environment?: "live" | "test" | "unknown";
+                scope?: "active" | "unsettled";
+                /** @description Cursor bound to actor and filters */
+                cursor?: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Private no-store evidence inventory; no global total or file-health assertion */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProductDeliveryEvidencePage"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    inspectProductDelivery: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                orderID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Private delivery inspection for admin:media; no storage paths or buyer identity */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProductDeliveryStatus"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    repairProductDelivery: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path: {
+                orderID: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProductDeliveryRepairInput"];
+            };
+        };
+        responses: {
+            /** @description Exact accepted bytes restored at a new location; existing rights unchanged */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProductDeliveryStatus"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description Revision or eligibility changed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Invalid input or backup does not match the frozen bytes */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    prepareProductDeliveryUpload: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path: {
+                orderID: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProductDeliveryUploadInput"];
+            };
+        };
+        responses: {
+            /** @description Reserve an exact upload target. Use pendingId for content upload; a completed replay has no pendingId. Superseded reservations return 409. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProductDeliveryStatus"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            /** @description Invalid reservation command */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    uploadProductDeliveryRepair: {
+        parameters: {
+            query: {
+                confirmed: true;
+            };
+            header?: never;
+            path: {
+                orderID: string;
+                repairID: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/octet-stream": string;
+            };
+        };
+        responses: {
+            /** @description Verified recovery or completed replay */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProductDeliveryStatus"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description Upload deadline exceeded; retry the recorded repair */
+            408: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: components["responses"]["Conflict"];
+            /** @description Request exceeds 100 MiB */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Requires application/octet-stream without parameters */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Missing confirmation or bytes do not match the accepted delivery */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Upload slots exhausted; retry the same repair */
+            503: {
+                headers: {
+                    /** @description Suggested delay in seconds */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    resumeProductDeliveryRepair: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                orderID: string;
+                repairID: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @enum {boolean} */
+                    confirmed: true;
+                };
+            };
+        };
+        responses: {
+            /** @description Continue the recorded repair or return current status on replay */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProductDeliveryStatus"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            /** @description Missing confirmation or byte mismatch */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listAdminDeletionJobs: {
+        parameters: {
+            query?: {
+                kind?: "all" | "prepare" | "cleanup";
+                status?: "all" | "failed" | "queued" | "running" | "succeeded" | "cancelled";
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Private account deletion preparation and cleanup queue for admin:data-rights; no raw errors or storage paths */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeletionJobPage"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            /** @description Invalid deletion recovery input */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    retryAdminDeletionJob: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                jobId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MediaCleanupRetry"];
+            };
+        };
+        responses: {
+            /** @description Replacement job queued with immutable recovery evidence; same actor and command replay returns the original replacement; preserves grace periods and the irreversible request stage; active legal holds prevent recovery */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeletionJob"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            /** @description Invalid deletion recovery input */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listAdminExportJobs: {
+        parameters: {
+            query?: {
+                kind?: "all" | "export" | "expiry";
+                status?: "all" | "failed" | "queued" | "running" | "succeeded" | "cancelled";
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Private export generation and expiry queue for admin:data-rights; no raw errors or storage paths */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExportJobPage"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            /** @description Invalid export recovery input */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    retryAdminExportJob: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                jobId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MediaCleanupRetry"];
+            };
+        };
+        responses: {
+            /** @description Replacement job queued with immutable recovery evidence; same actor and command replay returns the original replacement; does not rebuild ready artifacts or extend expiry */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExportJob"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            /** @description Invalid export recovery input */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listAdminMediaCleanups: {
+        parameters: {
+            query?: {
+                kind?: "all" | "account" | "product";
+                status?: "all" | "failed" | "queued" | "running" | "succeeded" | "cancelled";
+                limit?: number;
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Private cleanup queue for admin:data-rights; no raw errors or storage paths */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MediaCleanupPage"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            /** @description Invalid cleanup input */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    retryAdminMediaCleanup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                jobId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MediaCleanupRetry"];
+            };
+        };
+        responses: {
+            /** @description Replacement job queued with immutable recovery evidence; no files are deleted by this request */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MediaCleanup"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            /** @description Invalid cleanup input */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     listAdminDataRightsHolds: {

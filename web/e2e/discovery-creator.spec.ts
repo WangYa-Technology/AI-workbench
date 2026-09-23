@@ -1,7 +1,8 @@
+import { fixtureCredentials } from './helpers/identity'
 import { expect, test } from '@playwright/test'
 
 test('searches public domains, explains ranking, and follows a creator', async ({ page }) => {
-  const session = await page.request.post('/api/v1/auth/demo', { data: { actor: 'creator' } })
+  const session = await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('creator') })
   expect(session.ok()).toBeTruthy()
 
   await page.goto('/search?q=signal')
@@ -13,21 +14,21 @@ test('searches public domains, explains ranking, and follows a creator', async (
   await page.getByRole('button', { name: 'Work', exact: true }).click()
   await expect(page).toHaveURL(/types=work/)
   await expect(page.getByText(/\d+ public results/, { exact: true })).toBeVisible()
-  await expect(page.getByText('Product · @northstar_studio', { exact: true })).toBeHidden()
+  await expect(page.getByText('Product · @fixture_studio', { exact: true })).toBeHidden()
 
-  await page.locator('.search-page-header input').fill('northstar')
+  await page.locator('.search-page-header input').fill('fixture_studio')
   await page.locator('.search-page-header form').getByRole('button', { name: 'Search', exact: true }).click()
-  await expect(page).toHaveURL(/q=northstar/)
+  await expect(page).toHaveURL(/q=fixture_studio/)
   await page.getByRole('button', { name: 'All results', exact: true }).click()
-  const creatorResult = page.getByRole('link', { name: /Northstar Studio Creator/ })
+  const creatorResult = page.getByRole('link', { name: /Fixture Studio Creator/ })
   await expect(creatorResult).toBeVisible()
   await creatorResult.click()
 
-  await expect(page).toHaveURL('/creators/northstar_studio')
-  await expect(page.getByRole('heading', { name: 'Northstar Studio', exact: true })).toBeVisible()
+  await expect(page).toHaveURL('/creators/fixture_studio')
+  await expect(page.getByRole('heading', { name: 'Fixture Studio', exact: true })).toBeVisible()
   await expect(page.locator('.creator-work-grid > a')).toHaveCount(1)
   await expect(page.locator('.creator-product-list > a')).toHaveCount(3)
-  await expect(page.getByText('Demo media for local development.', { exact: false }).first()).toBeVisible()
+  await expect(page.getByText('Test fixture media for local development.', { exact: false }).first()).toBeVisible()
 
   const follow = page.getByRole('button', { name: 'Follow', exact: true })
   const following = page.getByRole('button', { name: 'Following', exact: true })
@@ -59,9 +60,9 @@ test('keeps search and creator pages within every required viewport', async ({ p
     let widths = await page.evaluate(() => ({ client: document.documentElement.clientWidth, scroll: document.documentElement.scrollWidth }))
     expect(widths.scroll, `search overflow at ${viewport.width}x${viewport.height}`).toBe(widths.client)
 
-    await page.goto('/creators/northstar_studio')
-    await expect(page.getByRole('heading', { name: 'Northstar Studio', exact: true })).toBeVisible()
-    await expect(page.locator('.creator-showcase')).toBeVisible()
+    await page.goto('/creators/fixture_studio')
+    await expect(page.getByRole('heading', { name: 'Fixture Studio', exact: true })).toBeVisible()
+    await expect(page.locator('.creator-header')).toBeVisible()
     widths = await page.evaluate(() => ({ client: document.documentElement.clientWidth, scroll: document.documentElement.scrollWidth }))
     expect(widths.scroll, `creator overflow at ${viewport.width}x${viewport.height}`).toBe(widths.client)
   }

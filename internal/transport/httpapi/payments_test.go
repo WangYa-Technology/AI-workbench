@@ -12,7 +12,11 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -37,9 +41,48 @@ func TestStripeWebhookHTTPContract(t *testing.T) {
 	defer server.Close()
 	now := time.Now().UTC().Unix()
 	paymentID, resourceID := uuid.New(), uuid.New()
+	buyer := registerGovernanceUser(t, testHTTPClient(t), server.URL, "receipt_buyer")
+	seller := registerGovernanceUser(t, testHTTPClient(t), server.URL, "receipt_seller")
+	assetID, orderID := uuid.New(), uuid.New()
+	exec := func(sql string, args ...any) {
+		t.Helper()
+		if _, err := pool.Exec(t.Context(), sql, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Normal product admission needs an actual original local transaction.
+	// Unknown signed claims are covered below as quarantined evidence.
+	exec(`INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,scan_status,source_type,license_code,storage_backend,storage_key)
+ VALUES($1,$2,'image','Receipt source','/private/source','image/jpeg','clean','upload','hcai-commercial-standard-v1','local_file','private/http-receipt.jpg')`, assetID, seller.ID)
+	exec(`INSERT INTO products(id,seller_id,asset_id,title,description,product_type,price_cents,currency,license_code,status)
+ VALUES($1,$2,$3,'Receipt product','Original receipt product','asset',1900,'USD','hcai-commercial-standard-v1','active')`, resourceID, seller.ID, assetID)
+	exec(`INSERT INTO orders(id,buyer_id,product_id,amount_cents,currency,status,license_accepted_at,idempotency_key,license_version,license_terms_snapshot,product_title_snapshot,license_name_snapshot,refund_window_days_snapshot)
+ VALUES($1,$2,$3,1900,'USD','payment_pending',now(),'http-receipt-order','1.0','Accepted terms','Receipt product','Commercial Standard',7)`, orderID, buyer.ID, resourceID)
+	exec(`INSERT INTO payment_intents(id,provider,purpose,payer_id,payee_id,resource_id,order_id,amount_cents,currency,status,live_mode,idempotency_key,provider_checkout_id)
+ VALUES($1,'stripe','product',$2,$3,$4,$5,1900,'USD','checkout_pending',false,'http-receipt-payment','cs_httpcontract')`, paymentID, buyer.ID, seller.ID, resourceID, orderID)
 	body := []byte(fmt.Sprintf(`{"id":"evt_httpcontract","object":"event","api_version":"2026-02-25.clover","created":%d,"livemode":false,"type":"checkout.session.completed","data":{"object":{"id":"cs_httpcontract","object":"checkout.session","status":"complete","payment_status":"paid","amount_total":1900,"currency":"usd","payment_intent":"pi_httpcontract","metadata":{"hcai_payment_id":%q,"hcai_resource_id":%q,"hcai_purpose":"product"}}}}`, now, paymentID.String(), resourceID.String()))
 
 	var receipt payments.Receipt
+	gate, err := pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer gate.Rollback(t.Context())
+	if _, err = gate.Exec(t.Context(), `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, "webhook-admission:stripe:evt_httpcontract"); err != nil {
+		t.Fatal(err)
+	}
+	var busy struct {
+		Error struct {
+			Code      string `json:"code"`
+			Retryable bool   `json:"retryable"`
+		} `json:"error"`
+	}
+	if response := postStripeWebhook(t, server.URL, body, "t="+fmt.Sprint(now)+",v1="+paymentStripeSignature(secret, now, body), "application/json", &busy); response.StatusCode != 503 || busy.Error.Code != "payment_event_busy" || !busy.Error.Retryable {
+		t.Fatalf("concurrent admission was not retryable: %d %#v", response.StatusCode, busy)
+	}
+	if err = gate.Rollback(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 	response := postStripeWebhook(t, server.URL, body, "t="+fmt.Sprint(now)+",v1="+paymentStripeSignature(secret, now, body), "application/json", &receipt)
 	if response.StatusCode != http.StatusAccepted || receipt.Duplicate || receipt.Status != "received" || receipt.ProviderEventID != "evt_httpcontract" {
 		t.Fatalf("signed Stripe event was not accepted: status=%d receipt=%#v", response.StatusCode, receipt)
@@ -49,6 +92,25 @@ func TestStripeWebhookHTTPContract(t *testing.T) {
 	if response.StatusCode != http.StatusOK || !receipt.Duplicate || receipt.Status != "received" {
 		t.Fatalf("duplicate Stripe event was not safely acknowledged: status=%d receipt=%#v", response.StatusCode, receipt)
 	}
+	unknown := []byte(strings.NewReplacer("evt_httpcontract", "evt_unknown_receipt", paymentID.String(), uuid.NewString()).Replace(string(body)))
+	response = postStripeWebhook(t, server.URL, unknown, "t="+fmt.Sprint(now)+",v1="+paymentStripeSignature(secret, now, unknown), "application/json", nil)
+	if response.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("unknown product payment was admitted: %d", response.StatusCode)
+	}
+	var quarantined int
+	if err := pool.QueryRow(t.Context(), `SELECT count(*) FROM product_webhook_quarantines WHERE rejection_code='payment_unknown'`).Scan(&quarantined); err != nil || quarantined != 1 {
+		t.Fatal(quarantined, err)
+	}
+	exec(`CREATE FUNCTION fail_quarantine_http_fixture() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'private-storage-failure'; END $$;
+ CREATE TRIGGER fail_quarantine_http_fixture BEFORE INSERT ON product_webhook_quarantines FOR EACH ROW EXECUTE FUNCTION fail_quarantine_http_fixture()`)
+	failed := []byte(strings.Replace(string(unknown), "evt_unknown_receipt", "evt_failed_persistence", 1))
+	var failure map[string]any
+	response = postStripeWebhook(t, server.URL, failed, "t="+fmt.Sprint(now)+",v1="+paymentStripeSignature(secret, now, failed), "application/json", &failure)
+	rawFailure, _ := json.Marshal(failure)
+	if response.StatusCode != http.StatusInternalServerError || strings.Contains(string(rawFailure), "private-storage-failure") {
+		t.Fatal(response.StatusCode, failure)
+	}
+	exec(`DROP TRIGGER fail_quarantine_http_fixture ON product_webhook_quarantines`)
 
 	response = postStripeWebhook(t, server.URL, body, "t="+fmt.Sprint(now)+",v1="+strings.Repeat("0", 64), "application/json", nil)
 	if response.StatusCode != http.StatusBadRequest {
@@ -88,6 +150,10 @@ func TestPayoutOnboardingHTTPContract(t *testing.T) {
 			t.Fatal(err)
 		}
 		switch r.URL.Path {
+		case "/v1/account":
+			fmt.Fprint(w, `{"object":"account","id":"acct_payout_merchant"}`)
+		case "/v1/balance":
+			fmt.Fprint(w, `{"object":"balance","livemode":false}`)
 		case "/v1/accounts":
 			accountCalls++
 			if r.Header.Get("Authorization") != "Bearer sk_test_payout_http_contract" || r.Header.Get("Stripe-Version") != "2026-02-25.clover" ||
@@ -96,7 +162,7 @@ func TestPayoutOnboardingHTTPContract(t *testing.T) {
 				r.PostForm.Get("metadata[hcai_user_id]") == "" || r.PostForm.Get("email") == "" {
 				t.Fatalf("unexpected Connect account request: headers=%v form=%v", r.Header, r.PostForm)
 			}
-			fmt.Fprint(w, `{"id":"acct_http_payout","charges_enabled":false,"payouts_enabled":false,"details_submitted":false,"livemode":false,"requirements":{"currently_due":["individual.first_name"],"past_due":[],"pending_verification":[]}}`)
+			fmt.Fprintf(w, `{"id":"acct_http_payout","object":"account","type":"express","metadata":{"hcai_user_id":%q},"charges_enabled":false,"payouts_enabled":false,"details_submitted":false,"requirements":{"currently_due":["individual.first_name"],"past_due":[],"pending_verification":[]}}`, r.PostForm.Get("metadata[hcai_user_id]"))
 		case "/v1/account_links":
 			linkCalls++
 			if r.Header.Get("Authorization") != "Bearer sk_test_payout_http_contract" || r.Header.Get("Stripe-Version") != "2026-02-25.clover" ||
@@ -152,7 +218,9 @@ func TestPayoutOnboardingHTTPContract(t *testing.T) {
 	if response := postStripeWebhook(t, server.URL, body, "t="+fmt.Sprint(now)+",v1="+paymentStripeSignature(secret, now, body), "application/json", &receipt); response.StatusCode != http.StatusAccepted || receipt.EventType != "account.updated" || receipt.Duplicate {
 		t.Fatalf("payout account.updated receipt mismatch: status=%d receipt=%#v", response.StatusCode, receipt)
 	}
-	workerPayments := payments.NewService(pool, payments.ServiceConfig{Enabled: true, LiveMode: false, APIVersion: cfg.StripeAPIVersion, WebhookSecret: secret, WebhookTolerance: 5 * time.Minute})
+	// The event worker must use the same authenticated Stripe runtime as the
+	// API process so account.updated can verify the persisted merchant binding.
+	workerPayments := payments.NewServiceFromConfig(pool, cfg)
 	if err := workerPayments.HandlePaymentEventJob(context.Background(), jobs.Job{Kind: payments.PaymentEventJobKind, Payload: []byte(fmt.Sprintf(`{"eventId":%q}`, receipt.EventID.String()))}); err != nil {
 		t.Fatal(err)
 	}
@@ -175,13 +243,27 @@ func TestProductCheckoutAndRefundHTTPContract(t *testing.T) {
 	defer cleanup()
 	const secret = "whsec_product_http_contract"
 	var checkoutCalls, refundCalls int
+	var cancelURL, successURL string
+	var loseCheckoutResponse atomic.Bool
+	var checkoutMerchant atomic.Value
+	checkoutMerchant.Store("acct_http_product")
 	stripe := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
 			t.Fatal(err)
 		}
 		switch r.URL.Path {
+		case "/v1/account":
+			fmt.Fprintf(w, `{"object":"account","id":%q}`, checkoutMerchant.Load().(string))
+		case "/v1/balance":
+			fmt.Fprint(w, `{"object":"balance","livemode":false}`)
 		case "/v1/checkout/sessions":
 			checkoutCalls++
+			if loseCheckoutResponse.Load() {
+				w.WriteHeader(http.StatusBadGateway)
+				return
+			}
+			cancelURL = r.PostForm.Get("cancel_url")
+			successURL = r.PostForm.Get("success_url")
 			paymentID := r.PostForm.Get("client_reference_id")
 			amount := r.PostForm.Get("line_items[0][price_data][unit_amount]")
 			fmt.Fprintf(w, `{"id":"cs_http_product","url":"https://checkout.stripe.com/c/pay/http-product","status":"open","payment_status":"unpaid","expires_at":%d,"livemode":false,"amount_total":%s,"currency":"usd","client_reference_id":%q}`, time.Now().Add(time.Hour).Unix(), amount, paymentID)
@@ -205,9 +287,13 @@ func TestProductCheckoutAndRefundHTTPContract(t *testing.T) {
 	seller := registerGovernanceUser(t, sellerClient, server.URL, "payment_http_seller")
 	buyer := registerGovernanceUser(t, buyerClient, server.URL, "payment_http_buyer")
 	assetID, productID := uuid.New(), uuid.New()
+	licensedBytes := []byte("Private licensed delivery bytes for the signed checkout test.")
+	if err := os.WriteFile(filepath.Join(cfg.MediaRoot, assetID.String()+".txt"), licensedBytes, 0600); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := pool.Exec(context.Background(), `
-		INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,scan_status,source_type,license_code)
-		VALUES($1,$2,'image','Payment HTTP Asset',$3,'image/jpeg','clean','demo','hcai-commercial-standard-v1')`,
+		INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,scan_status,source_type,license_code,storage_backend,storage_key)
+		VALUES($1,$2,'document','Payment HTTP Asset',$3,'text/plain','clean','upload','hcai-commercial-standard-v1','local_file',$1::uuid::text||'.txt')`,
 		assetID, seller.ID, "/api/v1/assets/"+assetID.String()+"/content"); err != nil {
 		t.Fatal(err)
 	}
@@ -219,11 +305,79 @@ func TestProductCheckoutAndRefundHTTPContract(t *testing.T) {
 	}
 
 	var checkout payments.Checkout
-	response := requestPaymentJSON(t, buyerClient, http.MethodPost, server.URL+"/api/v1/products/"+productID.String()+"/checkout", "http-checkout-001", map[string]any{"licenseAccepted": true}, &checkout)
+	var product marketplace.Product
+	assertCrossOriginRejected := func(path, key string, input any) {
+		t.Helper()
+		body, err := json.Marshal(input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req, err := http.NewRequest(http.MethodPost, server.URL+path, bytes.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Idempotency-Key", key)
+		req.Header.Set("Origin", "https://other.example.test")
+		req.Header.Set("Sec-Fetch-Site", "same-site")
+		res, err := buyerClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		var failure struct {
+			Error struct{ Code string } `json:"error"`
+		}
+		if err := json.NewDecoder(res.Body).Decode(&failure); err != nil {
+			t.Fatal(err)
+		}
+		if res.StatusCode != http.StatusForbidden || failure.Error.Code != "cross_origin_request" {
+			t.Fatalf("foreign write reached transaction handler: status=%d code=%s", res.StatusCode, failure.Error.Code)
+		}
+	}
+	if response := requestPaymentJSON(t, buyerClient, http.MethodGet, server.URL+"/api/v1/products/"+productID.String(), "", nil, &product); response.StatusCode != http.StatusOK || len(product.OfferVersion) != 64 {
+		t.Fatalf("missing offer version: status=%d version=%q", response.StatusCode, product.OfferVersion)
+	}
+	for _, version := range []string{"", strings.Repeat("Z", 64), strings.Repeat("0", 64)} {
+		want := http.StatusUnprocessableEntity
+		if version == strings.Repeat("0", 64) {
+			want = http.StatusConflict
+		}
+		response := requestPaymentJSON(t, buyerClient, http.MethodPost, server.URL+"/api/v1/products/"+productID.String()+"/checkout", "http-invalid-offer", map[string]any{"licenseAccepted": true, "offerVersion": version}, nil)
+		if response.StatusCode != want || checkoutCalls != 0 {
+			t.Fatalf("invalid offer had incorrect status or provider side effects: status=%d want=%d calls=%d", response.StatusCode, want, checkoutCalls)
+		}
+	}
+	assertCrossOriginRejected("/api/v1/products/"+productID.String()+"/checkout", "foreign-checkout", map[string]any{"licenseAccepted": true, "offerVersion": product.OfferVersion})
+	var foreignOrders int
+	if err := pool.QueryRow(context.Background(), `SELECT count(*) FROM orders WHERE buyer_id=$1`, buyer.ID).Scan(&foreignOrders); err != nil || foreignOrders != 0 || checkoutCalls != 0 {
+		t.Fatalf("foreign checkout left side effects: orders=%d calls=%d err=%v", foreignOrders, checkoutCalls, err)
+	}
+	response := requestPaymentJSON(t, buyerClient, http.MethodPost, server.URL+"/api/v1/products/"+productID.String()+"/checkout", "http-checkout-001", map[string]any{"licenseAccepted": true, "offerVersion": product.OfferVersion}, &checkout)
 	if response.StatusCode != http.StatusCreated || checkout.PaymentMode != "stripe" || checkout.RealCharge || checkout.LiveMode || checkoutCalls != 1 {
 		t.Fatalf("Provider checkout HTTP mismatch: status=%d checkout=%#v calls=%d", response.StatusCode, checkout, checkoutCalls)
 	}
-	response = requestPaymentJSON(t, buyerClient, http.MethodPost, server.URL+"/api/v1/products/"+productID.String()+"/checkout", "http-checkout-001", map[string]any{"licenseAccepted": true}, &checkout)
+	for _, target := range []struct{ raw, path, state string }{
+		{successURL, "/workspace/orders", "success"},
+		{cancelURL, "/market/assets/" + productID.String(), "cancelled"},
+	} {
+		parsed, err := url.Parse(target.raw)
+		if err != nil || parsed.Path != target.path || parsed.Query().Get("payment") != target.state || parsed.Query().Get("orderId") != checkout.OrderID.String() || parsed.Query().Get("paymentId") != checkout.PaymentID.String() {
+			t.Fatalf("checkout return identifiers missing: %q %v", target.raw, err)
+		}
+	}
+	var pendingOrder marketplace.Order
+	response = requestPaymentJSON(t, buyerClient, http.MethodGet, server.URL+"/api/v1/orders/"+checkout.OrderID.String()+"?payment=success", "", nil, &pendingOrder)
+	if response.StatusCode != http.StatusOK || pendingOrder.Status != "payment_pending" || pendingOrder.PaymentStatus != "checkout_open" || pendingOrder.PaymentID == nil || *pendingOrder.PaymentID != checkout.PaymentID || pendingOrder.CheckoutExpiresAt == nil || pendingOrder.AssetID != nil {
+		t.Fatalf("return query falsely confirmed payment or lacks tracking fields: %+v", pendingOrder)
+	}
+	if response.Header.Get("Cache-Control") != "private, no-store" {
+		t.Fatal("private order tracking response is cacheable")
+	}
+	if response := requestPaymentJSON(t, sellerClient, http.MethodGet, server.URL+"/api/v1/orders/"+checkout.OrderID.String(), "", nil, nil); response.StatusCode != http.StatusNotFound {
+		t.Fatalf("seller read buyer tracking data: %d", response.StatusCode)
+	}
+	response = requestPaymentJSON(t, buyerClient, http.MethodPost, server.URL+"/api/v1/products/"+productID.String()+"/checkout", "http-checkout-001", map[string]any{"licenseAccepted": true, "offerVersion": product.OfferVersion}, &checkout)
 	if response.StatusCode != http.StatusOK || !checkout.AlreadyCreated || checkoutCalls != 1 {
 		t.Fatalf("Provider checkout replay mismatch: status=%d checkout=%#v calls=%d", response.StatusCode, checkout, checkoutCalls)
 	}
@@ -235,14 +389,93 @@ func TestProductCheckoutAndRefundHTTPContract(t *testing.T) {
 	if response.StatusCode != http.StatusAccepted {
 		t.Fatalf("signed checkout event returned %d", response.StatusCode)
 	}
-	workerPayments := payments.NewService(pool, payments.ServiceConfig{Enabled: true, LiveMode: false, APIVersion: cfg.StripeAPIVersion, WebhookSecret: secret, WebhookTolerance: 5 * time.Minute})
+	workerPayments := payments.NewServiceFromConfig(pool, cfg)
 	if err := workerPayments.HandlePaymentEventJob(context.Background(), jobs.Job{Kind: payments.PaymentEventJobKind, Payload: []byte(fmt.Sprintf(`{"eventId":%q}`, paidReceipt.EventID.String()))}); err != nil {
 		t.Fatal(err)
 	}
 
 	var refundOrder marketplace.Order
-	response = requestPaymentJSON(t, buyerClient, http.MethodPost, server.URL+"/api/v1/orders/"+checkout.OrderID.String()+"/refund", "http-refund-001", map[string]any{"reason": "The licensed workflow did not meet the documented production requirement."}, &refundOrder)
-	if response.StatusCode != http.StatusOK || refundOrder.Status != "refund_requested" || refundOrder.PaymentMode != "stripe" || refundOrder.RealCharge || refundCalls != 1 {
+	response = requestPaymentJSON(t, buyerClient, http.MethodGet, server.URL+"/api/v1/orders/"+checkout.OrderID.String(), "", nil, &refundOrder)
+	if response.StatusCode != http.StatusOK || !refundOrder.CanRequestRefund || refundOrder.RefundDeadlineAt == nil || !refundOrder.RefundDeadlineAt.Equal(refundOrder.CreatedAt.Add(7*24*time.Hour)) {
+		t.Fatalf("refund capability/deadline missing: status=%d order=%+v", response.StatusCode, refundOrder)
+	}
+	if refundOrder.Status != "fulfilled" || refundOrder.PaymentStatus != "paid" || refundOrder.PaymentID == nil || *refundOrder.PaymentID != checkout.PaymentID || refundOrder.AssetID == nil {
+		t.Fatalf("signed fulfillment not reflected in tracked order: %+v", refundOrder)
+	}
+	assertPurchasePermission := func(allowed bool) {
+		t.Helper()
+		var projection struct {
+			Provenance struct {
+				Purchase struct {
+					CanDownload bool `json:"canDownload"`
+					CanReuse    bool `json:"canReuse"`
+				} `json:"purchase"`
+			} `json:"provenance"`
+		}
+		response := requestPaymentJSON(t, buyerClient, http.MethodGet, server.URL+"/api/v1/assets/"+refundOrder.AssetID.String(), "", nil, &projection)
+		if response.StatusCode != http.StatusOK || projection.Provenance.Purchase.CanDownload != allowed || projection.Provenance.Purchase.CanReuse != allowed {
+			t.Fatalf("purchase permission projection: status=%d projection=%+v want=%t", response.StatusCode, projection, allowed)
+		}
+		content, err := buyerClient.Get(server.URL + "/api/v1/assets/" + refundOrder.AssetID.String() + "/content")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer content.Body.Close()
+		body, err := io.ReadAll(content.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if allowed {
+			if content.StatusCode != http.StatusOK || !bytes.Equal(body, licensedBytes) || content.Header.Get("Cache-Control") != "private, no-store" {
+				t.Fatalf("licensed bytes inaccessible or cacheable: status=%d body=%q", content.StatusCode, body)
+			}
+		} else if content.StatusCode != http.StatusForbidden {
+			t.Fatalf("revoked media still accessible: %d", content.StatusCode)
+		}
+	}
+	assertPurchasePermission(true)
+	assertCrossOriginRejected("/api/v1/orders/"+checkout.OrderID.String()+"/refund", "foreign-refund", map[string]any{"reason": "A valid length refund reason"})
+	var retainedStatus string
+	if err := pool.QueryRow(context.Background(), `SELECT status FROM orders WHERE id=$1`, checkout.OrderID).Scan(&retainedStatus); err != nil || retainedStatus != "fulfilled" || refundCalls != 0 {
+		t.Fatalf("foreign refund changed the transaction: status=%s calls=%d err=%v", retainedStatus, refundCalls, err)
+	}
+	disabledConfig := cfg
+	disabledConfig.StripeEnabled = false
+	disabledServer := httptest.NewServer(httpapi.New(disabledConfig, pool, slog.New(slog.NewTextHandler(io.Discard, nil))))
+	defer disabledServer.Close()
+	var disabledOrder marketplace.Order
+	response = requestPaymentJSON(t, buyerClient, http.MethodGet, disabledServer.URL+"/api/v1/orders/"+checkout.OrderID.String(), "", nil, &disabledOrder)
+	if response.StatusCode != http.StatusOK || disabledOrder.CanRequestRefund || disabledOrder.RefundUnavailableReason != "provider_unavailable" {
+		t.Fatalf("disabled original provider advertised refund: status=%d order=%+v", response.StatusCode, disabledOrder)
+	}
+	var disabledPage marketplace.OrderPage
+	response = requestPaymentJSON(t, buyerClient, http.MethodGet, disabledServer.URL+"/api/v1/orders", "", nil, &disabledPage)
+	if response.StatusCode != http.StatusOK || len(disabledPage.Items) != 1 || disabledPage.Items[0].CanRequestRefund || disabledPage.Items[0].RefundUnavailableReason != "provider_unavailable" {
+		t.Fatalf("list and detail refund capabilities disagree: status=%d page=%+v", response.StatusCode, disabledPage)
+	}
+	for _, reason := range []string{strings.Repeat("界", 9), strings.Repeat("😀", 501), "A long reason with a NUL\x00"} {
+		response = requestPaymentJSON(t, buyerClient, http.MethodPost, server.URL+"/api/v1/orders/"+checkout.OrderID.String()+"/refund", "invalid-unicode-refund", map[string]any{"reason": reason}, nil)
+		if response.StatusCode != http.StatusUnprocessableEntity || refundCalls != 0 {
+			t.Fatalf("invalid Unicode reason accepted: status=%d calls=%d", response.StatusCode, refundCalls)
+		}
+	}
+	if _, err := pool.Exec(context.Background(), `UPDATE orders SET created_at=now()-interval '8 days' WHERE id=$1`, checkout.OrderID); err != nil {
+		t.Fatal(err)
+	}
+	var expiredOrder marketplace.Order
+	response = requestPaymentJSON(t, buyerClient, http.MethodGet, server.URL+"/api/v1/orders/"+checkout.OrderID.String(), "", nil, &expiredOrder)
+	if response.StatusCode != http.StatusOK || expiredOrder.CanRequestRefund || expiredOrder.RefundUnavailableReason != "window_expired" {
+		t.Fatalf("expired refund advertised: status=%d order=%+v", response.StatusCode, expiredOrder)
+	}
+	response = requestPaymentJSON(t, buyerClient, http.MethodPost, server.URL+"/api/v1/orders/"+checkout.OrderID.String()+"/refund", "expired-refund-command", map[string]any{"reason": strings.Repeat("界", 10)}, nil)
+	if response.StatusCode != http.StatusConflict {
+		t.Fatalf("expired refund accepted: %d", response.StatusCode)
+	}
+	if _, err := pool.Exec(context.Background(), `UPDATE orders SET created_at=$2 WHERE id=$1`, checkout.OrderID, refundOrder.CreatedAt); err != nil {
+		t.Fatal(err)
+	}
+	response = requestPaymentJSON(t, buyerClient, http.MethodPost, server.URL+"/api/v1/orders/"+checkout.OrderID.String()+"/refund", "http-refund-001", map[string]any{"reason": strings.Repeat("😀", 500)}, &refundOrder)
+	if response.StatusCode != http.StatusOK || refundOrder.Status != "refund_requested" || refundOrder.PaymentMode != "stripe" || refundOrder.RealCharge || refundCalls != 0 {
 		t.Fatalf("Provider refund HTTP mismatch: status=%d order=%#v calls=%d", response.StatusCode, refundOrder, refundCalls)
 	}
 	var activeEntitlements, localEntries int
@@ -256,6 +489,27 @@ func TestProductCheckoutAndRefundHTTPContract(t *testing.T) {
 	}
 	if activeEntitlements != 1 || localEntries != 0 {
 		t.Fatalf("refund request changed rights or Local Test ledgers early: entitlements=%d entries=%d", activeEntitlements, localEntries)
+	}
+	if refundOrder.CanRequestRefund || refundOrder.RefundUnavailableReason != "order_state" {
+		t.Fatalf("pending order advertised new refund: %+v", refundOrder)
+	}
+	assertPurchasePermission(true)
+	response = requestPaymentJSON(t, buyerClient, http.MethodPost, server.URL+"/api/v1/orders/"+checkout.OrderID.String()+"/refund", "http-refund-001", map[string]any{"reason": "The licensed workflow did not meet the documented production requirement."}, &refundOrder)
+	if response.StatusCode != http.StatusOK || refundOrder.Status != "refund_requested" || refundCalls != 0 {
+		t.Fatalf("pending refund replay dispatched synchronously: status=%d order=%#v calls=%d", response.StatusCode, refundOrder, refundCalls)
+	}
+	refundJob := jobs.Job{Kind: payments.ProductRefundJobKind}
+	if err := pool.QueryRow(context.Background(), `SELECT id,payload FROM jobs WHERE kind=$1 AND payload->>'paymentId'=$2`, payments.ProductRefundJobKind, checkout.PaymentID.String()).Scan(&refundJob.ID, &refundJob.Payload); err != nil {
+		t.Fatal(err)
+	}
+	if err := workerPayments.HandleProductRefundJob(context.Background(), refundJob); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(context.Background(), `SELECT count(*) FROM entitlements WHERE order_id=$1 AND status='active'`, checkout.OrderID).Scan(&activeEntitlements); err != nil {
+		t.Fatal(err)
+	}
+	if refundCalls != 1 || activeEntitlements != 1 {
+		t.Fatalf("worker dispatch must preserve rights until signed confirmation: calls=%d entitlements=%d", refundCalls, activeEntitlements)
 	}
 
 	refundBody := []byte(fmt.Sprintf(`{"id":"evt_http_product_refunded","object":"event","api_version":"2026-02-25.clover","created":%d,"livemode":false,"type":"refund.updated","data":{"object":{"id":"re_http_product","object":"refund","status":"succeeded","amount":1900,"currency":"usd","payment_intent":"pi_http_product","metadata":{"hcai_payment_id":%q,"hcai_resource_id":%q,"hcai_purpose":"product"}}}}`, now, checkout.PaymentID.String(), productID.String()))
@@ -271,6 +525,28 @@ func TestProductCheckoutAndRefundHTTPContract(t *testing.T) {
 	if response.StatusCode != http.StatusOK || refundOrder.Status != "refunded" || refundOrder.RefundedAt == nil {
 		t.Fatalf("signed refund did not finalize order: status=%d order=%#v", response.StatusCode, refundOrder)
 	}
+	assertPurchasePermission(false)
+
+	// A new checkout whose provider response was lost must preserve its command
+	// and return a distinct, non-retryable conflict after a merchant change.
+	loseCheckoutResponse.Store(true)
+	response = requestPaymentJSON(t, buyerClient, http.MethodPost, server.URL+"/api/v1/products/"+productID.String()+"/checkout", "http-request-evidence", map[string]any{"licenseAccepted": true, "offerVersion": product.OfferVersion}, nil)
+	if response.StatusCode != http.StatusServiceUnavailable || checkoutCalls != 2 {
+		t.Fatalf("lost checkout response: status=%d calls=%d", response.StatusCode, checkoutCalls)
+	}
+	checkoutMerchant.Store("acct_changed_merchant")
+	for _, key := range []string{"http-request-evidence", "http-alternative-key"} {
+		var failure struct {
+			Error struct {
+				Code      string `json:"code"`
+				Retryable bool   `json:"retryable"`
+			} `json:"error"`
+		}
+		response = requestPaymentJSON(t, buyerClient, http.MethodPost, server.URL+"/api/v1/products/"+productID.String()+"/checkout", key, map[string]any{"licenseAccepted": true, "offerVersion": product.OfferVersion}, &failure)
+		if response.StatusCode != http.StatusConflict || failure.Error.Code != "payment_reconciliation_required" || failure.Error.Retryable || checkoutCalls != 2 {
+			t.Fatalf("unsafe HTTP retry: status=%d code=%s calls=%d", response.StatusCode, failure.Error.Code, checkoutCalls)
+		}
+	}
 }
 
 func TestTaskCheckoutHTTPContract(t *testing.T) {
@@ -279,6 +555,16 @@ func TestTaskCheckoutHTTPContract(t *testing.T) {
 	const secret = "whsec_task_http_contract"
 	var checkoutCalls int
 	stripe := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/account" {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"id":"acct_http_task","object":"account"}`)
+			return
+		}
+		if r.URL.Path == "/v1/balance" {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"object":"balance","livemode":false}`)
+			return
+		}
 		if r.URL.Path != "/v1/checkout/sessions" {
 			http.NotFound(w, r)
 			return
@@ -366,6 +652,10 @@ func postStripeWebhook(t *testing.T, serverURL string, body []byte, signature, c
 	}
 	request.Header.Set("Content-Type", contentType)
 	request.Header.Set("Stripe-Signature", signature)
+	// This exact callback route bypasses browser-origin checks, but must
+	// continue enforcing signed payloads, size, mode and event contracts.
+	request.Header.Set("Origin", "https://payment-provider.example.test")
+	request.Header.Set("Sec-Fetch-Site", "cross-site")
 	response, err := http.DefaultClient.Do(request)
 	if err != nil {
 		t.Fatal(err)

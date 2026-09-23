@@ -50,7 +50,7 @@ export LOCAL_PROVIDER_ENABLED=true
 export EMAIL_DELIVERY_MODE=disabled
 
 go run ./cmd/migrate >/dev/null
-go run ./cmd/seed >/dev/null
+go run ./internal/testfixtures/cmd/seed >/dev/null
 go build -o "$drill_root/hcai-api" ./cmd/api
 go build -o "$drill_root/hcai-worker" ./cmd/worker
 
@@ -80,8 +80,8 @@ worker_pid=""
 cookie_jar="$drill_root/creator.cookies"
 curl -fsS -c "$cookie_jar" -b "$cookie_jar" \
   -H 'Content-Type: application/json' \
-  -d '{"actor":"creator"}' \
-  "http://127.0.0.1:${drill_http_port}/api/v1/auth/demo" >/dev/null
+  -d '{"email":"creator@fixture.hcai.test","password":"fixture-password-2026"}' \
+  "http://127.0.0.1:${drill_http_port}/api/v1/auth/login" >/dev/null
 
 idempotency_key="worker-restart-drill-$(date +%s)-${RANDOM}"
 submission=$(curl -fsS -c "$cookie_jar" -b "$cookie_jar" \
@@ -135,8 +135,8 @@ fi
 admin_jar="$drill_root/admin.cookies"
 curl -fsS -c "$admin_jar" -b "$admin_jar" \
   -H 'Content-Type: application/json' \
-  -d '{"actor":"admin"}' \
-  "http://127.0.0.1:${drill_http_port}/api/v1/auth/demo" >/dev/null
+  -d '{"email":"operations@fixture.hcai.test","password":"fixture-password-2026"}' \
+  "http://127.0.0.1:${drill_http_port}/api/v1/auth/login" >/dev/null
 diagnostics=$(curl -fsS -c "$admin_jar" -b "$admin_jar" "http://127.0.0.1:${drill_http_port}/api/v1/admin/observability")
 jq -e '.databaseReady == true and .audit.valid == true and .jobs.attemptsLast24Hours >= 1 and .jobs.byAttemptStatus.succeeded >= 1' <<<"$diagnostics" >/dev/null
 

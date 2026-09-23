@@ -1,7 +1,8 @@
+import { fixtureCredentials } from './helpers/identity'
 import { expect, test } from '@playwright/test'
 
 test('keeps the admin heading fixed while the admin body owns scrolling', async ({ page }) => {
-  const session = await page.request.post('/api/v1/auth/demo', { data: { actor: 'admin' } })
+  const session = await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('admin') })
   expect(session.ok()).toBeTruthy()
 
   await page.setViewportSize({ width: 1280, height: 800 })
@@ -82,7 +83,7 @@ test('keeps the admin heading fixed while the admin body owns scrolling', async 
 })
 
 test('collapses the desktop sidebar without changing mobile navigation', async ({ page }) => {
-  const session = await page.request.post('/api/v1/auth/demo', { data: { actor: 'creator' } })
+  const session = await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('creator') })
   expect(session.ok()).toBeTruthy()
 
   await page.setViewportSize({ width: 1280, height: 800 })
@@ -114,7 +115,7 @@ test('collapses the desktop sidebar without changing mobile navigation', async (
 })
 
 test('toggles the theme from the header icon button', async ({ page }) => {
-  const session = await page.request.post('/api/v1/auth/demo', { data: { actor: 'creator' } })
+  const session = await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('creator') })
   expect(session.ok()).toBeTruthy()
 
   await page.addInitScript(() => localStorage.setItem('hcai-theme', 'light'))

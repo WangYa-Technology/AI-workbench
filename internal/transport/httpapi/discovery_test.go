@@ -30,12 +30,13 @@ func TestDiscoverySearchAndCreatorPublicBoundary(t *testing.T) {
 	cleanAssetID, reviewAssetID, draftAssetID := uuid.New(), uuid.New(), uuid.New()
 	workID, reviewWorkID, draftWorkID := uuid.New(), uuid.New(), uuid.New()
 	productID, pausedProductID := uuid.New(), uuid.New()
+	productAssetID := uuid.New()
 	openDemandID, assignedDemandID := uuid.New(), uuid.New()
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,scan_status,source_type,license_code) VALUES
-		 ($1,$4,'image','Cinematic clean asset','/media/clean.jpg','image/jpeg','clean','demo','hcai-commercial-standard-v1'),
-		 ($2,$4,'image','Cinematic review asset','/media/review.jpg','image/jpeg','review','demo','hcai-commercial-standard-v1'),
-		 ($3,$4,'image','Cinematic draft asset','/media/draft.jpg','image/jpeg','clean','demo','hcai-commercial-standard-v1')`,
+		 ($1,$4,'image','Cinematic clean asset','/media/clean.jpg','image/jpeg','clean','delivery','hcai-commercial-standard-v1'),
+		 ($2,$4,'image','Cinematic review asset','/media/review.jpg','image/jpeg','review','delivery','hcai-commercial-standard-v1'),
+		 ($3,$4,'image','Cinematic draft asset','/media/draft.jpg','image/jpeg','clean','delivery','hcai-commercial-standard-v1')`,
 		cleanAssetID, reviewAssetID, draftAssetID, author.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -47,11 +48,15 @@ func TestDiscoverySearchAndCreatorPublicBoundary(t *testing.T) {
 		workID, reviewWorkID, draftWorkID, author.ID, cleanAssetID, reviewAssetID, draftAssetID); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := pool.Exec(ctx, `INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,scan_status,source_type,license_code)
+	 VALUES($1,$2,'image','Private product source','/media/private.jpg','image/jpeg','clean','delivery','hcai-commercial-standard-v1')`, productAssetID, author.ID); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO products(id,seller_id,asset_id,title,description,product_type,price_cents,currency,license_code,status,ai_disclosure,included_files,compatibility) VALUES
 		 ($1,$3,$4,'Cinematic Signal Workflow','Reusable cinematic production workflow','workflow',2400,'USD','hcai-commercial-standard-v1','active','Deterministic local test media.','[]','HCAI'),
 		 ($2,$3,$4,'Cinematic Paused Workflow','Must stay private','workflow',2400,'USD','hcai-commercial-standard-v1','paused','Paused.','[]','HCAI')`,
-		productID, pausedProductID, author.ID, cleanAssetID); err != nil {
+		productID, pausedProductID, author.ID, productAssetID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `

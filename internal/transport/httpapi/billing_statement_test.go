@@ -35,7 +35,7 @@ func TestBillingStatementHTTPContract(t *testing.T) {
 		INSERT INTO billing_entries(id,user_id,operation_id,entry_type,direction,amount_cents,currency,balance_after_cents,description,created_at) VALUES
 		($1,$2,$3,'generation_charge','debit',5,'USD',9995,'HTTP generation charge',$4),
 		($5,$2,$6,'product_refund','credit',20,'USD',10015,'HTTP product refund',$7),
-		($8,$9,$10,'admin_adjustment','credit',50,'USD',10050,'HTTP foreign entry',$11)`,
+		($8,$9,$10,'product_sale','credit',50,'USD',10050,'HTTP foreign entry',$11)`,
 		newestID, owner.ID, uuid.New(), base.Add(time.Minute), olderID, uuid.New(), base, uuid.New(), other.ID, uuid.New(), base.Add(2*time.Minute)); err != nil {
 		t.Fatal(err)
 	}

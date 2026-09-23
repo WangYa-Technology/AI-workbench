@@ -48,13 +48,13 @@ PGOPTIONS="-c search_path=public" psql "$base_database_url" -v ON_ERROR_STOP=1 -
 separator="?"; [[ "$base_database_url" == *"?"* ]] && separator="&"
 export APP_ENV=test DATABASE_URL="${base_database_url}${separator}search_path=${schema}" HTTP_ADDR="127.0.0.1:${api_port}"
 export WEB_ORIGIN="http://127.0.0.1:${api_port}" MEDIA_ROOT="$root/media" LOCAL_PROVIDER_SOURCE="$project_root/web/public/media/home-cinematic.jpg"
-export LOCAL_PROVIDER_ENABLED=true DEMO_DATA_ENABLED=true EMAIL_DELIVERY_MODE=disabled
+export LOCAL_PROVIDER_ENABLED=true EMAIL_DELIVERY_MODE=disabled
 export OPENAI_ENABLED=true OPENAI_PAID_CALLS_APPROVED=true OPENAI_API_KEY="$api_key" OPENAI_BASE_URL="http://127.0.0.1:${fixture_port}/v1"
 export OPENAI_CHAT_MODEL="$chat_model" OPENAI_IMAGE_MODEL="$image_model" OPENAI_CHAT_MAX_OUTPUT_TOKENS=2048 OPENAI_IMAGE_SIZE=1024x1024 OPENAI_IMAGE_QUALITY=medium
 export OPENAI_ORGANIZATION="$organization" OPENAI_PROJECT="$project" OPENAI_RECONCILIATION_ENABLED=true OPENAI_RECONCILIATION_APPROVED=true OPENAI_ADMIN_API_KEY="$admin_cost_key" OPENAI_RECONCILIATION_OVERAGE_THRESHOLD_MICROS=10000
 
 go run ./cmd/migrate >/dev/null
-go run ./cmd/seed >/dev/null
+go run ./internal/testfixtures/cmd/seed >/dev/null
 go build -o "$root/hcai-api" ./cmd/api
 go build -o "$root/hcai-worker" ./cmd/worker
 go build -o "$root/openai-fixture" ./cmd/openaifixture
@@ -71,8 +71,8 @@ rg -q '"msg":"worker started"' "$root/worker.log"
 
 api_url="http://127.0.0.1:${api_port}/api/v1"
 admin_jar="$root/admin.cookies"; creator_jar="$root/creator.cookies"
-curl -fsS -c "$admin_jar" -b "$admin_jar" -H 'Content-Type: application/json' -d '{"actor":"admin"}' "$api_url/auth/demo" >/dev/null
-curl -fsS -c "$creator_jar" -b "$creator_jar" -H 'Content-Type: application/json' -d '{"actor":"creator"}' "$api_url/auth/demo" >/dev/null
+curl -fsS -c "$admin_jar" -b "$admin_jar" -H 'Content-Type: application/json' -d '{"email":"operations@fixture.hcai.test","password":"fixture-password-2026"}' "$api_url/auth/login" >/dev/null
+curl -fsS -c "$creator_jar" -b "$creator_jar" -H 'Content-Type: application/json' -d '{"email":"creator@fixture.hcai.test","password":"fixture-password-2026"}' "$api_url/auth/login" >/dev/null
 
 providers=$(curl -fsS -c "$admin_jar" -b "$admin_jar" "$api_url/admin/providers")
 jq -e --arg chat "$chat_model" --arg image "$image_model" '.items | any(.[]; .id == "openai-chat" and .runtimeAvailable == true and .adminEnabled == false and .modelName == $chat) and any(.[]; .id == "openai-image" and .runtimeAvailable == true and .adminEnabled == false and .modelName == $image)' <<<"$providers" >/dev/null

@@ -41,7 +41,7 @@ func TestAdminContentAndMediaDirectoryHTTPContract(t *testing.T) {
 	sourceAssetID, oldWorkID := uuid.New(), uuid.New()
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,scan_status,source_type,license_code,created_at)
-		VALUES($1,$2,'image','HTTP inventory source','/media/http-inventory-source.jpg','image/jpeg','clean','demo','demo',now() - interval '3 hours')`, sourceAssetID, administrator.ID); err != nil {
+		VALUES($1,$2,'image','HTTP inventory source','/media/http-inventory-source.jpg','image/jpeg','clean','delivery','personal',now() - interval '3 hours')`, sourceAssetID, administrator.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -81,7 +81,7 @@ func TestAdminContentAndMediaDirectoryHTTPContract(t *testing.T) {
 	}
 	var moderated admin.ContentItem
 	response = requestJSON(t, adminClient, http.MethodPatch, server.URL+"/api/v1/admin/content/"+oldWorkID.String(), map[string]any{
-		"status": "hidden"}, &moderated)
+		"reason": "Reviewed the evidence and selected this decision.", "confirm": true, "expectedVersion": 1, "status": "hidden"}, &moderated)
 	if response.StatusCode != http.StatusOK || moderated.ID != oldWorkID || moderated.Status != "hidden" {
 		t.Fatalf("exact HTTP content response failed: status=%d item=%#v", response.StatusCode, moderated)
 	}

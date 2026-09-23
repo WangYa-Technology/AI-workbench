@@ -15,7 +15,7 @@ Identity and notifications cross every user workflow. A convenient browser-only 
 - Roles and permissions are persisted. Resource ownership checks remain mandatory even when a role contains a broad permission.
 - Registration, login, profile changes, session revocation, and security-relevant actions write audit evidence.
 - Google and GitHub are explicit provider boundaries. They remain unavailable and fail closed until external credentials and staging verification are complete.
-- Local demo sessions are explicit development actions. A `401` never silently creates a demo identity.
+- Authentication requires a personal account. Shared login and actor switching have been removed; a `401` never creates an identity. Automated tests use isolated fixtures and ordinary password login.
 - In-app notifications are user-scoped PostgreSQL records. Deep links accept only allowlisted internal routes and never accept external origins, query redirects, or fragments.
 - Opening a notification and marking it read are separate user actions.
 - Task, marketplace, and generation producers write notifications inside the same transaction as the state change. A unique user/source key makes producer replay idempotent.

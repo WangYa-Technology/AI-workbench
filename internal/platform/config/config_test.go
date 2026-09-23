@@ -24,7 +24,7 @@ func TestDevelopmentDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	if !cfg.LocalProviderEnabled || cfg.DemoDataEnabled || cfg.CookieSecure {
+	if !cfg.LocalProviderEnabled || cfg.CookieSecure {
 		t.Fatalf("unexpected development defaults: %+v", cfg)
 	}
 	if len(cfg.WebhookEncryptionKey) != 32 || !cfg.WebhookAllowLocal {

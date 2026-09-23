@@ -32,6 +32,7 @@
   --shadow-sm: 0 12px 32px rgb(20 33 61 / 9%);
   --radius-shell: 20px;
   --content-max: 1440px;
+  --category-sidebar-width: 180px;
   --space-page-x: 28px;
   --space-page-y: 24px;
   --font-sans: Geist, "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif;

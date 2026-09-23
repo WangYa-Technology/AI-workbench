@@ -1,12 +1,15 @@
 <script setup lang="ts">
+import UiSidebarGroup from '../ui/UiSidebarGroup.vue'
+import UiSidebarItem from '../ui/UiSidebarItem.vue'
 import { ArrowLeft, Bell, CircleUserRound, ClipboardList, Compass, Headphones, Images, Languages, ListChecks, Moon, PanelLeftClose, PanelLeftOpen, ReceiptText, Search, ShieldAlert, ShoppingBag, Store, Sun, UsersRound, WalletCards, WandSparkles } from 'lucide-vue-next'
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, useTemplateRef, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, useTemplateRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import { usePreferencesStore } from '../../stores/preferences'
 import { useNotificationsStore } from '../../stores/notifications'
 import { useSessionStore } from '../../stores/session'
 import { useSiteConfigStore } from '../../stores/siteConfig'
+import PageContextBar from './PageContextBar.vue'
 import { adminNavigationItems } from '../../lib/admin-navigation'
 import BrandLogo from '../brand/BrandLogo.vue'
 import MarkdownContent from '../ui/MarkdownContent.vue'
@@ -24,16 +27,9 @@ const notifications = useNotificationsStore()
 const searchQuery = ref(String(route.query.q || ''))
 const mainContent = useTemplateRef('mainContent')
 const routeAnnouncement = ref('')
-const pageContextTitle = ref('')
-const pageContextVisible = ref(false)
 const authAnnouncementDismissed = ref(false)
 const authAnnouncementStorageKey = 'hcai-account-announcement-dismissed'
 let routeFocusReady = false
-let pageContextRoot: globalThis.HTMLElement | null = null
-let observedPageHero: globalThis.HTMLElement | null = null
-let pageContextObserver: globalThis.IntersectionObserver | undefined
-let pageContextMutationObserver: globalThis.MutationObserver | undefined
-let pageContextMobileQuery: globalThis.MediaQueryList | undefined
 const isGuestHome = computed(() => route.name === 'home')
 const isAuthPage = computed(() => route.name === 'auth' || (route.name === 'settings' && !session.user))
 const isAdminRoute = computed(() => route.name === 'admin')
@@ -70,64 +66,10 @@ watch(() => [siteConfig.current.siteName, siteConfig.current.siteIconUrl] as con
   document.querySelector('link[rel="apple-touch-icon"]')?.setAttribute('href', siteIconUrl)
 }, { immediate: true })
 
-function syncPageContextHero(force = false) {
-  const root = mainContent.value
-  const hero = !isAdminRoute.value && route.name !== 'create'
-    ? root?.querySelector<globalThis.HTMLElement>('.page-hero-header.page-hero-banner') || null
-    : null
-  const title = hero?.querySelector('h1')?.textContent?.trim() || ''
-
-  pageContextTitle.value = title
-  if (!force && hero === observedPageHero) return
-
-  pageContextObserver?.disconnect()
-  observedPageHero = hero
-  pageContextVisible.value = false
-  if (!root || !hero || !title) return
-
-  const useViewport = pageContextMobileQuery?.matches ?? globalThis.innerWidth <= 767
-  pageContextObserver = new globalThis.IntersectionObserver(([entry]) => {
-    const visibleTop = entry?.rootBounds?.top ?? (useViewport ? 52 : root.getBoundingClientRect().top)
-    pageContextVisible.value = Boolean(entry && !entry.isIntersecting && entry.boundingClientRect.bottom <= visibleTop)
-  }, {
-    root: useViewport ? null : root,
-    rootMargin: useViewport ? '-52px 0px 0px' : '0px',
-    threshold: 0,
-  })
-  pageContextObserver.observe(hero)
-}
-
-function connectPageContextRoot(force = false) {
-  const root = mainContent.value
-  if (root !== pageContextRoot) {
-    pageContextMutationObserver?.disconnect()
-    pageContextRoot = root
-    if (root) {
-      pageContextMutationObserver = new globalThis.MutationObserver(() => syncPageContextHero())
-      pageContextMutationObserver.observe(root, { childList: true, subtree: true, characterData: true })
-    }
-    force = true
-  }
-  syncPageContextHero(force)
-}
-
-function handlePageContextBreakpoint() {
-  connectPageContextRoot(true)
-}
-
 onMounted(async () => {
   await router.isReady()
   await nextTick()
-  pageContextMobileQuery = globalThis.matchMedia('(max-width: 767px)')
-  pageContextMobileQuery.addEventListener('change', handlePageContextBreakpoint)
-  connectPageContextRoot(true)
   routeFocusReady = true
-})
-
-onBeforeUnmount(() => {
-  pageContextObserver?.disconnect()
-  pageContextMutationObserver?.disconnect()
-  pageContextMobileQuery?.removeEventListener('change', handlePageContextBreakpoint)
 })
 
 const communityNav = computed(() => [
@@ -166,6 +108,17 @@ const adminNav = computed(() => {
     icon: item.icon,
   }))
 })
+
+const sidebarGroups = computed(() => [
+  ...(!isAdminRoute.value ? [
+    { key: 'community', label: t('nav.communityArea'), items: communityNav.value },
+    { key: 'workbench', label: t('nav.workbench'), items: workbenchNav.value },
+  ] : []),
+  { key: 'admin', label: t('nav.operationsArea'), items: adminNav.value },
+].filter(group => group.items.length).map(group => ({
+  ...group,
+  items: group.items.map(item => ({ ...item, active: active(item.key) })),
+})))
 
 const mobileNav = computed(() => [
   { key: 'inspiration', label: t('nav.inspirationShort'), to: '/discover', icon: Compass },
@@ -208,7 +161,6 @@ watch(() => route.path, async () => {
   const heading = mainContent.value?.querySelector('h1')?.textContent?.trim()
   routeAnnouncement.value = heading || t('accessibility.pageChanged')
   if (mainContent.value) mainContent.value.scrollTop = 0
-  connectPageContextRoot(true)
   mainContent.value?.focus({ preventScroll: true })
 })
 
@@ -257,31 +209,8 @@ const submitSearch = () => {
       </RouterLink>
 
       <nav id="primary-navigation" class="primary-nav" :class="{ 'is-admin-navigation': isAdminRoute }" :aria-label="t('accessibility.primaryNavigation')">
-        <RouterLink v-if="isAdminRoute" class="admin-sidebar-return" to="/discover" :aria-label="preferences.sidebarCollapsed ? t('nav.backToWorkspace') : undefined" :title="preferences.sidebarCollapsed ? t('nav.backToWorkspace') : undefined">
-          <ArrowLeft :size="18" :stroke-width="1.75" />
-          <span>{{ t('nav.backToWorkspace') }}</span>
-        </RouterLink>
-        <section v-if="!isAdminRoute" class="nav-section">
-          <span class="nav-section-label">{{ t('nav.communityArea') }}</span>
-          <RouterLink v-for="item in communityNav" :key="item.key" :to="item.to" :class="{ active: active(item.key) }" :aria-current="active(item.key) ? 'page' : undefined" :aria-label="preferences.sidebarCollapsed ? item.label : undefined" :title="preferences.sidebarCollapsed ? item.label : undefined">
-            <component :is="item.icon" :size="18" :stroke-width="1.75" />
-            <span>{{ item.label }}</span>
-          </RouterLink>
-        </section>
-        <section v-if="!isAdminRoute" class="nav-section">
-          <span class="nav-section-label">{{ t('nav.workbench') }}</span>
-          <RouterLink v-for="item in workbenchNav" :key="item.key" :to="item.to" :class="{ active: active(item.key) }" :aria-current="active(item.key) ? 'page' : undefined" :aria-label="preferences.sidebarCollapsed ? item.label : undefined" :title="preferences.sidebarCollapsed ? item.label : undefined">
-            <component :is="item.icon" :size="18" :stroke-width="1.75" />
-            <span>{{ item.label }}</span>
-          </RouterLink>
-        </section>
-        <section v-if="adminNav.length" class="nav-section nav-section-admin">
-          <span class="nav-section-label">{{ t('nav.operationsArea') }}</span>
-          <RouterLink v-for="item in adminNav" :key="item.key" :to="item.to" :class="{ active: active(item.key) }" :aria-current="active(item.key) ? 'page' : undefined" :aria-label="preferences.sidebarCollapsed ? item.label : undefined" :title="preferences.sidebarCollapsed ? item.label : undefined">
-            <component :is="item.icon" :size="18" :stroke-width="1.75" />
-            <span>{{ item.label }}</span>
-          </RouterLink>
-        </section>
+        <UiSidebarItem v-if="isAdminRoute" class="admin-sidebar-return" variant="back" to="/discover" :icon="ArrowLeft" :label="t('nav.backToWorkspace')" :collapsed="preferences.sidebarCollapsed" />
+        <UiSidebarGroup v-for="group in sidebarGroups" :key="group.key" :class="{ 'nav-section-admin': group.key === 'admin' }" :label="group.label" :items="group.items" :collapsed="preferences.sidebarCollapsed" />
       </nav>
 
       <UiAnnouncement
@@ -352,11 +281,7 @@ const submitSearch = () => {
       </header>
 
       <main id="main-content" ref="mainContent" tabindex="-1">
-        <div v-if="pageContextTitle" class="content-context-bar" :class="{ 'is-visible': pageContextVisible }" aria-hidden="true">
-          <div class="content-context-bar-surface">
-            <span>{{ pageContextTitle }}</span>
-          </div>
-        </div>
+        <PageContextBar :root="mainContent" :disabled="isAdminRoute || route.name === 'create'" />
         <RouterView />
       </main>
 

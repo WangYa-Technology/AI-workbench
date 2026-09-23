@@ -1,5 +1,7 @@
 # ADR 0016: Controlled Admin task-dispute resolution
 
+> 2026-09-18 implementation update: this ADR preserves the original local-ledger design. Current HTTP tasks require verified Provider funding. See [the current task lifecycle](../task-marketplace-flows.md) for participant privacy, delivery bundles and immutable grants, expiry/extension handling, asynchronous refunds/transfers, and the restored reason/confirmation/audit contract. The local settlement statements below are historical, not current payment behavior.
+
 ## Status
 
 Accepted on August 11, 2026.

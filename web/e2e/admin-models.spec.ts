@@ -1,23 +1,22 @@
+import { fixtureCredentials } from './helpers/identity'
+import { chooseOption } from './helpers/select'
 import { expect, test } from '@playwright/test'
 
-test('activates an audited model route used by subsequent generation', async ({ page }) => {
+test('activates a versioned model route used by subsequent generation', async ({ page }) => {
   const runID = Date.now().toString(36)
-  await page.request.post('/api/v1/auth/demo', { data: { actor: 'creator' } })
+  await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('creator') })
   expect((await page.request.get('/api/v1/admin/models/routes')).status()).toBe(403)
 
-  await page.request.post('/api/v1/auth/demo', { data: { actor: 'admin' } })
+  await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('admin') })
   await page.goto('/admin?tab=models')
-  await expect(page.getByRole('heading', { name: 'Model routing', exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Default model', exact: true })).toBeVisible()
   const form = page.locator('.model-routes-admin form')
-  await form.getByRole('combobox', { name: 'Creation mode', exact: true }).selectOption('image')
-  await form.getByRole('textbox', { name: 'Route revision name', exact: true }).fill(`Browser image route ${runID}`)
-  await form.getByRole('spinbutton', { name: 'Timeout seconds', exact: true }).fill('90')
-  await form.getByRole('spinbutton', { name: 'Maximum attempts', exact: true }).fill('2')
-  const reason = `Activate a verified browser image route with bounded retry evidence ${runID}.`
-  await form.getByRole('textbox', { name: 'Required reason', exact: true }).fill(reason)
-  await form.getByRole('checkbox', { name: 'I verified runtime availability and confirm this immutable model route revision.', exact: true }).check()
+  await chooseOption(form.getByRole('combobox', { name: 'Creation type', exact: true }), 'image')
+  await form.getByRole('textbox', { name: 'Policy revision name', exact: true }).fill(`Browser image route ${runID}`)
+  await form.getByRole('spinbutton', { name: 'Timeout per attempt (seconds)', exact: true }).fill('90')
+  await form.getByRole('spinbutton', { name: 'Failed retry attempts', exact: true }).fill('2')
   await form.getByRole('button', { name: 'Activate revision', exact: true }).click()
-  await expect(page.getByText('Model route revision activated with audit evidence.', { exact: true })).toBeVisible()
+  await expect(page.getByText('Default model policy activated.', { exact: true })).toBeVisible()
 
   const currentResponse = await page.request.get('/api/v1/admin/models/routes?mode=image&limit=1')
   expect(currentResponse.ok()).toBeTruthy()
@@ -26,8 +25,8 @@ test('activates an audited model route used by subsequent generation', async ({ 
     const response = await page.request.post('/api/v1/admin/models/routes/image', {
       data: {
         providerProfileId: 'local-image-v1', name: `Local Test pagination route v${version + 1}`,
-        timeoutSeconds: 90, maxAttempts: 2, reason: `Create bounded browser pagination evidence for model route v${version + 1}.`,
-        expectedVersion: version, confirmed: true,
+        timeoutSeconds: 90, maxAttempts: 2,
+        expectedVersion: version,
       },
     })
     expect(response.ok()).toBeTruthy()
@@ -44,15 +43,11 @@ test('activates an audited model route used by subsequent generation', async ({ 
   expect(new Set(routeIDs).size).toBe(routeIDs.length)
   await expect(page.locator('.model-routes-admin > section:first-child > header > span')).toHaveText(activeVersion || '')
 
-  await page.request.post('/api/v1/auth/demo', { data: { actor: 'creator' } })
+  await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('creator') })
   const generationResponse = await page.request.post('/api/v1/generations', {
     headers: { 'Idempotency-Key': `model-route-${runID}` }, data: { mode: 'image', prompt: `Subsequent routed generation ${runID}` },
   })
   expect(generationResponse.status()).toBe(202)
   expect(await generationResponse.json()).toMatchObject({ provider: 'local_test', modelName: 'hcai-local-image-v1' })
 
-  await page.request.post('/api/v1/auth/demo', { data: { actor: 'admin' } })
-  await page.goto(`/admin?tab=audit&auditQ=${encodeURIComponent(runID)}`)
-  await expect(page.getByText('admin.model_route_updated', { exact: true }).first()).toBeVisible()
-  await expect(page.locator('.audit-list article').filter({ hasText: reason }).first()).toBeVisible()
 })

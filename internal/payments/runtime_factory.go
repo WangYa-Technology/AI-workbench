@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/hcai-chat/hcai-chat/internal/platform/config"
+	"github.com/hcai-chat/hcai-chat/internal/platform/media"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -27,7 +28,8 @@ func NewServiceFromConfig(pool *pgxpool.Pool, cfg config.Config) *Service {
 		}))
 	}
 	return NewServiceWithRuntimes(pool, ServiceConfig{
-		Enabled: cfg.StripeEnabled || cfg.WaffoEnabled, Provider: cfg.PaymentProvider, LiveMode: cfg.StripeLiveMode,
+		MediaStores: media.NewCatalogFromConfig(cfg),
+		Enabled:     cfg.StripeEnabled || cfg.WaffoEnabled, Provider: cfg.PaymentProvider, LiveMode: cfg.StripeLiveMode,
 		APIVersion: cfg.StripeAPIVersion, WebhookSecret: cfg.StripeWebhookSecret,
 		WebhookTolerance: time.Duration(cfg.StripeWebhookToleranceSeconds) * time.Second,
 		WaffoWebhookURL:  cfg.WaffoConnectorURL, WaffoConnectorToken: cfg.WaffoConnectorToken,

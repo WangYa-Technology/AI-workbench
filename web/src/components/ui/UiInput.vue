@@ -1,4 +1,11 @@
 <script setup lang="ts">
+import { ref } from 'vue'
+const input = ref<globalThis.HTMLInputElement | null>(null)
+defineExpose({
+  focus: (options?: globalThis.FocusOptions) => input.value?.focus(options),
+  blur: () => input.value?.blur(),
+  select: () => input.value?.select(),
+})
 defineOptions({ inheritAttrs: false })
 const props = withDefaults(defineProps<{ modelValue?: string | number; modelModifiers?: { trim?: boolean; number?: boolean }; size?: 'sm' | 'md' | 'lg'; invalid?: boolean }>(), { modelValue: '', modelModifiers: undefined, size: 'md', invalid: false })
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
@@ -16,5 +23,5 @@ function update(event: { target: unknown }) {
 </script>
 
 <template>
-  <input v-bind="$attrs" class="ui-input" :class="{ 'ui-input--invalid': invalid }" :data-size="size" :value="modelValue" @input="update" />
+  <input ref="input" v-bind="$attrs" class="ui-input" :class="{ 'ui-input--invalid': invalid }" :data-size="size" :value="modelValue" @input="update" />
 </template>

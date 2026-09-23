@@ -104,7 +104,7 @@ func TestAdminOperationsDirectoriesTraverseBeyondLegacyWindows(t *testing.T) {
 		t.Fatalf("unsupported finance state was accepted: %v", err)
 	}
 	adjusted, err := service.AdjustFinance(ctx, administratorID, targetOwnerID, admin.FinanceAdjustment{
-		DeltaCents: 1, Currency: "USD"}, "operations-directory-finance")
+		DeltaCents: 1, Currency: "USD"}, "directory-finance-command", "operations-directory-finance")
 	if err != nil || adjusted.UserID != targetOwnerID || adjusted.BalanceCents != 250001 {
 		t.Fatalf("exact older finance adjustment failed: %#v %v", adjusted, err)
 	}

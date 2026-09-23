@@ -1,6 +1,11 @@
 import http from 'node:http'
 import { Buffer } from 'node:buffer'
-import { WaffoPancake, verifyWebhook } from '@waffo/pancake-ts'
+import { WaffoPancake } from '@waffo/pancake-ts'
+import { checkoutIdentity, createBoundCheckout, CheckoutContractError } from './checkout-contract.mjs'
+import { lookupWaffoCheckout, CheckoutLookupContractError } from './checkout-lookup-contract.mjs'
+import { createBoundRefund, RefundContractError } from './refund-contract.mjs'
+import { waffoFetch, withWaffoRequestCancellation, waffoErrorStatus } from './transport.mjs'
+import { verifyWaffoWebhook } from './webhook-contract.mjs'
 
 const configuredEnvironment = (process.env.WAFFO_ENVIRONMENT || 'test').trim().toLowerCase()
 if (!['test', 'prod'].includes(configuredEnvironment)) {
@@ -8,6 +13,9 @@ if (!['test', 'prod'].includes(configuredEnvironment)) {
 }
 const env = configuredEnvironment
 const merchantId = (process.env.WAFFO_MERCHANT_ID || '').trim()
+const storeId = (process.env.WAFFO_STORE_ID || '').trim()
+const checkoutLookupQuery = (process.env.WAFFO_CHECKOUT_LOOKUP_QUERY || '').trim()
+const identity = checkoutIdentity(merchantId, storeId, env)
 const privateKey = process.env.WAFFO_PRIVATE_KEY ||
   (process.env.WAFFO_PRIVATE_KEY_BASE64 ? Buffer.from(process.env.WAFFO_PRIVATE_KEY_BASE64, 'base64').toString('utf8') : '')
 const token = (process.env.WAFFO_CONNECTOR_TOKEN || '').trim()
@@ -22,7 +30,7 @@ if (token.length < 16) {
   throw new Error('WAFFO_CONNECTOR_TOKEN must contain at least 16 characters')
 }
 
-const client = new WaffoPancake({ merchantId, privateKey, environment: env })
+const client = new WaffoPancake({ merchantId, privateKey, environment: env, fetch: waffoFetch })
 
 function authorized(req) {
   return req.headers.authorization === `Bearer ${token}`
@@ -40,75 +48,50 @@ async function body(req) {
 }
 
 function send(res, status, value) {
+  if (res.destroyed || res.writableEnded) return
   const payload = JSON.stringify(value)
   res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' })
   res.end(payload)
 }
 
-function errorStatus(error) {
-  if (String(error?.message || '').toLowerCase().includes('signature') || String(error?.message || '').toLowerCase().includes('timestamp')) return 401
-  const status = Number(error?.status)
-  if (status === 401 || status === 403) return status
-  return status >= 400 && status < 500 ? 422 : 502
-}
-
-const server = http.createServer(async (req, res) => {
+const server = http.createServer(withWaffoRequestCancellation(async (req, res) => {
   if (!authorized(req)) return send(res, 401, { error: 'unauthorized' })
   try {
     if (req.method === 'GET' && req.url === '/health') {
       return send(res, 200, { status: 'ready', environment: env })
     }
+    if (req.method === 'POST' && req.url === '/checkout/identity') {
+      return send(res, 200, identity)
+    }
     if (req.method === 'POST' && req.url === '/checkout') {
-      const input = JSON.parse(await body(req))
-      const productType = input.productType === 'subscription' ? 'subscription' : 'onetime'
-      const productId = input.productId || (productType === 'subscription' ? process.env.WAFFO_PRODUCT_ID_SUBSCRIPTION : process.env.WAFFO_PRODUCT_ID_ONETIME)
-      if (!productId) return send(res, 422, { error: 'waffo_product_id_required' })
-      const result = await client.checkout.authenticated.create({
-        productId,
-        currency: String(input.currency || 'USD').toUpperCase(),
-        buyerIdentity: String(input.buyerIdentity || input.paymentId),
-        buyerEmail: input.buyerEmail || undefined,
-        successUrl: input.successUrl || undefined,
-        orderMerchantExternalId: String(input.orderMerchantExternalId || input.paymentId),
-        priceSnapshot: {
-          amount: (Number(input.amountCents) / 100).toFixed(2),
-          taxCategory: 'digital_goods',
-        },
-        metadata: {
-          hcaiPaymentId: String(input.paymentId),
-          hcaiResourceId: String(input.resourceId),
-          hcaiPurpose: String(input.purpose),
-        },
-        expiresInSeconds: Number(input.expiresInSeconds || 2700),
+      let input
+      try { input = JSON.parse(await body(req)) } catch { return send(res, 422, { error: 'checkout_request_invalid' }) }
+      const { request, result } = await createBoundCheckout(client, input, identity, {
+        onetimeProductId: process.env.WAFFO_PRODUCT_ID_ONETIME,
+        subscriptionProductId: process.env.WAFFO_PRODUCT_ID_SUBSCRIPTION,
       })
-      return send(res, 200, { providerId: result.sessionId, checkoutUrl: result.checkoutUrl, expiresAt: result.expiresAt, liveMode: env === 'prod', paymentStatus: 'pending', status: 'open' })
+      return send(res, 200, { providerId: result.sessionId, checkoutUrl: result.checkoutUrl, expiresAt: result.expiresAt, liveMode: env === 'prod', paymentStatus: 'pending', status: 'open', checkoutIdentity: request.checkoutIdentity })
+    }
+    if (req.method === 'POST' && req.url === '/checkout/lookup') {
+      let input
+      try { input = JSON.parse(await body(req)) } catch { return send(res, 422, { error: 'checkout_lookup_request_invalid' }) }
+      return send(res, 200, await lookupWaffoCheckout(client, input, identity, { query: checkoutLookupQuery }))
     }
     if (req.method === 'POST' && req.url === '/refund') {
       const input = JSON.parse(await body(req))
-      if (!input.providerPaymentId) return send(res, 422, { error: 'waffo_payment_id_required' })
-      const session = await client.auth.issueSessionToken({
-        storeId: input.storeId || process.env.WAFFO_STORE_ID,
-        buyerIdentity: String(input.buyerIdentity || input.paymentId),
-      })
-      const customer = client.customer(session.token)
-      const result = await customer.createRefundTicket({
-        paymentId: String(input.providerPaymentId),
-        reason: String(input.reason || 'Requested by customer'),
-        requestedAmount: { amount: (Number(input.amountCents) / 100).toFixed(2), currency: String(input.currency || 'USD').toUpperCase() },
-        refundTicketMerchantExternalId: String(input.operationId || input.paymentId),
-        metadata: { hcaiPaymentId: String(input.paymentId) },
-      })
-      return send(res, 200, { providerId: result.ticket.id, providerPaymentId: String(input.providerPaymentId), amountCents: Number(input.amountCents), currency: String(input.currency || 'USD').toUpperCase(), status: result.ticket.status })
+      return send(res, 200, await createBoundRefund(client, input, identity))
     }
     if (req.method === 'POST' && req.url === '/webhook/verify') {
       const raw = await body(req)
-      const event = verifyWebhook(raw, req.headers['x-waffo-signature'], { environment: env })
-      return send(res, 200, { event })
+      return send(res, 200, verifyWaffoWebhook(raw, req.headers['x-waffo-signature'], env))
     }
     send(res, 404, { error: 'not_found' })
   } catch (error) {
-    send(res, errorStatus(error), { error: 'waffo_request_failed' })
+    if (error instanceof CheckoutContractError) return send(res, error.status, { error: error.code })
+    if (error instanceof CheckoutLookupContractError) return send(res, error.status, { error: error.code })
+    if (error instanceof RefundContractError) return send(res, error.status, { error: error.code })
+    send(res, waffoErrorStatus(error), { error: 'waffo_request_failed' })
   }
-})
+}))
 
 server.listen(port, host, () => process.stdout.write(`Waffo connector listening on ${host}:${port}\n`))

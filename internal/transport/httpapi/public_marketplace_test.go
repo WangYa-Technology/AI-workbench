@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -28,7 +30,7 @@ func TestPublicMarketplaceReadAndAuthenticatedMutationBoundary(t *testing.T) {
 	assetID, productID, taskID := uuid.New(), uuid.New(), uuid.New()
 	if _, err := pool.Exec(context.Background(), `
 		INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,scan_status,source_type,license_code)
-		VALUES($1,$2,'image','Public market Asset','/media/public-market.jpg','image/jpeg','clean','demo','hcai-commercial-standard-v1')`, assetID, seller.ID); err != nil {
+		VALUES($1,$2,'image','Public market Asset','/media/public-market.jpg','image/jpeg','clean','delivery','hcai-commercial-standard-v1')`, assetID, seller.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(context.Background(), `
@@ -43,12 +45,42 @@ func TestPublicMarketplaceReadAndAuthenticatedMutationBoundary(t *testing.T) {
 	}
 
 	anonymous := testHTTPClient(t)
-	var products struct {
-		Items []marketplace.Product `json:"items"`
-	}
+	var products marketplace.ProductPage
 	response := requestJSON(t, anonymous, http.MethodGet, server.URL+"/api/v1/products", nil, &products)
 	if response.StatusCode != http.StatusOK || len(products.Items) != 1 || products.Items[0].ID != productID || products.Items[0].OwnedAssetID != nil {
 		t.Fatalf("anonymous product list lost its public projection: status=%d products=%#v", response.StatusCode, products.Items)
+	}
+	if products.Total != 1 || products.CategoryCounts[products.Items[0].Category] != 1 || products.NextCursor != nil {
+		t.Fatalf("incorrect public catalogue counts: %+v", products)
+	}
+	for _, query := range []string{"limit=", "limit=0", "limit=-1", "limit=101", "limit=no", "limit=1.5", "sort=recent", "type=video", "category=bad+category", "cursor=bad", "q=" + url.QueryEscape(strings.Repeat("界", 121))} {
+		var failure struct {
+			Error struct {
+				Code string `json:"code"`
+			} `json:"error"`
+		}
+		response = requestJSON(t, anonymous, http.MethodGet, server.URL+"/api/v1/products?"+query, nil, &failure)
+		if response.StatusCode != http.StatusUnprocessableEntity || failure.Error.Code != "invalid_product_filters" {
+			t.Fatalf("invalid catalogue filter accepted: %s -> %d %+v", query, response.StatusCode, failure)
+		}
+	}
+	secondID := uuid.New()
+	if _, err := pool.Exec(context.Background(), `INSERT INTO products(id,seller_id,asset_id,title,description,product_type,price_cents,currency,license_code,status,ai_disclosure,included_files,compatibility)
+		SELECT $1,seller_id,asset_id,'Second workflow',description,product_type,price_cents,currency,license_code,status,ai_disclosure,included_files,compatibility FROM products WHERE id=$2`, secondID, productID); err != nil {
+		t.Fatal(err)
+	}
+	response = requestJSON(t, anonymous, http.MethodGet, server.URL+"/api/v1/products?limit=1", nil, &products)
+	if response.StatusCode != http.StatusOK || products.Total != 2 || len(products.Items) != 1 || products.NextCursor == nil {
+		t.Fatalf("first catalogue page invalid: status=%d %+v", response.StatusCode, products)
+	}
+	var continuation marketplace.ProductPage
+	response = requestJSON(t, anonymous, http.MethodGet, server.URL+"/api/v1/products?limit=1&cursor="+url.QueryEscape(*products.NextCursor), nil, &continuation)
+	if response.StatusCode != http.StatusOK || continuation.Total != 2 || len(continuation.Items) != 1 || continuation.Items[0].ID == products.Items[0].ID || continuation.NextCursor != nil {
+		t.Fatalf("catalogue continuation invalid: status=%d %+v", response.StatusCode, continuation)
+	}
+	response = requestJSON(t, anonymous, http.MethodGet, server.URL+"/api/v1/products?sort=price_asc&cursor="+url.QueryEscape(*products.NextCursor), nil, nil)
+	if response.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("cross-sort catalogue continuation accepted: %d", response.StatusCode)
 	}
 	var product marketplace.Product
 	response = requestJSON(t, anonymous, http.MethodGet, server.URL+"/api/v1/products/"+productID.String(), nil, &product)

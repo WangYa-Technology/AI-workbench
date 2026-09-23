@@ -34,6 +34,8 @@ var KnownKinds = []string{
 	"community.moderation",
 	"task.proposal_submitted",
 	"task.proposal_accepted",
+	"task.proposal_rejected",
+	"task.deadline_changed",
 	"task.directly_accepted",
 	"task.delivery_submitted",
 	"task.revision_requested",
@@ -47,8 +49,19 @@ var KnownKinds = []string{
 	"task.dispute_resolved",
 	"task.cancelled",
 	"marketplace.order_fulfilled",
+	"marketplace.product_settlement_transferred",
+	"marketplace.payout_reviewed",
+	"marketplace.payout_paid",
+	"marketplace.payout_failed",
+	"marketplace.payout_returned",
+	"marketplace.payout_source_return_observed",
+	"marketplace.payout_source_released",
+	"marketplace.payout_refund_recovered",
+	"marketplace.listing_reviewed",
 	"marketplace.order_refunded",
 	"marketplace.refund_failed",
+	"marketplace.refund_requested",
+	"marketplace.compensation_failed",
 	"generation.completed",
 	"generation.failed",
 	"billing.wallet_topup_completed",
@@ -58,7 +71,7 @@ var KnownKinds = []string{
 	"support.case_updated",
 }
 
-var detailTargetPattern = regexp.MustCompile(`^/(market/demands|workspace/assets|support|community/posts)/[0-9a-fA-F-]{36}$`)
+var detailTargetPattern = regexp.MustCompile(`^/(market/demands|workspace/assets|workspace/products|support|community/posts|community/reports)/[0-9a-fA-F-]{36}$`)
 
 type Notification struct {
 	ID           uuid.UUID  `json:"id"`
@@ -408,6 +421,8 @@ type deliveryError string
 func (e deliveryError) Error() string     { return string(e) }
 func (e deliveryError) ErrorCode() string { return string(e) }
 
+var creatorTargetPattern = regexp.MustCompile(`^/creators/[a-z0-9_]{3,30}$`)
+
 func ValidTargetPath(value string) bool {
 	if len(value) < 2 || len(value) > 240 || strings.HasPrefix(value, "//") || strings.ContainsAny(value, "\r\n") {
 		return false
@@ -435,10 +450,17 @@ func ValidTargetPath(value string) bool {
 		}
 	}
 	switch parsed.Path {
-	case "/notifications", "/settings", "/support", "/create/image", "/workspace/assets", "/workspace/generations", "/workspace/orders", "/workspace/tasks", "/workspace/billing", "/market", "/market/demands", "/community":
+	case "/workspace/payouts":
+		return true
+	case "/notifications", "/settings", "/support", "/create/image", "/workspace/assets", "/workspace/generations", "/workspace/orders", "/workspace/sales", "/workspace/tasks", "/workspace/billing", "/market", "/market/demands", "/community":
 		return true
 	default:
-		return detailTargetPattern.MatchString(parsed.Path)
+		if strings.HasPrefix(parsed.Path, "/workspace/payouts/") {
+			id := strings.TrimPrefix(parsed.Path, "/workspace/payouts/")
+			parsedID, err := uuid.Parse(id)
+			return err == nil && parsedID != uuid.Nil && parsedID.String() == id
+		}
+		return detailTargetPattern.MatchString(parsed.Path) || creatorTargetPattern.MatchString(parsed.Path)
 	}
 }
 

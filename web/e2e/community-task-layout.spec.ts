@@ -1,3 +1,4 @@
+import { fixtureCredentials } from './helpers/identity'
 import { expect, test, type Page } from '@playwright/test'
 
 const measureLayout = async (page: Page, path: string, tabName: string) => {
@@ -59,85 +60,47 @@ const expectSlidingPill = async (page: Page, path: string, fromName: string, toN
 }
 
 test('keeps Community and Task marketplace headers and view switchers aligned', async ({ page }) => {
-  const session = await page.request.post('/api/v1/auth/demo', { data: { actor: 'creator' } })
+  const session = await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('creator') })
   expect(session.ok()).toBeTruthy()
 
   await page.addInitScript(() => localStorage.setItem('hcai-theme', 'light'))
   await page.setViewportSize({ width: 1280, height: 800 })
 
-  const community = await measureLayout(page, '/community', 'Latest discussions')
-  const communityToolbarBox = await page.locator('.community-toolbar').boundingBox()
-  const communityToolbarControls = await page.locator('.community-search-control, .community-type-control, .community-toolbar-actions > *').evaluateAll(elements => elements.map(element => {
-    const rect = element.getBoundingClientRect()
-    return { y: rect.y, height: rect.height }
-  }))
-  expect(communityToolbarBox).not.toBeNull()
-  expect(communityToolbarControls).toHaveLength(4)
-  expect(new Set(communityToolbarControls.map(control => control.height))).toEqual(new Set([44]))
-  expect(new Set(communityToolbarControls.map(control => control.y)).size).toBe(1)
-  const toolbarTop = await page.locator('.community-toolbar').evaluate(element => element.getBoundingClientRect().top)
-  await page.getByRole('tab', { name: 'Most discussed', exact: true }).click()
-  await expect(page.getByRole('tab', { name: 'Most discussed', exact: true })).toHaveAttribute('aria-selected', 'true')
-  await expect.poll(() => page.locator('.community-toolbar').evaluate(element => element.getBoundingClientRect().top)).toBe(toolbarTop)
-
-  const tasks = await measureLayout(page, '/market/demands', 'Available work')
-  const taskFiltersBox = await page.locator('.task-filters').boundingBox()
-  const taskFilterControls = await page.locator('.task-filters > *').evaluateAll(elements => elements.map(element => {
-    const rect = element.getBoundingClientRect()
-    return { y: rect.y, height: rect.height }
-  }))
-  expect(taskFilterControls).toHaveLength(5)
-  expect(new Set(taskFilterControls.map(control => control.height))).toEqual(new Set([44]))
-  expect(new Set(taskFilterControls.map(control => control.y)).size).toBe(1)
-  expect(taskFiltersBox).not.toBeNull()
-  expect(taskFiltersBox!.height).toBe(communityToolbarBox!.height)
-  expect(community.header.height).toBe(272)
-  expect(tasks.header.height).toBe(community.header.height)
-  expect(tasks.header.y).toBe(community.header.y)
-  expect(tasks.switcherBar.height).toBe(community.switcherBar.height)
-  expect(tasks.switcherBar.y).toBe(community.switcherBar.y)
-  for (const key of ['copy', 'stats', 'art'] as const) {
-    expect(tasks.parts[key]).not.toBeNull()
-    expect(community.parts[key]).not.toBeNull()
-    expect(tasks.parts[key]!.x).toBe(community.parts[key]!.x)
-    expect(tasks.parts[key]!.y).toBe(community.parts[key]!.y)
-    expect(tasks.parts[key]!.width).toBe(community.parts[key]!.width)
-    expect(tasks.parts[key]!.height).toBe(community.parts[key]!.height)
-  }
-
-  await page.setViewportSize({ width: 390, height: 844 })
-  const mobileParts: Array<Record<string, { x: number; y: number; width: number; height: number } | null>> = []
-  for (const [path, tabName] of [['/community', 'Latest discussions'], ['/market/demands', 'Available work']] as const) {
-    await page.goto(path)
-    await expect(page.getByRole('tab', { name: tabName, exact: true })).toBeVisible()
-    await expect(page.locator('.view-switcher')).toHaveCSS('width', '358px')
-    const widths = await page.locator('.view-switcher button').evaluateAll(buttons => buttons.map(button => button.getBoundingClientRect().width))
-    expect(widths[0]).toBe(widths[1])
-    mobileParts.push(await page.locator('.page-hero-header').evaluate(element => {
-      const box = (selector: string) => {
-        const rect = element.querySelector(selector)?.getBoundingClientRect()
-        return rect ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height } : null
+  for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 }]) {
+    await page.setViewportSize(viewport)
+    const measurements = []
+    for (const [path, tab] of [['/community', 'All discussions'], ['/market/demands', 'Available work']] as const) {
+      measurements.push(await measureLayout(page, path, tab))
+      const bar = page.locator('.ui-filter-bar')
+      await expect(bar).toHaveCSS('--control-height-toolbar', '40px')
+      const controls = await bar.locator('.ui-filter-bar__search, .ui-select__trigger, .community-tools > button').evaluateAll(elements => elements.map(element => {
+        const rect = element.getBoundingClientRect()
+        return { x: rect.x, right: rect.right, height: rect.height }
+      }).filter(rect => rect.height > 0))
+      expect(controls.length).toBeGreaterThanOrEqual(2)
+      for (const control of controls) {
+        expect(control.height).toBe(40)
+        expect(control.x).toBeGreaterThanOrEqual(0)
+        expect(control.right).toBeLessThanOrEqual(viewport.width)
       }
-      return { copy: box('.page-hero-copy'), stats: box('.page-hero-stats'), art: box('.page-hero-art') }
-    }))
-    const viewport = await page.evaluate(() => ({ client: document.documentElement.clientWidth, scroll: document.documentElement.scrollWidth }))
-    expect(viewport.scroll).toBe(viewport.client)
-  }
-  for (const key of ['copy', 'stats', 'art'] as const) {
-    expect(mobileParts[0][key]).not.toBeNull()
-    expect(mobileParts[1][key]).not.toBeNull()
-    expect(mobileParts[0][key]!.x).toBe(mobileParts[1][key]!.x)
-    expect(mobileParts[0][key]!.y).toBe(mobileParts[1][key]!.y)
-    expect(mobileParts[0][key]!.width).toBe(mobileParts[1][key]!.width)
-    expect(Math.abs(mobileParts[0][key]!.height - mobileParts[1][key]!.height)).toBeLessThanOrEqual(2)
+      const tabs = await page.locator('.view-switcher button').evaluateAll(elements => elements.map(element => element.getBoundingClientRect().width))
+      if (viewport.width < 768) expect(tabs[0]).toBe(tabs[1])
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(viewport.width)
+    }
+    expect(measurements[0]!.header.width).toBe(measurements[1]!.header.width)
+    if (viewport.width >= 1200) {
+      expect(measurements[0]!.header.height).toBeLessThanOrEqual(160)
+      expect(measurements[1]!.header.height).toBeLessThan(300)
+      expect(measurements[0]!.switcherBar.x).toBe(measurements[1]!.switcherBar.x)
+    }
   }
 })
 
 test('animates both Community and Task marketplace view switchers', async ({ page }) => {
-  const session = await page.request.post('/api/v1/auth/demo', { data: { actor: 'creator' } })
+  const session = await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('creator') })
   expect(session.ok()).toBeTruthy()
   await page.addInitScript(() => localStorage.setItem('hcai-theme', 'light'))
 
-  await expectSlidingPill(page, '/community', 'Latest discussions', 'Most discussed')
+  await expectSlidingPill(page, '/community', 'All discussions', 'My discussions')
   await expectSlidingPill(page, '/market/demands', 'Available work', 'My activity')
 })

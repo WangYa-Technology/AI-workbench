@@ -1,11 +1,12 @@
+import { fixtureCredentials } from './helpers/identity'
 import { expect, test } from '@playwright/test'
 
 test('work details keep the primary action visible on mobile and preserve list filters', async ({ page, context }) => {
   await context.grantPermissions(['clipboard-read', 'clipboard-write'])
   await page.setViewportSize({ width: 390, height: 844 })
   await page.goto('/discover?kind=image')
-  await page.locator('.inspiration-card').first().getByRole('link', { name: 'View work', exact: true }).click()
-  const action = page.locator('.work-detail-heading').getByRole('link', { name: 'Remix', exact: true })
+  await page.getByRole('link', { name: 'View work', exact: true }).and(page.locator('a[href*="00000000-0000-4000-8000-000000000201"]')).click()
+  const action = page.locator('.work-detail-heading').getByRole('link', { name: 'Create with reference', exact: true })
   await expect(action).toBeVisible()
   const box = await action.boundingBox()
   expect(box!.y + box!.height).toBeLessThan(600)
@@ -17,15 +18,20 @@ test('work details keep the primary action visible on mobile and preserve list f
 })
 
 test('task facts precede the brief and unavailable payments are explained once', async ({ page }) => {
-  await page.request.post('/api/v1/auth/demo', { data: { actor: 'creator' } })
+  await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('creator') })
   await page.setViewportSize({ width: 390, height: 844 })
+  await page.route('**/api/v1/tasks/00000000-0000-4000-8000-000000000401', async route => {
+    const response = await route.fetch()
+    await route.fulfill({ json: { ...await response.json(), allowDirectAccept: true, deadline: new Date(Date.now() + 86400000).toISOString() } })
+  })
   await page.goto('/market/demands/00000000-0000-4000-8000-000000000401')
   await expect(page.locator('.task-key-facts')).toContainText('Task budget')
   const facts = await page.locator('.task-key-facts').boundingBox()
   const brief = await page.locator('.task-brief-overview').boundingBox()
   expect(facts!.y).toBeLessThan(brief!.y)
-  await expect(page.locator('.task-reward > p')).toBeVisible()
-  await expect(page.locator('.task-action-rail .task-payment-note')).toHaveCount(0)
+  await expect(page.locator('.task-reward')).toHaveCount(0)
+  await expect(page.locator('#task-payment-disabled')).toBeVisible()
+  await expect(page.locator('[aria-describedby=task-payment-disabled]')).toBeDisabled()
   await expect(page.getByRole('link', { name: 'Start creating', exact: true })).toHaveCount(0)
 })
 
@@ -86,13 +92,25 @@ test('comment pagination errors stay beside the discussion and can be retried', 
 })
 
 test('unassigned task sources cannot silently submit an unrelated generation', async ({ page }) => {
-  await page.request.post('/api/v1/auth/demo', { data: { actor: 'creator' } })
+  await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('creator') })
   await page.goto('/create/image?taskId=00000000-0000-4000-8000-000000000401')
   await page.locator('.creation-composer textarea').fill('A careful editorial composition with a clear subject.')
   await expect(page.locator('.creation-context-chip')).toBeVisible()
   const generate = page.getByRole('button', { name: 'Generate Image', exact: true })
   await expect(generate).toBeDisabled()
   await page.locator('.creation-context-chip button').click()
-  await expect(page).toHaveURL(/\/create\/image$/)
+  await expect(page).toHaveURL(/\/create\/image(?:\?|$)/)
   await expect(generate).toBeEnabled()
+})
+
+test('an unavailable source asset cannot silently become an unrelated generation', async ({ page }) => {
+  await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('creator') })
+  await page.goto('/create/image?sourceAssetId=00000000-0000-4000-8000-999999999999')
+  await page.locator('.creation-composer textarea').fill('A deliberate reference-based image request')
+  await expect(page.locator('.creation-submit')).toBeDisabled()
+  const source = page.locator('.creation-context-chip').filter({ hasText: 'This reference needs review before it can be used.' })
+  await expect(source).toBeVisible()
+  await source.getByRole('button', { name: 'Close', exact: true }).click()
+  await expect(page).not.toHaveURL(/sourceAssetId=/)
+  await expect(page.locator('.creation-submit')).toBeEnabled()
 })

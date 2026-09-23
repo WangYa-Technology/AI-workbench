@@ -1,0 +1,1 @@
+DROP INDEX jobs_running_lease_expiry_idx;

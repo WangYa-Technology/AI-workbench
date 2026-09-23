@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -24,25 +25,35 @@ type Author struct {
 	DisplayName string    `json:"displayName"`
 }
 
+type WorkReference struct {
+	ID     uuid.UUID `json:"id"`
+	Title  string    `json:"title"`
+	Author Author    `json:"author"`
+}
+
 type Work struct {
-	ID               uuid.UUID `json:"id"`
-	Title            string    `json:"title"`
-	Summary          string    `json:"summary"`
-	Prompt           *string   `json:"prompt,omitempty"`
-	PromptVisibility string    `json:"promptVisibility"`
-	ModelName        string    `json:"modelName"`
-	AIDisclosure     string    `json:"aiDisclosure"`
-	PublishedAt      time.Time `json:"publishedAt"`
-	AssetID          uuid.UUID `json:"assetId"`
-	MediaURL         string    `json:"mediaUrl"`
-	MediaKind        string    `json:"mediaKind"`
-	Width            *int      `json:"width,omitempty"`
-	Height           *int      `json:"height,omitempty"`
-	LicenseCode      string    `json:"licenseCode"`
-	Author           Author    `json:"author"`
+	PostID           *uuid.UUID      `json:"postId,omitempty"`
+	ViewerBookmarked bool            `json:"viewerBookmarked"`
+	Sources          []WorkReference `json:"sources,omitempty"`
+	ID               uuid.UUID       `json:"id"`
+	Title            string          `json:"title"`
+	Summary          string          `json:"summary"`
+	Prompt           *string         `json:"prompt,omitempty"`
+	PromptVisibility string          `json:"promptVisibility"`
+	ModelName        string          `json:"modelName"`
+	AIDisclosure     string          `json:"aiDisclosure"`
+	PublishedAt      time.Time       `json:"publishedAt"`
+	AssetID          uuid.UUID       `json:"assetId"`
+	MediaURL         string          `json:"mediaUrl"`
+	MediaKind        string          `json:"mediaKind"`
+	Width            *int            `json:"width,omitempty"`
+	Height           *int            `json:"height,omitempty"`
+	LicenseCode      string          `json:"licenseCode"`
+	Author           Author          `json:"author"`
 }
 
 type Page struct {
+	Total          int            `json:"total"`
 	Items          []Work         `json:"items"`
 	NextCursor     *string        `json:"nextCursor"`
 	CategoryCounts map[string]int `json:"categoryCounts"`
@@ -114,7 +125,13 @@ type CreatorProduct struct {
 	AIDisclosure string    `json:"aiDisclosure"`
 }
 
+type CreatorFilter struct{ WorksPage, ProductsPage, Limit int }
 type CreatorProfile struct {
+	WorksTotal      int              `json:"worksTotal"`
+	ProductsTotal   int              `json:"productsTotal"`
+	WorksPage       int              `json:"worksPage"`
+	ProductsPage    int              `json:"productsPage"`
+	Limit           int              `json:"limit"`
 	ID              uuid.UUID        `json:"id"`
 	Handle          string           `json:"handle"`
 	DisplayName     string           `json:"displayName"`
@@ -145,14 +162,30 @@ func (r *Repository) List(ctx context.Context, limit int, before *time.Time, fil
 	if len(filters) > 0 {
 		filter = filters[0]
 	}
-	if limit < 1 || limit > 24 {
+	if limit == 0 {
 		limit = 12
 	}
-	rows, err := r.pool.Query(ctx, `
+	if limit < 1 || limit > 24 {
+		return Page{}, ErrInvalidQuery
+	}
+	var err error
+	filter, err = NormalizeWorkFilter(filter)
+	if err != nil {
+		return Page{}, err
+	}
+	if before != nil && filter.BeforeID == nil {
+		return Page{}, ErrInvalidQuery
+	}
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return Page{}, err
+	}
+	defer tx.Rollback(ctx)
+	rows, err := tx.Query(ctx, `
 		SELECT w.id,w.title,w.summary,w.prompt_visibility,w.model_name,w.ai_disclosure,w.published_at,
 		       a.id,a.media_url,a.kind,a.width,a.height,a.license_code,
 		       u.id,u.handle,u.display_name
-		FROM works w
+		FROM public_works w
 		JOIN assets a ON a.id=w.asset_id
 		JOIN users u ON u.id=w.author_id
 		WHERE w.status='published' AND a.scan_status='clean'
@@ -161,7 +194,7 @@ func (r *Repository) List(ctx context.Context, limit int, before *time.Time, fil
 		AND ($4='' OR a.kind=$4)
 		AND ($5='' OR w.prompt_visibility=$5)
 		ORDER BY w.published_at DESC,w.id DESC
-		LIMIT $2`, before, limit+1, strings.TrimSpace(filter.Query), filter.Kind, filter.PromptVisibility, filter.BeforeID)
+		LIMIT $2`, before, limit+1, literalLike(filter.Query), filter.Kind, filter.PromptVisibility, filter.BeforeID)
 	if err != nil {
 		return Page{}, fmt.Errorf("list works: %w", err)
 	}
@@ -182,21 +215,18 @@ func (r *Repository) List(ctx context.Context, limit int, before *time.Time, fil
 	var next *string
 	if len(items) > limit {
 		items = items[:limit]
-		cursor := items[len(items)-1].PublishedAt.UTC().Format(time.RFC3339Nano)
-		if len(filters) > 0 {
-			cursor += "|" + items[len(items)-1].ID.String()
-		}
+		cursor := encodeWorkCursor(items[len(items)-1], filter)
 		next = &cursor
 	}
 	rows.Close()
 	counts := map[string]int{}
-	countRows, err := r.pool.Query(ctx, `
-		SELECT a.kind, count(*) FROM works w
+	countRows, err := tx.Query(ctx, `
+		SELECT a.kind, count(*) FROM public_works w
 		JOIN assets a ON a.id=w.asset_id JOIN users u ON u.id=w.author_id
 		WHERE w.status='published' AND a.scan_status='clean'
 		AND ($1='' OR concat_ws(' ',w.title,w.summary,u.display_name,u.handle,w.model_name,a.license_code) ILIKE '%'||$1||'%')
 		AND ($2='' OR w.prompt_visibility=$2)
-		GROUP BY a.kind`, strings.TrimSpace(filter.Query), filter.PromptVisibility)
+		GROUP BY a.kind`, literalLike(filter.Query), filter.PromptVisibility)
 	if err != nil {
 		return Page{}, fmt.Errorf("count work categories: %w", err)
 	}
@@ -212,17 +242,36 @@ func (r *Repository) List(ctx context.Context, limit int, before *time.Time, fil
 	if err := countRows.Err(); err != nil {
 		return Page{}, err
 	}
-	return Page{Items: items, NextCursor: next, CategoryCounts: counts}, nil
+	countRows.Close()
+	total := 0
+	for kind, count := range counts {
+		if filter.Kind == "" || filter.Kind == kind {
+			total += count
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Page{}, err
+	}
+	return Page{Items: items, NextCursor: next, CategoryCounts: counts, Total: total}, nil
 }
 
-func (r *Repository) Get(ctx context.Context, id uuid.UUID) (Work, error) {
-	row := r.pool.QueryRow(ctx, `
+func (r *Repository) Get(ctx context.Context, id uuid.UUID, viewers ...uuid.UUID) (Work, error) {
+	viewer := uuid.Nil
+	if len(viewers) > 0 {
+		viewer = viewers[0]
+	}
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return Work{}, err
+	}
+	defer tx.Rollback(ctx)
+	row := tx.QueryRow(ctx, `
 		SELECT w.id,w.title,w.summary,
 		       CASE WHEN w.prompt_visibility='public' THEN w.prompt ELSE NULL END,
 		       w.prompt_visibility,w.model_name,w.ai_disclosure,w.published_at,
 		       a.id,a.media_url,a.kind,a.width,a.height,a.license_code,
 		       u.id,u.handle,u.display_name
-		FROM works w
+		FROM public_works w
 		JOIN assets a ON a.id=w.asset_id
 		JOIN users u ON u.id=w.author_id
 		WHERE w.id=$1 AND w.status='published' AND a.scan_status='clean'`, id)
@@ -232,6 +281,39 @@ func (r *Repository) Get(ctx context.Context, id uuid.UUID) (Work, error) {
 	}
 	if err != nil {
 		return Work{}, fmt.Errorf("get work: %w", err)
+	}
+	err = tx.QueryRow(ctx, `SELECT p.id,EXISTS(SELECT 1 FROM post_reactions pr WHERE pr.post_id=p.id AND pr.user_id=$2 AND pr.kind='bookmark')
+ FROM community_visible_posts p WHERE p.work_id=$1 ORDER BY p.created_at,p.id LIMIT 1`, id, viewer).Scan(&work.PostID, &work.ViewerBookmarked)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return Work{}, err
+	}
+	rows, err := tx.Query(ctx, `WITH RECURSIVE lineage AS (
+ SELECT source.id,source.title,source.author_id,source.asset_id,ARRAY[$1::uuid,source.id] path,1 depth
+ FROM public_works current JOIN generations g ON g.output_asset_id=current.asset_id AND g.status='succeeded'
+ JOIN public_works source ON source.id=g.source_work_id WHERE current.id=$1 AND source.id<>current.id
+ UNION ALL
+ SELECT source.id,source.title,source.author_id,source.asset_id,l.path||source.id,l.depth+1
+ FROM lineage l JOIN generations g ON g.output_asset_id=l.asset_id AND g.status='succeeded'
+ JOIN public_works source ON source.id=g.source_work_id WHERE NOT source.id=ANY(l.path)
+ ) SELECT l.id,l.title,u.id,u.handle,u.display_name FROM lineage l JOIN users u ON u.id=l.author_id ORDER BY l.depth`, id)
+	if err != nil {
+		return Work{}, err
+	}
+	for rows.Next() {
+		var item WorkReference
+		if err := rows.Scan(&item.ID, &item.Title, &item.Author.ID, &item.Author.Handle, &item.Author.DisplayName); err != nil {
+			rows.Close()
+			return Work{}, err
+		}
+		work.Sources = append(work.Sources, item)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return Work{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Work{}, err
 	}
 	return work, nil
 }
@@ -258,7 +340,7 @@ func (r *Repository) SearchWithPolicy(ctx context.Context, filter SearchFilter, 
 
 func normalizeSearchFilter(filter SearchFilter) (string, []string, int, int, error) {
 	query := strings.ToLower(strings.TrimSpace(filter.Query))
-	if len(query) < 2 || len(query) > 120 {
+	if !utf8.ValidString(query) || utf8.RuneCountInString(query) < 2 || utf8.RuneCountInString(query) > 120 {
 		return "", nil, 0, 0, ErrInvalidQuery
 	}
 	allowed := map[string]bool{"work": true, "creator": true, "product": true, "demand": true}
@@ -274,11 +356,17 @@ func normalizeSearchFilter(filter SearchFilter) (string, []string, int, int, err
 			seen[kind] = true
 		}
 	}
-	if filter.Page < 1 || filter.Page > 100 {
+	if filter.Page == 0 {
 		filter.Page = 1
 	}
-	if filter.Limit < 1 || filter.Limit > 24 {
+	if filter.Page < 1 || filter.Page > 100 {
+		return "", nil, 0, 0, ErrInvalidQuery
+	}
+	if filter.Limit == 0 {
 		filter.Limit = 12
+	}
+	if filter.Limit < 1 || filter.Limit > 24 {
+		return "", nil, 0, 0, ErrInvalidQuery
 	}
 	return query, types, filter.Page, filter.Limit, nil
 }
@@ -289,7 +377,7 @@ func (r *Repository) searchWithPolicy(ctx context.Context, query string, types [
 		policy.TitleExactWeight, policy.TitlePrefixWeight, policy.TitleContainsWeight,
 		policy.CreatorExactWeight, policy.CreatorMatchWeight, policy.BodyMatchWeight, policy.SecondaryMatchWeight,
 		policy.RecencyWeight, policy.CreatorActivityWeight, policy.WorkTypeBoost, policy.CreatorTypeBoost,
-		policy.ProductTypeBoost, policy.DemandTypeBoost)
+		policy.ProductTypeBoost, policy.DemandTypeBoost, literalLike(query))
 	if err != nil {
 		return SearchPage{}, fmt.Errorf("search discovery: %w", err)
 	}
@@ -360,21 +448,31 @@ func rolloutBucket(key string) int {
 	return int(digest[0]) * 100 / 256
 }
 
-func (r *Repository) Creator(ctx context.Context, handle string, viewerID uuid.UUID) (CreatorProfile, error) {
+func (r *Repository) Creator(ctx context.Context, handle string, viewerID uuid.UUID, filters ...CreatorFilter) (CreatorProfile, error) {
+	f := CreatorFilter{1, 1, 12}
+	if len(filters) > 0 {
+		f = filters[0]
+	}
+	if f.WorksPage < 1 || f.ProductsPage < 1 || f.WorksPage > 1000000 || f.ProductsPage > 1000000 || f.Limit < 1 || f.Limit > 24 {
+		return CreatorProfile{}, ErrInvalidQuery
+	}
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return CreatorProfile{}, err
+	}
+	defer tx.Rollback(ctx)
 	handle = strings.TrimSpace(handle)
 	if len(handle) < 2 || len(handle) > 40 {
 		return CreatorProfile{}, ErrNotFound
 	}
 	var profile CreatorProfile
-	err := r.pool.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		SELECT u.id,u.handle,u.display_name,u.role,u.created_at,
 		       (SELECT count(*) FROM user_follows f JOIN users x ON x.id=f.follower_id AND x.status='active' WHERE f.following_id=u.id),
 		       (SELECT count(*) FROM user_follows f JOIN users x ON x.id=f.following_id AND x.status='active' WHERE f.follower_id=u.id),
 		       EXISTS(SELECT 1 FROM user_follows f WHERE f.follower_id=$2 AND f.following_id=u.id)
 		FROM users u
-		WHERE lower(u.handle)=lower($1) AND u.status='active'
-		  AND (EXISTS(SELECT 1 FROM works w JOIN assets a ON a.id=w.asset_id AND a.scan_status='clean' WHERE w.author_id=u.id AND w.status='published')
-		    OR EXISTS(SELECT 1 FROM products p JOIN assets a ON a.id=p.asset_id AND a.scan_status='clean' WHERE p.seller_id=u.id AND p.status='active'))`, handle, viewerID).
+		WHERE lower(u.handle)=lower($1) AND u.status='active'`, handle, viewerID).
 		Scan(&profile.ID, &profile.Handle, &profile.DisplayName, &profile.Role, &profile.MemberSince,
 			&profile.FollowerCount, &profile.FollowingCount, &profile.ViewerFollowing)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -383,25 +481,37 @@ func (r *Repository) Creator(ctx context.Context, handle string, viewerID uuid.U
 	if err != nil {
 		return CreatorProfile{}, fmt.Errorf("get creator: %w", err)
 	}
-	works, err := r.creatorWorks(ctx, profile.ID)
+	works, err := r.creatorWorks(ctx, tx, profile.ID, f)
 	if err != nil {
 		return CreatorProfile{}, err
 	}
-	products, err := r.creatorProducts(ctx, profile.ID)
+	products, err := r.creatorProducts(ctx, tx, profile.ID, f)
 	if err != nil {
 		return CreatorProfile{}, err
 	}
 	profile.Works = works
 	profile.Products = products
+	profile.WorksPage = f.WorksPage
+	profile.ProductsPage = f.ProductsPage
+	profile.Limit = f.Limit
+	err = tx.QueryRow(ctx, `SELECT
+ (SELECT count(*) FROM public_works WHERE author_id=$1),
+ (SELECT count(*) FROM public_products p WHERE p.seller_id=$1)`, profile.ID).Scan(&profile.WorksTotal, &profile.ProductsTotal)
+	if err != nil {
+		return CreatorProfile{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return CreatorProfile{}, err
+	}
 	return profile, nil
 }
 
-func (r *Repository) creatorWorks(ctx context.Context, creatorID uuid.UUID) ([]Work, error) {
-	rows, err := r.pool.Query(ctx, `
+func (r *Repository) creatorWorks(ctx context.Context, tx pgx.Tx, creatorID uuid.UUID, f CreatorFilter) ([]Work, error) {
+	rows, err := tx.Query(ctx, `
 		SELECT w.id,w.title,w.summary,w.prompt_visibility,w.model_name,w.ai_disclosure,w.published_at,
 		       a.id,a.media_url,a.kind,a.width,a.height,a.license_code,u.id,u.handle,u.display_name
-		FROM works w JOIN assets a ON a.id=w.asset_id AND a.scan_status='clean' JOIN users u ON u.id=w.author_id
-		WHERE w.author_id=$1 AND w.status='published' ORDER BY w.published_at DESC,w.id DESC LIMIT 24`, creatorID)
+		FROM public_works w JOIN assets a ON a.id=w.asset_id AND a.scan_status='clean' JOIN users u ON u.id=w.author_id
+		WHERE w.author_id=$1 AND w.status='published' ORDER BY w.published_at DESC,w.id DESC LIMIT $2 OFFSET $3`, creatorID, f.Limit, (f.WorksPage-1)*f.Limit)
 	if err != nil {
 		return nil, fmt.Errorf("list creator works: %w", err)
 	}
@@ -417,12 +527,12 @@ func (r *Repository) creatorWorks(ctx context.Context, creatorID uuid.UUID) ([]W
 	return items, rows.Err()
 }
 
-func (r *Repository) creatorProducts(ctx context.Context, creatorID uuid.UUID) ([]CreatorProduct, error) {
-	rows, err := r.pool.Query(ctx, `
-		SELECT p.id,p.title,p.description,p.product_type,p.price_cents,p.currency,p.license_code,a.media_url,a.kind,p.ai_disclosure
-		FROM products p JOIN assets a ON a.id=p.asset_id AND a.scan_status='clean'
-		JOIN licenses l ON l.code=p.license_code AND l.status='active'
-		WHERE p.seller_id=$1 AND p.status='active' ORDER BY p.created_at DESC,p.id DESC LIMIT 24`, creatorID)
+func (r *Repository) creatorProducts(ctx context.Context, tx pgx.Tx, creatorID uuid.UUID, f CreatorFilter) ([]CreatorProduct, error) {
+	rows, err := tx.Query(ctx, `
+		SELECT p.id,p.title,p.description,p.product_type,p.price_cents,p.currency,p.license_code,COALESCE(preview.media_url,''),COALESCE(preview.kind,a.kind),p.ai_disclosure
+		FROM public_products p JOIN assets a ON a.id=p.asset_id
+		LEFT JOIN public_product_previews preview ON preview.product_id=p.id
+		WHERE p.seller_id=$1 ORDER BY p.created_at DESC,p.id DESC LIMIT $2 OFFSET $3`, creatorID, f.Limit, (f.ProductsPage-1)*f.Limit)
 	if err != nil {
 		return nil, fmt.Errorf("list creator products: %w", err)
 	}
@@ -443,49 +553,49 @@ const searchQuery = `
 WITH candidates AS (
   SELECT 'work'::text kind,w.id,w.title,w.summary,'/works/'||w.id::text path,a.media_url,a.kind media_kind,u.handle,
          NULL::integer price_cents,NULL::text currency,w.published_at,
-         (CASE WHEN lower(w.title)=$1 THEN $5 WHEN lower(w.title) LIKE $1||'%' THEN $6 WHEN lower(w.title) LIKE '%'||$1||'%' THEN $7 ELSE 0 END
-          + CASE WHEN lower(u.handle)=$1 OR lower(u.display_name)=$1 THEN $8 WHEN lower(u.handle||' '||u.display_name) LIKE '%'||$1||'%' THEN $9 ELSE 0 END
-          + CASE WHEN lower(w.summary) LIKE '%'||$1||'%' THEN $10 ELSE 0 END
-          + CASE WHEN w.prompt_visibility='public' AND lower(COALESCE(w.prompt,'')) LIKE '%'||$1||'%' THEN $11 ELSE 0 END
+         (CASE WHEN lower(w.title)=$1 THEN $5 WHEN lower(w.title) LIKE $18||'%' THEN $6 WHEN lower(w.title) LIKE '%'||$18||'%' THEN $7 ELSE 0 END
+          + CASE WHEN lower(u.handle)=$1 OR lower(u.display_name)=$1 THEN $8 WHEN lower(u.handle||' '||u.display_name) LIKE '%'||$18||'%' THEN $9 ELSE 0 END
+          + CASE WHEN lower(w.summary) LIKE '%'||$18||'%' THEN $10 ELSE 0 END
+          + CASE WHEN w.prompt_visibility='public' AND lower(COALESCE(w.prompt,'')) LIKE '%'||$18||'%' THEN $11 ELSE 0 END
           + GREATEST(0,$12::integer-LEAST($12::integer,floor(EXTRACT(EPOCH FROM (now()-w.published_at))/2592000)::int)) + $14) rank,
          array_remove(ARRAY[
-           CASE WHEN lower(w.title) LIKE '%'||$1||'%' THEN 'title_match' END,
-           CASE WHEN lower(u.handle||' '||u.display_name) LIKE '%'||$1||'%' THEN 'creator_match' END,
-           CASE WHEN lower(w.summary) LIKE '%'||$1||'%' THEN 'summary_match' END,
-           CASE WHEN w.prompt_visibility='public' AND lower(COALESCE(w.prompt,'')) LIKE '%'||$1||'%' THEN 'public_prompt_match' END,
+           CASE WHEN lower(w.title) LIKE '%'||$18||'%' THEN 'title_match' END,
+           CASE WHEN lower(u.handle||' '||u.display_name) LIKE '%'||$18||'%' THEN 'creator_match' END,
+           CASE WHEN lower(w.summary) LIKE '%'||$18||'%' THEN 'summary_match' END,
+           CASE WHEN w.prompt_visibility='public' AND lower(COALESCE(w.prompt,'')) LIKE '%'||$18||'%' THEN 'public_prompt_match' END,
            CASE WHEN w.published_at > now()-interval '30 days' THEN 'recently_published' END],NULL) rank_signals
-  FROM works w JOIN assets a ON a.id=w.asset_id AND a.scan_status='clean' JOIN users u ON u.id=w.author_id AND u.status='active'
-  WHERE w.status='published' AND lower(w.title||' '||w.summary||' '||u.handle||' '||u.display_name||' '||CASE WHEN w.prompt_visibility='public' THEN COALESCE(w.prompt,'') ELSE '' END) LIKE '%'||$1||'%'
+  FROM public_works w JOIN assets a ON a.id=w.asset_id AND a.scan_status='clean' JOIN users u ON u.id=w.author_id AND u.status='active'
+  WHERE w.status='published' AND lower(w.title||' '||w.summary||' '||u.handle||' '||u.display_name||' '||CASE WHEN w.prompt_visibility='public' THEN COALESCE(w.prompt,'') ELSE '' END) LIKE '%'||$18||'%'
   UNION ALL
   SELECT 'creator',u.id,u.display_name,'@'||u.handle||' · '||count(DISTINCT w.id)::text||' published works','/creators/'||u.handle,
          (array_agg(a.media_url ORDER BY w.published_at DESC) FILTER (WHERE a.media_url IS NOT NULL))[1],
          (array_agg(a.kind ORDER BY w.published_at DESC) FILTER (WHERE a.kind IS NOT NULL))[1],u.handle,NULL,NULL,max(w.published_at),
-         (CASE WHEN lower(u.handle)=$1 THEN $5::integer+10 WHEN lower(u.display_name)=$1 THEN $5 WHEN lower(u.handle) LIKE $1||'%' THEN $6::integer+5 ELSE GREATEST(0,$7::integer-5) END
+         (CASE WHEN lower(u.handle)=$1 THEN $5::integer+10 WHEN lower(u.display_name)=$1 THEN $5 WHEN lower(u.handle) LIKE $18||'%' THEN $6::integer+5 ELSE GREATEST(0,$7::integer-5) END
           + LEAST($13::integer,count(DISTINCT w.id)::int*3+count(DISTINCT p.id)::int*2) + $15),
-         array_remove(ARRAY[CASE WHEN lower(u.handle) LIKE '%'||$1||'%' THEN 'handle_match' END,CASE WHEN lower(u.display_name) LIKE '%'||$1||'%' THEN 'display_name_match' END,CASE WHEN count(DISTINCT w.id)>0 THEN 'published_creator' END],NULL)
+         array_remove(ARRAY[CASE WHEN lower(u.handle) LIKE '%'||$18||'%' THEN 'handle_match' END,CASE WHEN lower(u.display_name) LIKE '%'||$18||'%' THEN 'display_name_match' END,CASE WHEN count(DISTINCT w.id)>0 THEN 'published_creator' END],NULL)
   FROM users u
-  LEFT JOIN works w ON w.author_id=u.id AND w.status='published'
+  LEFT JOIN public_works w ON w.author_id=u.id AND w.status='published'
   LEFT JOIN assets a ON a.id=w.asset_id AND a.scan_status='clean'
-  LEFT JOIN products p ON p.seller_id=u.id AND p.status='active'
-  LEFT JOIN assets pa ON pa.id=p.asset_id AND pa.scan_status='clean'
-  WHERE u.status='active' AND lower(u.handle||' '||u.display_name) LIKE '%'||$1||'%'
-  GROUP BY u.id HAVING count(a.id)>0 OR count(pa.id)>0
+  LEFT JOIN public_products p ON p.seller_id=u.id
+  WHERE u.status='active' AND lower(u.handle||' '||u.display_name) LIKE '%'||$18||'%'
+  GROUP BY u.id HAVING count(a.id)>0 OR count(p.id)>0
   UNION ALL
-  SELECT 'product',p.id,p.title,p.description,'/market/assets/'||p.id::text,a.media_url,a.kind,u.handle,p.price_cents,p.currency,p.created_at,
-         (CASE WHEN lower(p.title)=$1 THEN $5 WHEN lower(p.title) LIKE $1||'%' THEN $6 WHEN lower(p.title) LIKE '%'||$1||'%' THEN $7 ELSE 0 END
-          + CASE WHEN lower(u.handle||' '||u.display_name) LIKE '%'||$1||'%' THEN $9 ELSE 0 END
-          + CASE WHEN lower(p.description) LIKE '%'||$1||'%' THEN $10 ELSE 0 END + $16),
-         array_remove(ARRAY[CASE WHEN lower(p.title) LIKE '%'||$1||'%' THEN 'title_match' END,CASE WHEN lower(u.handle||' '||u.display_name) LIKE '%'||$1||'%' THEN 'creator_match' END,CASE WHEN lower(p.description) LIKE '%'||$1||'%' THEN 'description_match' END],NULL)
-  FROM products p JOIN assets a ON a.id=p.asset_id AND a.scan_status='clean' JOIN users u ON u.id=p.seller_id AND u.status='active' JOIN licenses l ON l.code=p.license_code AND l.status='active'
-  WHERE p.status='active' AND lower(p.title||' '||p.description||' '||u.handle||' '||u.display_name) LIKE '%'||$1||'%'
+  SELECT 'product',p.id,p.title,p.description,'/market/assets/'||p.id::text,preview.media_url,COALESCE(preview.kind,a.kind),u.handle,p.price_cents,p.currency,p.created_at,
+         (CASE WHEN lower(p.title)=$1 THEN $5 WHEN lower(p.title) LIKE $18||'%' THEN $6 WHEN lower(p.title) LIKE '%'||$18||'%' THEN $7 ELSE 0 END
+          + CASE WHEN lower(u.handle||' '||u.display_name) LIKE '%'||$18||'%' THEN $9 ELSE 0 END
+          + CASE WHEN lower(p.description) LIKE '%'||$18||'%' THEN $10 ELSE 0 END + $16),
+         array_remove(ARRAY[CASE WHEN lower(p.title) LIKE '%'||$18||'%' THEN 'title_match' END,CASE WHEN lower(u.handle||' '||u.display_name) LIKE '%'||$18||'%' THEN 'creator_match' END,CASE WHEN lower(p.description) LIKE '%'||$18||'%' THEN 'description_match' END],NULL)
+  FROM public_products p JOIN assets a ON a.id=p.asset_id JOIN users u ON u.id=p.seller_id
+  LEFT JOIN public_product_previews preview ON preview.product_id=p.id
+  WHERE lower(p.title||' '||p.description||' '||u.handle||' '||u.display_name) LIKE '%'||$18||'%'
   UNION ALL
   SELECT 'demand',d.id,d.title,d.summary,'/market/demands/'||d.id::text,NULL,NULL,u.handle,d.budget_cents,d.currency,d.created_at,
-         (CASE WHEN lower(d.title)=$1 THEN $5 WHEN lower(d.title) LIKE $1||'%' THEN $6 WHEN lower(d.title) LIKE '%'||$1||'%' THEN $7 ELSE 0 END
-          + CASE WHEN lower(d.summary) LIKE '%'||$1||'%' THEN $10 ELSE 0 END
-          + CASE WHEN lower(d.brief) LIKE '%'||$1||'%' THEN $11::integer+3 ELSE 0 END + $17),
-         array_remove(ARRAY[CASE WHEN lower(d.title) LIKE '%'||$1||'%' THEN 'title_match' END,CASE WHEN lower(d.summary) LIKE '%'||$1||'%' THEN 'summary_match' END,CASE WHEN lower(d.brief) LIKE '%'||$1||'%' THEN 'brief_match' END],NULL)
+         (CASE WHEN lower(d.title)=$1 THEN $5 WHEN lower(d.title) LIKE $18||'%' THEN $6 WHEN lower(d.title) LIKE '%'||$18||'%' THEN $7 ELSE 0 END
+          + CASE WHEN lower(d.summary) LIKE '%'||$18||'%' THEN $10 ELSE 0 END
+          + CASE WHEN lower(d.brief) LIKE '%'||$18||'%' THEN $11::integer+3 ELSE 0 END + $17),
+         array_remove(ARRAY[CASE WHEN lower(d.title) LIKE '%'||$18||'%' THEN 'title_match' END,CASE WHEN lower(d.summary) LIKE '%'||$18||'%' THEN 'summary_match' END,CASE WHEN lower(d.brief) LIKE '%'||$18||'%' THEN 'brief_match' END],NULL)
   FROM demands d JOIN users u ON u.id=d.client_id AND u.status='active'
-  WHERE d.status='open' AND lower(d.title||' '||d.summary||' '||d.brief||' '||u.handle||' '||u.display_name) LIKE '%'||$1||'%'
+  WHERE d.status='open' AND lower(d.title||' '||d.summary||' '||d.brief||' '||u.handle||' '||u.display_name) LIKE '%'||$18||'%'
 ), filtered AS (
   SELECT * FROM candidates WHERE cardinality($2::text[])=0 OR kind=ANY($2::text[])
 ), counted AS (

@@ -14,10 +14,15 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/hcai-chat/hcai-chat/internal/accountlifecycle"
 	"github.com/hcai-chat/hcai-chat/internal/notifications"
 	"github.com/hcai-chat/hcai-chat/internal/platform/config"
 	"github.com/hcai-chat/hcai-chat/internal/platform/jobs"
 	"github.com/hcai-chat/hcai-chat/internal/platform/media"
+	"github.com/hcai-chat/hcai-chat/internal/productdelivery"
+	"github.com/hcai-chat/hcai-chat/internal/productpolicy"
+	"github.com/hcai-chat/hcai-chat/internal/taskdelivery"
+	"github.com/hcai-chat/hcai-chat/internal/uploadwrite"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -38,6 +43,7 @@ const (
 )
 
 type Asset struct {
+	UploadReplayed    bool           `json:"-"`
 	ID                uuid.UUID      `json:"id"`
 	Kind              string         `json:"kind"`
 	Title             string         `json:"title"`
@@ -108,12 +114,15 @@ type AssetUsage struct {
 }
 
 type ListInput struct {
-	Cursor string
-	Limit  int
+	Cursor  string
+	Limit   int
+	Source  string
+	Purpose string
 }
 
 type AssetPage struct {
 	Items      []Asset `json:"items"`
+	Total      int     `json:"total"`
 	NextCursor *string `json:"nextCursor,omitempty"`
 }
 
@@ -130,6 +139,9 @@ type UsagePage struct {
 type assetCursor struct {
 	CreatedAt time.Time `json:"createdAt"`
 	ID        uuid.UUID `json:"id"`
+	OwnerID   uuid.UUID `json:"ownerId"`
+	Source    string    `json:"source,omitempty"`
+	Purpose   string    `json:"purpose,omitempty"`
 }
 
 type savedWorkCursor struct {
@@ -144,10 +156,11 @@ type usageCursor struct {
 }
 
 type UploadInput struct {
-	Title     string
-	Filename  string
-	Reader    io.Reader
-	RequestID string
+	IdempotencyKey string
+	Title          string
+	Filename       string
+	Reader         io.Reader
+	RequestID      string
 }
 
 type VersionInput struct {
@@ -156,23 +169,34 @@ type VersionInput struct {
 }
 
 type Provenance struct {
+	TaskGrant  *taskdelivery.Grant   `json:"taskGrant,omitempty"`
 	Purchase   *PurchaseProvenance   `json:"purchase,omitempty"`
 	Generation *GenerationProvenance `json:"generation,omitempty"`
 }
 
 type PurchaseProvenance struct {
-	OrderID      uuid.UUID `json:"orderId"`
-	ProductID    uuid.UUID `json:"productId"`
-	ProductTitle string    `json:"productTitle"`
-	SellerID     uuid.UUID `json:"sellerId"`
-	SellerName   string    `json:"sellerName"`
-	SellerHandle string    `json:"sellerHandle"`
-	LicenseCode  string    `json:"licenseCode"`
-	LicenseName  string    `json:"licenseName"`
-	OrderStatus  string    `json:"orderStatus"`
-	GrantedAt    time.Time `json:"grantedAt"`
-	PaymentMode  string    `json:"paymentMode"`
-	RealCharge   bool      `json:"realCharge"`
+	Delivery     *PurchaseDelivery `json:"delivery,omitempty"`
+	CanDownload  bool              `json:"canDownload"`
+	CanReuse     bool              `json:"canReuse"`
+	OrderID      uuid.UUID         `json:"orderId"`
+	ProductID    uuid.UUID         `json:"productId"`
+	ProductTitle string            `json:"productTitle"`
+	SellerID     *uuid.UUID        `json:"sellerId,omitempty"`
+	SellerName   string            `json:"sellerName,omitempty"`
+	SellerHandle string            `json:"sellerHandle,omitempty"`
+	LicenseCode  string            `json:"licenseCode"`
+	LicenseName  string            `json:"licenseName"`
+	OrderStatus  string            `json:"orderStatus"`
+	GrantedAt    time.Time         `json:"grantedAt"`
+	PaymentMode  string            `json:"paymentMode"`
+	RealCharge   bool              `json:"realCharge"`
+}
+
+type PurchaseDelivery struct {
+	Format    string                       `json:"format"`
+	SizeBytes int64                        `json:"sizeBytes"`
+	SHA256    string                       `json:"sha256"`
+	Files     []productdelivery.BundleFile `json:"files"`
 }
 
 type GenerationProvenance struct {
@@ -231,6 +255,14 @@ func (s *Service) storeUpload(ctx context.Context, ownerID uuid.UUID, input Uplo
 	if ownerID == uuid.Nil || len(input.Title) < 3 || len(input.Title) > 120 || input.Filename == "." || len(input.Filename) > 180 || input.Reader == nil {
 		return Asset{}, ErrInvalid
 	}
+	// Direct in-process callers may request a fresh operation. HTTP callers must
+	// supply a key, so response loss can be recovered across client retries.
+	if input.IdempotencyKey == "" {
+		input.IdempotencyKey = uuid.NewString()
+	}
+	if !ValidUploadKey(input.IdempotencyKey) {
+		return Asset{}, ErrUploadKey
+	}
 	assetID := uuid.New()
 	limited := io.LimitReader(input.Reader, MaxUploadSize+1)
 	data, err := io.ReadAll(limited)
@@ -250,28 +282,52 @@ func (s *Service) storeUpload(ctx context.Context, ownerID uuid.UUID, input Uplo
 		return Asset{}, ErrInvalid
 	}
 	store := s.stores.Primary()
-	storageKey, err := store.ObjectKey(assetID.String() + extension)
+	reservation, err := s.reserveUpload(ctx, ownerID, assetID, input.IdempotencyKey, uploadRequestHash(input, baseAssetID, versionNote, mimeType, data), store, data, extension)
 	if err != nil {
-		return Asset{}, fmt.Errorf("create upload storage key: %w", err)
+		return Asset{}, err
 	}
-	if err := store.Put(ctx, storageKey, data, mimeType); errors.Is(err, media.ErrConflict) {
-		return Asset{}, ErrConflict
-	} else if err != nil {
-		return Asset{}, fmt.Errorf("store uploaded asset: %w", err)
+	if reservation.Replay != nil {
+		return *reservation.Replay, nil
 	}
+	intent := reservation.Intent
+	storageKey := intent.Key
+	// Always leave cleanup responsibility in durable storage before Put. Cleanup
+	// after any failure checks attachment/holds/bytes rather than deleting blindly.
 	committed := false
 	defer func() {
-		if !committed {
-			_ = store.Delete(context.WithoutCancel(ctx), storageKey)
+		if committed {
+			return
 		}
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		_ = uploadwrite.NewService(s.pool, s.stores).Cleanup(cleanupCtx, intent.ID)
 	}()
-	written := int64(len(data))
 
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return Asset{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err = accountlifecycle.Lock(ctx, tx, ownerID); err != nil {
+		return Asset{}, err
+	}
+	var accountStatus string
+	if err = tx.QueryRow(ctx, `SELECT status FROM users WHERE id=$1 FOR SHARE`, ownerID).Scan(&accountStatus); errors.Is(err, pgx.ErrNoRows) {
+		return Asset{}, ErrForbidden
+	} else if err != nil {
+		return Asset{}, err
+	}
+	if accountStatus != "active" {
+		return Asset{}, ErrForbidden
+	}
+	// A concurrent request can finish the same command after our reservation.
+	// Recheck under lifecycle/command locks before any external write.
+	if replay, err := uploadCommandResult(ctx, tx, reservation.CommandID, ownerID); err != nil {
+		return Asset{}, err
+	} else if replay != nil {
+		return *replay, nil
+	}
+	written := int64(len(data))
 	familyID, versionNumber, licenseCode := assetID, 1, "personal"
 	var supersedesAssetID *uuid.UUID
 	if baseAssetID != nil {
@@ -282,7 +338,7 @@ func (s *Service) storeUpload(ctx context.Context, ownerID uuid.UUID, input Uplo
 		} else if err != nil {
 			return Asset{}, err
 		}
-		if actualOwner != ownerID || sourceType == "purchase" {
+		if actualOwner != ownerID || (sourceType == "purchase" || licenseCode == "task-contract") {
 			return Asset{}, ErrForbidden
 		}
 		if baseKind != kind {
@@ -295,6 +351,14 @@ func (s *Service) storeUpload(ctx context.Context, ownerID uuid.UUID, input Uplo
 			return Asset{}, err
 		}
 		supersedesAssetID = baseAssetID
+	}
+	// Validate account and version ownership before writing private bytes. The
+	// lifecycle lock remains held through Put and commit, so deletion cannot finish
+	// between authorization and asset insertion.
+	if err = uploadwrite.WriteTx(ctx, tx, s.stores, intent, data, mimeType); errors.Is(err, media.ErrConflict) {
+		return Asset{}, ErrConflict
+	} else if err != nil {
+		return Asset{}, fmt.Errorf("store uploaded asset: %w", err)
 	}
 	item := Asset{
 		ID: assetID, Kind: kind, Title: input.Title, MediaURL: "/api/v1/assets/" + assetID.String() + "/content",
@@ -316,9 +380,14 @@ func (s *Service) storeUpload(ctx context.Context, ownerID uuid.UUID, input Uplo
 		return Asset{}, fmt.Errorf("create uploaded asset: %w", err)
 	}
 	payload, _ := json.Marshal(map[string]any{"assetId": assetID})
-	if _, err := tx.Exec(ctx, `INSERT INTO jobs(kind,payload,max_attempts) VALUES($1,$2,3)`, ScanJobKind, payload); err != nil {
+	var scanJobID uuid.UUID
+	if err := tx.QueryRow(ctx, `INSERT INTO jobs(kind,payload,max_attempts) VALUES($1,$2,3) RETURNING id`, ScanJobKind, payload).Scan(&scanJobID); err != nil {
 		return Asset{}, fmt.Errorf("queue asset scan: %w", err)
 	}
+	if _, err := tx.Exec(ctx, `INSERT INTO asset_scan_executions(asset_id,job_id) VALUES($1,$2)`, assetID, scanJobID); err != nil {
+		return Asset{}, fmt.Errorf("bind asset scan: %w", err)
+	}
+
 	action, reason := "asset.uploaded", "User uploaded an Asset for asynchronous scanning"
 	if baseAssetID != nil {
 		action, reason = "asset.version_uploaded", versionNote
@@ -329,9 +398,26 @@ func (s *Service) storeUpload(ctx context.Context, ownerID uuid.UUID, input Uplo
 	if _, err := tx.Exec(ctx, `INSERT INTO audit_events(actor_id,action,resource_type,resource_id,reason,request_id,metadata) VALUES($1,$2,'asset',$3,$4,$5,jsonb_build_object('mimeType',$6::text,'sizeBytes',$7::bigint,'familyId',$8::text,'versionNumber',$9::integer))`, ownerID, action, assetID, reason, requestID(input.RequestID), mimeType, written, familyID, versionNumber); err != nil {
 		return Asset{}, fmt.Errorf("audit asset upload: %w", err)
 	}
-	if err := tx.Commit(ctx); err != nil {
+	if err = uploadwrite.AttachTx(ctx, tx, intent.ID); err != nil {
 		return Asset{}, err
 	}
+	if _, err = tx.Exec(ctx, `UPDATE asset_upload_commands SET result_asset_id=$2,completed_at=now() WHERE id=$1 AND result_asset_id IS NULL`, reservation.CommandID, item.ID); err != nil {
+		return Asset{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		// A failed acknowledgement is not proof of rollback. Never delete the
+		// original until a fresh, serialized read proves that it was not committed.
+		committedAsset, found, verifyErr := s.resolveUploadCommit(ctx, ownerID, item, store.Backend(), storageKey)
+		if verifyErr != nil {
+			return Asset{}, errors.Join(err, verifyErr)
+		}
+		if found {
+			committed = true
+			return committedAsset, nil
+		}
+		return Asset{}, err
+	}
+
 	committed = true
 	return item, nil
 }
@@ -353,17 +439,21 @@ func (s *Service) HandleScanJob(ctx context.Context, job jobs.Job) error {
 	if scanStatus != "pending" {
 		return nil
 	}
+	job, err := checkScanExecution(ctx, s.pool, payload.AssetID, job)
+	if err != nil {
+		return err
+	}
 	store, err := s.stores.Get(storageBackend)
 	if err != nil {
 		if job.Attempts >= job.MaxAttempts {
-			return s.finishScan(ctx, payload.AssetID, ownerID, media.ScanResult{Status: "review", ReasonCode: "storage_backend_unavailable", Engine: s.scanner.Adapter(), Version: "1"})
+			return s.finishScan(ctx, payload.AssetID, ownerID, job, media.ScanResult{Status: "review", ReasonCode: "storage_backend_unavailable", Engine: s.scanner.Adapter(), Version: "1"})
 		}
 		return err
 	}
 	object, err := store.Open(ctx, storageKey, nil)
 	if err != nil {
 		if job.Attempts >= job.MaxAttempts {
-			return s.finishScan(ctx, payload.AssetID, ownerID, media.ScanResult{Status: "review", ReasonCode: "storage_read_failed", Engine: s.scanner.Adapter(), Version: "1"})
+			return s.finishScan(ctx, payload.AssetID, ownerID, job, media.ScanResult{Status: "review", ReasonCode: "storage_read_failed", Engine: s.scanner.Adapter(), Version: "1"})
 		}
 		return fmt.Errorf("read uploaded asset for scan: %w", err)
 	}
@@ -371,57 +461,106 @@ func (s *Service) HandleScanJob(ctx context.Context, job jobs.Job) error {
 	closeErr := object.Body.Close()
 	if readErr != nil || closeErr != nil || len(data) > MaxUploadSize {
 		if job.Attempts >= job.MaxAttempts {
-			return s.finishScan(ctx, payload.AssetID, ownerID, media.ScanResult{Status: "review", ReasonCode: "storage_read_failed", Engine: s.scanner.Adapter(), Version: "1"})
+			return s.finishScan(ctx, payload.AssetID, ownerID, job, media.ScanResult{Status: "review", ReasonCode: "storage_read_failed", Engine: s.scanner.Adapter(), Version: "1"})
 		}
 		return fmt.Errorf("read uploaded asset for scan: read=%v close=%v", readErr, closeErr)
 	}
+	// Storage I/O may outlive the claim; recheck before sending private bytes.
+	if job, err = checkScanExecution(ctx, s.pool, payload.AssetID, job); err != nil {
+		return err
+	}
 	result, err := s.scanner.Scan(ctx, storageKey, mimeType, data)
 	if err != nil {
+		// The worker will not schedule another attempt for a permanent scanner
+		// failure. Complete its business state too, without accepting any verdict.
+		if !jobs.ShouldRetry(err) {
+			return s.finishScan(ctx, payload.AssetID, ownerID, job, media.ScanResult{Status: "review", ReasonCode: "scanner_failed", Engine: s.scanner.Adapter(), Version: "1"})
+		}
 		if job.Attempts >= job.MaxAttempts {
-			return s.finishScan(ctx, payload.AssetID, ownerID, media.ScanResult{Status: "review", ReasonCode: "scanner_failed_after_retries", Engine: s.scanner.Adapter(), Version: "1"})
+			return s.finishScan(ctx, payload.AssetID, ownerID, job, media.ScanResult{Status: "review", ReasonCode: "scanner_failed_after_retries", Engine: s.scanner.Adapter(), Version: "1"})
 		}
 		return err
 	}
-	return s.finishScan(ctx, payload.AssetID, ownerID, result)
+	return s.finishScan(ctx, payload.AssetID, ownerID, job, result)
 }
 
-func (s *Service) finishScan(ctx context.Context, assetID, ownerID uuid.UUID, result media.ScanResult) error {
-	reason := scanReason(result)
+func (s *Service) finishScan(ctx context.Context, assetID, ownerID uuid.UUID, job jobs.Job, result media.ScanResult) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	updated, err := tx.Exec(ctx, `UPDATE assets SET scan_status=$2,scan_reason=$3,scanned_at=now() WHERE id=$1 AND scan_status='pending'`, assetID, result.Status, reason)
-	if err != nil {
+	if err = accountlifecycle.Lock(ctx, tx, ownerID); err != nil {
 		return err
 	}
-	if updated.RowsAffected() == 0 {
+	var status string
+	if err = tx.QueryRow(ctx, `SELECT scan_status FROM assets WHERE id=$1 FOR UPDATE`, assetID).Scan(&status); err != nil {
+		return err
+	}
+	if status != "pending" {
 		return tx.Commit(ctx)
 	}
-	title := "Asset scan completed"
-	body := "Your uploaded Asset passed deterministic local scanning and is ready to use."
-	if result.Status != "clean" {
-		title = "Asset needs review"
-		body = "Your uploaded Asset is not available because deterministic local scanning requires review."
-	}
-	if err := notifications.CreateTx(ctx, tx, notifications.CreateInput{
-		UserID: ownerID, Kind: "asset.scan_completed", Title: title, Body: body, TargetPath: "/workspace/assets/" + assetID.String(),
-		ResourceType: "asset", ResourceID: &assetID, SourceKey: "asset-scan:" + assetID.String() + ":" + result.Status,
-	}); err != nil {
+	if _, err = lockScanExecution(ctx, tx, assetID, job); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `INSERT INTO audit_events(action,resource_type,resource_id,reason,request_id,metadata) VALUES('asset.scan_completed','asset',$1,$2,'asset-scanner',jsonb_build_object('status',$3::text,'reasonCode',$4::text,'scannerAdapter',$5::text,'engine',$6::text,'version',$7::text))`, assetID, reason, result.Status, result.ReasonCode, s.scanner.Adapter(), result.Engine, result.Version); err != nil {
+	if err = finishScanTx(ctx, tx, assetID, ownerID, result, s.scanner.Adapter()); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
 }
 
+func finishScanTx(ctx context.Context, tx pgx.Tx, assetID, ownerID uuid.UUID, result media.ScanResult, adapter string) error {
+	// Callers hold the account lifecycle lock before the asset row lock.
+	var accountStatus string
+	if err := tx.QueryRow(ctx, `SELECT status FROM users WHERE id=$1`, ownerID).Scan(&accountStatus); err != nil {
+		return err
+	}
+	if accountStatus == "deleted" {
+		result = media.ScanResult{Status: "review", ReasonCode: "scanner_execution_failed", Engine: result.Engine, Version: result.Version}
+	}
+	reason := scanReason(result)
+	updated, err := tx.Exec(ctx, `UPDATE assets SET scan_status=$2,scan_reason=$3,scanned_at=now() WHERE id=$1 AND scan_status='pending'`, assetID, result.Status, reason)
+	if err != nil {
+		return err
+	}
+	if updated.RowsAffected() == 0 {
+		return nil
+	}
+	title := "Asset scan completed"
+	body := "Your uploaded Asset passed scanning and is ready to use."
+	if result.Status != "clean" {
+		title = "Asset needs review"
+		body = "Your uploaded Asset needs review and is not available for use yet."
+	}
+	if accountStatus != "deleted" {
+		if err := notifications.CreateTx(ctx, tx, notifications.CreateInput{
+			UserID: ownerID, Kind: "asset.scan_completed", Title: title, Body: body, TargetPath: "/workspace/assets/" + assetID.String(),
+			ResourceType: "asset", ResourceID: &assetID, SourceKey: "asset-scan:" + assetID.String() + ":" + result.Status,
+		}); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO audit_events(action,resource_type,resource_id,reason,request_id,metadata) VALUES('asset.scan_completed','asset',$1,$2,'asset-scanner',jsonb_build_object('status',$3::text,'reasonCode',$4::text,'scannerAdapter',$5::text,'engine',$6::text,'version',$7::text))`, assetID, reason, result.Status, result.ReasonCode, adapter, result.Engine, result.Version); err != nil {
+		return err
+	}
+	return nil
+}
+
+const assetListConditions = ` WHERE a.owner_id=$1
+	AND ($2='' OR a.source_type=$2)
+	AND ($3='' OR ($3='product_preview' AND EXISTS(SELECT 1 FROM product_preview_candidates candidate WHERE candidate.asset_id=a.id))
+ OR ($3='product_source' AND EXISTS(SELECT 1 FROM product_source_candidates candidate WHERE candidate.asset_id=a.id)))
+	AND (a.source_type<>'purchase' OR EXISTS(SELECT 1 FROM entitlements e WHERE e.asset_id=a.id AND e.user_id=$1 AND e.status='active'))
+	AND NOT (a.source_type='generation' AND EXISTS(SELECT 1 FROM generations chat_generation WHERE chat_generation.id=a.source_id AND chat_generation.mode='chat'))
+	AND NOT EXISTS(SELECT 1 FROM assets newer WHERE newer.family_id=a.family_id AND newer.version_number>a.version_number)`
+
 func (s *Service) List(ctx context.Context, ownerID uuid.UUID, input ListInput) (AssetPage, error) {
 	if input.Limit == 0 {
 		input.Limit = 20
 	}
-	if ownerID == uuid.Nil || input.Limit < 1 || input.Limit > 50 {
+	if ownerID == uuid.Nil || input.Limit < 1 || input.Limit > 50 || len(input.Cursor) > 1024 ||
+		(input.Source != "" && input.Source != "purchase") ||
+		(input.Purpose != "" && input.Purpose != "product_preview" && input.Purpose != "product_source") || (input.Purpose != "" && input.Source != "") {
 		return AssetPage{}, ErrInvalidList
 	}
 	var cursorTime *time.Time
@@ -431,15 +570,23 @@ func (s *Service) List(ctx context.Context, ownerID uuid.UUID, input ListInput) 
 		if err != nil {
 			return AssetPage{}, err
 		}
+		if cursor.OwnerID != ownerID || cursor.Source != input.Source || cursor.Purpose != input.Purpose {
+			return AssetPage{}, ErrInvalidList
+		}
 		cursorTime, cursorID = &cursor.CreatedAt, &cursor.ID
 	}
-	rows, err := s.pool.Query(ctx, assetSelect+`
-		WHERE a.owner_id=$1
-		  AND (a.source_type<>'purchase' OR EXISTS(SELECT 1 FROM entitlements e WHERE e.asset_id=a.id AND e.user_id=$1 AND e.status='active'))
-		  AND NOT (a.source_type='generation' AND EXISTS(SELECT 1 FROM generations chat_generation WHERE chat_generation.id=a.source_id AND chat_generation.mode='chat'))
-		  AND NOT EXISTS(SELECT 1 FROM assets newer WHERE newer.family_id=a.family_id AND newer.version_number>a.version_number)
-		  AND ($2::timestamptz IS NULL OR (a.created_at,a.id)<($2,$3::uuid))
-		ORDER BY a.created_at DESC,a.id DESC LIMIT $4`, ownerID, cursorTime, cursorID, input.Limit+1)
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return AssetPage{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var total int
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM assets a`+assetListConditions, ownerID, input.Source, input.Purpose).Scan(&total); err != nil {
+		return AssetPage{}, err
+	}
+	rows, err := tx.Query(ctx, assetSelect+assetListConditions+`
+		  AND ($4::timestamptz IS NULL OR (a.created_at,a.id)<($4,$5::uuid))
+		ORDER BY a.created_at DESC,a.id DESC LIMIT $6`, ownerID, input.Source, input.Purpose, cursorTime, cursorID, input.Limit+1)
 	if err != nil {
 		return AssetPage{}, fmt.Errorf("list assets: %w", err)
 	}
@@ -455,14 +602,14 @@ func (s *Service) List(ctx context.Context, ownerID uuid.UUID, input ListInput) 
 	if err := rows.Err(); err != nil {
 		return AssetPage{}, err
 	}
-	page := AssetPage{Items: items}
+	page := AssetPage{Items: items, Total: total}
 	if len(page.Items) > input.Limit {
 		page.Items = page.Items[:input.Limit]
 		last := page.Items[len(page.Items)-1]
-		cursor := encodeCursor(assetCursor{CreatedAt: last.CreatedAt, ID: last.ID})
+		cursor := encodeCursor(assetCursor{CreatedAt: last.CreatedAt, ID: last.ID, OwnerID: ownerID, Source: input.Source, Purpose: input.Purpose})
 		page.NextCursor = &cursor
 	}
-	return page, nil
+	return page, tx.Commit(ctx)
 }
 
 func (s *Service) ListSavedWorks(ctx context.Context, userID uuid.UUID, input ListInput) (SavedWorkPage, error) {
@@ -485,7 +632,7 @@ func (s *Service) ListSavedWorks(ctx context.Context, userID uuid.UUID, input Li
 		SELECT p.id,w.id,a.id,w.title,w.summary,a.media_url,a.kind,a.width,a.height,
 		       a.license_code,w.prompt_visibility,u.id,u.handle,u.display_name,pr.created_at
 		FROM post_reactions pr
-		JOIN posts p ON p.id=pr.post_id
+		JOIN community_visible_posts p ON p.id=pr.post_id
 		JOIN works w ON w.id=p.work_id
 		JOIN assets a ON a.id=w.asset_id
 		JOIN users u ON u.id=w.author_id
@@ -534,6 +681,15 @@ func (s *Service) GetOwned(ctx context.Context, ownerID, assetID uuid.UUID) (Ass
 	}
 	provenance := &Provenance{}
 	switch item.SourceType {
+	case "delivery":
+		var grant taskdelivery.Grant
+		err := s.pool.QueryRow(ctx, `SELECT demand_id,delivery_id,rights_terms,rights_evidence,ai_disclosure,allow_derivative_reuse FROM task_delivery_grants WHERE asset_id=$1 AND client_id=$2`, item.ID, ownerID).Scan(&grant.TaskID, &grant.DeliveryID, &grant.RightsTerms, &grant.RightsEvidence, &grant.AIDisclosure, &grant.AllowDerivativeReuse)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return Asset{}, err
+		}
+		if err == nil {
+			provenance.TaskGrant = &grant
+		}
 	case "purchase":
 		purchase, err := s.purchaseProvenance(ctx, item.ID)
 		if err != nil {
@@ -547,7 +703,7 @@ func (s *Service) GetOwned(ctx context.Context, ownerID, assetID uuid.UUID) (Ass
 		}
 		provenance.Generation = generation
 	}
-	if provenance.Purchase != nil || provenance.Generation != nil {
+	if provenance.Purchase != nil || provenance.Generation != nil || provenance.TaskGrant != nil {
 		item.Provenance = provenance
 	}
 	versions, err := s.versions(ctx, item.FamilyID)
@@ -711,47 +867,215 @@ func (s *Service) versions(ctx context.Context, familyID uuid.UUID) ([]AssetVers
 }
 
 type Content struct {
-	MimeType string
-	Name     string
-	store    media.Store
-	key      string
+	snapshot   *productdelivery.Snapshot
+	fileIndex  *int
+	authorize  func(context.Context) error
+	stores     *media.Catalog
+	MimeType   string
+	Name       string
+	Attachment bool
+	store      media.Store
+	key        string
 }
 
-func (c Content) Stat(ctx context.Context) (media.ObjectInfo, error) { return c.store.Stat(ctx, c.key) }
+// WithAuthorization adds an access condition without replacing ownership,
+// scan, storage-locator or purchased-content checks on the original handle.
+func (c Content) WithAuthorization(check func(context.Context) error) Content {
+	if check == nil {
+		return c
+	}
+	original := c.authorize
+	c.authorize = func(ctx context.Context) error {
+		if err := check(ctx); err != nil {
+			return err
+		}
+		if original != nil {
+			return original(ctx)
+		}
+		return nil
+	}
+	return c
+}
+
+func (c Content) Stat(ctx context.Context) (media.ObjectInfo, error) {
+	if c.authorize != nil {
+		if err := c.authorize(ctx); err != nil {
+			return media.ObjectInfo{}, err
+		}
+	}
+	if c.snapshot != nil {
+		if c.fileIndex != nil {
+			file := c.snapshot.Manifest.Files[*c.fileIndex]
+			return media.ObjectInfo{Size: file.SizeBytes, ETag: `"sha256-` + file.SHA256 + `"`}, nil
+		}
+		return media.ObjectInfo{Size: c.snapshot.Size, ETag: `"sha256-` + c.snapshot.SHA256 + `"`}, nil
+	}
+	info, err := c.store.Stat(ctx, c.key)
+	if err != nil {
+		return media.ObjectInfo{}, err
+	}
+	// A remote HEAD may outlive authority. Do not expose even length/range
+	// metadata after it completes with an obsolete grant.
+	if c.authorize != nil {
+		if err := c.authorize(ctx); err != nil {
+			return media.ObjectInfo{}, err
+		}
+	}
+	return info, nil
+}
 func (c Content) Open(ctx context.Context, requested *media.ByteRange) (media.Object, error) {
-	return c.store.Open(ctx, c.key, requested)
+	if c.authorize != nil {
+		if err := c.authorize(ctx); err != nil {
+			return media.Object{}, err
+		}
+	}
+	var object media.Object
+	var err error
+	if c.snapshot != nil {
+		if c.fileIndex != nil {
+			object, err = c.snapshot.OpenFile(ctx, c.stores, *c.fileIndex, requested)
+		} else {
+			object, err = c.snapshot.Open(ctx, c.stores, requested)
+		}
+	} else {
+		object, err = c.store.Open(ctx, c.key, requested)
+	}
+	if err != nil {
+		return media.Object{}, err
+	}
+	// Both snapshot staging and legacy storage reads may take time. Close the
+	// stream if rights or scanning changed before the bytes can be returned.
+	if c.authorize != nil {
+		if err = c.authorize(ctx); err != nil {
+			_ = object.Body.Close()
+			return media.Object{}, err
+		}
+	}
+	return object, nil
+}
+
+// contentAccess binds a non-snapshot handle to the exact authorized locator.
+// Re-resolving it prevents a stale handle from inheriting changed visibility or
+// using an old key after the asset has moved. This is not a historical checksum.
+type contentAccess struct {
+	ownerID, orderID                                        uuid.UUID
+	mimeType, storageSourceType, storageBackend, storageKey string
+	snapshotRequired                                        bool
+}
+
+func (s *Service) resolveContentAccess(ctx context.Context, viewerID, assetID uuid.UUID) (contentAccess, error) {
+	var access contentAccess
+	var publiclyVisible, purchaseActive, taskParticipant, viewerActive bool
+	err := s.pool.QueryRow(ctx, `
+			SELECT a.owner_id,COALESCE(c.contract->'asset'->>'mimeType',a.mime_type),COALESCE(c.contract->'asset'->>'sourceType',origin.source_type,a.source_type),
+			       COALESCE(c.contract->'asset'->>'storageBackend',origin.storage_backend,a.storage_backend),
+			       COALESCE(c.contract->'asset'->>'storageKey',origin.storage_key,a.storage_key),
+			       (a.source_type<>'purchase' AND NOT EXISTS(SELECT 1 FROM product_delivery_roots r WHERE r.asset_id=COALESCE(a.origin_asset_id,a.id)) AND
+			       (EXISTS(SELECT 1 FROM public_product_previews preview WHERE preview.asset_id=a.id) OR EXISTS(SELECT 1 FROM public_works w WHERE w.asset_id IN (a.id,a.origin_asset_id)) OR
+			        EXISTS(SELECT 1 FROM system_settings ss WHERE ss.singleton=true AND ss.site_configuration->>'siteIconUrl'=a.media_url))),
+			       a.source_type<>'purchase' OR `+productpolicy.PurchaseAssetAccessSQL+`,
+                   EXISTS(SELECT 1 FROM deliveries dl JOIN demands d ON d.id=dl.demand_id
+                          WHERE (dl.asset_id=a.id OR EXISTS(SELECT 1 FROM delivery_assets da WHERE da.delivery_id=dl.id AND da.asset_id=a.id)) AND (d.client_id=$2 OR (d.status='disputed' AND EXISTS(SELECT 1 FROM users u JOIN role_permissions rp ON rp.role=u.role WHERE u.id=$2 AND u.status='active' AND rp.permission_id='admin:tasks'))) AND d.status IN ('submitted','revision','disputed','accepted')),
+                   COALESCE(o.delivery_snapshot_required,false),COALESCE(o.id,'00000000-0000-0000-0000-000000000000'::uuid),
+                   EXISTS(SELECT 1 FROM users viewer WHERE viewer.id=$2 AND viewer.status='active')
+			FROM assets a
+			LEFT JOIN assets origin ON origin.id=a.origin_asset_id
+			LEFT JOIN product_order_contracts c ON a.source_type='purchase' AND c.order_id=a.source_id
+            LEFT JOIN orders o ON a.source_type='purchase' AND o.id=a.source_id
+			WHERE a.id=$1 AND a.scan_status='clean' AND (origin.id IS NULL OR origin.scan_status='clean')`, assetID, viewerID).Scan(&access.ownerID, &access.mimeType, &access.storageSourceType, &access.storageBackend, &access.storageKey, &publiclyVisible, &purchaseActive, &taskParticipant, &access.snapshotRequired, &access.orderID, &viewerActive)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return contentAccess{}, ErrNotFound
+	}
+	if err != nil {
+		return contentAccess{}, fmt.Errorf("get asset content: %w", err)
+	}
+	if !purchaseActive || (!publiclyVisible && !(viewerActive && (access.ownerID == viewerID || taskParticipant))) {
+		return contentAccess{}, ErrForbidden
+	}
+	return access, nil
 }
 
 func (s *Service) Content(ctx context.Context, viewerID, assetID uuid.UUID) (Content, error) {
-	var ownerID uuid.UUID
-	var mimeType, storageSourceType, storageBackend, storageKey string
-	var publiclyVisible, purchaseActive bool
-	err := s.pool.QueryRow(ctx, `
-			SELECT a.owner_id,a.mime_type,COALESCE(origin.source_type,a.source_type),
-			       COALESCE(origin.storage_backend,a.storage_backend),COALESCE(origin.storage_key,a.storage_key),
-			       (EXISTS(SELECT 1 FROM works w WHERE w.asset_id IN (a.id,a.origin_asset_id) AND w.status='published') OR
-			        EXISTS(SELECT 1 FROM system_settings ss WHERE ss.singleton=true AND ss.site_configuration->>'siteIconUrl'=a.media_url)),
-			       a.source_type<>'purchase' OR EXISTS(SELECT 1 FROM entitlements e WHERE e.asset_id=a.id AND e.user_id=a.owner_id AND e.status='active')
-			FROM assets a
-			LEFT JOIN assets origin ON origin.id=a.origin_asset_id
-			WHERE a.id=$1 AND a.scan_status='clean'`, assetID).Scan(&ownerID, &mimeType, &storageSourceType, &storageBackend, &storageKey, &publiclyVisible, &purchaseActive)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return Content{}, ErrNotFound
-	}
+	access, err := s.resolveContentAccess(ctx, viewerID, assetID)
 	if err != nil {
-		return Content{}, fmt.Errorf("get asset content: %w", err)
+		return Content{}, err
 	}
-	if !purchaseActive || (ownerID != viewerID && !publiclyVisible) {
-		return Content{}, ErrForbidden
+
+	if access.snapshotRequired {
+		if access.orderID == uuid.Nil {
+			return Content{}, ErrNotFound
+		}
+		if err := s.authorizePurchaseContent(ctx, viewerID, assetID, access.orderID); err != nil {
+			return Content{}, err
+		}
+		snapshot, err := productdelivery.Load(ctx, s.pool, access.orderID)
+		if errors.Is(err, pgx.ErrNoRows) || (err == nil && snapshot.State != "ready") {
+			return Content{}, ErrNotFound
+		}
+		if err != nil {
+			return Content{}, err
+		}
+		content := Content{MimeType: snapshot.MIMEType, Name: assetID.String(), snapshot: &snapshot, stores: s.stores,
+			authorize: func(ctx context.Context) error {
+				return s.authorizePurchaseContent(ctx, viewerID, assetID, access.orderID)
+			}}
+		if snapshot.Format == productdelivery.FormatZIPV1 {
+			content.Name += ".zip"
+			content.Attachment = true
+		}
+		return content, nil
 	}
-	if storageSourceType != "generation" && storageSourceType != "upload" {
+	if access.storageSourceType != "generation" && access.storageSourceType != "upload" {
 		return Content{}, ErrNotFound
 	}
-	store, err := s.stores.Get(storageBackend)
+	store, err := s.stores.Get(access.storageBackend)
 	if err != nil {
 		return Content{}, fmt.Errorf("get asset storage backend: %w", err)
 	}
-	return Content{MimeType: mimeType, Name: assetID.String(), store: store, key: storageKey}, nil
+	content := Content{MimeType: access.mimeType, Name: assetID.String(), store: store, key: access.storageKey}
+	content.authorize = func(ctx context.Context) error {
+		current, err := s.resolveContentAccess(ctx, viewerID, assetID)
+		if errors.Is(err, ErrNotFound) {
+			return ErrForbidden
+		}
+		if err != nil {
+			return err
+		}
+		if current != access {
+			return ErrForbidden
+		}
+		return nil
+	}
+	return content, nil
+}
+
+// ContentFile accepts only an index into this buyer's immutable package. It
+// cannot address originals, another order, or arbitrary storage keys.
+func (s *Service) ContentFile(ctx context.Context, viewerID, assetID uuid.UUID, index int) (Content, error) {
+	content, err := s.Content(ctx, viewerID, assetID)
+	if err != nil {
+		return Content{}, err
+	}
+	if content.snapshot == nil || content.snapshot.Format != productdelivery.FormatZIPV1 || content.snapshot.Manifest == nil || index < 0 || index >= len(content.snapshot.Manifest.Files) {
+		return Content{}, ErrInvalid
+	}
+	file := content.snapshot.Manifest.Files[index]
+	content.fileIndex, content.Name, content.MimeType, content.Attachment = &index, file.Name, file.MIMEType, true
+	return content, nil
+}
+
+func (s *Service) authorizePurchaseContent(ctx context.Context, viewerID, assetID, orderID uuid.UUID) error {
+	var allowed bool
+	err := s.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM assets a
+ WHERE a.id=$1 AND a.source_id=$2 AND a.owner_id=$3 AND `+productpolicy.PurchaseAssetAccessSQL+`)`,
+		assetID, orderID, viewerID).Scan(&allowed)
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return ErrForbidden
+	}
+	return nil
 }
 
 func (s *Service) generationProvenance(ctx context.Context, assetID uuid.UUID) (*GenerationProvenance, error) {
@@ -789,21 +1113,37 @@ func (s *Service) generationProvenance(ctx context.Context, assetID uuid.UUID) (
 func (s *Service) purchaseProvenance(ctx context.Context, assetID uuid.UUID) (*PurchaseProvenance, error) {
 	var result PurchaseProvenance
 	err := s.pool.QueryRow(ctx, `
-		SELECT e.order_id,p.id,o.product_title_snapshot,u.id,u.display_name,u.handle,e.license_code,o.license_name_snapshot,o.status,e.granted_at,
-	       CASE WHEN pi.provider IS NULL THEN 'test' ELSE pi.provider END,COALESCE(pi.live_mode,false)
+		SELECT e.order_id,p.id,o.product_title_snapshot,u.id,COALESCE(u.display_name,''),COALESCE(u.handle,''),e.license_code,o.license_name_snapshot,o.status,e.granted_at,
+	       CASE WHEN pi.provider IS NOT NULL THEN pi.provider WHEN legacy.order_id IS NOT NULL THEN 'test' ELSE 'unverified' END,COALESCE(pi.live_mode,false),
+	       `+productpolicy.PurchaseAssetAccessSQL+`, `+productpolicy.PurchaseAssetReuseSQL+`
 		FROM entitlements e
+		JOIN assets a ON a.id=e.asset_id
+		LEFT JOIN product_order_contracts c ON c.order_id=e.order_id
 		JOIN orders o ON o.id=e.order_id
 		JOIN products p ON p.id=e.product_id
-		JOIN users u ON u.id=p.seller_id
 		LEFT JOIN payment_intents pi ON pi.order_id=o.id
+  LEFT JOIN legacy_product_refund_evidence legacy ON legacy.order_id=o.id AND pi.id IS NULL
+  LEFT JOIN users u ON u.id::text=CASE WHEN c.order_id IS NOT NULL THEN c.contract->'product'->>'sellerId'
+    WHEN pi.id IS NOT NULL THEN pi.payee_id::text ELSE legacy.seller_id::text END
 		WHERE e.asset_id=$1`, assetID).Scan(
 		&result.OrderID, &result.ProductID, &result.ProductTitle, &result.SellerID, &result.SellerName,
-		&result.SellerHandle, &result.LicenseCode, &result.LicenseName, &result.OrderStatus, &result.GrantedAt, &result.PaymentMode, &result.RealCharge)
+		&result.SellerHandle, &result.LicenseCode, &result.LicenseName, &result.OrderStatus, &result.GrantedAt, &result.PaymentMode, &result.RealCharge,
+		&result.CanDownload, &result.CanReuse)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get purchase provenance: %w", err)
+	}
+	snapshot, err := productdelivery.Load(ctx, s.pool, result.OrderID)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return nil, err
+	}
+	if err == nil {
+		if snapshot.Format == productdelivery.FormatZIPV1 {
+			result.CanReuse = false
+			result.Delivery = &PurchaseDelivery{Format: snapshot.Format, SizeBytes: snapshot.Size, SHA256: snapshot.SHA256, Files: snapshot.Manifest.Files}
+		}
 	}
 	return &result, nil
 }
@@ -925,6 +1265,10 @@ func scanReason(result media.ScanResult) string {
 		return "Stored media could not be read after repeated scan attempts."
 	case "scanner_failed_after_retries":
 		return "The configured media scanner failed after repeated attempts."
+	case "scanner_execution_failed":
+		return "The scan worker stopped without a verified result. Review is required."
+	case "scanner_failed":
+		return "The configured media scanner could not verify this file. Review is required."
 	default:
 		return "Media scanner returned " + result.Status + " with reason code " + result.ReasonCode + "."
 	}

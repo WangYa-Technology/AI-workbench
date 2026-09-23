@@ -277,6 +277,7 @@ func upload(ctx context.Context, client *http.Client, baseURL string, payload []
 		return assets.Asset{}, err
 	}
 	request.Header.Set("Content-Type", writer.FormDataContentType())
+	request.Header.Set("Idempotency-Key", "media-acceptance-"+rand.Text())
 	response, err := client.Do(request)
 	if err != nil {
 		return assets.Asset{}, fmt.Errorf("upload application acceptance Asset")

@@ -1,3 +1,4 @@
+import { fixtureCredentials } from './helpers/identity'
 import { expect, test } from '@playwright/test'
 
 test('saves branding, footer, and policy content from Settings', async ({ page }) => {
@@ -6,7 +7,7 @@ test('saves branding, footer, and policy content from Settings', async ({ page }
   expect(originalResponse.ok()).toBeTruthy()
   const original = await originalResponse.json()
 
-  await page.request.post('/api/v1/auth/demo', { data: { actor: 'admin' } })
+  await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('admin') })
   try {
     await page.goto('/admin?tab=settings')
 		const workspace = page.locator('.site-configuration-workspace')
@@ -43,7 +44,7 @@ test('saves branding, footer, and policy content from Settings', async ({ page }
     await expect(page.locator('link[rel="icon"]')).toHaveAttribute('href', icon)
     await expect(page).toHaveTitle(siteName)
   } finally {
-    await page.request.post('/api/v1/auth/demo', { data: { actor: 'admin' } })
+    await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('admin') })
 		await page.request.put('/api/v1/admin/site-config', { data: original })
   }
 })
@@ -54,7 +55,7 @@ test('previews Markdown and renders sanitized policy and footer copy', async ({ 
   const original = await originalResponse.json()
   const markdown = '# Live policy\n\n**Bold policy** with [a link](https://example.com).\n\n<script>alert(1)</script>'
 
-  await page.request.post('/api/v1/auth/demo', { data: { actor: 'admin' } })
+  await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('admin') })
   try {
     await page.goto('/admin?tab=settings')
     const workspace = page.locator('.site-configuration-workspace')
@@ -99,7 +100,7 @@ test('previews Markdown and renders sanitized policy and footer copy', async ({ 
     await expect(page.locator('.site-footer-content strong')).toHaveText('Footer')
     await expect(page.locator('.site-footer-content em')).toHaveText('Markdown')
   } finally {
-    await page.request.post('/api/v1/auth/demo', { data: { actor: 'admin' } })
+    await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('admin') })
     await page.request.put('/api/v1/admin/site-config', { data: original })
   }
 })

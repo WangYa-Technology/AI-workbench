@@ -41,8 +41,11 @@ const routeStarter = () => String(route.query.starter || '').trim()
 const prompt = ref(routeStarter() || restored?.prompt || '')
 const sourceWork = ref<{ id: string; title: string } | null>(null)
 const sourceWorkLoading = ref(false)
+const sourceWorkError = ref('')
+const sourceWorkAttempt = ref(0)
 const sourceTask = ref<{ id: string; title: string } | null>(null)
 const sourceTaskLoading = ref(false)
+const sourceAssetLoading = ref(false)
 const view = ref<CreationDraftView>('guide')
 const settings = ref<CreationOutputSettings>(restored?.settings || defaultSettings(props.mode))
 const generations = ref<Generation[]>([])
@@ -104,7 +107,7 @@ const referenceKinds = computed(() => capabilityComplete.value ? activeCapabilit
 const referenceAccept = computed(() => ({ chat: 'text/plain,.txt,.md', image: 'image/jpeg,image/png', video: 'image/jpeg,image/png', music: 'audio/wav,audio/x-wav,audio/wave,audio/mpeg' }[activeMode.value]))
 const running = computed(() => generations.value.some(item => ['queued', 'running'].includes(item.status)))
 const currentConversation = computed(() => conversations.value.find(item => item.id === currentConversationId.value) || null)
-const canSubmit = computed(() => prompt.value.trim().length >= 3 && Boolean(session.user) && capabilitiesLoaded.value && !submitting.value && !sourceWorkLoading.value && !sourceTaskLoading.value && (!route.query.taskId || Boolean(sourceTask.value)) && !capabilityUnavailable.value && (!maskAsset.value || sourceAssets.value.length > 0))
+const canSubmit = computed(() => prompt.value.trim().length >= 3 && Boolean(session.user) && capabilitiesLoaded.value && !submitting.value && !sourceWorkLoading.value && (!route.query.sourceWorkId || sourceWork.value?.id === route.query.sourceWorkId) && !sourceTaskLoading.value && !sourceAssetLoading.value && (!route.query.sourceAssetId || sourceAssets.value.some(asset => asset.id === route.query.sourceAssetId)) && (!route.query.taskId || Boolean(sourceTask.value)) && !capabilityUnavailable.value && (!maskAsset.value || sourceAssets.value.length > 0))
 const generationLabel = computed(() => activeMode.value === 'chat' ? t('create.studio.continueChat') : t('actions.generateMode', { mode: modeLabel.value }))
 
 function defaultSettings(mode: CreationMode): CreationOutputSettings {
@@ -219,6 +222,7 @@ async function loadAssets() {
 function selectMode(mode: CreationMode) {
   if (!modeAvailable(mode)) return
   activeMode.value = mode
+  if (route.params.mode !== mode) void router.replace({ path: `/create/${mode}`, query: { ...route.query } })
   settings.value = defaultSettings(mode)
   sourceAssets.value = sourceAssets.value.filter(asset => referenceKinds.value.includes(asset.kind))
   if (mode !== 'image') maskAsset.value = null
@@ -254,13 +258,16 @@ function openAssetPicker(mode: 'references' | 'mask') {
 
 async function chooseAsset(asset: Asset) {
   if (referencePickerMode.value === 'mask') { maskAsset.value = maskAsset.value?.id === asset.id ? null : asset; feedback.value = maskAsset.value ? t('create.studio.maskAttached', { title: asset.title }) : ''; return }
-  if (sourceAssets.value.some(item => item.id === asset.id)) { sourceAssets.value = sourceAssets.value.filter(item => item.id !== asset.id); return }
+  if (sourceAssets.value.some(item => item.id === asset.id)) { removeSourceAsset(asset.id); return }
   if (sourceAssets.value.length >= 8) { error.value = t('create.studio.referenceLimit'); return }
   sourceAssets.value = [...sourceAssets.value, asset]
   feedback.value = t('create.studio.referenceAttached', { title: asset.title })
 }
 
-function removeSourceAsset(id: string) { sourceAssets.value = sourceAssets.value.filter(asset => asset.id !== id) }
+function removeSourceAsset(id: string) {
+  sourceAssets.value = sourceAssets.value.filter(asset => asset.id !== id)
+  if (route.query.sourceAssetId === id) void router.replace({ query: { ...route.query, sourceAssetId: undefined } })
+}
 
 async function waitForCleanAsset(asset: Asset) {
   let current = asset
@@ -357,7 +364,8 @@ onClickOutside(modeMenu, () => { modeMenuOpen.value = false }, { ignore: [modeMe
 onClickOutside(controlsPanel, () => { controlsOpen.value = false }, { ignore: [controlsTrigger] })
 onKeyStroke('Escape', () => { modeMenuOpen.value = false; controlsOpen.value = false; assetPickerOpen.value = false })
 
-watch([prompt, settings, activeMode], () => { drafts.save(props.mode, { prompt: prompt.value, view: view.value, settings: settings.value }) }, { deep: true })
+watch([prompt, settings, activeMode], () => { drafts.save(activeMode.value, { prompt: prompt.value, view: view.value, settings: settings.value }) }, { deep: true })
+watch(() => props.mode, mode => { if (mode !== activeMode.value) selectMode(mode) })
 watch(() => route.query.conversationId, async value => {
   const conversationID = String(value || '')
   if (!conversationID || conversationID === currentConversationId.value) return
@@ -389,10 +397,29 @@ watch(() => route.query.taskId, async (value, _previous, onCleanup) => {
   } catch (reason) { if (!stale) error.value = messageFrom(reason) }
   finally { if (!stale) sourceTaskLoading.value = false }
 }, { immediate: true })
-watch(() => route.query.sourceWorkId, async (value, _previous, onCleanup) => {
+watch(() => route.query.sourceAssetId, async (value, previous, onCleanup) => {
+  let stale = false
+  onCleanup(() => { stale = true })
+  if (previous) sourceAssets.value = sourceAssets.value.filter(asset => asset.id !== previous)
+  sourceAssetLoading.value = Boolean(value)
+  if (!value) return
+  try {
+    await session.ensure()
+    const asset = await api.getAsset(String(value))
+    if (stale) return
+    if (asset.scanStatus !== 'clean' || !referenceKinds.value.includes(asset.kind)) {
+      error.value = t('create.studio.referenceUnavailable')
+      return
+    }
+    if (!sourceAssets.value.some(item => item.id === asset.id)) sourceAssets.value = [asset, ...sourceAssets.value].slice(0, 8)
+  } catch (reason) { if (!stale) error.value = messageFrom(reason) }
+  finally { if (!stale) sourceAssetLoading.value = false }
+}, { immediate: true })
+watch([() => route.query.sourceWorkId, sourceWorkAttempt], async ([value], _previous, onCleanup) => {
   let stale = false
   onCleanup(() => { stale = true })
   sourceWork.value = null
+  sourceWorkError.value = ''
   sourceWorkLoading.value = Boolean(value)
   if (!value) return
   const originalPrompt = prompt.value
@@ -402,11 +429,16 @@ watch(() => route.query.sourceWorkId, async (value, _previous, onCleanup) => {
     sourceWork.value = { id: work.id, title: work.title }
     if (work.prompt && prompt.value === originalPrompt) prompt.value = work.prompt
   } catch (reason) {
-    if (!stale) error.value = messageFrom(reason)
+    if (!stale) sourceWorkError.value = messageFrom(reason)
   } finally {
     if (!stale) sourceWorkLoading.value = false
   }
 }, { immediate: true })
+// Asset usage links identify a specific result within its conversation. Open it once,
+// without reopening the dialog whenever background polling updates the list.
+watch(() => generations.value.find(item => item.id === route.query.generationId)?.id, id => {
+  if (id) selectedGeneration.value = generations.value.find(item => item.id === id) || null
+})
 watch(activeCapability, capability => {
   selectedModelId.value = capability?.models?.find(item => item.available)?.id || ''
   if (!capability) return
@@ -544,9 +576,24 @@ onMounted(async () => {
     </div>
 
     <form class="creation-composer" @submit.prevent="submit">
+      <div v-if="route.query.sourceAssetId && !sourceAssets.some(asset => asset.id === route.query.sourceAssetId)" class="creation-context">
+        <span class="creation-context-chip"><Paperclip :size="13" /><strong>{{ sourceAssetLoading ? t('status.loadingAssets') : t('create.studio.referenceUnavailable') }}</strong><UiIconButton size="sm" :label="t('actions.close')" @click="removeSourceAsset(String(route.query.sourceAssetId))"><X :size="13" /></UiIconButton></span>
+      </div>
       <div v-if="route.query.taskId" class="creation-context">
         <span class="creation-context-chip"><span>{{ t('content.taskSource') }}</span><strong>{{ sourceTaskLoading ? t('tasks.loading') : sourceTask?.title || t('taskCreationUnavailable') }}</strong><UiIconButton size="sm" :label="t('actions.close')" @click="router.replace({ query: { ...route.query, taskId: undefined } })"><X :size="13" /></UiIconButton></span>
       </div>
+      <div v-if="sourceWorkError" class="creation-context" role="alert">
+        <p>{{ t('inspiration.sourceFailed') }} {{ sourceWorkError }}</p>
+        <UiButton variant="secondary" type="button" @click="sourceWorkAttempt++">
+          {{ t('actions.retry') }}
+        </UiButton>
+        <UiButton variant="ghost" type="button" @click="router.replace({ query: { ...route.query, sourceWorkId: undefined } })">
+          {{ t('inspiration.removeSource') }}
+        </UiButton>
+      </div>
+      <p v-if="sourceWork" class="creation-context">
+        {{ t('inspiration.remixHint') }}
+      </p>
       <div v-if="sourceWork" class="creation-context">
         <span class="creation-context-chip"><Sparkles :size="13" /><span>{{ t('create.remixing') }}</span><strong>{{ sourceWork.title }}</strong><UiIconButton size="sm" :label="t('actions.close')" @click="router.replace({ query: { ...route.query, sourceWorkId: undefined } })"><X :size="13" /></UiIconButton></span>
       </div>
@@ -608,6 +655,11 @@ onMounted(async () => {
               </template><strong>{{ t('create.studio.menuItems.album') }}</strong><small>{{ t('create.studio.menuItems.reference') }}</small>
             </UiButton>
           </div>
+          <UiButton v-if="activeMode === 'image'" class="creation-menu-item" variant="ghost" content-wrapper role="menuitem" @click="openAssetPicker('mask')">
+            <template #start>
+              <ImageIcon :size="18" />
+            </template><strong>{{ t('create.studio.addMask') }}</strong><small>{{ t('create.studio.maskSummary') }}</small>
+          </UiButton>
           <div class="creation-menu-divider"></div>
           <div class="creation-menu-heading">
             {{ t('create.studio.menuItems.generationHeading') }}
@@ -658,7 +710,7 @@ onMounted(async () => {
         </div>
         <div v-else-if="assets.length" class="creation-asset-list">
           <UiButton v-for="asset in assets" :key="asset.id" variant="ghost" :content-wrapper="false" :class="{ selected: referencePickerMode === 'mask' ? maskAsset?.id === asset.id : sourceAssets.some(item => item.id === asset.id) }" @click="chooseAsset(asset)">
-            <AssetMedia :src="asset.mediaUrl" :kind="asset.kind" :alt="asset.title" :width="48" :height="48" :controls="false" /><span><strong>{{ asset.title }}</strong><small>{{ asset.mimeType }}</small></span><Check v-if="referencePickerMode === 'mask' ? maskAsset?.id === asset.id : sourceAssets.some(item => item.id === asset.id)" :size="14" />
+            <AssetMedia :src="asset.mediaUrl" :kind="asset.kind" :mime-type="asset.mimeType" :alt="asset.title" :width="48" :height="48" :controls="false" /><span><strong>{{ asset.title }}</strong><small>{{ asset.mimeType }}</small></span><Check v-if="referencePickerMode === 'mask' ? maskAsset?.id === asset.id : sourceAssets.some(item => item.id === asset.id)" :size="14" />
           </UiButton>
         </div>
         <p v-else class="creation-asset-empty">
@@ -689,6 +741,9 @@ onMounted(async () => {
           <AlertCircle :size="15" />{{ selectedGeneration.errorMessage }}
         </p>
         <footer>
+          <UiButton v-if="selectedGeneration.status === 'succeeded' && selectedGeneration.outputAssetId && selectedGeneration.sourceTaskId" as="RouterLink" variant="primary" size="sm" :to="{ path: `/market/demands/${selectedGeneration.sourceTaskId}`, query: { assetId: selectedGeneration.outputAssetId }, hash: '#task-participation' }">
+            {{ t('tasks.submitDelivery') }}
+          </UiButton>
           <UiButton v-if="selectedGeneration.status === 'succeeded' && selectedGeneration.outputAssetId" as="RouterLink" variant="primary" size="sm" :to="{ path: '/publish', query: { assetId: selectedGeneration.outputAssetId, prompt: selectedGeneration.prompt } }">
             {{ t('actions.publishWork') }}
           </UiButton>

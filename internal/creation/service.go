@@ -1,7 +1,6 @@
 package creation
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -15,9 +14,11 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/hcai-chat/hcai-chat/internal/billing"
+	"github.com/hcai-chat/hcai-chat/internal/generationoutput"
 	"github.com/hcai-chat/hcai-chat/internal/notifications"
 	"github.com/hcai-chat/hcai-chat/internal/platform/jobs"
 	"github.com/hcai-chat/hcai-chat/internal/platform/media"
+	"github.com/hcai-chat/hcai-chat/internal/productdelivery"
 	"github.com/hcai-chat/hcai-chat/internal/systemsettings"
 	"github.com/hcai-chat/hcai-chat/internal/webhooks"
 	"github.com/jackc/pgx/v5"
@@ -269,6 +270,9 @@ func (s *Service) SubmitCommand(ctx context.Context, ownerID uuid.UUID, input Su
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	if err := requireActiveGenerationAccount(ctx, tx, ownerID); err != nil {
+		return Generation{}, err
+	}
 	if replay, found, err := commandReplay(ctx, tx, ownerID, "submit", idempotencyKey, requestHash); err != nil {
 		return Generation{}, err
 	} else if found {
@@ -328,46 +332,12 @@ func (s *Service) SubmitCommand(ctx context.Context, ownerID uuid.UUID, input Su
 		return Generation{}, err
 	}
 
-	if input.SourceWorkID != nil {
-		var exists bool
-		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM works WHERE id=$1 AND status='published')`, input.SourceWorkID).Scan(&exists); err != nil {
-			return Generation{}, fmt.Errorf("check source work: %w", err)
-		}
-		if !exists {
-			return Generation{}, ErrInvalid
-		}
+	if err := validateSourceWork(ctx, tx, input.SourceWorkID); err != nil {
+		return Generation{}, err
 	}
-	if len(input.SourceAssetIDs) > 0 {
-		var validCount int
-		if err := tx.QueryRow(ctx, `
-			SELECT count(*) FROM assets a
-			WHERE a.id=ANY($1) AND a.owner_id=$2 AND a.scan_status='clean' AND a.kind=ANY($3)
-			    AND (a.source_type<>'purchase' OR EXISTS(
-			      SELECT 1 FROM entitlements e JOIN licenses l ON l.code=e.license_code
-			      WHERE e.asset_id=a.id AND e.user_id=$2 AND e.status='active' AND l.allows_derivatives
-			    ))
-			`, input.SourceAssetIDs, ownerID, referenceKindsForMode(input.Mode)).Scan(&validCount); err != nil {
-			return Generation{}, fmt.Errorf("check source assets: %w", err)
-		}
-		if validCount != len(input.SourceAssetIDs) {
-			return Generation{}, ErrInvalid
-		}
-	}
-	if input.MaskAssetID != nil {
-		if input.Mode != "image" || len(input.SourceAssetIDs) == 0 || *input.MaskAssetID == uuid.Nil {
-			return Generation{}, ErrInvalid
-		}
-		var validMask bool
-		if err := tx.QueryRow(ctx, `
-			SELECT EXISTS(
-			  SELECT 1 FROM assets
-			  WHERE id=$1 AND owner_id=$2 AND kind='image' AND scan_status='clean'
-			)`, input.MaskAssetID, ownerID).Scan(&validMask); err != nil {
-			return Generation{}, fmt.Errorf("check mask asset: %w", err)
-		}
-		if !validMask {
-			return Generation{}, ErrInvalid
-		}
+
+	if err := validateReferenceAssets(ctx, tx, ownerID, input); err != nil {
+		return Generation{}, err
 	}
 	if input.SourceTaskID != nil {
 		var allowed bool
@@ -431,11 +401,7 @@ func (s *Service) SubmitCommand(ctx context.Context, ownerID uuid.UUID, input Su
 	if err := insertGenerationReferences(ctx, tx, generation.ID, input.SourceAssetIDs); err != nil {
 		return Generation{}, err
 	}
-	payload, err := json.Marshal(jobPayload{GenerationID: generation.ID})
-	if err != nil {
-		return Generation{}, fmt.Errorf("marshal generation job: %w", err)
-	}
-	if _, err := tx.Exec(ctx, `INSERT INTO jobs(kind,payload,max_attempts) VALUES($1,$2,$3)`, JobKind, payload, maxAttempts); err != nil {
+	if err := enqueueGenerationTx(ctx, tx, generation.ID, maxAttempts); err != nil {
 		return Generation{}, fmt.Errorf("enqueue generation: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
@@ -467,6 +433,9 @@ func (s *Service) Cancel(ctx context.Context, ownerID, generationID uuid.UUID, i
 		return Generation{}, fmt.Errorf("begin generation cancellation: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err := requireActiveGenerationAccount(ctx, tx, ownerID); err != nil {
+		return Generation{}, err
+	}
 	if replay, found, err := commandReplay(ctx, tx, ownerID, "cancel", idempotencyKey, requestHash); err != nil {
 		return Generation{}, err
 	} else if found {
@@ -526,6 +495,9 @@ func (s *Service) Retry(ctx context.Context, ownerID, generationID uuid.UUID, id
 		return Generation{}, fmt.Errorf("begin generation retry: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err := requireActiveGenerationAccount(ctx, tx, ownerID); err != nil {
+		return Generation{}, err
+	}
 	if replay, found, err := commandReplay(ctx, tx, ownerID, "retry", idempotencyKey, requestHash); err != nil {
 		return Generation{}, err
 	} else if found {
@@ -582,7 +554,14 @@ func (s *Service) Retry(ctx context.Context, ownerID, generationID uuid.UUID, id
 	if err := validateProviderRequest(provider, input.Mode, input.Parameters, len(input.SourceAssetIDs), input.MaskAssetID != nil); err != nil {
 		return Generation{}, err
 	}
+	if err := validateSourceWork(ctx, tx, input.SourceWorkID); err != nil {
+		return Generation{}, err
+	}
+
 	newID := uuid.New()
+	if err := validateReferenceAssets(ctx, tx, ownerID, input); err != nil {
+		return Generation{}, err
+	}
 	estimatedPoints, pricingSnapshot, err := billing.ReserveGenerationPointsTx(ctx, tx, ownerID, newID, providerModelID, providerProfileID, input.Mode, pointMeterInput(input.Prompt, input.Parameters))
 	if err != nil {
 		return Generation{}, err
@@ -615,8 +594,7 @@ func (s *Service) Retry(ctx context.Context, ownerID, generationID uuid.UUID, id
 	if err := insertGenerationReferences(ctx, tx, generation.ID, input.SourceAssetIDs); err != nil {
 		return Generation{}, err
 	}
-	payload, _ := json.Marshal(jobPayload{GenerationID: newID})
-	if _, err := tx.Exec(ctx, `INSERT INTO jobs(kind,payload,max_attempts) VALUES($1,$2,$3)`, JobKind, payload, maxAttempts); err != nil {
+	if err := enqueueGenerationTx(ctx, tx, newID, maxAttempts); err != nil {
 		return Generation{}, fmt.Errorf("enqueue generation retry: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `INSERT INTO generation_commands(actor_id,operation,idempotency_key,generation_id,result_generation_id,request_hash) VALUES($1,'retry',$2,$3,$4,$5)`, ownerID, idempotencyKey, generationID, newID, requestHash); err != nil {
@@ -795,17 +773,8 @@ func (s *Service) HandleJob(ctx context.Context, job jobs.Job) error {
 	if job.Kind == FailureEvidenceJobKind {
 		return s.persistFailureEvidence(ctx, payload.GenerationID)
 	}
-	err := s.process(ctx, payload.GenerationID)
-	if err == nil {
-		return nil
-	}
-	if job.Attempts < job.MaxAttempts && jobs.ShouldRetry(err) {
-		_, updateErr := s.pool.Exec(ctx, `
-			UPDATE generations SET status='queued',progress=0,error_code='provider_retrying',error_message=$2,updated_at=now()
-			WHERE id=$1 AND status <> 'succeeded' AND status <> 'cancelled'`, payload.GenerationID, "The generation Provider request is waiting for a retry.")
-		if updateErr != nil {
-			return fmt.Errorf("%w; record generation retry: %v", err, updateErr)
-		}
+	err := s.process(ctx, payload.GenerationID, job)
+	if err == nil || errors.Is(err, jobs.ErrLeaseLost) {
 		return err
 	}
 	tx, beginErr := s.pool.Begin(ctx)
@@ -813,30 +782,62 @@ func (s *Service) HandleJob(ctx context.Context, job jobs.Job) error {
 		return fmt.Errorf("%w; begin final generation failure: %v", err, beginErr)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var ownerID uuid.UUID
+	ownerID, ownerErr := generationOwner(ctx, tx, payload.GenerationID)
+	if ownerErr != nil {
+		return ownerErr
+	}
+	account, accountErr := lockGenerationAccount(ctx, tx, ownerID)
+	if accountErr != nil {
+		return accountErr
+	}
 	var status string
 	if lockErr := tx.QueryRow(ctx, `SELECT owner_id,status FROM generations WHERE id=$1 FOR UPDATE`, payload.GenerationID).Scan(&ownerID, &status); lockErr != nil {
 		return fmt.Errorf("%w; lock failed generation: %v", err, lockErr)
 	}
-	if status != "succeeded" && status != "cancelled" {
-		if _, updateErr := tx.Exec(ctx, `
-			UPDATE generations SET status='failed',progress=0,error_code='provider_failed',error_message=$2,updated_at=now()
-			WHERE id=$1`, payload.GenerationID, "The configured generation Provider could not complete this request."); updateErr != nil {
-			return fmt.Errorf("%w; record generation failure: %v", err, updateErr)
+	if status == "succeeded" || status == "cancelled" || status == "failed" {
+		return tx.Commit(ctx)
+	}
+	var leaseErr error
+	job, leaseErr = lockExecution(ctx, tx, payload.GenerationID, job)
+	if leaseErr != nil {
+		return leaseErr
+	}
+	if account != "active" {
+		err = ErrAccountUnavailable
+	}
+	if job.Attempts < job.MaxAttempts && jobs.ShouldRetry(err) {
+		if _, updateErr := tx.Exec(ctx, `UPDATE generations SET status='queued',progress=0,error_code='provider_retrying',error_message=$2,updated_at=now() WHERE id=$1`, payload.GenerationID, "The generation Provider request is waiting for a retry."); updateErr != nil {
+			return updateErr
 		}
-		if releaseErr := billing.ReleaseGenerationPointsTx(ctx, tx, payload.GenerationID, "provider failed after all attempts"); releaseErr != nil {
-			return fmt.Errorf("%w; release failed generation credits: %v", err, releaseErr)
+		if _, leaseErr := checkExecution(ctx, tx, payload.GenerationID, job); leaseErr != nil {
+			return leaseErr
 		}
-		if releaseErr := billing.ReleaseGenerationTx(ctx, tx, payload.GenerationID, "provider failed after all attempts"); releaseErr != nil {
-			return fmt.Errorf("%w; release failed legacy generation credits: %v", err, releaseErr)
+		if commitErr := tx.Commit(ctx); commitErr != nil {
+			return commitErr
 		}
-		payloadJSON, marshalErr := json.Marshal(payload)
-		if marshalErr != nil {
-			return fmt.Errorf("%w; marshal failure evidence job: %v", err, marshalErr)
-		}
-		if _, enqueueErr := tx.Exec(ctx, `INSERT INTO jobs(kind,payload,max_attempts) VALUES($1,$2,5)`, FailureEvidenceJobKind, payloadJSON); enqueueErr != nil {
-			return fmt.Errorf("%w; enqueue failure evidence: %v", err, enqueueErr)
-		}
+		return err
+	}
+	errorCode := "provider_failed"
+	errorMessage := "The configured generation Provider could not complete this request."
+	releaseReason := "provider failed after all attempts"
+	if errors.Is(err, ErrReferenceUnavailable) {
+		errorCode = "reference_unavailable"
+		errorMessage = "A reference asset is no longer available or permitted for reuse. Reserved points were released."
+		releaseReason = "reference asset unavailable or reuse permission revoked"
+	}
+	if errors.Is(err, ErrAccountUnavailable) {
+		errorCode = "generation_account_unavailable"
+		errorMessage = "The account is unavailable. Reserved points were released."
+		releaseReason = "generation account unavailable"
+	}
+	if account == "deleted" {
+		errorMessage = ""
+	}
+	if finalizeErr := failGenerationTx(ctx, tx, payload.GenerationID, errorCode, errorMessage, releaseReason); finalizeErr != nil {
+		return fmt.Errorf("%w; finalize generation: %v", err, finalizeErr)
+	}
+	if _, leaseErr := checkExecution(ctx, tx, payload.GenerationID, job); leaseErr != nil {
+		return leaseErr
 	}
 	if commitErr := tx.Commit(ctx); commitErr != nil {
 		return fmt.Errorf("%w; commit failed generation: %v", err, commitErr)
@@ -845,9 +846,7 @@ func (s *Service) HandleJob(ctx context.Context, job jobs.Job) error {
 	// important user-visible transition. Audit and notification writes happen
 	// after that commit so a secondary evidence failure cannot roll the task
 	// back to a permanent 35% running state.
-	if status != "succeeded" && status != "cancelled" {
-		_ = s.persistFailureEvidence(ctx, payload.GenerationID)
-	}
+	_ = s.persistFailureEvidence(ctx, payload.GenerationID)
 	return err
 }
 
@@ -859,10 +858,18 @@ func (s *Service) persistFailureEvidence(ctx context.Context, generationID uuid.
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var ownerID uuid.UUID
+	ownerID, err := generationOwner(ctx, tx, generationID)
+	if err != nil {
+		return err
+	}
+	account, err := lockGenerationAccount(ctx, tx, ownerID)
+	if err != nil {
+		return err
+	}
 	var status string
+	var errorCode string
 	var conversationID *uuid.UUID
-	if err := tx.QueryRow(ctx, `SELECT owner_id,status,conversation_id FROM generations WHERE id=$1 FOR UPDATE`, generationID).Scan(&ownerID, &status, &conversationID); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT owner_id,status,conversation_id,COALESCE(error_code,'provider_failed') FROM generations WHERE id=$1 FOR UPDATE`, generationID).Scan(&ownerID, &status, &conversationID, &errorCode); err != nil {
 		return err
 	}
 	if status != "failed" {
@@ -873,9 +880,12 @@ func (s *Service) persistFailureEvidence(ctx context.Context, generationID uuid.
 		return err
 	}
 	if !exists {
-		if err := writeAudit(ctx, tx, ownerID, "generation.failed", generationID, "worker", map[string]any{"errorCode": "provider_failed", "charged": false}); err != nil {
+		if err := writeAudit(ctx, tx, ownerID, "generation.failed", generationID, "worker", map[string]any{"errorCode": errorCode, "charged": false}); err != nil {
 			return err
 		}
+	}
+	if account != "active" {
+		return tx.Commit(ctx)
 	}
 	targetPath := "/create/image"
 	if conversationID != nil {
@@ -889,7 +899,7 @@ func (s *Service) persistFailureEvidence(ctx context.Context, generationID uuid.
 	return tx.Commit(ctx)
 }
 
-func (s *Service) process(ctx context.Context, generationID uuid.UUID) error {
+func (s *Service) process(ctx context.Context, generationID uuid.UUID, job jobs.Job) error {
 	var ownerID uuid.UUID
 	var parentGenerationID *uuid.UUID
 	var maskAssetID *uuid.UUID
@@ -900,7 +910,9 @@ func (s *Service) process(ctx context.Context, generationID uuid.UUID) error {
 	var timeoutSeconds int
 	err := s.pool.QueryRow(ctx, `
 		SELECT g.owner_id,g.prompt,g.parameters,g.status,g.mode,g.provider,g.model_name,g.parent_generation_id,g.mask_asset_id,
-		       ARRAY(SELECT reference.asset_id FROM generation_reference_assets reference WHERE reference.generation_id=g.id ORDER BY reference.position),
+		       CASE WHEN EXISTS(SELECT 1 FROM generation_reference_assets reference WHERE reference.generation_id=g.id)
+		         THEN ARRAY(SELECT reference.asset_id FROM generation_reference_assets reference WHERE reference.generation_id=g.id ORDER BY reference.position)
+		         WHEN g.source_asset_id IS NOT NULL THEN ARRAY[g.source_asset_id] ELSE ARRAY[]::uuid[] END,
 		       COALESCE(r.timeout_seconds,120)
 		FROM generations g LEFT JOIN model_route_revisions r ON r.id=g.model_route_revision_id
 		WHERE g.id=$1`, generationID).Scan(&ownerID, &prompt, &parametersJSON, &status, &mode, &provider, &modelName, &parentGenerationID, &maskAssetID, &referenceAssetIDs, &timeoutSeconds)
@@ -916,11 +928,21 @@ func (s *Service) process(ctx context.Context, generationID uuid.UUID) error {
 	if status == "succeeded" || status == "cancelled" || status == "failed" {
 		return nil
 	}
+	if proceed, err := s.generationMayContinue(ctx, generationID, ownerID, job); err != nil || !proceed {
+		return err
+	}
+	referenceInput := SubmitInput{Mode: mode, SourceAssetIDs: referenceAssetIDs, MaskAssetID: maskAssetID}
+	if err := validateReferenceAssets(ctx, s.pool, ownerID, referenceInput); err != nil {
+		if errors.Is(err, ErrInvalid) {
+			return ErrReferenceUnavailable
+		}
+		return err
+	}
 	if !s.runtimes.Available(provider, mode, modelName) {
 		return ErrRuntimeUnavailable
 	}
-	if _, err := s.pool.Exec(ctx, `UPDATE generations SET status='running',progress=35,error_code=NULL,error_message=NULL,updated_at=now() WHERE id=$1 AND status='queued'`, generationID); err != nil {
-		return fmt.Errorf("start generation: %w", err)
+	if proceed, err := s.startExecution(ctx, ownerID, generationID, job); err != nil || !proceed {
+		return err
 	}
 
 	assetID := uuid.NewSHA1(generationID, []byte("hcai-generation-output"))
@@ -935,9 +957,12 @@ func (s *Service) process(ctx context.Context, generationID uuid.UUID) error {
 	}
 	var referenceAssets []ProviderAsset
 	if (mode == "video" || mode == "chat") && len(referenceAssetIDs) > 0 {
-		referenceAssets, err = s.providerAssets(ctx, ownerID, referenceAssetIDs)
+		referenceAssets, err = s.providerAssets(ctx, ownerID, referenceAssetIDs, referenceKindsForMode(mode))
 		if err != nil {
 			cancelProvider()
+			if errors.Is(err, ErrInvalid) {
+				return ErrReferenceUnavailable
+			}
 			return NewProviderFailure("provider_invalid_request", 0)
 		}
 		if mode == "chat" {
@@ -948,11 +973,31 @@ func (s *Service) process(ctx context.Context, generationID uuid.UUID) error {
 			}
 		}
 	}
+	if proceed, err := s.generationMayContinue(ctx, generationID, ownerID, job); err != nil || !proceed {
+		cancelProvider()
+		return err
+	}
+	// Loading bounded local/remote files can take time. Recheck at dispatch so a
+	// revocation committed during that read cannot leak the buffered content.
+	if err := validateReferenceAssets(ctx, s.pool, ownerID, referenceInput); err != nil {
+		cancelProvider()
+		if errors.Is(err, ErrInvalid) {
+			return ErrReferenceUnavailable
+		}
+		return err
+	}
+	if _, err := checkExecution(ctx, s.pool, generationID, job); err != nil {
+		cancelProvider()
+		return err
+	}
 	output, err := s.runtimes.Generate(providerCtx, ProviderRequest{
 		GenerationID: generationID,
 		Mode:         mode, Provider: provider, ModelName: modelName, Prompt: prompt, Parameters: parameters, Messages: messages, ReferenceAssetIDs: referenceAssetIDs, ReferenceAssets: referenceAssets, MaskAssetID: maskAssetID,
 	})
 	cancelProvider()
+	if proceed, accessErr := s.generationMayContinue(ctx, generationID, ownerID, job); accessErr != nil || !proceed {
+		return accessErr
+	}
 	if err != nil {
 		return err
 	}
@@ -960,33 +1005,38 @@ func (s *Service) process(ctx context.Context, generationID uuid.UUID) error {
 	// text on the generation record so it can continue the thread, but do not
 	// create a media object, storage key, asset entry, or asset notification.
 	if mode == "chat" {
-		return s.persistChatOutput(ctx, generationID, ownerID, provider, modelName, output)
+		return s.persistChatOutput(ctx, generationID, ownerID, provider, modelName, output, job)
 	}
-	store := s.stores.Primary()
-	storageKey, err := store.ObjectKey(assetID.String() + output.Extension)
-	if err != nil {
-		return fmt.Errorf("create provider output storage key: %w", err)
+	intent, err := s.prepareOutputIntent(ctx, ownerID, generationID, assetID, output, job)
+	if err != nil || intent == nil {
+		return err
 	}
-	createdOutput, err := storeProviderOutput(ctx, store, storageKey, output.Content, output.MIMEType)
-	if err != nil {
-		return fmt.Errorf("persist provider output: %w", err)
-	}
-	keepOutput := false
-	defer func() {
-		if !keepOutput && createdOutput {
-			_ = store.Delete(context.WithoutCancel(ctx), storageKey)
-		}
-	}()
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin generation result: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	account, err := lockGenerationAccount(ctx, tx, ownerID)
+	if err != nil {
+		return err
+	}
+	if account != "active" {
+		return ErrAccountUnavailable
+	}
 	if err := tx.QueryRow(ctx, `SELECT status FROM generations WHERE id=$1 FOR UPDATE`, generationID).Scan(&status); err != nil {
 		return fmt.Errorf("lock generation: %w", err)
 	}
-	if status == "cancelled" {
+	if status == "cancelled" || status == "failed" || status == "succeeded" {
 		return tx.Commit(ctx)
+	}
+	if _, err := checkExecution(ctx, tx, generationID, job); err != nil {
+		return err
+	}
+	if err := generationoutput.WriteTx(ctx, tx, s.stores, *intent, output.Content, output.MIMEType); err != nil {
+		return fmt.Errorf("persist recorded provider output: %w", err)
+	}
+	if _, err := lockExecution(ctx, tx, generationID, job); err != nil {
+		return err
 	}
 	chargedPoints, usageSnapshot, err := billing.CaptureGenerationPointsTx(ctx, tx, generationID, pointUsageMetrics(output, parameters))
 	if err != nil {
@@ -1003,7 +1053,7 @@ func (s *Service) process(ctx context.Context, generationID uuid.UUID) error {
 	_, err = tx.Exec(ctx, `
 		INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,width,height,scan_status,source_type,source_id,license_code,storage_backend,storage_key)
 		VALUES($1,$2,$3,$4,$5,$6,$7,$8,'clean','generation',$9,'creator-owned',$10,$11)
-		ON CONFLICT (id) DO NOTHING`, assetID, ownerID, output.Kind, title, "/api/v1/assets/"+assetID.String()+"/content", output.MIMEType, output.Width, output.Height, generationID, store.Backend(), storageKey)
+		ON CONFLICT (id) DO NOTHING`, assetID, ownerID, output.Kind, title, "/api/v1/assets/"+assetID.String()+"/content", output.MIMEType, output.Width, output.Height, generationID, intent.Backend, intent.Key)
 	if err != nil {
 		return fmt.Errorf("insert generated asset: %w", err)
 	}
@@ -1032,24 +1082,36 @@ func (s *Service) process(ctx context.Context, generationID uuid.UUID) error {
 	if err := webhooks.EnqueueTx(ctx, tx, webhooks.EventInput{OwnerID: ownerID, EventType: "generation.completed", ResourceType: "generation", ResourceID: &generationID, SourceKey: "generation:" + generationID.String() + ":completed"}); err != nil {
 		return fmt.Errorf("enqueue generation webhook: %w", err)
 	}
+	if err := generationoutput.AttachTx(ctx, tx, intent.ID); err != nil {
+		return err
+	}
+	if _, err := checkExecution(ctx, tx, generationID, job); err != nil {
+		return err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit generation result: %w", err)
 	}
-	keepOutput = true
 	return nil
 }
 
-func (s *Service) persistChatOutput(ctx context.Context, generationID, ownerID uuid.UUID, provider, modelName string, output ProviderOutput) error {
+func (s *Service) persistChatOutput(ctx context.Context, generationID, ownerID uuid.UUID, provider, modelName string, output ProviderOutput, job jobs.Job) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin chat generation result: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	account, err := lockGenerationAccount(ctx, tx, ownerID)
+	if err != nil {
+		return err
+	}
+	if account != "active" {
+		return ErrAccountUnavailable
+	}
 	var status string
 	if err := tx.QueryRow(ctx, `SELECT status FROM generations WHERE id=$1 FOR UPDATE`, generationID).Scan(&status); err != nil {
 		return fmt.Errorf("lock chat generation: %w", err)
 	}
-	if status == "cancelled" {
+	if status == "cancelled" || status == "failed" || status == "succeeded" {
 		return tx.Commit(ctx)
 	}
 	var parameters GenerationParameters
@@ -1059,6 +1121,9 @@ func (s *Service) persistChatOutput(ctx context.Context, generationID, ownerID u
 	}
 	if err := json.Unmarshal(parametersJSON, &parameters); err != nil {
 		return fmt.Errorf("decode chat generation parameters: %w", err)
+	}
+	if _, err := lockExecution(ctx, tx, generationID, job); err != nil {
+		return err
 	}
 	chargedPoints, usageSnapshot, err := billing.CaptureGenerationPointsTx(ctx, tx, generationID, pointUsageMetrics(output, parameters))
 	if err != nil {
@@ -1101,6 +1166,9 @@ func (s *Service) persistChatOutput(ctx context.Context, generationID, ownerID u
 	}
 	if err := webhooks.EnqueueTx(ctx, tx, webhooks.EventInput{OwnerID: ownerID, EventType: "generation.completed", ResourceType: "generation", ResourceID: &generationID, SourceKey: "generation:" + generationID.String() + ":completed"}); err != nil {
 		return fmt.Errorf("enqueue chat generation webhook: %w", err)
+	}
+	if _, err := checkExecution(ctx, tx, generationID, job); err != nil {
+		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit chat generation result: %w", err)
@@ -1198,19 +1266,26 @@ func chatMessagesWithReferences(messages []ProviderMessage, assets []ProviderAss
 	return result, nil
 }
 
-func (s *Service) providerAssets(ctx context.Context, ownerID uuid.UUID, ids []uuid.UUID) ([]ProviderAsset, error) {
+func (s *Service) providerAssets(ctx context.Context, ownerID uuid.UUID, ids []uuid.UUID, kinds []string) ([]ProviderAsset, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
 	type assetRecord struct {
-		mimeType string
-		backend  string
-		key      string
+		snapshotRequired bool
+		orderID          *uuid.UUID
+		mimeType         string
+		backend          string
+		key              string
 	}
 	rows, err := s.pool.Query(ctx, `
-		SELECT id,mime_type,storage_backend,storage_key
-		FROM assets
-		WHERE owner_id=$1 AND scan_status='clean' AND id=ANY($2)`, ownerID, ids)
+		SELECT a.id,COALESCE(c.contract->'asset'->>'mimeType',a.mime_type),
+		       COALESCE(c.contract->'asset'->>'storageBackend',origin.storage_backend,a.storage_backend),
+		       COALESCE(c.contract->'asset'->>'storageKey',origin.storage_key,a.storage_key),
+               COALESCE(o.delivery_snapshot_required,false),o.id
+		FROM assets a LEFT JOIN assets origin ON origin.id=a.origin_asset_id
+		LEFT JOIN product_order_contracts c ON a.source_type='purchase' AND c.order_id=a.source_id
+        LEFT JOIN orders o ON a.source_type='purchase' AND o.id=a.source_id
+		WHERE `+referenceAssetPermissionSQL, ownerID, ids, kinds)
 	if err != nil {
 		return nil, fmt.Errorf("load provider reference assets: %w", err)
 	}
@@ -1219,7 +1294,7 @@ func (s *Service) providerAssets(ctx context.Context, ownerID uuid.UUID, ids []u
 	for rows.Next() {
 		var id uuid.UUID
 		var record assetRecord
-		if err := rows.Scan(&id, &record.mimeType, &record.backend, &record.key); err != nil {
+		if err := rows.Scan(&id, &record.mimeType, &record.backend, &record.key, &record.snapshotRequired, &record.orderID); err != nil {
 			return nil, fmt.Errorf("scan provider reference asset: %w", err)
 		}
 		records[id] = record
@@ -1234,14 +1309,30 @@ func (s *Service) providerAssets(ctx context.Context, ownerID uuid.UUID, ids []u
 	var total int64
 	for _, id := range ids {
 		record := records[id]
-		store, err := s.stores.Get(record.backend)
-		if err != nil {
-			return nil, err
+		var object media.Object
+		if record.snapshotRequired {
+			snapshot, loadErr := productdelivery.Load(ctx, s.pool, *record.orderID)
+			if loadErr != nil {
+				return nil, loadErr
+			}
+			if snapshot.Format != productdelivery.FormatSingle || snapshot.Size > 30*1024*1024 {
+				return nil, ErrInvalid
+			}
+			object, err = snapshot.Open(ctx, s.stores, nil)
+		} else {
+			store, storeErr := s.stores.Get(record.backend)
+			if storeErr != nil {
+				return nil, storeErr
+			}
+			object, err = store.Open(ctx, record.key, nil)
 		}
-		object, err := store.Open(ctx, record.key, nil)
 		if err != nil {
+			if errors.Is(err, media.ErrIntegrity) || errors.Is(err, media.ErrNotFound) || errors.Is(err, productdelivery.ErrUnavailable) {
+				return nil, ErrInvalid
+			}
 			return nil, fmt.Errorf("open provider reference asset: %w", err)
 		}
+
 		content, readErr := io.ReadAll(io.LimitReader(object.Body, 30*1024*1024+1))
 		closeErr := object.Body.Close()
 		if readErr != nil || closeErr != nil || len(content) == 0 || len(content) > 30*1024*1024 {
@@ -1479,29 +1570,6 @@ func writeAudit(ctx context.Context, tx pgx.Tx, actorID uuid.UUID, action string
 	return nil
 }
 
-func storeProviderOutput(ctx context.Context, store media.Store, key string, content []byte, mimeType string) (bool, error) {
-	err := store.Put(ctx, key, content, mimeType)
-	if err == nil {
-		return true, nil
-	}
-	if !errors.Is(err, media.ErrConflict) {
-		return false, err
-	}
-	object, err := store.Open(ctx, key, nil)
-	if err != nil {
-		return false, fmt.Errorf("open existing provider output: %w", err)
-	}
-	existing, readErr := io.ReadAll(io.LimitReader(object.Body, int64(len(content))+1))
-	closeErr := object.Body.Close()
-	if readErr != nil || closeErr != nil {
-		return false, fmt.Errorf("read existing provider output: read=%v close=%v", readErr, closeErr)
-	}
-	if !bytes.Equal(existing, content) {
-		return false, errors.New("provider output storage key contains different content")
-	}
-	return false, nil
-}
-
 func normalizeGenerationParameters(mode string, input GenerationParameters) (GenerationParameters, error) {
 	input.AspectRatio = strings.TrimSpace(strings.ToLower(input.AspectRatio))
 	input.Quality = strings.TrimSpace(strings.ToLower(input.Quality))
@@ -1661,3 +1729,18 @@ func oneOfInt(value int, allowed ...int) bool {
 }
 
 func intPtr(value int) *int { return &value }
+
+// A source work records attribution, not permission to consume its media or private prompt.
+func validateSourceWork(ctx context.Context, tx pgx.Tx, id *uuid.UUID) error {
+	if id == nil {
+		return nil
+	}
+	var visible bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM public_works WHERE id=$1)`, id).Scan(&visible); err != nil {
+		return fmt.Errorf("check source work: %w", err)
+	}
+	if !visible {
+		return ErrInvalid
+	}
+	return nil
+}

@@ -24,14 +24,17 @@ func (e providerFailure) Retryable() bool           { return e.retryable }
 
 func newProviderFailure(code string, retryAfter time.Duration) error {
 	retryableCodes := map[string]bool{
-		"payment_authentication":       false,
-		"payment_invalid_request":      false,
-		"payment_rate_limited":         true,
-		"payment_request_failed":       true,
-		"payment_response_invalid":     false,
-		"payment_timeout":              true,
-		"payment_provider_unavailable": true,
-		"payment_provider_unsupported": false,
+		"payment_authentication":          false,
+		"payment_invalid_request":         false,
+		"payment_rate_limited":            true,
+		"payment_request_failed":          true,
+		"payment_response_invalid":        false,
+		"payment_reconciliation_required": false,
+		"payment_timeout":                 true,
+		"payment_provider_unavailable":    true,
+		"payment_provider_unsupported":    false,
+		"payment_settlement_not_due":      true,
+		"payment_settlement_pending":      true,
 	}
 	retryable, allowed := retryableCodes[code]
 	if !allowed {
@@ -58,6 +61,8 @@ type CheckoutRequest struct {
 	ProductID       string
 	ProductType     string
 	OrderExternalID string
+	// Supplied from the immutable product request record, never caller input.
+	CheckoutIdentity *ProductCheckoutIdentity `json:"-"`
 }
 
 type CheckoutSession struct {
@@ -70,15 +75,19 @@ type CheckoutSession struct {
 }
 
 type RefundRequest struct {
-	PaymentID         uuid.UUID
-	OperationID       uuid.UUID
-	ProviderPaymentID string
-	StoreID           string
-	AmountCents       int
-	Currency          string
-	Reason            string
-	BuyerIdentity     string
-	BuyerEmail        string
+	PaymentID                uuid.UUID
+	OperationID              uuid.UUID
+	IncludeOperationMetadata bool
+	ProviderPaymentID        string
+	StoreID                  string
+	AmountCents              int
+	Currency                 string
+	Reason                   string
+	BuyerIdentity            string
+	BuyerEmail               string
+	// Original product merchant, authenticated before dispatch. Other payment
+	// purposes have their own workflows and do not supply this field.
+	PaymentIdentity *ProductCheckoutIdentity
 }
 
 type Refund struct {
@@ -90,11 +99,17 @@ type Refund struct {
 }
 
 type TransferRequest struct {
-	PaymentID        uuid.UUID
-	ProviderChargeID string
-	DestinationID    string
-	AmountCents      int
-	Currency         string
+	PaymentID uuid.UUID
+	// Set only for a new seller source after a consumed return. Legacy and automatic
+	// transfers retain their original payment-scoped idempotency key.
+	SourceRequestID uuid.UUID
+	// An automatic settlement following a consumed source return uses its
+	// already-persisted batch instead of a seller request. Never set both.
+	SettlementBatchID uuid.UUID
+	ProviderChargeID  string
+	DestinationID     string
+	AmountCents       int
+	Currency          string
 }
 
 type Transfer struct {
@@ -103,6 +118,96 @@ type Transfer struct {
 	AmountCents   int
 	Currency      string
 	TransferGroup string
+}
+
+// PayoutRequest is an independent bank payout from a connected account. It
+// must never be implemented by CreateTransfer: a platform transfer only moves
+// funds between Stripe accounts and is not evidence of a bank payout.
+type PayoutRequest struct {
+	PayoutRequestID   uuid.UUID
+	DestinationID     string
+	BankDestinationID string
+	AmountCents       int
+	Currency          string
+	IdempotencyKey    string
+	// ReservedAt and Identity come from the immutable dispatch record.
+	ReservedAt time.Time
+	Identity   *ProductCheckoutIdentity
+}
+
+type Payout struct {
+	ProviderID        string    `json:"providerId"`
+	Destination       string    `json:"destination"`
+	BankDestinationID string    `json:"bankDestinationId"`
+	AmountCents       int       `json:"amountCents"`
+	Currency          string    `json:"currency"`
+	Status            string    `json:"status"`
+	CreatedAt         time.Time `json:"createdAt"`
+	FailureCode       string    `json:"failureCode,omitempty"`
+}
+
+// Read results are observations, never authorization to resend a payout.
+type PayoutLookupResult struct {
+	Outcome      string   `json:"outcome"`
+	Pages        int      `json:"pages"`
+	Observations []Payout `json:"observations"`
+}
+
+type SellerPayoutReader interface {
+	ReadPayout(context.Context, PayoutRequest, string) (Payout, error)
+	LookupPayout(context.Context, PayoutRequest) (PayoutLookupResult, error)
+}
+
+// This snapshot is a preflight observation, not a funds reservation or a
+// promise of bank settlement. Only minimized identifiers cross this boundary.
+type PayoutReadiness struct {
+	DestinationID     string    `json:"destinationId"`
+	BankDestinationID string    `json:"bankDestinationId"`
+	Currency          string    `json:"currency"`
+	AvailableCents    int64     `json:"availableCents"`
+	ObservedAt        time.Time `json:"observedAt"`
+}
+
+type SellerPayoutPreflight interface {
+	ReadPayoutReadiness(context.Context, PayoutRequest) (PayoutReadiness, error)
+}
+
+// Bank ownership can be verified before the connected balance is funded.
+// A bank observation is not a balance check or authorization to dispatch.
+type PayoutBankTargetRequest struct {
+	DestinationID     string
+	BankDestinationID string
+	Currency          string
+	Identity          ProductCheckoutIdentity
+}
+
+type PayoutBankTarget struct {
+	BankName          string    `json:"bankName,omitempty"`
+	Last4             string    `json:"last4,omitempty"`
+	DestinationID     string    `json:"destinationId"`
+	BankDestinationID string    `json:"bankDestinationId"`
+	Currency          string    `json:"currency"`
+	ObservedAt        time.Time `json:"observedAt"`
+}
+
+type SellerPayoutBankReader interface {
+	ReadPayoutBankTarget(context.Context, PayoutBankTargetRequest) (PayoutBankTarget, error)
+}
+
+type PayoutBankOption struct {
+	BankDestinationID string `json:"bankDestinationId"`
+	BankName          string `json:"bankName"`
+	Last4             string `json:"last4"`
+	Currency          string `json:"currency"`
+}
+
+type PayoutBankDirectory struct {
+	Items      []PayoutBankOption `json:"items"`
+	ObservedAt time.Time          `json:"observedAt"`
+}
+
+type SellerPayoutBankLister interface {
+	ListPayoutBanks(context.Context, PayoutBankTargetRequest) (PayoutBankDirectory, error)
 }
 
 // ConnectAccount is the minimized connected-account projection used by the
@@ -118,8 +223,10 @@ type ConnectAccount struct {
 }
 
 type ConnectAccountRequest struct {
-	UserID uuid.UUID
-	Email  string
+	UserID      uuid.UUID
+	Email       string
+	Identity    *ProductCheckoutIdentity
+	RetryBefore time.Time
 }
 
 type AccountLinkRequest struct {
@@ -149,6 +256,7 @@ type ProviderCapabilities struct {
 	Checkout          bool
 	Refund            bool
 	Transfer          bool
+	Payout            bool
 	ConnectedAccounts bool
 }
 
@@ -156,17 +264,28 @@ type capabilityProviderRuntime interface {
 	Capabilities() ProviderCapabilities
 }
 
+// SellerPayoutRuntime is optional until every payment connector implements
+// independent bank payouts. A connector lacking it must fail closed before an
+// external write; platform CreateTransfer is never an acceptable fallback.
+type SellerPayoutRuntime interface {
+	CreatePayout(context.Context, PayoutRequest) (Payout, error)
+}
+
 func runtimeCapabilities(runtime ProviderRuntime) ProviderCapabilities {
 	if runtime == nil {
 		return ProviderCapabilities{}
 	}
 	if capable, ok := runtime.(capabilityProviderRuntime); ok {
-		return capable.Capabilities()
+		capabilities := capable.Capabilities()
+		_, supportsPayout := runtime.(SellerPayoutRuntime)
+		capabilities.Payout = capabilities.Payout && supportsPayout
+		return capabilities
 	}
 	// Preserve compatibility with existing Stripe runtime test doubles. New
 	// Providers should implement Capabilities explicitly.
 	if strings.EqualFold(strings.TrimSpace(runtime.Provider()), "stripe") {
-		return ProviderCapabilities{Checkout: true, Refund: true, Transfer: true, ConnectedAccounts: true}
+		_, supportsPayout := runtime.(SellerPayoutRuntime)
+		return ProviderCapabilities{Checkout: true, Refund: true, Transfer: true, Payout: supportsPayout, ConnectedAccounts: true}
 	}
 	return ProviderCapabilities{Checkout: true}
 }

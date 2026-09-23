@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/hcai-chat/hcai-chat/internal/platform/password"
 	"github.com/hcai-chat/hcai-chat/internal/risk"
 	"github.com/hcai-chat/hcai-chat/internal/systemsettings"
 	"github.com/jackc/pgx/v5"
@@ -24,14 +25,8 @@ import (
 )
 
 const (
-	SessionCookie      = "hcai_session"
-	DemoToken          = "hcai_local_demo_creator_session_v1"
-	DemoPublisherToken = "hcai_local_demo_publisher_session_v1"
-	DemoAdminToken     = "hcai_local_demo_admin_session_v1"
-	DemoUserID         = "00000000-0000-4000-8000-000000000002"
-	DemoPublisherID    = "00000000-0000-4000-8000-000000000003"
-	DemoAdminID        = "00000000-0000-4000-8000-000000000004"
-	sessionLifetime    = 30 * 24 * time.Hour
+	SessionCookie   = "hcai_session"
+	sessionLifetime = 30 * 24 * time.Hour
 )
 
 var (
@@ -500,42 +495,6 @@ func (r *Repository) ListOAuthProviders(ctx context.Context) ([]OAuthProvider, e
 	return items, rows.Err()
 }
 
-func (r *Repository) StartDemoSession(ctx context.Context, actor string, client ...ClientInfo) (User, string, error) {
-	userID := uuid.MustParse(DemoUserID)
-	token := DemoToken
-	if actor == "publisher" {
-		userID = uuid.MustParse(DemoPublisherID)
-		token = DemoPublisherToken
-	} else if actor == "admin" {
-		userID = uuid.MustParse(DemoAdminID)
-		token = DemoAdminToken
-	}
-	info := ClientInfo{Label: "Local demo session", RequestID: "local-demo"}
-	if len(client) > 0 {
-		info = normalizedClient(client[0])
-	}
-	tx, err := r.pool.Begin(ctx)
-	if err != nil {
-		return User{}, "", fmt.Errorf("begin demo session: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	_, err = tx.Exec(ctx, `
-		INSERT INTO sessions(user_id,token_hash,expires_at,client_label,network_hash,last_seen_at)
-		VALUES($1,$2,$3,$4,$5,now())
-		ON CONFLICT (token_hash) DO UPDATE SET user_id=excluded.user_id,expires_at=excluded.expires_at,
-		  client_label=excluded.client_label,network_hash=excluded.network_hash,last_seen_at=now(),revoked_at=NULL`,
-		userID, HashToken(token), time.Now().Add(sessionLifetime), info.Label, nullable(info.NetworkHash),
-	)
-	if err != nil {
-		return User{}, "", fmt.Errorf("start demo session: %w", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return User{}, "", fmt.Errorf("commit demo session: %w", err)
-	}
-	user, err := r.Authenticate(ctx, token)
-	return user, token, err
-}
-
 func (r *Repository) Revoke(ctx context.Context, token string) error {
 	if token == "" {
 		return nil
@@ -603,7 +562,7 @@ func insertAudit(ctx context.Context, tx pgx.Tx, actorID uuid.UUID, action, reso
 func validateRegistration(input RegisterInput) (string, string, string, string, string, error) {
 	email := strings.ToLower(strings.TrimSpace(input.Email))
 	handle := strings.ToLower(strings.TrimSpace(input.Handle))
-	if !validEmail(email) || !handlePattern.MatchString(handle) || len(input.Password) < 10 || len(input.Password) > 128 {
+	if !validEmail(email) || !handlePattern.MatchString(handle) || !password.ValidNew(input.Password) {
 		return "", "", "", "", "", ErrInvalid
 	}
 	displayName, locale, timezone, err := validateProfile(input.DisplayName, input.Locale, input.Timezone)

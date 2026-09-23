@@ -9,8 +9,8 @@ const emit = defineEmits<{ 'update:open': [value: boolean] }>()
     <button class="ui-collapsible__trigger" type="button" :aria-expanded="open" :disabled="disabled" @click="emit('update:open', !open)">
       <slot name="trigger">
         {{ title }}
-      </slot><ChevronDown :size="16" aria-hidden="true" />
-    </button><div class="ui-collapsible__panel">
+      </slot><ChevronDown class="ui-collapsible__chevron" :size="16" aria-hidden="true" />
+    </button><div class="ui-collapsible__panel" :inert="!open" :aria-hidden="!open">
       <div class="ui-collapsible__inner">
         <slot></slot>
       </div>

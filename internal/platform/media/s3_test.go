@@ -1,6 +1,7 @@
 package media_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -22,6 +23,13 @@ func TestS3StoreSignedImmutableLifecycleAndRange(t *testing.T) {
 	deleted := false
 	modified := time.Now().UTC().Truncate(time.Second)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodHead && r.URL.Path == "/hcai-contract" {
+			if !strings.HasPrefix(r.Header.Get("Authorization"), "AWS4-HMAC-SHA256 ") {
+				t.Error("unsigned bucket check")
+			}
+			w.WriteHeader(http.StatusOK)
+			return
+		}
 		if r.URL.Path != "/hcai-contract/media/object.txt" || !strings.HasPrefix(r.Header.Get("Authorization"), "AWS4-HMAC-SHA256 ") {
 			t.Errorf("S3 request identity mismatch: method=%s path=%s authorization=%q", r.Method, r.URL.Path, r.Header.Get("Authorization"))
 		}
@@ -55,15 +63,18 @@ func TestS3StoreSignedImmutableLifecycleAndRange(t *testing.T) {
 				return
 			}
 			start, end := 0, len(stored)-1
+			status := http.StatusOK
 			if value := r.Header.Get("Range"); value != "" {
 				if _, err := fmt.Sscanf(value, "bytes=%d-%d", &start, &end); err != nil {
 					t.Errorf("invalid Range from client: %q", value)
 				}
-				w.WriteHeader(http.StatusPartialContent)
+				w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, len(stored)))
+				status = http.StatusPartialContent
 			}
 			w.Header().Set("Content-Length", strconv.Itoa(end-start+1))
 			w.Header().Set("Last-Modified", modified.Format(http.TimeFormat))
 			w.Header().Set("ETag", `"contract-etag"`)
+			w.WriteHeader(status)
 			_, _ = w.Write(stored[start : end+1])
 		case http.MethodDelete:
 			deleted = true
@@ -84,7 +95,23 @@ func TestS3StoreSignedImmutableLifecycleAndRange(t *testing.T) {
 		t.Fatalf("S3 key mismatch: key=%q err=%v", key, err)
 	}
 	ctx := context.Background()
-	if err := store.Put(ctx, key, []byte("0123456789"), "text/plain"); err != nil {
+	staged, err := media.Stage(ctx, bytes.NewReader([]byte("0123456789")), 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer staged.Close()
+	if err = staged.Put(ctx, store, key, "text/plain"); err != nil {
+		t.Fatal(err)
+	}
+	verified, err := media.OpenVerified(ctx, store, key, staged.SHA256, staged.Size, &media.ByteRange{Start: 3, End: 6})
+	if err != nil {
+		t.Fatal(err)
+	}
+	actual, err := io.ReadAll(verified.Body)
+	if err != nil || string(actual) != "3456" {
+		t.Fatalf("verified S3 range: %q %v", actual, err)
+	}
+	if err = verified.Body.Close(); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Put(ctx, key, []byte("replacement"), "text/plain"); !errors.Is(err, media.ErrConflict) {

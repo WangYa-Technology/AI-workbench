@@ -1,3 +1,4 @@
+import { fixtureCredentials } from './helpers/identity'
 import { expect, test } from '@playwright/test'
 
 // Response fixtures exercise content rendering; payment execution is covered by
@@ -11,13 +12,13 @@ for (const theme of ['light', 'dark']) for (const width of [390, 768, 1308, 1551
   test(`transaction content ${theme} ${width}: nonempty orders and purchases`, async ({ page }) => {
     await page.setViewportSize({ width, height: 901 })
     await page.addInitScript(theme => localStorage.setItem('hcai-theme', theme), theme)
-    await page.request.post('/api/v1/auth/demo', { data: { actor: 'creator' } })
+    await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('creator') })
     const orders = statuses.map((status, index) => ({
       id: `00000000-0000-4000-8000-${String(900 + index).padStart(12, '0')}`, productId,
       productTitle: 'A detailed licensed resource '.repeat(12), amountCents: 12345678, currency: 'USD', status,
       licenseCode: 'hcai-commercial-v1', licenseName: 'Commercial license', licenseVersion: '1.0',
       licenseTerms: 'You may use this resource commercially with attribution. '.repeat(12), refundWindowDays: 7,
-      paymentMode: 'stripe', realCharge: false, createdAt: date,
+      paymentMode: 'stripe', realCharge: false, createdAt: date, canRequestRefund: status === 'fulfilled',
       events: [{ toStatus: status, createdAt: date, reason: 'A recorded order state.' }],
     }))
     await page.route('**/api/v1/orders?*', route => route.fulfill({ json: { items: orders } }))
@@ -29,8 +30,8 @@ for (const theme of ['light', 'dark']) for (const width of [390, 768, 1308, 1551
     expect(overflow).toEqual([])
 
     const original = await (await page.request.get(`/api/v1/assets/${assetId}`)).json()
-    const purchased = { ...original, sourceType: 'purchase', title: 'Purchased resource with a descriptive title', licenseCode: 'hcai-commercial-v1', provenance: { purchase: { orderId: orders[5]!.id, productId, productTitle: 'Licensed resource', sellerId: '00000000-0000-4000-8000-000000000001', sellerName: 'Example Creator', sellerHandle: 'example', licenseCode: 'hcai-commercial-v1', licenseName: 'Commercial license', orderStatus: 'fulfilled', grantedAt: date, paymentMode: 'stripe', realCharge: false } } }
-    await page.route('**/api/v1/assets', route => route.fulfill({ json: { items: [purchased] } }))
+    const purchased = { ...original, sourceType: 'purchase', title: 'Purchased resource with a descriptive title', licenseCode: 'hcai-commercial-v1', provenance: { purchase: { orderId: orders[5]!.id, productId, productTitle: 'Licensed resource', sellerId: '10000000-0000-4000-8000-000000000001', sellerName: 'Example Creator', sellerHandle: 'example', licenseCode: 'hcai-commercial-v1', licenseName: 'Commercial license', orderStatus: 'fulfilled', grantedAt: date, paymentMode: 'stripe', realCharge: false, canDownload: true, canReuse: true } } }
+    await page.route('**/api/v1/assets?*', route => route.fulfill({ json: { items: [purchased], total: 1 } }))
     await page.route(`**/api/v1/assets/${assetId}`, route => route.fulfill({ json: purchased }))
     await page.goto('/workspace/purchases')
     await expect(page.locator('.asset-row')).toHaveCount(1)

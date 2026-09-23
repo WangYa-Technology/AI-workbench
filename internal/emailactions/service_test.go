@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -94,6 +95,11 @@ func TestIdentityEmailVerificationAndPasswordResetLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	resetToken := regexp.MustCompile(`emailact_[A-Za-z0-9_-]+`).FindString(string(resetMail))
+	for _, password := range []string{strings.Repeat("a", 73), strings.Repeat("密", 25), strings.Repeat("🔑", 19)} {
+		if _, err := service.ConfirmPasswordReset(ctx, resetToken, password, "invalid-reset"); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("expected validation error before consuming reset token, got %v", err)
+		}
+	}
 	revoked, err := service.ConfirmPasswordReset(ctx, resetToken, "new-correct-horse-456", "consume-reset")
 	if err != nil || revoked != 1 {
 		t.Fatalf("password reset session revocation mismatch: revoked=%d err=%v", revoked, err)

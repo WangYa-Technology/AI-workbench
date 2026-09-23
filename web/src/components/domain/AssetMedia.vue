@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { FileText, Music } from 'lucide-vue-next'
+import { FileText, Music, PackageOpen } from 'lucide-vue-next'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { inlineTextPreview, readTextPreview, TEXT_PREVIEW_BYTES } from '../../lib/textPreview'
 
 const props = withDefaults(defineProps<{
   src: string
   kind: string
+  mimeType?: string
   alt: string
   width?: number
   height?: number
@@ -16,6 +18,7 @@ const props = withDefaults(defineProps<{
   width: 1200,
   height: 900,
   text: '',
+  mimeType: '',
   controls: true,
   eager: false,
 })
@@ -23,25 +26,43 @@ const props = withDefaults(defineProps<{
 const { t } = useI18n()
 const loadedText = ref('')
 const textError = ref('')
+const textTruncated = ref(false)
 const mediaFailed = ref(false)
-const normalizedKind = computed(() => props.kind === 'music' ? 'audio' : props.kind)
+const normalizedKind = computed(() => {
+  const mime = props.mimeType.split(';')[0]?.trim().toLowerCase()
+  if (mime === 'application/zip') return 'package'
+  if (props.kind === 'document' && mime && !mime.startsWith('text/')) return 'file'
+  return props.kind === 'music' ? 'audio' : props.kind
+})
 
 watch(
   () => [normalizedKind.value, props.src, props.text] as const,
   async ([kind, src, text], _previous, onCleanup) => {
     const controller = new globalThis.AbortController()
-    onCleanup(() => controller.abort())
-    loadedText.value = text
+    let timer: ReturnType<typeof globalThis.setTimeout> | undefined
+    onCleanup(() => { globalThis.clearTimeout(timer); timer = undefined; controller.abort() })
+    const inline = inlineTextPreview(text)
+    loadedText.value = inline.text
+    textTruncated.value = inline.truncated
     textError.value = ''
     mediaFailed.value = false
     if (kind !== 'document' || text || !src) return
+    timer = globalThis.setTimeout(() => controller.abort(), 15_000)
     try {
-      const response = await globalThis.fetch(src, { credentials: 'include', signal: controller.signal })
-      if (!response.ok) throw new Error(`HTTP ${response.status}`)
-      const body = await response.text()
-      if (!controller.signal.aborted) loadedText.value = body
+      // One extra byte distinguishes a complete file from a shortened preview.
+      // The stream reader still enforces the cap if a server ignores Range.
+      const response = await globalThis.fetch(src, { credentials: 'include', signal: controller.signal, headers: { Range: `bytes=0-${TEXT_PREVIEW_BYTES}` } })
+      const preview = await readTextPreview(response)
+      if (!controller.signal.aborted) {
+        loadedText.value = preview.text
+        textTruncated.value = preview.truncated
+      }
     } catch {
-      if (!controller.signal.aborted) textError.value = t('status.mediaUnavailable')
+      // A timer abort is an error for this preview; a superseded watch must not
+      // overwrite its successor. Cleanup clears timer before aborting it.
+      if (timer !== undefined) textError.value = t('status.mediaUnavailable')
+    } finally {
+      globalThis.clearTimeout(timer)
     }
   },
   { immediate: true },
@@ -80,6 +101,11 @@ watch(
       <strong>{{ alt }}</strong>
       <audio v-if="controls" :src="src" controls preload="metadata" :aria-label="alt" @error="mediaFailed = true"></audio>
     </div>
+    <div v-else-if="normalizedKind === 'package'" class="asset-document">
+      <PackageOpen :size="32" :stroke-width="1.5" aria-hidden="true" />
+      <strong>{{ alt }}</strong>
+      <span>{{ t('workspace.packageFilesFormat', { format: 'ZIP' }) }}</span>
+    </div>
     <div v-else-if="normalizedKind === 'document'" class="asset-document">
       <FileText :size="26" :stroke-width="1.5" aria-hidden="true" />
       <pre v-if="loadedText" tabindex="0">{{ loadedText }}</pre>
@@ -87,6 +113,7 @@ watch(
         {{ textError }}
       </p>
       <span v-else>{{ t('status.loadingTextResult') }}</span>
+      <small v-if="textTruncated" class="asset-text-preview-note">{{ t('status.textPreviewTruncated') }}</small>
     </div>
     <div v-else class="asset-document">
       <FileText :size="26" :stroke-width="1.5" aria-hidden="true" />

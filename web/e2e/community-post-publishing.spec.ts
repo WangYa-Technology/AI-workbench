@@ -1,12 +1,13 @@
+import { fixtureCredentials } from './helpers/identity'
 import { expect, test } from '@playwright/test'
 
 test('publishes a standalone Community post from the Hero drawer', async ({ page }) => {
-  const session = await page.request.post('/api/v1/auth/demo', { data: { actor: 'creator' } })
+  const session = await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('creator') })
   expect(session.ok()).toBeTruthy()
 
   await page.goto('/community')
-  await expect(page.getByRole('button', { name: 'My posts', exact: true })).toBeVisible()
-  await page.getByRole('button', { name: 'Publish post', exact: true }).click()
+  await expect(page.getByRole('tab', { name: 'My discussions', exact: true })).toBeVisible()
+  await page.locator('.ui-page-hero').getByRole('button', { name: 'Publish post', exact: true }).click()
 
   const drawer = page.getByRole('dialog', { name: 'Publish post' })
   await expect(drawer).toBeVisible()
@@ -24,14 +25,14 @@ test('publishes a standalone Community post from the Hero drawer', async ({ page
   await expect(drawer).toBeHidden()
   await expect(page.getByRole('heading', { name: title, exact: true })).toBeVisible()
 
-  await page.getByRole('button', { name: 'My posts', exact: true }).click()
+  await page.getByRole('tab', { name: 'My discussions', exact: true }).click()
   await expect(page).toHaveURL(/view=mine/)
   await expect(page.getByRole('heading', { name: title, exact: true })).toBeVisible()
   await page.getByRole('heading', { name: title, exact: true }).click()
 
   await expect(page.locator('.community-post-layout')).toHaveClass(/is-standalone/)
   await expect(page.locator('.community-post-context')).toHaveCount(0)
-  await page.getByLabel('Add comment', { exact: true }).fill('Include the model, input settings, and selected output version.')
+  await page.getByLabel('Join the discussion', { exact: true }).fill('Include the model, input settings, and selected output version.')
   await page.locator('.community-comment-composer').getByRole('button', { name: 'Add comment', exact: true }).click()
   await expect(page.getByText('Include the model, input settings, and selected output version.')).toBeVisible()
 
@@ -50,11 +51,11 @@ test('shows authentication actions instead of publishing controls to guests', as
 })
 
 test('returns from an empty My posts view to all Community posts', async ({ page }) => {
-  const session = await page.request.post('/api/v1/auth/demo', { data: { actor: 'publisher' } })
+  const session = await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('publisher') })
   expect(session.ok()).toBeTruthy()
 
   await page.goto('/community')
-  await page.getByRole('button', { name: 'My posts', exact: true }).click()
+  await page.getByRole('tab', { name: 'My discussions', exact: true }).click()
   await expect(page).toHaveURL(/view=mine/)
   await expect(page.getByRole('heading', { name: 'You have not published a post yet', exact: true })).toBeVisible()
 

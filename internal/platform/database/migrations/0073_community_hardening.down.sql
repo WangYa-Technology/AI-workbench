@@ -1,0 +1,23 @@
+DROP TABLE content_moderation_holds,content_moderation_resources;
+DELETE FROM role_permissions WHERE role='moderator' AND permission_id='community:publish';
+DROP TRIGGER comments_revision ON comments;
+DROP TRIGGER works_revision ON works;
+DROP TRIGGER posts_revision ON posts;
+DROP FUNCTION increment_content_version();
+DROP TRIGGER governance_events_immutable ON governance_events;
+DROP FUNCTION protect_governance_event();
+DROP TABLE community_commands;
+DROP TABLE community_feed_snapshot_items,community_feed_snapshots;
+DROP VIEW community_visible_posts;
+ALTER TABLE moderation_appeals DROP COLUMN version;
+ALTER TABLE moderation_appeals DROP CONSTRAINT moderation_appeals_actor_decision_key;
+ALTER TABLE moderation_appeals DROP COLUMN decision_outcome;
+ALTER TABLE moderation_appeals DROP COLUMN decision_version;
+ALTER TABLE moderation_appeals ADD CONSTRAINT moderation_appeals_report_id_appellant_id_key UNIQUE(report_id,appellant_id);
+ALTER TABLE content_reports DROP COLUMN decision_version;
+ALTER TABLE content_reports DROP COLUMN version;
+ALTER TABLE comments DROP COLUMN version;
+ALTER TABLE posts DROP COLUMN owner_removed;
+ALTER TABLE posts DROP CONSTRAINT posts_title_length_check;
+ALTER TABLE posts ADD CONSTRAINT posts_title_length_check
+ CHECK(work_id IS NOT NULL OR (title IS NOT NULL AND char_length(title) BETWEEN 3 AND 120)) NOT VALID;

@@ -1,3 +1,4 @@
+import { fixtureCredentials } from './helpers/identity'
 import { expect, test } from '@playwright/test'
 import { assignTaskFixture } from './fixtures/task'
 
@@ -6,7 +7,7 @@ test('resolves a disputed task through permission-scoped operations without sett
   const runID = Date.now().toString(36)
   const title = `Operations dispute brief ${runID}`
 
-  await page.request.post('/api/v1/auth/demo', { data: { actor: 'publisher' } })
+  await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('publisher') })
   const createResponse = await page.request.post('/api/v1/tasks', {
     headers: { 'Idempotency-Key': `admin-task-${runID}` },
     data: {
@@ -28,7 +29,7 @@ test('resolves a disputed task through permission-scoped operations without sett
   expect(createResponse.ok()).toBeTruthy()
   const created = (await createResponse.json()) as { id: string }
 
-  const creatorSession = await page.request.post('/api/v1/auth/demo', { data: { actor: 'creator' } })
+  const creatorSession = await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('creator') })
   const creator = await creatorSession.json() as { user: { id: string } }
   await page.goto(`/market/demands/${created.id}`)
   await page.getByRole('button', { name: 'Submit proposal', exact: true }).click()
@@ -50,15 +51,21 @@ test('resolves a disputed task through permission-scoped operations without sett
   await expect(page.locator('.creation-turn').first()).toHaveAttribute('data-status', 'succeeded')
   await page.goto(`/market/demands/${created.id}`)
   await page.getByLabel('Delivery note', { exact: true }).fill('Submitted with complete deterministic Local Test source and model evidence.')
+  await page.getByLabel('Source and license evidence', { exact: true }).fill('Original source assets with the rights required for this task.')
+  await page.getByLabel('AI models and source disclosure', { exact: true }).fill('Local generated result; model and sources documented for review.')
+  await page.getByRole('checkbox', { name: 'I confirm the delivery meets the task rights terms and all sources are disclosed.' }).check()
   await page.getByRole('button', { name: 'Submit delivery', exact: true }).click()
-  await expect(page.locator('.task-deliveries')).toContainText('Maya Chen')
-  await page.request.post('/api/v1/auth/demo', { data: { actor: 'publisher' } })
+  await expect(page.locator('.task-deliveries')).toContainText('Fixture Creator')
+  await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('publisher') })
   await page.reload()
   await page.getByLabel('Review note', { exact: true }).fill('Please increase the subject contrast and preserve the supplied source evidence.')
   await page.getByRole('button', { name: 'Request revision', exact: true }).click()
-  await page.request.post('/api/v1/auth/demo', { data: { actor: 'creator' } })
+  await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('creator') })
   await page.reload()
   await page.getByLabel('Delivery note', { exact: true }).fill('Updated subject contrast and retained the complete source evidence for the second version.')
+  await page.getByLabel('Source and license evidence', { exact: true }).fill('Original source assets with the rights required for this task.')
+  await page.getByLabel('AI models and source disclosure', { exact: true }).fill('Local generated result; model and sources documented for review.')
+  await page.getByRole('checkbox', { name: 'I confirm the delivery meets the task rights terms and all sources are disclosed.' }).check()
   await page.getByRole('button', { name: 'Submit delivery', exact: true }).click()
   await expect(page.locator('.task-deliveries')).toContainText('v2')
   await page.getByRole('button', { name: 'Open dispute', exact: true }).click()
@@ -70,7 +77,7 @@ test('resolves a disputed task through permission-scoped operations without sett
   expect(deniedQueue.status()).toBe(403)
 
   await page.setViewportSize({ width: 390, height: 844 })
-  await page.request.post('/api/v1/auth/demo', { data: { actor: 'admin' } })
+  await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('admin') })
   await page.goto(`/admin?tab=tasks&taskQ=${runID}&taskStatus=disputed&taskDisputeStatus=open`)
   await expect(page.getByRole('heading', { name: 'Task operations queue', exact: true })).toBeVisible()
   await expect(page.getByRole('searchbox', { name: 'Search tasks', exact: true })).toHaveValue(runID)
@@ -93,6 +100,8 @@ test('resolves a disputed task through permission-scoped operations without sett
   await commandPanel.getByRole('combobox', { name: 'Dispute outcome', exact: true }).click()
   await page.getByRole('option', { name: 'Cancel without settlement', exact: true }).click()
   const resolution = page.waitForResponse(response => response.url().endsWith(`/admin/tasks/${created.id}/resolve`) && response.request().method() === 'POST')
+  await commandPanel.getByLabel('Decision reason', { exact: true }).fill('Verified the delivery history and confirmed the requested cancellation.')
+  await commandPanel.getByRole('checkbox', { name: 'I reviewed delivery and funding evidence and confirm this decision.' }).check()
   await commandPanel.getByRole('button', { name: 'Apply', exact: true }).click()
   expect(await (await resolution).json()).toMatchObject({ disputeStatus: 'resolved_client' })
   await expect(page.getByText('Operation completed.', { exact: true })).toBeVisible()

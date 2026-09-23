@@ -128,26 +128,3 @@ func (s *Service) providerConfigReadyForPurpose(provider persistedProviderConfig
 	}
 	return true
 }
-
-func (s *Service) waffoWebhookSettings(ctx context.Context) (environment, storeID string) {
-	if s == nil {
-		return "test", ""
-	}
-	environment, storeID = s.config.WaffoEnvironment, s.config.WaffoStoreID
-	if s.pool == nil {
-		return environment, storeID
-	}
-	var configuredEnvironment, configuredStoreID string
-	if err := s.pool.QueryRow(ctx, `SELECT environment,store_id FROM payment_provider_configs WHERE provider='waffo_pancake' AND enabled=true`).Scan(&configuredEnvironment, &configuredStoreID); err == nil {
-		if strings.TrimSpace(configuredEnvironment) != "" {
-			if strings.TrimSpace(environment) != "" && !strings.EqualFold(strings.TrimSpace(environment), strings.TrimSpace(configuredEnvironment)) {
-				return "", ""
-			}
-			environment = configuredEnvironment
-		}
-		if strings.TrimSpace(configuredStoreID) != "" {
-			storeID = configuredStoreID
-		}
-	}
-	return environment, storeID
-}

@@ -32,7 +32,7 @@ func TestGenerationCenterHTTPContract(t *testing.T) {
 	assetID := uuid.New()
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,scan_status,source_type,license_code,family_id,version_number)
-		VALUES($1,$2,'image','HTTP reusable output',$3,'image/jpeg','clean','demo','creator-owned',$1,1)`,
+		VALUES($1,$2,'image','HTTP reusable output',$3,'image/jpeg','clean','delivery','creator-owned',$1,1)`,
 		assetID, owner.ID, "/api/v1/assets/"+assetID.String()+"/content"); err != nil {
 		t.Fatal(err)
 	}

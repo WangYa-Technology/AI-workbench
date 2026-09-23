@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import UiEmptyState from '../ui/UiEmptyState.vue'
+import UiFilterBar from '../ui/UiFilterBar.vue'
 import type { AdminUser } from '../../api/client'
 import UiButton from '../ui/UiButton.vue'
 import UiIconButton from '../ui/UiIconButton.vue'
@@ -33,7 +35,7 @@ const emit = defineEmits<{
 
 <template>
   <div class="admin-user-directory">
-    <form class="admin-user-filters" @submit.prevent="emit('apply')">
+    <UiFilterBar fields density="compact" layout="grid" class="admin-user-filters" @submit.prevent="emit('apply')">
       <label>{{ t('admin.userSearch') }}<UiInput :model-value="query" type="search" maxlength="120" :placeholder="t('admin.userSearchPlaceholder')" @update:model-value="emit('update:query', String($event))" /></label>
       <label>{{ t('admin.role') }}<UiSelect :model-value="role" @update:model-value="emit('update:role', String($event))"><option value="">{{ t('admin.allRoles') }}</option><option v-for="item in ['member','creator','publisher','moderator','admin']" :key="item" :value="item">{{ localizedLabel(roleKeys, item) }}</option></UiSelect></label>
       <label>{{ t('admin.status') }}<UiSelect :model-value="status" @update:model-value="emit('update:status', String($event))"><option value="">{{ t('admin.allStatuses') }}</option><option v-for="item in ['active','suspended','deleted']" :key="item" :value="item">{{ t(`admin.states.${item}`) }}</option></UiSelect></label>
@@ -45,7 +47,7 @@ const emit = defineEmits<{
       <UiIconButton class="icon-button" :label="t('actions.clearFilters')" @click="emit('clear')">
         <X :size="16" />
       </UiIconButton>
-    </form>
+    </UiFilterBar>
     <UiTable v-if="users.length" class="admin-user-table-shell" table-class="admin-user-table" :caption="t('admin.userTableCaption')">
       <thead>
         <tr>
@@ -97,9 +99,7 @@ const emit = defineEmits<{
         </tr>
       </tbody>
     </UiTable>
-    <p v-else class="inline-empty">
-      {{ t('admin.noUsers') }}
-    </p>
+    <UiEmptyState v-else density="compact" :title="t('admin.noUsers')" />
     <UiButton v-if="nextCursor" class="command-button secondary admin-load-more" type="button" :disabled="loadingMore" variant="secondary" @click="emit('more')">
       <LoaderCircle v-if="loadingMore" class="spin" :size="16" /><ListFilter v-else :size="16" />{{ t('actions.loadMore') }}
     </UiButton>

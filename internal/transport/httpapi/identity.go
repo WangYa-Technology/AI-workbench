@@ -19,6 +19,10 @@ import (
 )
 
 func (s *Server) register(w http.ResponseWriter, r *http.Request) {
+	if s.config.Environment != "test" {
+		httputil.WriteError(w, r, http.StatusGone, "email_verification_required", "Use the email verification registration flow.", false)
+		return
+	}
 	var input identity.RegisterInput
 	if !httputil.DecodeJSON(w, r, &input) {
 		return
@@ -102,7 +106,8 @@ func (s *Server) unifiedAuthStart(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if errors.Is(challengeErr, authchallenges.ErrRateLimited) {
-			httputil.WriteError(w, r, http.StatusTooManyRequests, "auth_code_rate_limited", "A code was sent recently. Wait before requesting another.", true)
+			w.Header().Set("Retry-After", strconv.Itoa(int(authchallenges.ResendInterval/time.Second)))
+			httputil.WriteError(w, r, http.StatusTooManyRequests, "auth_code_resend_limited", "A code was requested recently. Wait before requesting another.", true)
 			return
 		}
 		if challengeErr != nil {
@@ -158,7 +163,8 @@ func (s *Server) unifiedAuthSendCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if errors.Is(err, authchallenges.ErrRateLimited) {
-		httputil.WriteError(w, r, http.StatusTooManyRequests, "auth_code_rate_limited", "A code was sent recently. Wait before requesting another.", true)
+		w.Header().Set("Retry-After", strconv.Itoa(int(authchallenges.ResendInterval/time.Second)))
+		httputil.WriteError(w, r, http.StatusTooManyRequests, "auth_code_resend_limited", "A code was requested recently. Wait before requesting another.", true)
 		return
 	}
 	if err != nil {
@@ -409,21 +415,34 @@ func clientAddress(r *http.Request, trustedProxyCIDRs []netip.Prefix) string {
 		host = strings.TrimSpace(r.RemoteAddr)
 	}
 	remote, parseErr := netip.ParseAddr(host)
-	if parseErr != nil || !isTrustedProxy(remote, trustedProxyCIDRs) {
+	if parseErr != nil {
 		return host
 	}
-	for _, candidate := range strings.Split(r.Header.Get("X-Forwarded-For"), ",") {
-		candidate = strings.TrimSpace(candidate)
-		if parsed, err := netip.ParseAddr(candidate); err == nil {
-			return parsed.String()
+	// Append-only proxies preserve caller-supplied prefixes. Trust each hop
+	// from the TCP peer backwards and stop at the first untrusted address;
+	// trusting the leftmost value lets callers forge session/risk evidence.
+	current := remote
+	fields := r.Header.Values("X-Forwarded-For")
+	for i := len(fields) - 1; i >= 0; i-- {
+		hops := strings.Split(fields[i], ",")
+		for j := len(hops) - 1; j >= 0; j-- {
+			if !isTrustedProxy(current, trustedProxyCIDRs) {
+				return current.Unmap().String()
+			}
+			parsed, err := netip.ParseAddr(strings.TrimSpace(hops[j]))
+			if err != nil || parsed.Zone() != "" {
+				// Do not skip a malformed hop and accidentally trust its prefix.
+				return remote.Unmap().String()
+			}
+			current = parsed
 		}
 	}
-	return host
+	return current.Unmap().String()
 }
 
 func isTrustedProxy(address netip.Addr, trusted []netip.Prefix) bool {
 	for _, prefix := range trusted {
-		if prefix.Contains(address) {
+		if prefix.Contains(address) || prefix.Contains(address.Unmap()) {
 			return true
 		}
 	}

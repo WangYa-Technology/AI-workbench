@@ -8,10 +8,12 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/hcai-chat/hcai-chat/internal/notifications"
 	"github.com/hcai-chat/hcai-chat/internal/payments"
+	"github.com/hcai-chat/hcai-chat/internal/taskdelivery"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -46,6 +48,8 @@ type TaskOperation struct {
 }
 
 type TaskDisputeResolution struct {
+	Reason          string `json:"reason"`
+	Confirm         bool   `json:"confirm"`
 	Decision        string `json:"decision"`
 	ExpectedVersion int    `json:"expectedVersion"`
 }
@@ -144,8 +148,12 @@ func decodeTaskOperationCursor(value string) (taskOperationCursor, error) {
 	return cursor, nil
 }
 
-func (s *Service) ResolveTaskDispute(ctx context.Context, actorID, taskID uuid.UUID, input TaskDisputeResolution, _ string) (TaskOperation, error) {
+func (s *Service) ResolveTaskDispute(ctx context.Context, actorID, taskID uuid.UUID, input TaskDisputeResolution, requestID string) (TaskOperation, error) {
 	input.Decision = strings.TrimSpace(strings.ToLower(input.Decision))
+	input.Reason = strings.TrimSpace(input.Reason)
+	if !input.Confirm || utf8.RuneCountInString(input.Reason) < 10 || utf8.RuneCountInString(input.Reason) > 2000 {
+		return TaskOperation{}, ErrInvalid
+	}
 	if input.ExpectedVersion < 1 || !oneOf(input.Decision, "release_creator", "cancel_without_settlement") {
 		return TaskOperation{}, ErrInvalid
 	}
@@ -199,7 +207,7 @@ func (s *Service) ResolveTaskDispute(ctx context.Context, actorID, taskID uuid.U
 		return TaskOperation{}, ErrConflict
 	}
 
-	note := "Administrative decision: " + input.Decision
+	note := input.Reason
 	metadata := map[string]any{"decision": input.Decision, "previousStatus": status, "disputeId": disputeID, "amountCents": 0, "currency": currency, "paymentMode": "none"}
 	if providerPayment {
 		metadata["paymentMode"] = paymentProvider
@@ -219,6 +227,11 @@ func (s *Service) ResolveTaskDispute(ctx context.Context, actorID, taskID uuid.U
 			return TaskOperation{}, ErrConflict
 		}
 		if err != nil {
+			return TaskOperation{}, err
+		}
+		if err = taskdelivery.GrantTx(ctx, tx, deliveryID); errors.Is(err, taskdelivery.ErrUnavailable) {
+			return TaskOperation{}, ErrConflict
+		} else if err != nil {
 			return TaskOperation{}, err
 		}
 		settlementID = uuid.New()
@@ -271,6 +284,12 @@ func (s *Service) ResolveTaskDispute(ctx context.Context, actorID, taskID uuid.U
 		return TaskOperation{}, err
 	}
 	if _, err = tx.Exec(ctx, `INSERT INTO task_events(demand_id,actor_id,kind,from_status,to_status,note,metadata) VALUES($1,$2,$3,'disputed',$4,$5,$6)`, taskID, actorID, eventKind, toStatus, note, metadata); err != nil {
+		return TaskOperation{}, err
+	}
+	metadata["previousVersion"] = disputeVersion
+	metadata["version"] = disputeVersion + 1
+	metadata["status"] = toStatus
+	if _, err = tx.Exec(ctx, `INSERT INTO audit_events(actor_id,action,resource_type,resource_id,reason,request_id,metadata) VALUES($1,'admin.task_dispute_resolved','task',$2,$3,$4,$5)`, actorID, taskID, note, requestID, metadata); err != nil {
 		return TaskOperation{}, err
 	}
 	paymentMode := metadata["paymentMode"].(string)

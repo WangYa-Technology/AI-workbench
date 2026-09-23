@@ -1,3 +1,4 @@
+import { fixtureCredentials } from './helpers/identity'
 import { expect, test } from '@playwright/test'
 
 test('versions an Asset and publishes a restored server draft', async ({ page }) => {
@@ -8,7 +9,7 @@ test('versions an Asset and publishes a restored server draft', async ({ page })
   const restoredSummary = `Restored from PostgreSQL for ${runID}.`
   const publishedSummary = `Updated server draft version for ${runID}.`
 
-  const session = await page.request.post('/api/v1/auth/demo', { data: { actor: 'creator' } })
+  const session = await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('creator') })
   expect(session.ok()).toBeTruthy()
 
   await page.goto('/workspace/assets')
@@ -23,7 +24,7 @@ test('versions an Asset and publishes a restored server draft', async ({ page })
   await uploadPanel.getByRole('button', { name: 'Upload and scan', exact: true }).click()
   await expect(page.getByText('Upload passed scanning and is ready to use.', { exact: true })).toBeVisible()
 
-  const v1Card = page.locator('.asset-card').filter({ hasText: v1Title }).first()
+  const v1Card = page.locator('.asset-row').filter({ hasText: v1Title }).first()
   await v1Card.getByRole('link', { name: 'View details', exact: true }).click()
   await page.getByRole('button', { name: 'Upload new version', exact: true }).click()
   const versionForm = page.locator('.asset-version-form')
@@ -47,8 +48,8 @@ test('versions an Asset and publishes a restored server draft', async ({ page })
   }).toBe('clean')
   await page.reload()
   await expect(page.getByRole('heading', { name: v2Title, exact: true })).toBeVisible()
-  await expect(page.locator('.asset-version-block')).toContainText('v2 · Clean')
-  await expect(page.locator('.asset-version-block')).toContainText('v1 · Clean')
+  await expect(page.locator('.asset-version-block').getByRole('link').filter({ hasText: v2Title })).toContainText(/v2\s*Clean/)
+  await expect(page.locator('.asset-version-block').getByRole('link').filter({ hasText: v1Title })).toContainText(/v1\s*Clean/)
 
   await page.getByRole('button', { name: 'Publish asset', exact: true }).click()
   await page.getByLabel('Work title', { exact: true }).fill(workTitle)
@@ -66,7 +67,7 @@ test('versions an Asset and publishes a restored server draft', async ({ page })
 
   await page.getByLabel('Short description', { exact: true }).fill(publishedSummary)
   await page.getByRole('button', { name: 'Save draft', exact: true }).click()
-  await expect(page.locator('#asset-publish-draft option:checked')).toContainText('v2')
+  await expect(page.getByRole('combobox', { name: 'Saved drafts', exact: true })).toContainText('v2')
   await page.getByRole('button', { name: 'Publish work', exact: true }).click()
 
   await expect(page).toHaveURL(/\/works\/[0-9a-f-]+$/)

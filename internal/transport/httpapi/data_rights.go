@@ -1,11 +1,16 @@
 package httpapi
 
 import (
+	"context"
+	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/hcai-chat/hcai-chat/internal/datarights"
 	"github.com/hcai-chat/hcai-chat/internal/platform/httputil"
@@ -51,8 +56,6 @@ func (s *Server) createDataRightsRequest(w http.ResponseWriter, r *http.Request)
 		httputil.WriteError(w, r, http.StatusUnauthorized, "recent_authentication_required", "Sign in again before creating a data-rights request.", false)
 	case errors.Is(err, datarights.ErrConflict):
 		httputil.WriteError(w, r, http.StatusConflict, "data_rights_request_conflict", "An active request already exists or the 30-day request limit was reached.", false)
-	case errors.Is(err, datarights.ErrDemoAccount):
-		httputil.WriteError(w, r, http.StatusConflict, "demo_data_rights_disabled", "Create a personal test account to verify data export or deletion. Shared demo accounts cannot be changed.", false)
 	case err != nil:
 		s.internalError(w, r, "create data rights request", err)
 	default:
@@ -92,8 +95,26 @@ func (s *Server) downloadDataExport(w http.ResponseWriter, r *http.Request) {
 	if !valid {
 		return
 	}
-	body, checksum, err := s.dataRights.Download(r.Context(), user.ID, id)
+	// A large native download needs a longer response budget than JSON APIs.
+	// Bound preparation and transfer together; do not disable server deadlines.
+	deadline := time.Now().Add(10 * time.Minute)
+	if err := http.NewResponseController(w).SetWriteDeadline(deadline); err != nil {
+		s.internalError(w, r, "set data export deadline", err)
+		return
+	}
+	ctx, cancel := context.WithDeadline(r.Context(), deadline)
+	defer cancel()
+	w.Header().Set("Cache-Control", "private, no-store")
+	body, checksum, err := s.dataRights.OpenExport(ctx, user.ID, id)
 	switch {
+	case errors.Is(err, datarights.ErrExportBusy):
+		w.Header().Set("Retry-After", "5")
+		httputil.WriteError(w, r, http.StatusServiceUnavailable, "data_export_busy", "Data export capacity is busy. Retry shortly.", true)
+	case errors.Is(err, datarights.ErrExportStorage):
+		w.Header().Set("Retry-After", "30")
+		httputil.WriteError(w, r, http.StatusServiceUnavailable, "data_export_storage_unavailable", "Export storage is temporarily unavailable. Retry later or contact support.", true)
+	case errors.Is(err, datarights.ErrExportTooLarge):
+		httputil.WriteError(w, r, http.StatusServiceUnavailable, "data_export_too_large", "The complete export exceeds this server's preparation budget. Contact support.", false)
 	case errors.Is(err, datarights.ErrNotReady):
 		httputil.WriteError(w, r, http.StatusNotFound, "data_export_not_ready", "The export is not ready or does not belong to this account.", false)
 	case errors.Is(err, datarights.ErrExpired):
@@ -101,12 +122,28 @@ func (s *Server) downloadDataExport(w http.ResponseWriter, r *http.Request) {
 	case err != nil:
 		s.internalError(w, r, "download data export", err)
 	default:
+		defer body.Close()
+		info, statErr := body.Stat()
+		if statErr != nil {
+			s.internalError(w, r, "stat data export", statErr)
+			return
+		}
+		digest, decodeErr := hex.DecodeString(checksum)
+		if decodeErr != nil || len(digest) != 32 {
+			s.internalError(w, r, "decode data export checksum", errors.New("invalid stored export checksum"))
+			return
+		}
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="hcai-data-export-%s.json"`, id.String()))
-		w.Header().Set("Digest", "sha-256="+checksum)
+		encoded := base64.StdEncoding.EncodeToString(digest)
+		w.Header().Set("Digest", "sha-256="+encoded)
+		w.Header().Set("Content-Digest", "sha-256=:"+encoded+":")
 		w.Header().Set("Cache-Control", "private, no-store")
+		w.Header().Set("Content-Length", strconv.FormatInt(info.Size(), 10))
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(body)
+		if _, err := io.Copy(w, body); err != nil {
+			s.logger.Error("stream data export", "requestId", id, "error", err)
+		}
 	}
 }
 
@@ -152,9 +189,9 @@ func (s *Server) adminListDataRightsHolds(w http.ResponseWriter, r *http.Request
 
 func parseDataRightsListInput(w http.ResponseWriter, r *http.Request, code string) (datarights.ListInput, bool) {
 	limit := 0
-	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
-		parsed, err := strconv.Atoi(raw)
-		if err != nil {
+	if values, present := r.URL.Query()["limit"]; present {
+		parsed, err := strconv.Atoi(strings.TrimSpace(values[0]))
+		if err != nil || len(values) != 1 || parsed < 1 || parsed > 50 {
 			httputil.WriteError(w, r, http.StatusUnprocessableEntity, code, "Use a page size from 1 to 50 and an unmodified cursor.", false)
 			return datarights.ListInput{}, false
 		}

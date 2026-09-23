@@ -26,6 +26,7 @@ import (
 	"github.com/hcai-chat/hcai-chat/internal/platform/httputil"
 	"github.com/hcai-chat/hcai-chat/internal/platform/media"
 	"github.com/hcai-chat/hcai-chat/internal/platform/providers"
+	"github.com/hcai-chat/hcai-chat/internal/productdelivery"
 	"github.com/hcai-chat/hcai-chat/internal/reconciliation"
 	"github.com/hcai-chat/hcai-chat/internal/support"
 	"github.com/hcai-chat/hcai-chat/internal/tasks"
@@ -39,31 +40,32 @@ import (
 var openAPIDocument []byte
 
 type Server struct {
-	config         config.Config
-	pool           *pgxpool.Pool
-	logger         *slog.Logger
-	started        time.Time
-	identity       *identity.Repository
-	discovery      *discovery.Repository
-	creation       *creation.Service
-	billing        *billing.Service
-	assets         *assets.Service
-	community      *community.Repository
-	tasks          *tasks.Service
-	marketplace    *marketplace.Service
-	notifications  *notifications.Repository
-	admin          *admin.Service
-	dataRights     *datarights.Service
-	developer      *developer.Service
-	support        *support.Service
-	observability  *observability.Repository
-	metrics        *observability.Metrics
-	webhooks       *webhooks.Service
-	emailActions   *emailactions.Service
-	authChallenges *authchallenges.Service
-	payments       *payments.Service
-	reconciliation *reconciliation.Service
-	taskTypes      *tasktypes.Service
+	config          config.Config
+	pool            *pgxpool.Pool
+	logger          *slog.Logger
+	started         time.Time
+	identity        *identity.Repository
+	discovery       *discovery.Repository
+	creation        *creation.Service
+	billing         *billing.Service
+	assets          *assets.Service
+	community       *community.Repository
+	tasks           *tasks.Service
+	marketplace     *marketplace.Service
+	notifications   *notifications.Repository
+	admin           *admin.Service
+	dataRights      *datarights.Service
+	developer       *developer.Service
+	support         *support.Service
+	observability   *observability.Repository
+	metrics         *observability.Metrics
+	webhooks        *webhooks.Service
+	emailActions    *emailactions.Service
+	authChallenges  *authchallenges.Service
+	payments        *payments.Service
+	deliveryRepairs *productdelivery.RepairService
+	reconciliation  *reconciliation.Service
+	taskTypes       *tasktypes.Service
 }
 
 func New(cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger) http.Handler {
@@ -78,19 +80,20 @@ func New(cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger) http.Handle
 	mediaScanner := assets.NewScannerFromConfig(cfg)
 	server := &Server{
 		config: cfg, pool: pool, logger: logger, started: started,
-		identity:  identity.NewRepository(pool),
-		discovery: discovery.NewRepository(pool),
-		creation:  creation.NewServiceWithMedia(pool, mediaStores, providerRuntimes),
-		billing:   billing.NewService(pool),
-		assets:    assets.NewServiceWithMedia(pool, mediaStores, mediaScanner),
-		community: community.NewRepository(pool),
+		identity:        identity.NewRepository(pool),
+		discovery:       discovery.NewRepository(pool),
+		creation:        creation.NewServiceWithMedia(pool, mediaStores, providerRuntimes),
+		billing:         billing.NewService(pool),
+		assets:          assets.NewServiceWithMedia(pool, mediaStores, mediaScanner),
+		deliveryRepairs: productdelivery.NewRepairService(pool, mediaStores),
+		community:       community.NewRepository(pool),
 		// HTTP traffic must never fall back to the legacy local task ledger.
 		// Payment capability is determined by payments.Service at checkout time.
 		tasks:          tasks.NewServiceWithPayments(pool, true),
 		marketplace:    marketplace.NewService(pool),
 		notifications:  notifications.NewRepository(pool),
 		admin:          admin.NewServiceWithRuntimesAndProviderKey(pool, providerRuntimes, cfg.WebhookEncryptionKey),
-		dataRights:     datarights.NewServiceWithMedia(pool, cfg.MediaRoot, mediaStores),
+		dataRights:     datarights.NewServiceWithMedia(pool, cfg.MediaRoot, mediaStores, cfg.DataExport),
 		developer:      developer.NewService(pool),
 		support:        support.NewService(pool),
 		observability:  observability.NewRepository(pool),
@@ -104,6 +107,12 @@ func New(cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger) http.Handle
 	}
 	router := chi.NewRouter()
 	router.Use(httputil.Middleware(logger, cfg.WebOrigin, server.observability.RecordRequest, server.metrics.RecordRequest))
+	// Browser writes require a trusted origin. Payment callbacks authenticate
+	// signed bodies independently and must not inherit browser-origin rules.
+	router.Use(httputil.ProtectBrowserWrites(cfg.WebOrigin,
+		"POST /api/v1/payments/webhooks/stripe",
+		"POST /api/v1/payments/webhooks/waffo",
+	))
 	router.Get("/health", server.health)
 	router.Get("/ready", server.ready)
 	router.Get("/metrics", server.metricsEndpoint)
@@ -123,7 +132,6 @@ func New(cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger) http.Handle
 		api.Post("/auth/unified/send-code", server.unifiedAuthSendCode)
 		api.Post("/auth/unified/login-code", server.unifiedAuthLoginCode)
 		api.Post("/auth/unified/register", server.unifiedAuthRegister)
-		api.Post("/auth/demo", server.demoLogin)
 		api.Post("/auth/logout", server.logout)
 		api.Post("/auth/password-reset-requests", server.requestPasswordReset)
 		api.Post("/auth/password-reset-confirm", server.confirmPasswordReset)
@@ -180,6 +188,7 @@ func New(cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger) http.Handle
 		api.Put("/generations/{generationID}/favorite", server.favoriteGeneration)
 		api.Get("/billing/statement", server.billingStatement)
 		api.Get("/billing/points", server.pointOverview)
+		api.Get("/billing/topup-settings", server.walletTopupSettings)
 		api.Post("/billing/topups/checkout", server.checkoutWalletTopup)
 		api.Post("/billing/subscriptions/checkout", server.checkoutSubscription)
 		api.Get("/assets", server.listAssets)
@@ -189,12 +198,46 @@ func New(cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger) http.Handle
 		api.Get("/assets/{assetID}", server.getAsset)
 		api.Get("/assets/{assetID}/content", server.assetContent)
 		api.Post("/assets/{assetID}/versions", server.uploadAssetVersion)
+		api.Get("/seller/products", server.listSellerProducts)
+		api.Get("/seller/sales", server.listSellerSales)
+		api.Get("/seller/sales/{orderID}", server.getSellerSale)
+		api.Get("/seller/sales/{orderID}/events", server.listSellerSaleEvents)
+		api.Get("/seller/funds", server.getSellerFunds)
+		api.Get("/admin/seller-payout-requests", server.adminSellerPayoutDirectory)
+		api.Get("/admin/seller-payout-requests/{requestID}", server.adminSellerPayoutReview)
+		api.Post("/admin/seller-payout-requests/{requestID}/review", server.adminSellerPayoutReview)
+		api.Post("/admin/seller-payout-requests/{requestID}/funding", server.adminSellerPayoutFunding)
+		api.Get("/admin/seller-payout-requests/{requestID}/bank-payout", server.adminSellerBankPayout)
+		api.Post("/admin/seller-payout-requests/{requestID}/bank-payout", server.adminSellerBankPayout)
+		api.Post("/admin/seller-payout-requests/{requestID}/bank-payout/resume", server.adminResumeSellerBankPayout)
+		api.Get("/admin/seller-payout-requests/{requestID}/source-reversal", server.adminSellerSourceReversal)
+		api.Post("/admin/seller-payout-requests/{requestID}/source-reversal", server.adminSellerSourceReversal)
+		api.Post("/admin/seller-source-reversals/{commandID}/close", server.adminCloseSellerSourceReversal)
+		api.Get("/seller/payout-options", server.listSellerPayoutOptions)
+		api.Get("/seller/payout-requests", server.listSellerPayoutRequests)
+		api.Post("/seller/payout-requests", server.createSellerPayoutRequest)
+		api.Delete("/seller/payout-requests/{requestID}", server.cancelSellerPayoutRequest)
+		api.Get("/seller/payout-requests/{requestID}", server.getSellerPayoutRequest)
+		api.Get("/seller/payout-requests/{requestID}/bank-destination", server.getSellerPayoutBankTarget)
+		api.Get("/seller/payout-requests/{requestID}/banks", server.listSellerPayoutBanks)
+		api.Put("/seller/payout-requests/{requestID}/bank-destination", server.bindSellerPayoutBankTarget)
+		api.Get("/seller/licenses", server.listSellerLicenses)
+		api.Post("/seller/products", server.createSellerProduct)
+		api.Get("/seller/products/{productID}", server.getSellerProduct)
+		api.Put("/seller/products/{productID}", server.editSellerProduct)
+		api.Post("/seller/products/{productID}/{action}", server.actSellerProduct)
+		api.Get("/admin/products", server.listReviewProducts)
+		api.Get("/admin/products/{productID}", server.getReviewProduct)
+		api.Get("/admin/products/{productID}/content", server.reviewProductContent)
+		api.Post("/admin/products/{productID}/{action}", server.actReviewProduct)
 		api.Get("/products", server.listProducts)
 		api.Get("/products/{productID}", server.getProduct)
+		api.Put("/products/{productID}/preview", server.setProductPreview)
 		api.Post("/products/{productID}/checkout", server.checkoutProduct)
 		api.Get("/orders", server.listOrders)
 		api.Get("/orders/{orderID}", server.getOrder)
 		api.Post("/orders/{orderID}/refund", server.refundOrder)
+		api.Post("/orders/{orderID}/close-checkout", server.closeProductCheckout)
 		api.Post("/publications", server.publish)
 		api.Get("/content-drafts", server.listContentDrafts)
 		api.Post("/content-drafts", server.createContentDraft)
@@ -203,14 +246,19 @@ func New(cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger) http.Handle
 		api.Delete("/content-drafts/{draftID}", server.discardContentDraft)
 		api.Post("/content-drafts/{draftID}/publish", server.publishContentDraft)
 		api.Get("/community/posts", server.listPosts)
+		api.Get("/community/capabilities", server.communityCapabilities)
 		api.Post("/community/posts", server.createCommunityPost)
 		api.Get("/community/posts/{postID}", server.getCommunityPost)
+		api.Get("/community/posts/{postID}/owned", server.getOwnedCommunityPost)
+		api.Patch("/community/posts/{postID}", server.updateCommunityPost)
+		api.Delete("/community/posts/{postID}", server.deleteCommunityPost)
 		api.Get("/community/posts/{postID}/comments", server.listComments)
 		api.Post("/community/posts/{postID}/comments", server.createComment)
 		api.Put("/community/posts/{postID}/reactions/{kind}", server.setPostReaction)
 		api.Put("/community/authors/{authorID}/follow", server.setCommunityFollow)
 		api.Post("/community/posts/{postID}/reports", server.reportCommunityPost)
 		api.Get("/community/reports/mine", server.listMyCommunityReports)
+		api.Get("/community/reports/{reportID}", server.getCommunityReport)
 		api.Post("/community/reports/{reportID}/appeals", server.createCommunityAppeal)
 		api.Get("/tasks", server.listTasks)
 		api.Get("/task-types", server.listTaskTypes)
@@ -224,12 +272,19 @@ func New(cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger) http.Handle
 		api.Post("/tasks/{taskID}/review", server.reviewTask)
 		api.Post("/tasks/{taskID}/disputes", server.disputeTask)
 		api.Post("/tasks/{taskID}/cancel", server.cancelTask)
+		api.Post("/tasks/{taskID}/deadline", server.changeTaskDeadline)
 		api.Get("/admin/overview", server.adminOverview)
 		api.Get("/admin/users", server.adminListUsers)
 		api.Patch("/admin/users/{userID}", server.adminUpdateUser)
 		api.Get("/admin/content", server.adminListContent)
 		api.Patch("/admin/content/{workID}", server.adminUpdateContent)
 		api.Get("/admin/media", server.adminListMedia)
+		api.Get("/admin/product-deliveries/evidence-gaps", server.listProductDeliveryEvidenceGaps)
+		api.Get("/admin/product-deliveries/{orderID}", server.inspectProductDelivery)
+		api.Post("/admin/product-deliveries/{orderID}/repair", server.repairProductDelivery)
+		api.Post("/admin/product-deliveries/{orderID}/repair-upload", server.prepareProductDeliveryUpload)
+		api.Put("/admin/product-deliveries/{orderID}/repairs/{repairID}/content", server.uploadProductDeliveryRepair)
+		api.Post("/admin/product-deliveries/{orderID}/repairs/{repairID}/resume", server.resumeProductDeliveryRepair)
 		api.Post("/admin/media/{assetID}/review", server.adminReviewMedia)
 		api.Get("/admin/generations", server.adminListGenerations)
 		api.Post("/admin/generations/{generationID}/cancel", server.adminCancelGeneration)
@@ -250,6 +305,9 @@ func New(cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger) http.Handle
 		api.Post("/admin/provider-configs/{providerID}/models", server.adminCreateProviderModel)
 		api.Patch("/admin/provider-models/{modelID}", server.adminUpdateProviderModel)
 		api.Post("/admin/provider-models/{modelID}/archive", server.adminArchiveProviderModel)
+		api.Get("/admin/subscription-models", server.adminListSubscriptionModels)
+		api.Get("/admin/wallet-topup-settings", server.adminWalletTopupSettings)
+		api.Put("/admin/wallet-topup-settings", server.adminUpdateWalletTopupSettings)
 		api.Get("/admin/subscription-plans", server.adminListSubscriptionPlans)
 		api.Post("/admin/subscription-plans", server.adminCreateSubscriptionPlan)
 		api.Patch("/admin/subscription-plans/{planID}", server.adminUpdateSubscriptionPlan)
@@ -263,6 +321,16 @@ func New(cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger) http.Handle
 		api.Get("/admin/provider-cost-reconciliations", server.adminListProviderCostReconciliations)
 		api.Post("/admin/provider-cost-reconciliations", server.adminRequestProviderCostReconciliation)
 		api.Get("/admin/payments", server.adminListPayments)
+		api.Get("/admin/product-disputes", server.adminListProductPaymentDisputes)
+		api.Get("/admin/product-disputes/{disputeID}", server.adminGetProductPaymentDispute)
+		api.Post("/admin/product-disputes/{disputeID}/operations", server.adminOperateProductPaymentDispute)
+		api.Get("/admin/payments/webhook-quarantines", server.listProductWebhookQuarantines)
+		api.Post("/admin/payments/webhook-quarantines/{quarantineID}/recheck", server.recheckProductWebhookQuarantine)
+		api.Get("/admin/payments/{paymentID}/refund-history", server.adminRefundHistory)
+		api.Post("/admin/payments/{paymentID}/refund-checks", server.adminRequestRefundCheck)
+		api.Get("/admin/payments/{paymentID}/refund-checks", server.adminListRefundChecks)
+		api.Get("/admin/payments/{paymentID}/refund-checks/{checkID}", server.adminGetRefundCheck)
+		api.Get("/admin/payments/{paymentID}/refund-checks/{checkID}/receipts", server.adminRefundReadReceipts)
 		api.Post("/admin/payments/{paymentID}/recover", server.adminRecoverPayment)
 		api.Post("/admin/payments/events/{eventID}/replay", server.adminReplayPaymentEvent)
 		api.Get("/admin/payment-destinations", server.adminListPaymentDestinations)
@@ -291,6 +359,12 @@ func New(cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger) http.Handle
 		api.Post("/admin/email-actions/{actionID}/retry", server.adminRetryEmailAction)
 		api.Post("/admin/email-actions/{actionID}/cancel", server.adminCancelEmailAction)
 		api.Get("/admin/data-rights", server.adminListDataRights)
+		api.Get("/admin/data-rights/deletion-jobs", server.adminListDeletionJobs)
+		api.Post("/admin/data-rights/deletion-jobs/{jobID}/retry", server.adminRetryDeletionJob)
+		api.Get("/admin/data-rights/export-jobs", server.adminListExportJobs)
+		api.Post("/admin/data-rights/export-jobs/{jobID}/retry", server.adminRetryExportJob)
+		api.Get("/admin/data-rights/media-cleanups", server.adminListMediaCleanups)
+		api.Post("/admin/data-rights/media-cleanups/{jobID}/retry", server.adminRetryMediaCleanup)
 		api.Get("/admin/data-rights/holds", server.adminListDataRightsHolds)
 		api.Post("/admin/data-rights/holds", server.adminCreateDataRightsHold)
 		api.Post("/admin/data-rights/holds/{holdID}/release", server.adminReleaseDataRightsHold)
@@ -369,7 +443,6 @@ func (s *Server) meta(w http.ResponseWriter, r *http.Request) {
 		"defaultLocale":       "en-US",
 		"supportedLocales":    []string{"en-US", "zh-CN"},
 		"defaultCurrency":     "USD",
-		"localDemoAvailable":  s.config.Environment != "production" && s.config.DemoDataEnabled,
 		"localProvider":       map[string]any{"enabled": s.config.LocalProviderEnabled, "label": "Deterministic local test provider"},
 		"paymentProvider":     map[string]any{"enabled": paymentEnabled, "provider": paymentProvider, "liveMode": paymentLiveMode},
 		"taskPaymentProvider": map[string]any{"enabled": taskPaymentEnabled, "provider": paymentProvider, "liveMode": paymentLiveMode},

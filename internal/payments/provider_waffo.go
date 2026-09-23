@@ -16,6 +16,8 @@ import (
 )
 
 const maxWaffoResponseBytes int64 = 1024 * 1024
+const waffoRefundContractVersion = "waffo-product-refund-v1"
+const waffoCheckoutLookupContractVersion = "waffo-product-checkout-lookup-v1"
 
 // WaffoRuntimeConfig contains only deployment-safe connector settings. The
 // Pancake private key stays inside the connector process and is never sent to
@@ -40,6 +42,11 @@ func NewWaffoRuntime(config WaffoRuntimeConfig) *WaffoRuntime {
 	if client == nil {
 		client = http.DefaultClient
 	}
+	// The connector identity is pinned to this endpoint. In particular a
+	// 307/308 must not replay a financial POST or forward its credentials.
+	copyClient := *client
+	copyClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	client = &copyClient
 	config.ConnectorURL = strings.TrimRight(strings.TrimSpace(config.ConnectorURL), "/")
 	config.Environment = strings.TrimSpace(strings.ToLower(config.Environment))
 	if config.Environment == "" {
@@ -52,6 +59,53 @@ func (r *WaffoRuntime) Provider() string { return "waffo_pancake" }
 
 func (r *WaffoRuntime) Capabilities() ProviderCapabilities {
 	return ProviderCapabilities{Checkout: true, Refund: true}
+}
+
+// LookupProductCheckout only observes a previously dispatched order. The
+// connector query is deployment-supplied and schema-reviewed; an absent or
+// rejected query remains a reconciliation outcome and can never create a new
+// checkout.
+func (r *WaffoRuntime) LookupProductCheckout(ctx context.Context, input CheckoutLookupRequest) (CheckoutLookupResult, error) {
+	result := CheckoutLookupResult{Matches: []string{}}
+	if r == nil || !r.validConnector() || input.PaymentID == uuid.Nil || input.ResourceID == uuid.Nil || input.AmountCents < 50 || input.Currency != "USD" || input.LiveMode != (r.config.Environment == "prod") || input.StoreID == "" || input.StoreID != r.config.StoreID || input.OrderExternalID == "" || input.BuyerIdentity == "" || input.CreatedAfter.IsZero() || !input.CreatedBefore.After(input.CreatedAfter) || input.CreatedBefore.Sub(input.CreatedAfter) > 24*time.Hour {
+		return result, newProviderFailure("payment_invalid_request", 0)
+	}
+	payload := map[string]any{
+		"lookupContractVersion": waffoCheckoutLookupContractVersion,
+		"paymentId":             input.PaymentID.String(), "resourceId": input.ResourceID.String(),
+		"orderMerchantExternalId": input.OrderExternalID, "buyerIdentity": input.BuyerIdentity,
+		"storeId": input.StoreID, "amountCents": input.AmountCents, "currency": input.Currency,
+		"liveMode": input.LiveMode, "createdAfter": input.CreatedAfter.UTC().Format(time.RFC3339Nano), "createdBefore": input.CreatedBefore.UTC().Format(time.RFC3339Nano),
+	}
+	var response struct {
+		CheckoutLookupResult
+		Observation *struct {
+			CheckoutObservation
+			LiveMode *bool `json:"liveMode"`
+		} `json:"observation"`
+	}
+	if err := r.postJSON(ctx, "/checkout/lookup", payload, &response); err != nil {
+		return CheckoutLookupResult{}, err
+	}
+	result = response.CheckoutLookupResult
+	if response.Observation != nil {
+		if response.Observation.LiveMode == nil {
+			return CheckoutLookupResult{}, newProviderFailure("payment_response_invalid", 0)
+		}
+		response.Observation.CheckoutObservation.LiveMode = *response.Observation.LiveMode
+		result.Observation = &response.Observation.CheckoutObservation
+	}
+	if !validCheckoutLookupResult(input, result) {
+		return CheckoutLookupResult{}, newProviderFailure("payment_response_invalid", 0)
+	}
+	if result.Outcome == "found" {
+		request := input.CheckoutReadRequest
+		request.ProviderCheckoutID = result.Observation.ProviderCheckoutID
+		if !validCheckoutObservationForProvider(request, *result.Observation, r.Provider()) {
+			return CheckoutLookupResult{}, newProviderFailure("payment_response_invalid", 0)
+		}
+	}
+	return result, nil
 }
 
 func (r *WaffoRuntime) CreateCheckout(ctx context.Context, input CheckoutRequest) (CheckoutSession, error) {
@@ -79,21 +133,32 @@ func (r *WaffoRuntime) CreateCheckout(ctx context.Context, input CheckoutRequest
 		"buyerEmail": strings.TrimSpace(input.BuyerEmail), "successUrl": input.SuccessURL, "cancelUrl": input.CancelURL,
 		"orderMerchantExternalId": strings.TrimSpace(input.OrderExternalID),
 	}
+	if expected := input.CheckoutIdentity; expected != nil {
+		if expected.Provider != r.Provider() || expected.Endpoint != r.config.ConnectorURL || expected.LiveMode != (r.config.Environment == "prod") ||
+			expected.APIVersion != waffoProductCheckoutAPI || expected.RequestVersion != waffoProductCheckoutVersion {
+			return CheckoutSession{}, newProviderFailure("payment_reconciliation_required", 0)
+		}
+		payload["checkoutIdentity"] = expected
+	}
 	var response struct {
-		ProviderID    string `json:"providerId"`
-		CheckoutURL   string `json:"checkoutUrl"`
-		Status        string `json:"status"`
-		PaymentStatus string `json:"paymentStatus"`
-		ExpiresAt     string `json:"expiresAt"`
-		LiveMode      bool   `json:"liveMode"`
+		ProviderID       string                   `json:"providerId"`
+		CheckoutURL      string                   `json:"checkoutUrl"`
+		Status           string                   `json:"status"`
+		PaymentStatus    string                   `json:"paymentStatus"`
+		ExpiresAt        string                   `json:"expiresAt"`
+		LiveMode         *bool                    `json:"liveMode"`
+		CheckoutIdentity *ProductCheckoutIdentity `json:"checkoutIdentity"`
 	}
 	if err := r.postJSON(ctx, "/checkout", payload, &response); err != nil {
 		return CheckoutSession{}, err
 	}
+	if input.CheckoutIdentity != nil && (response.CheckoutIdentity == nil || *response.CheckoutIdentity != *input.CheckoutIdentity) {
+		return CheckoutSession{}, newProviderFailure("payment_response_invalid", 0)
+	}
 	parsedURL, err := url.Parse(strings.TrimSpace(response.CheckoutURL))
 	if err != nil || parsedURL.Scheme != "https" || parsedURL.Host == "" || parsedURL.User != nil ||
 		strings.TrimSpace(response.ProviderID) == "" || !oneOf(strings.TrimSpace(response.Status), "open", "pending", "complete", "expired") ||
-		strings.TrimSpace(response.PaymentStatus) == "" || response.LiveMode != (r.config.Environment == "prod") {
+		strings.TrimSpace(response.PaymentStatus) == "" || response.LiveMode == nil || *response.LiveMode != (r.config.Environment == "prod") {
 		return CheckoutSession{}, newProviderFailure("payment_response_invalid", 0)
 	}
 	expiresAt, err := parseWaffoTime(response.ExpiresAt)
@@ -101,32 +166,46 @@ func (r *WaffoRuntime) CreateCheckout(ctx context.Context, input CheckoutRequest
 		return CheckoutSession{}, newProviderFailure("payment_response_invalid", 0)
 	}
 	return CheckoutSession{ProviderID: response.ProviderID, CheckoutURL: response.CheckoutURL, Status: response.Status,
-		PaymentStatus: response.PaymentStatus, ExpiresAt: expiresAt, LiveMode: response.LiveMode}, nil
+		PaymentStatus: response.PaymentStatus, ExpiresAt: expiresAt, LiveMode: *response.LiveMode}, nil
 }
 
 func (r *WaffoRuntime) CreateRefund(ctx context.Context, input RefundRequest) (Refund, error) {
 	if r == nil || !r.validConnector() || input.PaymentID == uuid.Nil || input.OperationID == uuid.Nil ||
 		strings.TrimSpace(input.ProviderPaymentID) == "" || input.AmountCents < 1 || input.AmountCents > 99999999 ||
-		strings.ToUpper(strings.TrimSpace(input.Currency)) != "USD" {
+		strings.ToUpper(strings.TrimSpace(input.Currency)) != "USD" || strings.TrimSpace(input.BuyerIdentity) == "" {
 		return Refund{}, newProviderFailure("payment_invalid_request", 0)
+	}
+	expected := input.PaymentIdentity
+	if expected == nil || expected.Provider != r.Provider() || expected.Endpoint != r.config.ConnectorURL || expected.MerchantID == "" ||
+		expected.StoreID == "" || input.StoreID != expected.StoreID || expected.LiveMode != (r.config.Environment == "prod") ||
+		expected.APIVersion != waffoProductCheckoutAPI || expected.RequestVersion != waffoProductCheckoutVersion {
+		return Refund{}, ErrCheckoutReconciliation
 	}
 	payload := map[string]any{
 		"paymentId": input.PaymentID.String(), "operationId": input.OperationID.String(), "providerPaymentId": strings.TrimSpace(input.ProviderPaymentID),
-		"amountCents": input.AmountCents, "currency": strings.ToUpper(strings.TrimSpace(input.Currency)), "reason": strings.TrimSpace(input.Reason),
+		"refundContractVersion": waffoRefundContractVersion,
+		"amountCents":           input.AmountCents, "currency": strings.ToUpper(strings.TrimSpace(input.Currency)), "reason": strings.TrimSpace(input.Reason),
 		"buyerIdentity": strings.TrimSpace(input.BuyerIdentity), "buyerEmail": strings.TrimSpace(input.BuyerEmail), "storeId": strings.TrimSpace(input.StoreID),
+		"paymentIdentity": expected,
 	}
 	var response struct {
-		ProviderID        string `json:"providerId"`
-		ProviderPaymentID string `json:"providerPaymentId"`
-		AmountCents       int    `json:"amountCents"`
-		Currency          string `json:"currency"`
-		Status            string `json:"status"`
+		OperationID       uuid.UUID                `json:"operationId"`
+		ContractVersion   string                   `json:"refundContractVersion"`
+		ProviderID        string                   `json:"providerId"`
+		ProviderPaymentID string                   `json:"providerPaymentId"`
+		AmountCents       int                      `json:"amountCents"`
+		Currency          string                   `json:"currency"`
+		Status            string                   `json:"status"`
+		PaymentIdentity   *ProductCheckoutIdentity `json:"paymentIdentity"`
 	}
 	if err := r.postJSON(ctx, "/refund", payload, &response); err != nil {
 		return Refund{}, err
 	}
-	if strings.TrimSpace(response.ProviderID) == "" || response.ProviderPaymentID != input.ProviderPaymentID ||
-		response.AmountCents != input.AmountCents || strings.ToUpper(response.Currency) != "USD" || strings.TrimSpace(response.Status) == "" {
+	if response.PaymentIdentity == nil || *response.PaymentIdentity != *expected || response.OperationID != input.OperationID || response.ContractVersion != waffoRefundContractVersion {
+		return Refund{}, newProviderFailure("payment_response_invalid", 0)
+	}
+	if !safeProviderIDPattern.MatchString(response.ProviderID) || response.ProviderPaymentID != input.ProviderPaymentID ||
+		response.AmountCents != input.AmountCents || response.Currency != "USD" || !oneOf(response.Status, "pending", "under_review", "approved", "rejected", "returned", "processing", "succeeded", "failed", "cancelled") {
 		return Refund{}, newProviderFailure("payment_response_invalid", 0)
 	}
 	return Refund{ProviderID: response.ProviderID, ProviderPaymentID: response.ProviderPaymentID, AmountCents: response.AmountCents,
@@ -187,6 +266,9 @@ func (r *WaffoRuntime) postJSON(ctx context.Context, path string, payload any, d
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		if response.StatusCode == http.StatusConflict {
+			return newProviderFailure("payment_reconciliation_required", 0)
+		}
 		if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
 			return newProviderFailure("payment_authentication", 0)
 		}

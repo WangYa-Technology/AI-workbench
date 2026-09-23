@@ -17,26 +17,28 @@ import (
 )
 
 var (
-	ErrNotFound                 = errors.New("admin resource not found")
-	ErrInvalid                  = errors.New("invalid admin command")
-	ErrConflict                 = errors.New("admin resource state conflict")
-	ErrSelfMutation             = errors.New("administrator cannot mutate own access")
-	ErrProviderConfig           = errors.New("provider requires external configuration")
-	ErrInvalidRiskFilter        = errors.New("invalid admin risk filter")
-	ErrInvalidUserFilter        = errors.New("invalid admin user filter")
-	ErrInvalidContentFilter     = errors.New("invalid admin content filter")
-	ErrInvalidMediaFilter       = errors.New("invalid admin media filter")
-	ErrInvalidReportFilter      = errors.New("invalid admin governance report filter")
-	ErrInvalidAppealFilter      = errors.New("invalid admin governance appeal filter")
-	ErrInvalidTaskFilter        = errors.New("invalid admin task filter")
-	ErrInvalidGenerationFilter  = errors.New("invalid admin generation filter")
-	ErrInvalidFinanceFilter     = errors.New("invalid admin finance filter")
-	ErrInvalidPaymentFilter     = errors.New("invalid admin payment filter")
-	ErrInvalidDestinationFilter = errors.New("invalid admin payment destination filter")
-	ErrInvalidRiskRuleHistory   = errors.New("invalid admin risk rule history filter")
-	ErrInvalidRankingHistory    = errors.New("invalid admin ranking history filter")
-	ErrInvalidDiscoveryHistory  = errors.New("invalid admin discovery operation history filter")
-	ErrInvalidModelRouteHistory = errors.New("invalid admin model route history filter")
+	ErrNotFound                    = errors.New("admin resource not found")
+	ErrInvalid                     = errors.New("invalid admin command")
+	ErrConflict                    = errors.New("admin resource state conflict")
+	ErrForbidden                   = errors.New("admin permission required")
+	ErrSelfMutation                = errors.New("administrator cannot mutate own access")
+	ErrProviderConfig              = errors.New("provider requires external configuration")
+	ErrInvalidRiskFilter           = errors.New("invalid admin risk filter")
+	ErrInvalidUserFilter           = errors.New("invalid admin user filter")
+	ErrInvalidContentFilter        = errors.New("invalid admin content filter")
+	ErrInvalidMediaFilter          = errors.New("invalid admin media filter")
+	ErrInvalidReportFilter         = errors.New("invalid admin governance report filter")
+	ErrInvalidAppealFilter         = errors.New("invalid admin governance appeal filter")
+	ErrInvalidTaskFilter           = errors.New("invalid admin task filter")
+	ErrInvalidGenerationFilter     = errors.New("invalid admin generation filter")
+	ErrInvalidFinanceFilter        = errors.New("invalid admin finance filter")
+	ErrInvalidPaymentFilter        = errors.New("invalid admin payment filter")
+	ErrInvalidProductDisputeFilter = errors.New("invalid admin product dispute filter")
+	ErrInvalidDestinationFilter    = errors.New("invalid admin payment destination filter")
+	ErrInvalidRiskRuleHistory      = errors.New("invalid admin risk rule history filter")
+	ErrInvalidRankingHistory       = errors.New("invalid admin ranking history filter")
+	ErrInvalidDiscoveryHistory     = errors.New("invalid admin discovery operation history filter")
+	ErrInvalidModelRouteHistory    = errors.New("invalid admin model route history filter")
 )
 
 type Overview struct {
@@ -94,6 +96,7 @@ type UserUpdate struct {
 }
 
 type ContentItem struct {
+	Version      int        `json:"version"`
 	ID           uuid.UUID  `json:"id"`
 	ResourceType string     `json:"resourceType"`
 	Title        string     `json:"title"`
@@ -124,7 +127,10 @@ type contentCursor struct {
 }
 
 type ContentUpdate struct {
-	Status string `json:"status"`
+	Reason          string `json:"reason"`
+	Confirm         bool   `json:"confirm"`
+	ExpectedVersion int    `json:"expectedVersion"`
+	Status          string `json:"status"`
 }
 
 type GenerationItem struct {
@@ -491,7 +497,7 @@ func (s *Service) ListContent(ctx context.Context, input ContentListInput) (Cont
 		cursorTime, cursorID = &cursor.UpdatedAt, &cursor.ID
 	}
 	rows, err := s.pool.Query(ctx, `
-		SELECT w.id,'work',w.title,w.author_id,u.handle,w.status,w.ai_disclosure,w.published_at,w.updated_at
+		SELECT w.id,'work',w.title,w.author_id,u.handle,w.status,w.ai_disclosure,w.published_at,w.updated_at,w.version
 		FROM works w JOIN users u ON u.id=w.author_id
 		WHERE ($1='' OR strpos(lower(w.title),$1)>0 OR strpos(lower(u.handle),$1)>0 OR strpos(lower(w.ai_disclosure),$1)>0)
 		  AND ($2='' OR $2='work')
@@ -506,7 +512,7 @@ func (s *Service) ListContent(ctx context.Context, input ContentListInput) (Cont
 	for rows.Next() {
 		var item ContentItem
 		if err := rows.Scan(&item.ID, &item.ResourceType, &item.Title, &item.AuthorID, &item.AuthorHandle, &item.Status,
-			&item.AIDisclosure, &item.PublishedAt, &item.UpdatedAt); err != nil {
+			&item.AIDisclosure, &item.PublishedAt, &item.UpdatedAt, &item.Version); err != nil {
 			return ContentPage{}, fmt.Errorf("scan moderation content: %w", err)
 		}
 		items = append(items, item)
@@ -540,10 +546,10 @@ func decodeContentCursor(value string) (contentCursor, error) {
 func (s *Service) content(ctx context.Context, workID uuid.UUID) (ContentItem, error) {
 	var item ContentItem
 	err := s.pool.QueryRow(ctx, `
-		SELECT w.id,'work',w.title,w.author_id,u.handle,w.status,w.ai_disclosure,w.published_at,w.updated_at
+		SELECT w.id,'work',w.title,w.author_id,u.handle,w.status,w.ai_disclosure,w.published_at,w.updated_at,w.version
 		FROM works w JOIN users u ON u.id=w.author_id WHERE w.id=$1`, workID).Scan(
 		&item.ID, &item.ResourceType, &item.Title, &item.AuthorID, &item.AuthorHandle, &item.Status,
-		&item.AIDisclosure, &item.PublishedAt, &item.UpdatedAt)
+		&item.AIDisclosure, &item.PublishedAt, &item.UpdatedAt, &item.Version)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ContentItem{}, ErrNotFound
 	}
@@ -553,9 +559,9 @@ func (s *Service) content(ctx context.Context, workID uuid.UUID) (ContentItem, e
 	return item, nil
 }
 
-func (s *Service) UpdateContent(ctx context.Context, _ uuid.UUID, workID uuid.UUID, input ContentUpdate, _ string) (ContentItem, error) {
-	input.Status = strings.TrimSpace(strings.ToLower(input.Status))
-	if !oneOf(input.Status, "published", "hidden", "removed") {
+func (s *Service) UpdateContent(ctx context.Context, actorID uuid.UUID, workID uuid.UUID, input ContentUpdate, requestID string) (ContentItem, error) {
+	input.Status = strings.TrimSpace(input.Status)
+	if !validContentDecision(input.Reason, input.Confirm, input.ExpectedVersion) || !oneOf(input.Status, "published", "hidden", "removed") {
 		return ContentItem{}, ErrInvalid
 	}
 	tx, err := s.pool.Begin(ctx)
@@ -563,23 +569,38 @@ func (s *Service) UpdateContent(ctx context.Context, _ uuid.UUID, workID uuid.UU
 		return ContentItem{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var lockedID uuid.UUID
-	if err := tx.QueryRow(ctx, `SELECT id FROM works WHERE id=$1 FOR UPDATE`, workID).Scan(&lockedID); errors.Is(err, pgx.ErrNoRows) {
-		return ContentItem{}, ErrNotFound
-	} else if err != nil {
+	if err = lockModeration(ctx, tx); err != nil {
 		return ContentItem{}, err
 	}
-	if _, err := tx.Exec(ctx, `UPDATE works SET status=$2,updated_at=now() WHERE id=$1`, workID, input.Status); err != nil {
-		return ContentItem{}, fmt.Errorf("moderate work: %w", err)
+	current, version, err := contentState(ctx, tx, moderatedResource{"work", workID})
+	if err != nil {
+		return ContentItem{}, err
 	}
-	postStatus := input.Status
-	if postStatus == "published" {
-		postStatus = "published"
+	if version != input.ExpectedVersion || current == "draft" {
+		return ContentItem{}, ErrConflict
 	}
-	if _, err := tx.Exec(ctx, `UPDATE posts SET status=$2,updated_at=now() WHERE work_id=$1`, workID, postStatus); err != nil {
-		return ContentItem{}, fmt.Errorf("moderate linked post: %w", err)
+	targets, err := moderationTargets(ctx, tx, "work", workID)
+	if err != nil {
+		return ContentItem{}, err
 	}
-	if err := tx.Commit(ctx); err != nil {
+	for _, target := range targets {
+		if input.Status == "published" {
+			var held bool
+			if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM content_moderation_holds WHERE resource_type=$1 AND resource_id=$2)`, target.Kind, target.ID).Scan(&held); err != nil {
+				return ContentItem{}, err
+			}
+			if held {
+				return ContentItem{}, ErrConflict
+			}
+		}
+		if _, err = setContentState(ctx, tx, target, input.Status); err != nil {
+			return ContentItem{}, err
+		}
+	}
+	if err = contentAudit(ctx, tx, actorID, workID, "content.moderated", "work", input.Reason, requestID, map[string]any{"status": current, "version": version}, map[string]any{"status": input.Status, "version": version + 1}); err != nil {
+		return ContentItem{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
 		return ContentItem{}, err
 	}
 	return s.content(ctx, workID)
@@ -711,27 +732,6 @@ func (s *Service) UpdateProvider(ctx context.Context, actorID uuid.UUID, provide
 		}
 	}
 	return Provider{}, ErrNotFound
-}
-
-func (s *Service) AdjustFinance(ctx context.Context, actorID, userID uuid.UUID, input FinanceAdjustment, _ string) (FinanceAccount, error) {
-	input.Currency = strings.ToUpper(strings.TrimSpace(input.Currency))
-	if input.DeltaCents == 0 || input.Currency != "USD" || input.DeltaCents > 1000000 || input.DeltaCents < -1000000 {
-		return FinanceAccount{}, ErrInvalid
-	}
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return FinanceAccount{}, err
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	operationID := uuid.New()
-	_, err = billing.AdjustTx(ctx, tx, userID, operationID, input.DeltaCents, input.Currency, "Administrative balance adjustment", map[string]any{"actorId": actorID.String(), "paymentMode": "local_test"})
-	if err != nil {
-		return FinanceAccount{}, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return FinanceAccount{}, err
-	}
-	return s.financeAccount(ctx, userID, input.Currency)
 }
 
 const riskSignalSelect = `

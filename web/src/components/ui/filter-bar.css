@@ -1,0 +1,130 @@
+/* Shared catalog filter bar. Pages own column layouts; this owns the surface and control rhythm. */
+.ui-filter-bar.ui-filter-bar {
+  --control-height-toolbar: 40px;
+  --community-toolbar-control-height: 40px;
+  --task-filter-control-height: 40px;
+  --filter-control-height: 40px;
+  min-width: 0;
+  min-height: 56px;
+  margin-bottom: 16px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-surface);
+  background: var(--surface-muted);
+  box-shadow: none;
+  overflow: visible;
+}
+.ui-filter-bar.ui-filter-bar--split { padding-block: 0; }
+.ui-filter-bar.ui-filter-bar--split > .ui-filter-bar__controls {
+  min-height: 54px;
+  margin: 0;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: color-mix(in srgb, var(--surface-muted) 72%, var(--surface));
+  box-shadow: none;
+}
+.ui-filter-bar.ui-filter-bar--split > .view-switcher-bar { margin: 0; }
+.ui-filter-bar :is(.ui-select__trigger, .ui-filter-bar__search),
+.ui-filter-bar > :is(.ui-button, .ui-icon-button) {
+  min-height: var(--filter-control-height);
+  height: var(--filter-control-height);
+}
+@media (max-width: 1199px) {
+  .ui-filter-bar.ui-filter-bar--split { display: grid; gap: 6px; padding-block: 6px; }
+  .ui-filter-bar.ui-filter-bar--split > .ui-filter-bar__controls { min-height: 40px; padding: 0; background: transparent; }
+}
+
+/* Filter inputs share a neutral focus treatment, including an expanded select. */
+.ui-filter-bar .ui-select-root:not(.ui-select-root--invalid).ui-select-root--open .ui-select__trigger,
+.ui-filter-bar .ui-select-root:not(.ui-select-root--invalid) .ui-select__trigger:focus-visible {
+  border-color: var(--border-strong);
+  outline: none;
+  box-shadow: none;
+}
+
+/* Every filter bar uses the same trigger surface and typography. */
+.ui-filter-bar .ui-select__trigger {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 520;
+  line-height: 1.4;
+}
+
+/* Compact shared filters: reserve flexible space for search, not short select labels. */
+.ui-filter-bar .ui-select-root .ui-select__trigger { gap: 6px; padding-inline: 10px; }
+.ui-filter-bar .ui-select__trigger .ui-select__chevron { width: 16px; height: 16px; }
+.ui-filter-bar.ui-filter-bar--split > .ui-filter-bar__controls { padding-inline: 0; gap: 6px; }
+@media (min-width: 768px) {
+  .ui-filter-bar:not(.ui-filter-bar--split):not(.ui-filter-bar--fields),
+  .ui-filter-bar.ui-filter-bar--split > .ui-filter-bar__controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+  }
+  .ui-filter-bar .ui-filter-bar__search { flex: 1 1 180px; width: auto; }
+  .ui-filter-bar:not(.ui-filter-bar--fields) .ui-select-root { flex: 0 1 auto; width: max-content; max-width: 220px; min-width: 0; }
+  .ui-filter-bar:not(.ui-filter-bar--fields) .ui-select-root .ui-select__trigger { width: auto; max-width: 100%; }
+  .ui-filter-bar .ui-filter-bar__actions { margin-left: 0; }
+}
+
+@media (max-width: 767px) {
+  .ui-filter-bar:not(.ui-filter-bar--split):not(.ui-filter-bar--fields) { display: grid; gap: 6px; }
+}
+
+/* Toolbars without a search field can align their compact filters to the end. */
+.ui-filter-bar > .ui-filter-bar__controls--end { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; }
+@media (max-width: 767px) {
+  .ui-filter-bar > .ui-filter-bar__controls--end > .ui-select-root { flex: 1 1 130px; min-width: 0; }
+}
+
+/* Search wrappers share their surface and focus state with filter triggers. */
+.ui-filter-bar .ui-filter-bar__search {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--text-secondary);
+  transition: border-color var(--duration-quick) var(--ease-smooth-out);
+}
+.ui-filter-bar .ui-filter-bar__search:hover,
+.ui-filter-bar .ui-filter-bar__search:focus-within { border-color: var(--border-strong); }
+.ui-filter-bar .ui-filter-bar__search > svg { flex: 0 0 auto; pointer-events: none; }
+.ui-filter-bar .ui-filter-bar__search .ui-input {
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.4;
+  box-shadow: none;
+}
+.ui-filter-bar .ui-filter-bar__search .ui-input::placeholder { color: var(--text-tertiary); opacity: 1; }
+
+/* Labeled filters share field sizing, labels and focus; pages only set columns. */
+.ui-filter-bar[data-density='compact'] { --filter-control-height: var(--control-height-md); }
+.ui-filter-bar--fields { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; }
+.ui-filter-bar--grid { display: grid; }
+.ui-filter-bar--fields > label { flex: 1 1 150px; min-width: 0; display: grid; align-content: start; gap: 6px; color: var(--text-secondary); font-size: 12px; font-weight: 600; }
+.ui-filter-bar--fields > label > span { min-height: 16px; line-height: 16px; }
+.ui-filter-bar--fields .ui-select-root,
+.ui-filter-bar--fields .ui-select__trigger { width: 100%; max-width: none; }
+.ui-filter-bar--fields :is(.ui-input, .ui-select-root) { --ui-height: var(--filter-control-height); }
+.ui-filter-bar--fields .ui-input { padding-inline: 10px; background: var(--surface); font-size: 12px; }
+.ui-filter-bar--fields .ui-input:not(.ui-input--invalid):focus-visible { border-color: var(--border-strong); outline: 0; box-shadow: none; }
+.ui-filter-bar--fields > button { flex: 0 0 auto; }
+.ui-filter-bar--fields > .ui-icon-button { --ui-size: var(--filter-control-height); }

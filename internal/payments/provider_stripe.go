@@ -35,6 +35,12 @@ func NewStripeRuntime(config StripeRuntimeConfig) *StripeRuntime {
 	if client == nil {
 		client = http.DefaultClient
 	}
+	// The original merchant identity is tied to this endpoint. Redirects must
+	// neither replay financial POSTs nor let another endpoint supply identity
+	// or reconciliation evidence. Copy instead of mutating a shared client.
+	copyClient := *client
+	copyClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	client = &copyClient
 	config.BaseURL = strings.TrimRight(config.BaseURL, "/")
 	return &StripeRuntime{config: config, client: client}
 }
@@ -42,10 +48,16 @@ func NewStripeRuntime(config StripeRuntimeConfig) *StripeRuntime {
 func (r *StripeRuntime) Provider() string { return "stripe" }
 
 func (r *StripeRuntime) Capabilities() ProviderCapabilities {
-	return ProviderCapabilities{Checkout: true, Refund: true, Transfer: true, ConnectedAccounts: true}
+	return ProviderCapabilities{Checkout: true, Refund: true, Transfer: true, Payout: true, ConnectedAccounts: true}
 }
 
 func (r *StripeRuntime) CreateCheckout(ctx context.Context, input CheckoutRequest) (CheckoutSession, error) {
+	if expected := input.CheckoutIdentity; expected != nil {
+		if expected.Provider != r.Provider() || expected.Endpoint != r.config.BaseURL || expected.LiveMode != r.config.LiveMode ||
+			expected.APIVersion != r.config.APIVersion || expected.RequestVersion != stripeProductCheckoutVersion {
+			return CheckoutSession{}, newProviderFailure("payment_reconciliation_required", 0)
+		}
+	}
 	input.Purpose = strings.TrimSpace(strings.ToLower(input.Purpose))
 	input.Currency = strings.TrimSpace(strings.ToLower(input.Currency))
 	input.Name = strings.TrimSpace(input.Name)
@@ -87,8 +99,7 @@ func (r *StripeRuntime) CreateCheckout(ctx context.Context, input CheckoutReques
 	if err := r.postForm(ctx, "/checkout/sessions", form, "checkout-"+paymentID, &response); err != nil {
 		return CheckoutSession{}, err
 	}
-	checkoutURL, err := url.Parse(response.URL)
-	if err != nil || checkoutURL.Scheme != "https" || !strings.EqualFold(checkoutURL.Hostname(), "checkout.stripe.com") ||
+	if !validStripeCheckoutURL(response.URL) ||
 		!validStripeID(response.ID, "cs_") || !oneOf(response.Status, "open", "complete", "expired") ||
 		!oneOf(response.PaymentStatus, "unpaid", "paid", "no_payment_required") || response.ExpiresAt <= 0 ||
 		response.LiveMode != r.config.LiveMode || response.AmountTotal != input.AmountCents ||
@@ -123,6 +134,11 @@ func (r *StripeRuntime) ExpireCheckout(ctx context.Context, providerID string) e
 }
 
 func (r *StripeRuntime) CreateRefund(ctx context.Context, input RefundRequest) (Refund, error) {
+	if expected := input.PaymentIdentity; expected != nil {
+		if expected.Provider != r.Provider() || expected.Endpoint != r.config.BaseURL || expected.LiveMode != r.config.LiveMode || expected.APIVersion != r.config.APIVersion {
+			return Refund{}, ErrCheckoutReconciliation
+		}
+	}
 	if input.PaymentID == uuid.Nil || input.OperationID == uuid.Nil || !validStripeID(input.ProviderPaymentID, "pi_") || input.AmountCents < 1 || input.AmountCents > 99999999 {
 		return Refund{}, newProviderFailure("payment_invalid_request", 0)
 	}
@@ -131,6 +147,9 @@ func (r *StripeRuntime) CreateRefund(ctx context.Context, input RefundRequest) (
 		"amount":                    {strconv.Itoa(input.AmountCents)},
 		"metadata[hcai_payment_id]": {input.PaymentID.String()},
 		"reason":                    {"requested_by_customer"},
+	}
+	if input.IncludeOperationMetadata {
+		form.Set("metadata[hcai_refund_operation_id]", input.OperationID.String())
 	}
 	var response struct {
 		ID            string `json:"id"`
@@ -152,7 +171,8 @@ func (r *StripeRuntime) CreateRefund(ctx context.Context, input RefundRequest) (
 func (r *StripeRuntime) CreateTransfer(ctx context.Context, input TransferRequest) (Transfer, error) {
 	input.Currency = strings.TrimSpace(strings.ToLower(input.Currency))
 	if input.PaymentID == uuid.Nil || !validStripeID(input.ProviderChargeID, "ch_") || !validStripeID(input.DestinationID, "acct_") ||
-		input.AmountCents < 1 || input.AmountCents > 99999999 || input.Currency != "usd" {
+		input.AmountCents < 1 || input.AmountCents > 99999999 || input.Currency != "usd" ||
+		(input.SourceRequestID != uuid.Nil && input.SettlementBatchID != uuid.Nil) {
 		return Transfer{}, newProviderFailure("payment_invalid_request", 0)
 	}
 	group := transferGroup(input.PaymentID)
@@ -164,27 +184,43 @@ func (r *StripeRuntime) CreateTransfer(ctx context.Context, input TransferReques
 		"transfer_group":            {group},
 		"metadata[hcai_payment_id]": {input.PaymentID.String()},
 	}
-	var response struct {
-		ID            string `json:"id"`
-		Destination   string `json:"destination"`
-		Amount        int    `json:"amount"`
-		Currency      string `json:"currency"`
-		TransferGroup string `json:"transfer_group"`
-	}
-	if err := r.postForm(ctx, "/transfers", form, "transfer-"+input.PaymentID.String(), &response); err != nil {
+	var response stripeTransferResponseData
+	if err := r.postForm(ctx, "/transfers", form, transferDispatchKey(input), &response); err != nil {
 		return Transfer{}, err
 	}
-	if !validStripeID(response.ID, "tr_") || response.Destination != input.DestinationID || response.Amount != input.AmountCents ||
-		strings.ToLower(response.Currency) != input.Currency || response.TransferGroup != group {
+	input.Currency = strings.ToUpper(input.Currency)
+	observation, valid := response.observation(TransferLookupRequest{TransferRequest: input, LiveMode: r.config.LiveMode})
+	// An idempotent replay can return a transfer reversed after its creation.
+	// Preserve the caller's unknown-outcome recovery instead of reporting success.
+	if !valid || observation.AmountReversed != 0 {
 		return Transfer{}, newProviderFailure("payment_response_invalid", 0)
 	}
-	return Transfer{ProviderID: response.ID, DestinationID: response.Destination, AmountCents: response.Amount, Currency: strings.ToUpper(response.Currency), TransferGroup: response.TransferGroup}, nil
+	return observation.Transfer, nil
 }
 
 func (r *StripeRuntime) CreateConnectAccount(ctx context.Context, input ConnectAccountRequest) (ConnectAccount, error) {
-	if input.UserID == uuid.Nil || (input.Email != "" && !strings.Contains(input.Email, "@")) {
+	if r == nil || input.UserID == uuid.Nil || (input.Email != "" && !strings.Contains(input.Email, "@")) {
 		return ConnectAccount{}, newProviderFailure("payment_invalid_request", 0)
 	}
+	if input.Identity != nil {
+		current, err := r.ProductCheckoutIdentity(ctx)
+		if err != nil {
+			return ConnectAccount{}, err
+		}
+		if current != *input.Identity || input.RetryBefore.IsZero() || !time.Now().Before(input.RetryBefore) {
+			return ConnectAccount{}, ErrPayoutReconciliation
+		}
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithDeadline(ctx, input.RetryBefore)
+		defer cancel()
+	} else if err := r.verifyCredentialMode(ctx); err != nil {
+		return ConnectAccount{}, err
+	}
+	return r.createConnectAccountAfterModeCheck(ctx, input)
+}
+
+// The bounded staging checker calls this only after its own counted mode read.
+func (r *StripeRuntime) createConnectAccountAfterModeCheck(ctx context.Context, input ConnectAccountRequest) (ConnectAccount, error) {
 	form := url.Values{
 		"type":                                   {"express"},
 		"capabilities[card_payments][requested]": {"true"},
@@ -195,29 +231,28 @@ func (r *StripeRuntime) CreateConnectAccount(ctx context.Context, input ConnectA
 		form.Set("email", strings.TrimSpace(input.Email))
 	}
 	var response struct {
-		ID               string `json:"id"`
-		ChargesEnabled   bool   `json:"charges_enabled"`
-		PayoutsEnabled   bool   `json:"payouts_enabled"`
-		DetailsSubmitted bool   `json:"details_submitted"`
-		LiveMode         bool   `json:"livemode"`
-		Requirements     struct {
-			CurrentlyDue        []string `json:"currently_due"`
-			PastDue             []string `json:"past_due"`
-			PendingVerification []string `json:"pending_verification"`
-			DisabledReason      string   `json:"disabled_reason"`
-		} `json:"requirements"`
+		ID               string                     `json:"id"`
+		Object           string                     `json:"object"`
+		Type             string                     `json:"type"`
+		Metadata         map[string]string          `json:"metadata"`
+		ChargesEnabled   *bool                      `json:"charges_enabled"`
+		PayoutsEnabled   *bool                      `json:"payouts_enabled"`
+		DetailsSubmitted *bool                      `json:"details_submitted"`
+		Requirements     *stripeAccountRequirements `json:"requirements"`
 	}
 	if err := r.postForm(ctx, "/accounts", form, "connect-account-"+input.UserID.String(), &response); err != nil {
 		return ConnectAccount{}, err
 	}
-	if !validStripeID(response.ID, "acct_") || response.LiveMode != r.config.LiveMode {
+	if !validStripeID(response.ID, "acct_") || response.Object != "account" || response.Type != "express" ||
+		response.Metadata["hcai_user_id"] != input.UserID.String() || response.ChargesEnabled == nil ||
+		response.PayoutsEnabled == nil || response.DetailsSubmitted == nil {
 		return ConnectAccount{}, newProviderFailure("payment_response_invalid", 0)
 	}
 	return ConnectAccount{
-		ID: response.ID, ChargesEnabled: response.ChargesEnabled, PayoutsEnabled: response.PayoutsEnabled,
-		DetailsSubmitted: response.DetailsSubmitted,
-		RequirementsDue:  len(response.Requirements.CurrentlyDue) > 0 || len(response.Requirements.PastDue) > 0 || len(response.Requirements.PendingVerification) > 0 || response.Requirements.DisabledReason != "",
-		LiveMode:         response.LiveMode,
+		ID: response.ID, ChargesEnabled: *response.ChargesEnabled, PayoutsEnabled: *response.PayoutsEnabled,
+		DetailsSubmitted: *response.DetailsSubmitted,
+		RequirementsDue:  response.Requirements.unresolved(),
+		LiveMode:         r.config.LiveMode,
 	}, nil
 }
 
@@ -287,6 +322,15 @@ func (r *StripeRuntime) postForm(ctx context.Context, path string, form url.Valu
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	request.Header.Set("Idempotency-Key", idempotencyKey)
 	request.Header.Set("Stripe-Version", r.config.APIVersion)
+	// Financial writes are retried only by their durable business command. Do
+	// not let net/http replay a buffered POST after a reused connection fails.
+	request.GetBody = nil
+	if request.Body == http.NoBody {
+		// A zero-length body is considered replayable even without GetBody.
+		// Keep empty commands (such as Checkout expiry) as streaming POSTs.
+		request.Body = io.NopCloser(strings.NewReader(""))
+		request.ContentLength = -1
+	}
 	response, err := r.client.Do(request)
 	if err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) {
@@ -385,6 +429,16 @@ func validStripeID(value, prefix string) bool {
 }
 
 func transferGroup(paymentID uuid.UUID) string { return "hcai_" + paymentID.String() }
+
+func transferDispatchKey(input TransferRequest) string {
+	if input.SourceRequestID != uuid.Nil {
+		return "seller-source-" + input.SourceRequestID.String()
+	}
+	if input.SettlementBatchID != uuid.Nil {
+		return "settlement-batch-" + input.SettlementBatchID.String()
+	}
+	return "transfer-" + input.PaymentID.String()
+}
 
 func oneOf(value string, allowed ...string) bool {
 	for _, candidate := range allowed {

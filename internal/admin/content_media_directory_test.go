@@ -25,7 +25,7 @@ func TestAdminContentAndMediaInventoriesTraverseBeyondLegacyWindow(t *testing.T)
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,scan_status,source_type,license_code,created_at)
-		VALUES($1,$2,'image','Backlog source','/media/backlog-source.jpg','image/jpeg','clean','demo','demo',now() - interval '4 hours')`, sourceAssetID, creatorID); err != nil {
+		VALUES($1,$2,'image','Backlog source','/media/backlog-source.jpg','image/jpeg','clean','delivery','personal',now() - interval '4 hours')`, sourceAssetID, creatorID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -69,7 +69,7 @@ func TestAdminContentAndMediaInventoriesTraverseBeyondLegacyWindow(t *testing.T)
 	if _, err := service.ListContent(ctx, admin.ContentListInput{Cursor: "modified", Limit: 20}); !errors.Is(err, admin.ErrInvalidContentFilter) {
 		t.Fatalf("modified content cursor was accepted: %v", err)
 	}
-	moderated, err := service.UpdateContent(ctx, administratorID, oldWorkID, admin.ContentUpdate{
+	moderated, err := service.UpdateContent(ctx, administratorID, oldWorkID, admin.ContentUpdate{Reason: "Reviewed the evidence and selected this decision.", Confirm: true, ExpectedVersion: 1,
 		Status: "hidden"}, "content-backlog-review")
 	if err != nil || moderated.ID != oldWorkID || moderated.Status != "hidden" {
 		t.Fatalf("exact older content moderation response failed: %#v %v", moderated, err)

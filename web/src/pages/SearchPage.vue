@@ -1,14 +1,21 @@
 <script setup lang="ts">
+import { textLength } from '../lib/unicodeText'
+import UiEmptyState from '../components/ui/UiEmptyState.vue'
+import UiFilterBar from '../components/ui/UiFilterBar.vue'
+import UiCatalog from '../components/ui/UiCatalog.vue'
+import UiContentCard from '../components/ui/UiContentCard.vue'
+import PageHeading from '../components/ui/PageHeading.vue'
 import { ArrowLeft, ArrowRight, ClipboardList, FileSearch, RefreshCw, Search, ShoppingBag, Sparkles, UsersRound } from 'lucide-vue-next'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { RouterLink, useRoute, useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { api, messageFrom, type SearchPage } from '../api/client'
 import AssetMedia from '../components/domain/AssetMedia.vue'
 import { formatCurrency } from '../lib/format'
 import UiButton from '../components/ui/UiButton.vue'
 import UiIconButton from '../components/ui/UiIconButton.vue'
 import UiInput from '../components/ui/UiInput.vue'
+import UiToggle from '../components/ui/UiToggle.vue'
 
 const { t, locale } = useI18n()
 const route = useRoute()
@@ -21,7 +28,7 @@ const supportedTypes = ['work', 'creator', 'product', 'demand'] as const
 const selectedTypes = ref<string[]>([])
 
 const query = computed(() => String(route.query.q || '').trim())
-const page = computed(() => Math.max(1, Number(route.query.page || 1) || 1))
+const page = computed(() => Number(route.query.page ?? 1))
 const typeIcons = { work: Sparkles, creator: UsersRound, product: ShoppingBag, demand: ClipboardList }
 
 function readTypes() {
@@ -34,7 +41,7 @@ async function load() {
   const version = ++loadVersion
   draft.value = query.value
   selectedTypes.value = readTypes()
-  if (query.value.length < 2) {
+  if (textLength(query.value) < 2) {
     result.value = null
     loading.value = false
     error.value = ''
@@ -54,7 +61,7 @@ async function load() {
 
 function submit() {
   const q = draft.value.trim()
-  if (q.length < 2) return
+  if (textLength(q) < 2 || textLength(q) > 120) { error.value = t('inspiration.searchLength'); return }
   void router.push({ path: '/search', query: { q, ...(selectedTypes.value.length ? { types: selectedTypes.value.join(',') } : {}) } })
 }
 
@@ -76,31 +83,29 @@ watch(() => route.fullPath, () => void load(), { immediate: true })
 
 <template>
   <section class="search-page content-width">
-    <header class="search-page-header">
+    <PageHeading class="search-page-header">
       <span class="status-label">{{ t('search.label') }}</span>
       <h1>{{ t('search.title') }}</h1>
       <p>{{ t('search.summary') }}</p>
       <form role="search" @submit.prevent="submit">
         <Search :size="20" :stroke-width="1.75" aria-hidden="true" />
-        <UiInput v-model="draft" type="search" minlength="2" maxlength="120" required :placeholder="t('search.placeholder')" :aria-label="t('actions.search')" />
+        <UiInput v-model="draft" type="search" :aria-invalid="textLength(draft.trim()) > 120" required :placeholder="t('search.placeholder')" :aria-label="t('actions.search')" />
         <UiButton class="command-button primary" variant="primary" type="submit">
           {{ t('actions.search') }}<template #end>
             <ArrowRight :size="17" />
           </template>
         </UiButton>
       </form>
-    </header>
+    </PageHeading>
 
-    <nav v-if="query.length >= 2" class="search-type-filter" :aria-label="t('search.filterLabel')">
-      <UiButton variant="ghost" :class="{ active: selectedTypes.length === 0 }" @click="selectedTypes = []; submit()">
+    <UiFilterBar v-if="textLength(query) >= 2" as="nav" fields class="search-type-filter" :aria-label="t('search.filterLabel')">
+      <UiToggle :model-value="selectedTypes.length === 0" @update:model-value="selectedTypes = []; submit()">
         {{ t('search.all') }}
-      </UiButton>
-      <UiButton v-for="type in supportedTypes" :key="type" variant="ghost" :class="{ active: selectedTypes.includes(type) }" :aria-pressed="selectedTypes.includes(type)" @click="toggleType(type)">
-        <template #start>
-          <component :is="typeIcons[type]" :size="15" />
-        </template>{{ t(`search.types.${type}`) }}
-      </UiButton>
-    </nav>
+      </UiToggle>
+      <UiToggle v-for="type in supportedTypes" :key="type" :model-value="selectedTypes.includes(type)" @update:model-value="toggleType(type)">
+        <component :is="typeIcons[type]" :size="15" aria-hidden="true" />{{ t(`search.types.${type}`) }}
+      </UiToggle>
+    </UiFilterBar>
 
     <div v-if="loading" class="page-state" aria-live="polite">
       {{ t('search.loading') }}
@@ -112,15 +117,17 @@ watch(() => route.fullPath, () => void load(), { immediate: true })
         </template>{{ t('actions.retry') }}
       </UiButton>
     </div>
-    <div v-else-if="query.length < 2" class="search-start-state">
-      <FileSearch :size="26" :stroke-width="1.5" /><h2>{{ t('search.startTitle') }}</h2><p>{{ t('search.startSummary') }}</p>
-    </div>
+    <UiEmptyState v-else-if="textLength(query) < 2" class="search-start-state" :title="t('search.startTitle')" :message="t('search.startSummary')">
+      <template #icon>
+        <FileSearch :size="26" :stroke-width="1.5" />
+      </template>
+    </UiEmptyState>
     <template v-else-if="result">
       <div class="search-results-meta">
         <strong>{{ t('search.resultCount', { count: result.total }) }}</strong>
       </div>
-      <div v-if="result.items.length" class="search-results">
-        <RouterLink v-for="item in result.items" :key="`${item.type}:${item.id}`" class="search-result" :to="item.path">
+      <UiCatalog v-if="result.items.length" class="search-results">
+        <UiContentCard v-for="item in result.items" :key="`${item.type}:${item.id}`" class="search-result" :to="item.path">
           <div class="search-result-media">
             <AssetMedia v-if="item.mediaUrl && item.mediaKind" :src="item.mediaUrl" :kind="item.mediaKind" :alt="item.title" :width="640" :height="480" :controls="false" />
             <span v-else class="search-result-avatar" aria-hidden="true">{{ item.title.slice(0, 1) }}</span>
@@ -135,11 +142,13 @@ watch(() => route.fullPath, () => void load(), { immediate: true })
           </div>
           <strong v-if="item.priceCents !== undefined && item.currency" class="search-result-price">{{ money(item.priceCents, item.currency) }}</strong>
           <ArrowRight class="search-result-arrow" :size="18" />
-        </RouterLink>
-      </div>
-      <div v-else class="search-start-state">
-        <FileSearch :size="26" /><h2>{{ t('search.emptyTitle') }}</h2><p>{{ t('search.emptySummary') }}</p>
-      </div>
+        </UiContentCard>
+      </UiCatalog>
+      <UiEmptyState v-else class="search-start-state" :title="t('search.emptyTitle')" :message="t('search.emptySummary')">
+        <template #icon>
+          <FileSearch :size="26" />
+        </template>
+      </UiEmptyState>
       <nav v-if="result.total > result.limit" class="search-pagination" :aria-label="t('search.pagination')">
         <UiIconButton class="icon-button" :disabled="result.page <= 1" :label="t('search.previous')" @click="changePage(result.page - 1)">
           <ArrowLeft :size="18" />

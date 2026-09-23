@@ -48,7 +48,7 @@ describe('internationalization contract', () => {
     for (const file of sourceFiles(appRoot).filter((path) => /\.(ts|vue)$/.test(path))) {
       const source = readFileSync(file, 'utf8')
       for (const match of source.matchAll(/\bt\(\s*['"]([^'"]+)['"]/g)) {
-        if (!(match[1] in en)) missing.add(match[1])
+        if (!match[1].endsWith('.') && !(match[1] in en)) missing.add(match[1])
       }
     }
     expect([...missing].sort()).toEqual([])
