@@ -2838,6 +2838,9 @@ onMounted(() => void initialize())
             <UiButton v-if="session.user?.permissions.includes('admin:finance')" as="RouterLink" to="/admin/payouts" variant="secondary">
               {{ t('payoutReviews.title') }}
             </UiButton>
+            <UiButton v-if="session.user?.permissions.includes('admin:finance')" as="RouterLink" to="/admin/product-disputes" variant="secondary">
+              {{ t('productDisputes.title') }}
+            </UiButton>
             <section class="admin-finance-section subscription-plan-admin">
               <header>
                 <div><h2>{{ t('admin.subscriptionPlansTitle') }}</h2><p>{{ t('admin.subscriptionPlansSummary') }}</p></div><UiButton class="command-button primary" type="button" variant="primary" @click="openNewSubscriptionPlan">

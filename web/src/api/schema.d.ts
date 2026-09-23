@@ -1377,6 +1377,61 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/product-disputes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Requires active admin:finance authority, rechecked under a database lock. Private directory ordered by won-last priority, dueBy and ID. Unknown or repeated query parameters are rejected. Cursors are opaque and bound to the normalized filters; changing filters requires restarting pagination. */
+        get: operations["listProductPaymentDisputes"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/product-disputes/{disputeID}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                disputeID: string;
+            };
+            cookie?: never;
+        };
+        /** @description Requires active admin:finance authority. Returns current state, provider event history and immutable operation/evidence history. Query parameters are rejected. Provider references and party identifiers are private; clients should display only necessary operational information, never raw provider payloads. */
+        get: operations["getProductPaymentDispute"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/product-disputes/{disputeID}/operations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                disputeID: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Requires active admin:finance authority. Exactly one Idempotency-Key and no query parameters. Atomically records the operation, optional evidence reference, version increment and audit. Does not submit to the provider, adjudicate the dispute, release funds or change payment/order status. Same operator/key and normalized payload replay returns the original operationId with CURRENT detail. Same key with changed payload/dispute, stale version, requesting already submitted evidence or recording evidence before requesting it returns 409. A response loss must be retried with the same key and body. All current authority checks still apply to replay. */
+        post: operations["operateProductPaymentDispute"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/seller-payout-requests": {
         parameters: {
             query?: never;
@@ -3784,6 +3839,143 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @enum {string} */
+        ProductDisputeAction: "route" | "request_evidence" | "record_evidence_submission" | "escalate_recovery";
+        /** @enum {string} */
+        ProductDisputeRoute: "finance" | "seller_support" | "provider_review" | "collections";
+        /** @enum {string} */
+        ProductDisputeActionStatus: "needs_response" | "warning_needs_response" | "under_review" | "warning_under_review" | "won" | "lost" | "charge_refunded" | "prevented" | "requires_review";
+        /** @enum {string} */
+        ProductDisputeReviewStatus: "new" | "acknowledged" | "evidence_requested" | "evidence_submitted" | "escalated";
+        /** @enum {string} */
+        ProductDisputeEvidenceStatus: "not_requested" | "requested" | "submitted";
+        ProductPaymentDispute: {
+            /** Format: uuid */
+            id: string;
+            provider: string;
+            liveMode: boolean;
+            providerDisputeId: string;
+            /** Format: uuid */
+            paymentId?: string;
+            /** Format: uuid */
+            orderId?: string;
+            /** Format: uuid */
+            sellerId?: string;
+            /** Format: uuid */
+            settlementId?: string;
+            providerPaymentId: string;
+            providerChargeId: string;
+            /** Format: int64 */
+            amountCents: number;
+            currency: string;
+            providerStatus: string;
+            actionStatus: components["schemas"]["ProductDisputeActionStatus"];
+            reviewStatus: components["schemas"]["ProductDisputeReviewStatus"];
+            reviewRoute: components["schemas"]["ProductDisputeRoute"];
+            evidenceStatus: components["schemas"]["ProductDisputeEvidenceStatus"];
+            bound: boolean;
+            /** Format: uuid */
+            productId?: string;
+            productTitle?: string;
+            /** Format: uuid */
+            buyerId?: string;
+            buyerHandle?: string;
+            buyerDisplayName?: string;
+            sellerHandle?: string;
+            sellerDisplayName?: string;
+            orderStatus?: string;
+            paymentStatus?: string;
+            settlementStatus?: string;
+            /** Format: date-time */
+            dueBy: string;
+            /** Format: date-time */
+            latestEventAt: string;
+            /** Format: int64 */
+            version: number;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        ProductPaymentDisputeEvent: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            providerEventId: string;
+            eventType: string;
+            providerStatus: string;
+            reason: string;
+            networkReasonCode: string;
+            /** Format: date-time */
+            dueBy: string;
+            /** Format: date-time */
+            occurredAt: string;
+            applied: boolean;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        ProductPaymentDisputeOperation: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            actorId: string;
+            actorHandle: string;
+            actorDisplayName: string;
+            action: components["schemas"]["ProductDisputeAction"];
+            route: components["schemas"]["ProductDisputeRoute"];
+            reason: string;
+            evidenceReference?: string;
+            /** Format: int64 */
+            expectedVersion: number;
+            /** Format: int64 */
+            resultingVersion: number;
+            fromReviewStatus: components["schemas"]["ProductDisputeReviewStatus"];
+            toReviewStatus: components["schemas"]["ProductDisputeReviewStatus"];
+            fromEvidenceStatus: components["schemas"]["ProductDisputeEvidenceStatus"];
+            toEvidenceStatus: components["schemas"]["ProductDisputeEvidenceStatus"];
+            requestId: string;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        ProductPaymentDisputeEvidence: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            operationId: string;
+            /** Format: uuid */
+            submittedBy: string;
+            submitterHandle: string;
+            providerReference: string;
+            /** Format: date-time */
+            submittedAt: string;
+        };
+        ProductPaymentDisputeDetail: components["schemas"]["ProductPaymentDispute"] & {
+            events: components["schemas"]["ProductPaymentDisputeEvent"][];
+            operations: components["schemas"]["ProductPaymentDisputeOperation"][];
+            evidenceSubmissions: components["schemas"]["ProductPaymentDisputeEvidence"][];
+        };
+        ProductPaymentDisputePage: {
+            items: components["schemas"]["ProductPaymentDispute"][];
+            nextCursor?: string;
+        };
+        /** @description Action and route are normalized to lowercase; reason and reference are trimmed. escalate_recovery requires collections. A successful operation increments exactly one version; provider outcome and money remain unchanged. */
+        ProductPaymentDisputeCommand: {
+            action: components["schemas"]["ProductDisputeAction"];
+            route: components["schemas"]["ProductDisputeRoute"];
+            /** @description Required only for record_evidence_submission; otherwise omitted or empty. Use an opaque receipt reference without credentials or personal data. */
+            evidenceReference?: string;
+            /** Format: int64 */
+            expectedVersion: number;
+            /** @description Trimmed Unicode character length; NUL is rejected. */
+            reason: string;
+            /** @constant */
+            confirmed: true;
+        } & (unknown & unknown);
+        ProductPaymentDisputeCommandResult: components["schemas"]["ProductPaymentDisputeDetail"] & {
+            /** Format: uuid */
+            operationId: string;
+            replayed: boolean;
+        };
         ContentCategory: {
             code?: string;
             /** @enum {string} */
@@ -10223,6 +10415,98 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    listProductPaymentDisputes: {
+        parameters: {
+            query?: {
+                /** @description Product title or handle substring; exact local dispute or provider reference match. */
+                q?: string;
+                actionStatus?: components["schemas"]["ProductDisputeActionStatus"];
+                reviewStatus?: components["schemas"]["ProductDisputeReviewStatus"];
+                binding?: "bound" | "unbound";
+                mode?: "live" | "test";
+                cursor?: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Private dispute directory */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProductPaymentDisputePage"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    getProductPaymentDispute: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                disputeID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Dispute detail */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProductPaymentDisputeDetail"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    operateProductPaymentDispute: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path: {
+                disputeID: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProductPaymentDisputeCommand"];
+            };
+        };
+        responses: {
+            /** @description Committed or replayed operation with current detail */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProductPaymentDisputeCommandResult"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
             422: components["responses"]["ValidationFailed"];
         };
     };

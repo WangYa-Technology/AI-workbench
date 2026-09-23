@@ -30,6 +30,7 @@ export const router = createRouter({
     { path: '/admin/products/:id?', name: 'product-reviews', component: () => import('../pages/SellerProductsPage.vue') },
     { path: '/admin/deliveries/:id?', name: 'delivery-repair', component: () => import('../pages/DeliveryRepairPage.vue') },
     { path: '/admin/payouts/:id?', name: 'payout-reviews', component: () => import('../pages/PayoutReviewsPage.vue') },
+    { path: '/admin/product-disputes/:id?', name: 'product-payment-disputes', component: () => import('../pages/ProductPaymentDisputesPage.vue') },
     { path: '/workspace/:section?', name: 'workspace', component: () => import('../pages/WorkspacePage.vue') },
     {
       path: '/publish',

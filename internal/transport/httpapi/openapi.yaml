@@ -1436,6 +1436,68 @@ paths:
         '200': { description: Seller funds balance, content: { application/json: { schema: { $ref: '#/components/schemas/SellerFundsBalance' } } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
+  /admin/product-disputes:
+    get:
+      tags: [Admin]
+      operationId: listProductPaymentDisputes
+      security: [{ sessionCookie: [] }]
+      description: Requires active admin:finance authority, rechecked under a database lock. Private directory ordered by won-last priority, dueBy and ID. Unknown or repeated query parameters are rejected. Cursors are opaque and bound to the normalized filters; changing filters requires restarting pagination.
+      parameters:
+        - { name: q, in: query, schema: { type: string, maxLength: 120 }, description: Product title or handle substring; exact local dispute or provider reference match. }
+        - { name: actionStatus, in: query, schema: { $ref: '#/components/schemas/ProductDisputeActionStatus' } }
+        - { name: reviewStatus, in: query, schema: { $ref: '#/components/schemas/ProductDisputeReviewStatus' } }
+        - { name: binding, in: query, schema: { type: string, enum: [bound, unbound] } }
+        - { name: mode, in: query, schema: { type: string, enum: [live, test] } }
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
+      responses:
+        '200': { description: Private dispute directory, content: { application/json: { schema: { $ref: '#/components/schemas/ProductPaymentDisputePage' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+  /admin/product-disputes/{disputeID}:
+    parameters:
+      - { name: disputeID, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Admin]
+      operationId: getProductPaymentDispute
+      security: [{ sessionCookie: [] }]
+      description: Requires active admin:finance authority. Returns current state, provider event history and immutable operation/evidence history. Query parameters are rejected. Provider references and party identifiers are private; clients should display only necessary operational information, never raw provider payloads.
+      responses:
+        '200': { description: Dispute detail, content: { application/json: { schema: { $ref: '#/components/schemas/ProductPaymentDisputeDetail' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+  /admin/product-disputes/{disputeID}/operations:
+    parameters:
+      - { name: disputeID, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Admin]
+      operationId: operateProductPaymentDispute
+      security: [{ sessionCookie: [] }]
+      description: >-
+        Requires active admin:finance authority. Exactly one Idempotency-Key and no query parameters.
+        Atomically records the operation, optional evidence reference, version increment and audit.
+        Does not submit to the provider, adjudicate the dispute, release funds or change payment/order status.
+        Same operator/key and normalized payload replay returns the original operationId with CURRENT detail.
+        Same key with changed payload/dispute, stale version, requesting already submitted evidence or recording evidence before requesting it returns 409.
+        A response loss must be retried with the same key and body. All current authority checks still apply to replay.
+      parameters:
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string, minLength: 8, maxLength: 128, pattern: '^[A-Za-z0-9._:-]{8,128}$' } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProductPaymentDisputeCommand' }
+      responses:
+        '200': { description: Committed or replayed operation with current detail, content: { application/json: { schema: { $ref: '#/components/schemas/ProductPaymentDisputeCommandResult' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
   /admin/seller-payout-requests:
     get:
       tags: [Admin]
@@ -4076,6 +4138,142 @@ components:
           schema:
             $ref: '#/components/schemas/ErrorEnvelope'
   schemas:
+    ProductDisputeAction:
+      type: string
+      enum: [route, request_evidence, record_evidence_submission, escalate_recovery]
+    ProductDisputeRoute:
+      type: string
+      enum: [finance, seller_support, provider_review, collections]
+    ProductDisputeActionStatus:
+      type: string
+      enum: [needs_response, warning_needs_response, under_review, warning_under_review, won, lost, charge_refunded, prevented, requires_review]
+    ProductDisputeReviewStatus:
+      type: string
+      enum: [new, acknowledged, evidence_requested, evidence_submitted, escalated]
+    ProductDisputeEvidenceStatus:
+      type: string
+      enum: [not_requested, requested, submitted]
+    ProductPaymentDispute:
+      type: object
+      required: [id, provider, liveMode, providerDisputeId, providerPaymentId, providerChargeId, amountCents, currency, providerStatus, actionStatus, reviewStatus, reviewRoute, evidenceStatus, bound, dueBy, latestEventAt, version, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        provider: { type: string }
+        liveMode: { type: boolean }
+        providerDisputeId: { type: string }
+        paymentId: { type: string, format: uuid }
+        orderId: { type: string, format: uuid }
+        sellerId: { type: string, format: uuid }
+        settlementId: { type: string, format: uuid }
+        providerPaymentId: { type: string }
+        providerChargeId: { type: string }
+        amountCents: { type: integer, format: int64 }
+        currency: { type: string }
+        providerStatus: { type: string }
+        actionStatus: { $ref: '#/components/schemas/ProductDisputeActionStatus' }
+        reviewStatus: { $ref: '#/components/schemas/ProductDisputeReviewStatus' }
+        reviewRoute: { $ref: '#/components/schemas/ProductDisputeRoute' }
+        evidenceStatus: { $ref: '#/components/schemas/ProductDisputeEvidenceStatus' }
+        bound: { type: boolean }
+        productId: { type: string, format: uuid }
+        productTitle: { type: string }
+        buyerId: { type: string, format: uuid }
+        buyerHandle: { type: string }
+        buyerDisplayName: { type: string }
+        sellerHandle: { type: string }
+        sellerDisplayName: { type: string }
+        orderStatus: { type: string }
+        paymentStatus: { type: string }
+        settlementStatus: { type: string }
+        dueBy: { type: string, format: date-time }
+        latestEventAt: { type: string, format: date-time }
+        version: { type: integer, format: int64, minimum: 1 }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    ProductPaymentDisputeEvent:
+      type: object
+      required: [id, providerEventId, eventType, providerStatus, reason, networkReasonCode, dueBy, occurredAt, applied, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        providerEventId: { type: string, format: uuid }
+        eventType: { type: string }
+        providerStatus: { type: string }
+        reason: { type: string }
+        networkReasonCode: { type: string }
+        dueBy: { type: string, format: date-time }
+        occurredAt: { type: string, format: date-time }
+        applied: { type: boolean }
+        createdAt: { type: string, format: date-time }
+    ProductPaymentDisputeOperation:
+      type: object
+      required: [id, actorId, actorHandle, actorDisplayName, action, route, reason, expectedVersion, resultingVersion, fromReviewStatus, toReviewStatus, fromEvidenceStatus, toEvidenceStatus, requestId, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        actorId: { type: string, format: uuid }
+        actorHandle: { type: string }
+        actorDisplayName: { type: string }
+        action: { $ref: '#/components/schemas/ProductDisputeAction' }
+        route: { $ref: '#/components/schemas/ProductDisputeRoute' }
+        reason: { type: string }
+        evidenceReference: { type: string }
+        expectedVersion: { type: integer, format: int64, minimum: 1 }
+        resultingVersion: { type: integer, format: int64, minimum: 1 }
+        fromReviewStatus: { $ref: '#/components/schemas/ProductDisputeReviewStatus' }
+        toReviewStatus: { $ref: '#/components/schemas/ProductDisputeReviewStatus' }
+        fromEvidenceStatus: { $ref: '#/components/schemas/ProductDisputeEvidenceStatus' }
+        toEvidenceStatus: { $ref: '#/components/schemas/ProductDisputeEvidenceStatus' }
+        requestId: { type: string }
+        createdAt: { type: string, format: date-time }
+    ProductPaymentDisputeEvidence:
+      type: object
+      required: [id, operationId, submittedBy, submitterHandle, providerReference, submittedAt]
+      properties:
+        id: { type: string, format: uuid }
+        operationId: { type: string, format: uuid }
+        submittedBy: { type: string, format: uuid }
+        submitterHandle: { type: string }
+        providerReference: { type: string }
+        submittedAt: { type: string, format: date-time }
+    ProductPaymentDisputeDetail:
+      allOf:
+        - { $ref: '#/components/schemas/ProductPaymentDispute' }
+        - type: object
+          required: [events, operations, evidenceSubmissions]
+          properties:
+            events: { type: array, items: { $ref: '#/components/schemas/ProductPaymentDisputeEvent' } }
+            operations: { type: array, items: { $ref: '#/components/schemas/ProductPaymentDisputeOperation' } }
+            evidenceSubmissions: { type: array, items: { $ref: '#/components/schemas/ProductPaymentDisputeEvidence' } }
+    ProductPaymentDisputePage:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/ProductPaymentDispute' } }
+        nextCursor: { type: string }
+    ProductPaymentDisputeCommand:
+      type: object
+      additionalProperties: false
+      required: [action, route, expectedVersion, reason, confirmed]
+      properties:
+        action: { $ref: '#/components/schemas/ProductDisputeAction' }
+        route: { $ref: '#/components/schemas/ProductDisputeRoute' }
+        evidenceReference: { type: string, pattern: '^[A-Za-z0-9][A-Za-z0-9._:/#-]{2,499}$', description: Required only for record_evidence_submission; otherwise omitted or empty. Use an opaque receipt reference without credentials or personal data. }
+        expectedVersion: { type: integer, format: int64, minimum: 1 }
+        reason: { type: string, minLength: 10, maxLength: 2000, description: Trimmed Unicode character length; NUL is rejected. }
+        confirmed: { type: boolean, const: true }
+      description: Action and route are normalized to lowercase; reason and reference are trimmed. escalate_recovery requires collections. A successful operation increments exactly one version; provider outcome and money remain unchanged.
+      allOf:
+        - if: { properties: { action: { const: record_evidence_submission } } }
+          then: { required: [evidenceReference] }
+        - if: { properties: { action: { const: escalate_recovery } } }
+          then: { properties: { route: { const: collections } } }
+    ProductPaymentDisputeCommandResult:
+      allOf:
+        - { $ref: '#/components/schemas/ProductPaymentDisputeDetail' }
+        - type: object
+          required: [operationId, replayed]
+          properties:
+            operationId: { type: string, format: uuid }
+            replayed: { type: boolean }
     ContentCategory:
       type: object
       additionalProperties: false

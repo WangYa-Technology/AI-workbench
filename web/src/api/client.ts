@@ -2,6 +2,12 @@ import type { components, operations } from './schema'
 import { i18n } from '../i18n'
 import { runJSONCommand, runUploadCommand, runFinanceCommand, assertCommandSessionReady, CommandSessionChangedError } from '../lib/taskCommands'
 
+export type ProductPaymentDispute = components['schemas']['ProductPaymentDispute']
+export type ProductPaymentDisputeDetail = components['schemas']['ProductPaymentDisputeDetail']
+export type ProductPaymentDisputeCommand = components['schemas']['ProductPaymentDisputeCommand']
+export type ProductPaymentDisputeCommandResult = components['schemas']['ProductPaymentDisputeCommandResult']
+export type ProductPaymentDisputeQuery = NonNullable<operations['listProductPaymentDisputes']['parameters']['query']>
+
 export type User = components['schemas']['User']
 export type Work = components['schemas']['Work']
 export type WorkPage = components['schemas']['WorkPage']
@@ -540,6 +546,15 @@ export const api = {
   listSellerSaleEvents: (id: string, query: { cursor?: string; limit?: number } = {}) => request<SellerSaleEventsPage>(`/seller/sales/${encodeURIComponent(id)}/events?${queryParameters(query)}`),
   getSellerFunds: () => request<SellerFundsBalance>('/seller/funds', { cache: 'no-store' }),
   listSellerPayoutOptions: (query: { cursor?: string; limit?: number } = {}) => request<components['schemas']['SellerPayoutOptions']>(`/seller/payout-options?${queryParameters(query)}`, { cache: 'no-store' }),
+  listProductPaymentDisputes: (query: ProductPaymentDisputeQuery = {}) => request<components['schemas']['ProductPaymentDisputePage']>(`/admin/product-disputes?${queryParameters(query)}`, { cache: 'no-store' }),
+  getProductPaymentDispute: (id: string) => request<ProductPaymentDisputeDetail>(`/admin/product-disputes/${encodeURIComponent(id)}`, { cache: 'no-store' }),
+  operateProductPaymentDispute: (id: string, input: ProductPaymentDisputeCommand) => {
+    const path = `/admin/product-disputes/${encodeURIComponent(id)}/operations`
+    const snapshot = { ...input }
+    return runFinanceCommand(path, snapshot, key => request<ProductPaymentDisputeCommandResult>(path, {
+      method: 'POST', headers: { 'Idempotency-Key': key }, body: JSON.stringify(snapshot),
+    }))
+  },
   listSellerPayoutReviews: (query: { cursor?: string; limit?: number } = {}) => request<components['schemas']['SellerPayoutReviewPage']>(`/admin/seller-payout-requests?${queryParameters(query)}`, { cache: 'no-store' }),
   getSellerPayoutReview: (id: string) => request<SellerPayoutReviewItem>(`/admin/seller-payout-requests/${encodeURIComponent(id)}`, { cache: 'no-store' }),
   reviewSellerPayout: (id: string, input: SellerPayoutReviewInput) => {
