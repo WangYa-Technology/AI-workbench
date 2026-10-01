@@ -1025,7 +1025,7 @@ func fulfillSubscriptionPaymentTx(ctx context.Context, tx pgx.Tx, provider strin
 	} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `UPDATE user_subscriptions SET status='cancelled',cancelled_at=now(),updated_at=now() WHERE user_id=$1 AND status='active'`, payerID); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE user_subscriptions SET status=CASE WHEN current_period_end<=now() THEN 'expired' ELSE 'cancelled' END,cancelled_at=CASE WHEN current_period_end>now() THEN now() ELSE cancelled_at END,updated_at=now() WHERE user_id=$1 AND status='active'`, payerID); err != nil {
 		return err
 	}
 	subscriptionID := uuid.New()
@@ -1102,7 +1102,8 @@ func fulfillOrRenewWaffoSubscriptionTx(ctx context.Context, tx pgx.Tx, providerE
 	if err := tx.QueryRow(ctx, `
 		SELECT s.id
 		FROM user_subscriptions s
-		WHERE s.user_id=$1 AND s.plan_id=$2 AND s.purchase_operation_id=$3 AND s.status='active'
+		WHERE s.user_id=$1 AND s.plan_id=$2 AND s.purchase_operation_id=$3 AND s.status IN ('active','expired')
+		AND NOT EXISTS(SELECT 1 FROM user_subscriptions newer WHERE newer.user_id=s.user_id AND newer.id<>s.id AND (newer.status='active' OR (newer.created_at,newer.id)>(s.created_at,s.id)))
 		FOR UPDATE OF s`, payerID, planID, paymentID).Scan(&subscriptionID); errors.Is(err, pgx.ErrNoRows) {
 		return newProviderFailure("payment_response_invalid", 0)
 	} else if err != nil {
@@ -1123,7 +1124,7 @@ func fulfillOrRenewWaffoSubscriptionTx(ctx context.Context, tx pgx.Tx, providerE
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE user_subscriptions
-		SET current_period_end=GREATEST(current_period_end,$2)+make_interval(days => $3),updated_at=now()
+		SET current_period_end=GREATEST(current_period_end,$2)+make_interval(days => $3),status='active',updated_at=now()
 		WHERE id=$1`, subscriptionID, occurredAt, billingPeriodDays); err != nil {
 		return err
 	}

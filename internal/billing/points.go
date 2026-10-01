@@ -2,6 +2,7 @@ package billing
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,6 +25,7 @@ var (
 	ErrInvalidPricing       = errors.New("invalid model point pricing")
 	ErrSubscriptionReplay   = errors.New("subscription idempotency conflict")
 	ErrSubscriptionActive   = errors.New("subscription plan is already active")
+	ErrInvalidPointEntries  = errors.New("invalid point entry pagination")
 )
 
 type PointAccount struct {
@@ -85,6 +87,12 @@ type PointOverview struct {
 	CurrentSubscription *UserSubscription  `json:"currentSubscription,omitempty"`
 	Plans               []SubscriptionPlan `json:"plans"`
 	Entries             []PointEntry       `json:"entries"`
+	NextEntryCursor     *string            `json:"nextEntryCursor,omitempty"`
+}
+
+type pointEntryCursor struct {
+	CreatedAt time.Time `json:"createdAt"`
+	ID        uuid.UUID `json:"id"`
 }
 
 type SubscriptionPlanInput struct {
@@ -155,6 +163,10 @@ type pricingSnapshot struct {
 }
 
 func (s *Service) PointOverview(ctx context.Context, userID uuid.UUID) (PointOverview, error) {
+	return s.PointOverviewPage(ctx, userID, "", 30)
+}
+
+func (s *Service) PointOverviewPage(ctx context.Context, userID uuid.UUID, cursor string, limit int) (PointOverview, error) {
 	account, err := getPointAccount(ctx, s.pool, userID)
 	if err != nil {
 		return PointOverview{}, err
@@ -167,9 +179,26 @@ func (s *Service) PointOverview(ctx context.Context, userID uuid.UUID) (PointOve
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return PointOverview{}, err
 	}
+	if limit == 0 {
+		limit = 30
+	}
+	if limit < 1 || limit > 50 {
+		return PointOverview{}, ErrInvalidPointEntries
+	}
+	var cursorTime *time.Time
+	var cursorID *uuid.UUID
+	if cursor != "" {
+		decoded, err := decodePointEntryCursor(cursor)
+		if err != nil {
+			return PointOverview{}, ErrInvalidPointEntries
+		}
+		cursorTime, cursorID = &decoded.CreatedAt, &decoded.ID
+	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT id,operation_id,entry_type,direction,amount_points,balance_after_points,description,metadata,created_at
-		FROM point_entries WHERE user_id=$1 ORDER BY created_at DESC,id DESC LIMIT 30`, userID)
+		FROM point_entries WHERE user_id=$1
+		  AND ($2::timestamptz IS NULL OR (created_at,id) < ($2,$3::uuid))
+		ORDER BY created_at DESC,id DESC LIMIT $4`, userID, cursorTime, cursorID, limit+1)
 	if err != nil {
 		return PointOverview{}, fmt.Errorf("list point entries: %w", err)
 	}
@@ -183,10 +212,52 @@ func (s *Service) PointOverview(ctx context.Context, userID uuid.UUID) (PointOve
 		entries = append(entries, item)
 	}
 	result := PointOverview{Account: account, Plans: plans, Entries: entries}
+	if len(result.Entries) > limit {
+		result.Entries = result.Entries[:limit]
+		next := encodePointEntryCursor(result.Entries[len(result.Entries)-1])
+		result.NextEntryCursor = &next
+	}
 	if err == nil && current.ID != uuid.Nil {
 		result.CurrentSubscription = &current
 	}
 	return result, rows.Err()
+}
+
+func encodePointEntryCursor(item PointEntry) string {
+	body, _ := json.Marshal(pointEntryCursor{CreatedAt: item.CreatedAt, ID: item.ID})
+	return base64.RawURLEncoding.EncodeToString(body)
+}
+
+func decodePointEntryCursor(value string) (pointEntryCursor, error) {
+	var cursor pointEntryCursor
+	body, err := base64.RawURLEncoding.DecodeString(value)
+	if err != nil || json.Unmarshal(body, &cursor) != nil || cursor.ID == uuid.Nil || cursor.CreatedAt.IsZero() {
+		return pointEntryCursor{}, ErrInvalidPointEntries
+	}
+	return cursor, nil
+}
+
+// ExpireSubscriptions marks active subscriptions whose paid period has ended.
+// The predicate makes repeated runs idempotent and avoids touching newer plans.
+func (s *Service) ExpireSubscriptions(ctx context.Context, limit int) (int64, error) {
+	if limit == 0 {
+		limit = 1000
+	}
+	if limit < 1 || limit > 10000 {
+		return 0, fmt.Errorf("invalid subscription expiry limit")
+	}
+	result, err := s.pool.Exec(ctx, `
+		WITH expired AS (
+			SELECT id FROM user_subscriptions
+			WHERE status='active' AND current_period_end <= now()
+			ORDER BY current_period_end,id LIMIT $1 FOR UPDATE SKIP LOCKED
+		)
+		UPDATE user_subscriptions s SET status='expired',updated_at=now()
+		FROM expired e WHERE s.id=e.id AND s.status='active' AND s.current_period_end <= now()`, limit)
+	if err != nil {
+		return 0, fmt.Errorf("expire subscriptions: %w", err)
+	}
+	return result.RowsAffected(), nil
 }
 
 func getPointAccount(ctx context.Context, q rowQuerier, userID uuid.UUID) (PointAccount, error) {
@@ -470,7 +541,7 @@ func (s *Service) PurchaseSubscription(ctx context.Context, userID, planID uuid.
 			return PointOverview{}, err
 		}
 	}
-	if _, err := tx.Exec(ctx, `UPDATE user_subscriptions SET status='cancelled',cancelled_at=now(),updated_at=now() WHERE user_id=$1 AND status='active'`, userID); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE user_subscriptions SET status=CASE WHEN current_period_end<=now() THEN 'expired' ELSE 'cancelled' END,cancelled_at=CASE WHEN current_period_end>now() THEN now() ELSE cancelled_at END,updated_at=now() WHERE user_id=$1 AND status='active'`, userID); err != nil {
 		return PointOverview{}, err
 	}
 	if _, err := tx.Exec(ctx, `INSERT INTO user_subscriptions(id,user_id,plan_id,price_cents,currency,granted_points,current_period_end,purchase_operation_id,idempotency_key) VALUES($1,$2,$3,$4,$5,$6,now()+make_interval(days => $7),$8,$9)`, subscriptionID, userID, plan.ID, plan.PriceCents, plan.Currency, plan.IncludedPoints, plan.BillingPeriodDays, operationID, idempotencyKey); err != nil {
@@ -720,7 +791,13 @@ func CaptureGenerationPointsTx(ctx context.Context, tx pgx.Tx, generationID uuid
 	if err := tx.QueryRow(ctx, `SELECT balance_points,reserved_points FROM point_accounts WHERE user_id=$1 FOR UPDATE`, userID).Scan(&balance, &reserved); err != nil {
 		return 0, nil, err
 	}
-	if reserved < held || balance < charge {
+	// The balance includes every currently held reservation. Once this
+	// reservation is captured, the other reservations must still remain
+	// covered. Checking only balance >= charge could spend points held for a
+	// different generation when actual usage exceeds this reservation's
+	// estimate.
+	availableAfterRelease := balance - reserved + held
+	if reserved < held || availableAfterRelease < charge {
 		return 0, nil, ErrInsufficientFunds
 	}
 	balance -= charge

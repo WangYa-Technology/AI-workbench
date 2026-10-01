@@ -1146,6 +1146,9 @@ paths:
       tags: [Billing]
       operationId: getPointOverview
       security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: cursor, in: query, required: false, schema: { type: string } }
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 50, default: 30 } }
       responses:
         '200': { description: Current point balance, active subscription, purchasable plans, and recent point entries, content: { application/json: { schema: { $ref: '#/components/schemas/PointOverview' } } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -6798,6 +6801,7 @@ components:
         currentSubscription: { $ref: '#/components/schemas/UserSubscription' }
         plans: { type: array, items: { $ref: '#/components/schemas/SubscriptionPlan' } }
         entries: { type: array, items: { $ref: '#/components/schemas/PointEntry' } }
+        nextEntryCursor: { type: string }
     SubscriptionPlanInput:
       type: object
       additionalProperties: false

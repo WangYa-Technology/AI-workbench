@@ -392,9 +392,24 @@ func (s *Server) pointOverview(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	overview, err := s.billing.PointOverview(r.Context(), user.ID)
+	query := r.URL.Query()
+	cursor := strings.TrimSpace(query.Get("cursor"))
+	limit := 30
+	if raw := strings.TrimSpace(query.Get("limit")); raw != "" {
+		parsed, parseErr := strconv.Atoi(raw)
+		if parseErr != nil || parsed < 1 || parsed > 50 {
+			httputil.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_point_entries", "Use a limit from 1 to 50 and an unmodified cursor.", false)
+			return
+		}
+		limit = parsed
+	}
+	overview, err := s.billing.PointOverviewPage(r.Context(), user.ID, cursor, limit)
 	if errors.Is(err, billing.ErrPointAccountNotFound) {
 		httputil.WriteError(w, r, http.StatusNotFound, "point_account_not_found", "The point account was not found.", false)
+		return
+	}
+	if errors.Is(err, billing.ErrInvalidPointEntries) {
+		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_point_entries", "Use a limit from 1 to 50 and an unmodified cursor.", false)
 		return
 	}
 	if err != nil {

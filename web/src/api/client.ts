@@ -458,7 +458,10 @@ export const api = {
     const params = queryParameters(query)
     return request<BillingStatement>(`/billing/statement${params.size ? `?${params}` : ''}`)
 	},
-	pointOverview: () => request<PointOverview>('/billing/points'),
+	pointOverview: (query: { cursor?: string; limit?: number } = {}) => {
+		const params = queryParameters(query)
+		return request<PointOverview>(`/billing/points${params.size ? `?${params}` : ''}`)
+	},
 	checkoutWalletTopup: (amountCents: number, idempotencyKey?: string) => billingCheckout('/billing/topups/checkout', { amountCents }, idempotencyKey),
 	checkoutSubscription: (planId: string, idempotencyKey?: string) => billingCheckout('/billing/subscriptions/checkout', { planId }, idempotencyKey),
 	listAssets: (query: AssetListQuery = {}) => {

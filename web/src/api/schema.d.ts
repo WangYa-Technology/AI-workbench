@@ -6506,6 +6506,7 @@ export interface components {
             currentSubscription?: components["schemas"]["UserSubscription"];
             plans: components["schemas"]["SubscriptionPlan"][];
             entries: components["schemas"]["PointEntry"][];
+            nextEntryCursor?: string;
         };
         SubscriptionPlanInput: {
             tierCode: string;
@@ -9910,7 +9911,10 @@ export interface operations {
     };
     getPointOverview: {
         parameters: {
-            query?: never;
+            query?: {
+                cursor?: string;
+                limit?: number;
+            };
             header?: never;
             path?: never;
             cookie?: never;

@@ -109,6 +109,8 @@ const generationDateTo = ref('')
 const selectedGenerationIDs = ref<string[]>([])
 const billingNextCursor = ref<string | null>(null)
 const billingLoadingMore = ref(false)
+const pointNextCursor = ref<string | null>(null)
+const pointLoadingMore = ref(false)
 const billingDirection = ref('')
 const billingEntryType = ref('')
 const billingDateFrom = ref('')
@@ -393,6 +395,19 @@ async function loadBillingStatement(cursor = '', version = workspaceLoadVersion)
   billingNextCursor.value = page.nextCursor || null
 }
 
+async function loadPointOverview(cursor = '', version = workspaceLoadVersion) {
+  if (version !== workspaceLoadVersion) return
+  const page = await api.pointOverview(cursor ? { cursor } : {})
+  if (version !== workspaceLoadVersion) return
+  if (cursor && points.value) {
+    const known = new Set(points.value.entries.map(item => item.id))
+    points.value = { ...page, entries: [...points.value.entries, ...page.entries.filter(item => !known.has(item.id))] }
+  } else {
+    points.value = page
+  }
+  pointNextCursor.value = page.nextEntryCursor || null
+}
+
 function hasPaymentEvidence(paymentId: string) {
   return Boolean(
     billing.value?.entries.some(entry => entry.operationId === paymentId)
@@ -406,6 +421,7 @@ async function pollPaymentConfirmation(paymentId: string, version: number, attem
     const [, pointOverview] = await Promise.all([loadBillingStatement('', version), api.pointOverview()])
     if (version !== workspaceLoadVersion) return
     points.value = pointOverview
+    pointNextCursor.value = pointOverview.nextEntryCursor || null
     if (hasPaymentEvidence(paymentId)) {
       success.value = t('workspace.paymentConfirmed')
       return
@@ -519,6 +535,20 @@ async function loadMoreBilling() {
   }
 }
 
+async function loadMorePoints() {
+  if (loading.value || !pointNextCursor.value || pointLoadingMore.value) return
+  const version = workspaceLoadVersion
+  pointLoadingMore.value = true
+  error.value = ''
+  try {
+    await loadPointOverview(pointNextCursor.value, version)
+  } catch (reason) {
+    if (version === workspaceLoadVersion) error.value = messageFrom(reason)
+  } finally {
+    if (version === workspaceLoadVersion) pointLoadingMore.value = false
+  }
+}
+
 async function loadGenerationList(version = workspaceLoadVersion) {
   if (version !== workspaceLoadVersion) return
   const focusedID = generationFocus.value
@@ -563,6 +593,7 @@ async function load() {
   refunding.value = ''
   loadingMoreTasks.value = false
   billingLoadingMore.value = false
+  pointLoadingMore.value = false
   generationLoadingMore.value = false
   generationAction.value = ''
   subscriptionAction.value = ''
@@ -637,6 +668,7 @@ async function load() {
       const [, pointOverview, runtime, settings] = await Promise.all([loadBillingStatement('', version), api.pointOverview(), api.meta(), api.walletTopupSettings()])
       if (version !== workspaceLoadVersion) return
       points.value = pointOverview
+      pointNextCursor.value = pointOverview.nextEntryCursor || null
       paymentProvider.value = runtime.paymentProvider
       topupSettings.value = settings
       if (route.query.payment === 'success') {
@@ -805,6 +837,7 @@ async function changeGeneration(item: Generation, action: 'cancel' | 'retry') {
     if (version !== workspaceLoadVersion) return
     billing.value = statement
     points.value = pointOverview
+    pointNextCursor.value = pointOverview.nextEntryCursor || null
     success.value = action === 'cancel' ? t('workspace.generationCancelled') : t('workspace.generationRetried')
   } catch (reason) {
     if (version === workspaceLoadVersion) error.value = messageFrom(reason)
@@ -968,7 +1001,7 @@ function clearPrivateState() {
   orders.value = []; orderNextCursor.value = null; refundReasons.value = {}
   tasks.value = []; taskTotal.value = 0; nextTaskCursor.value = undefined
   generations.value = []; generationNextCursor.value = null; selectedGenerationIDs.value = []
-  billing.value = null; billingNextCursor.value = null; points.value = null; paymentProvider.value = null
+  billing.value = null; billingNextCursor.value = null; points.value = null; pointNextCursor.value = null; paymentProvider.value = null
   selectedAsset.value = null
   uploadOpen.value = false; uploadFile.value = null; uploadTitle.value = ''
   versionOpen.value = false; versionFile.value = null; versionTitle.value = ''; versionNote.value = ''
@@ -1764,6 +1797,9 @@ onBeforeUnmount(() => {
                 <strong>{{ entry.direction === 'credit' ? '+' : '-' }}{{ entry.amountPoints.toLocaleString(locale) }} {{ t('workspace.pointsUnit') }}</strong>
                 <small>{{ entry.balanceAfterPoints.toLocaleString(locale) }}</small>
               </article>
+              <UiButton v-if="pointNextCursor" class="command-button secondary billing-load-more" variant="secondary" :loading="pointLoadingMore" @click="loadMorePoints">
+                {{ t('actions.loadMore') }}
+              </UiButton>
             </section>
           </div>
         </div>

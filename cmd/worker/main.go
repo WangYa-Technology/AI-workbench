@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/hcai-chat/hcai-chat/internal/assets"
 	"github.com/hcai-chat/hcai-chat/internal/authchallenges"
+	"github.com/hcai-chat/hcai-chat/internal/billing"
 	"github.com/hcai-chat/hcai-chat/internal/creation"
 	"github.com/hcai-chat/hcai-chat/internal/datarights"
 	"github.com/hcai-chat/hcai-chat/internal/emailactions"
@@ -54,6 +55,7 @@ func main() {
 
 	repository := jobs.NewRepository(pool)
 	worker := jobs.NewWorker(repository, "worker-"+uuid.NewString(), logger)
+	billingService := billing.NewService(pool)
 	providerRuntimes := providers.NewCatalogWithRegistry(cfg, pool, cfg.WebhookEncryptionKey)
 	costRuntime, err := providers.NewOpenAICostsRuntime(cfg)
 	if err != nil {
@@ -71,6 +73,9 @@ func main() {
 				return
 			case <-ticker.C:
 				maintenanceCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+				if _, err := billingService.ExpireSubscriptions(maintenanceCtx, 1000); err != nil {
+					logger.Warn("expire subscriptions", "error", err)
+				}
 				if err := observabilityRepository.PurgeExpired(maintenanceCtx, 1000); err != nil {
 					logger.Warn("purge request observations", "error", err)
 				}

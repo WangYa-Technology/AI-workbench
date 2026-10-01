@@ -169,6 +169,49 @@ func TestModelPointMeteringUsesTokensResolutionCountAndDuration(t *testing.T) {
 	}
 }
 
+func TestCaptureGenerationPointsCannotSpendAnotherReservation(t *testing.T) {
+	pool, cleanup := testPool(t)
+	defer cleanup()
+	ctx := context.Background()
+	userID, generationID := uuid.New(), uuid.New()
+	if _, err := pool.Exec(ctx, `INSERT INTO users(id,email,handle,display_name,role,status) VALUES($1,$2,$3,'Reservation User','member','active')`, userID, userID.String()+"@test.local", "reservation_"+userID.String()[:8]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE point_accounts SET balance_points=100,reserved_points=80 WHERE user_id=$1`, userID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO generations(id,owner_id,mode,provider,model_name,prompt) VALUES($1,$2,'video','local_test','reservation-model','reservation test')`, generationID, userID); err != nil {
+		t.Fatal(err)
+	}
+	var userSubscriptionID uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT id FROM user_subscriptions WHERE user_id=$1 AND status='active' ORDER BY created_at DESC LIMIT 1`, userID).Scan(&userSubscriptionID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO point_reservations(user_id,generation_id,subscription_id,held_points,pricing_snapshot) VALUES($1,$2,$3,20,$4)`, userID, generationID, userSubscriptionID, []byte(`{"Rule":{"Mode":"video","PointsPerSecond":10,"MinimumPoints":1},"EstimateInput":{}}`)); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = billing.CaptureGenerationPointsTx(ctx, tx, generationID, billing.UsageMetrics{DurationSeconds: 5, ProviderReported: true})
+	if !errors.Is(err, billing.ErrInsufficientFunds) {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("capture spent points reserved for another generation: %v", err)
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var balance, reserved int64
+	var status string
+	if err := pool.QueryRow(ctx, `SELECT p.balance_points,p.reserved_points,r.status FROM point_accounts p JOIN point_reservations r ON r.user_id=p.user_id WHERE p.user_id=$1 AND r.generation_id=$2`, userID, generationID).Scan(&balance, &reserved, &status); err != nil {
+		t.Fatal(err)
+	}
+	if balance != 100 || reserved != 80 || status != "held" {
+		t.Fatalf("failed capture changed balances: balance=%d reserved=%d status=%s", balance, reserved, status)
+	}
+}
+
 func assertWalletAndPointBalances(t *testing.T, ctx context.Context, pool *pgxpool.Pool, userID uuid.UUID, walletCents, points int64) {
 	t.Helper()
 	var actualWallet, actualPoints int64

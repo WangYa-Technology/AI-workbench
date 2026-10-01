@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/hcai-chat/hcai-chat/internal/billing"
 	"github.com/hcai-chat/hcai-chat/internal/notifications"
 	"github.com/hcai-chat/hcai-chat/internal/platform/jobs"
 	"github.com/jackc/pgx/v5"
@@ -418,6 +419,13 @@ func TestWaffoSubscriptionActivationAndRenewalWorkflow(t *testing.T) {
 		t.Fatal(err)
 	}
 	renewalPaymentID := "PAY_waffo_renewal_456"
+	// A delayed renewal must still work after the maintenance worker archives it.
+	if _, err := pool.Exec(ctx, `UPDATE user_subscriptions SET current_period_end=now()-interval '1 hour' WHERE purchase_operation_id=$1`, checkout.PaymentID); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := billing.NewService(pool).ExpireSubscriptions(ctx, 1000); err != nil || n != 1 {
+		t.Fatalf("archive before renewal: n=%d err=%v", n, err)
+	}
 	renewal := activation
 	renewal.ProviderEventID = "delivery_waffo_renewal_456"
 	renewal.EventType = "subscription.payment_succeeded"
