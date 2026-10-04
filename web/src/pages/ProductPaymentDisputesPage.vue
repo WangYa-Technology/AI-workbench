@@ -32,10 +32,10 @@ const items = ref<ProductPaymentDispute[]>([])
 const detail = ref<ProductPaymentDisputeDetail>()
 const cursor = ref<string>()
 const query = ref('')
-const actionStatus = ref('')
-const reviewStatus = ref('')
-const binding = ref('')
-const mode = ref('')
+const actionStatus = ref<ProductPaymentDisputeQuery['actionStatus'] | ''>('')
+const reviewStatus = ref<ProductPaymentDisputeQuery['reviewStatus'] | ''>('')
+const binding = ref<ProductPaymentDisputeQuery['binding'] | ''>('')
+const mode = ref<ProductPaymentDisputeQuery['mode'] | ''>('')
 const loading = ref(false)
 const busy = ref(false)
 const denied = ref(false)
@@ -58,7 +58,7 @@ const canOperate = computed(() => allowed.value && !denied.value && detail.value
 function safeReference(reference?: string) {
   if (!reference) return t('productDisputes.noReference')
   try {
-    const parsed = new URL(reference)
+    const parsed = new globalThis.URL(reference)
     if (parsed.protocol === 'https:' || parsed.protocol === 'http:') return `${parsed.protocol}//${parsed.host}/…`
   } catch { /* Opaque provider references are shown only by a short suffix. */ }
   return `…${reference.slice(-4)}`
