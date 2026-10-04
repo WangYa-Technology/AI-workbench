@@ -171,7 +171,16 @@ async function load() {
   error.value = ''
   success.value = ''
   try {
-    const [, runtime, configuredTypes] = await Promise.all([session.ensure(), api.meta(), api.listTaskTypes()])
+    await session.ensure()
+    if (version !== loadVersion) return
+    if (!id && route.query.publish === '1') {
+      if (!session.user) {
+        await router.replace({ path: '/auth', query: { auth: 'login', returnTo: route.fullPath } })
+        return
+      }
+      createOpen.value = true
+    }
+    const [runtime, configuredTypes] = await Promise.all([api.meta(), api.listTaskTypes()])
     if (version !== loadVersion) return
     taskTypes.value = configuredTypes.items
     taskPaymentEnabled.value = runtime.taskPaymentProvider.enabled
@@ -500,6 +509,11 @@ watch(createOpen, async (open) => {
     await nextTick()
     taskTitleInput.value?.focus()
     return
+  }
+  if (route.query.publish === '1') {
+    const query = { ...route.query }
+    delete query.publish
+    void router.replace({ path: route.path, query })
   }
   createTrigger?.focus()
   createTrigger = null

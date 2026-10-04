@@ -6,9 +6,9 @@ test('shows the product home to guests and keeps the mobile layout contained', a
   await page.setViewportSize({ width: 390, height: 844 })
   await page.goto('/')
 
-  await expect(page.getByRole('heading', { level: 1, name: /Create, share, and earn with AI/i })).toBeVisible()
-  await expect(page.getByRole('textbox', { name: 'Describe what you want to create' })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Continue to the creation workspace' })).toBeVisible()
+  await expect(page.getByRole('heading', { level: 1, name: /Creative projects.*Built through collaboration/i })).toBeVisible()
+  await expect(page.locator('.home-publish')).toBeVisible()
+  await expect(page.locator('.home-pathway-resources')).toHaveAttribute('href', '/market')
   await expect(page.locator('.site-sidebar')).toHaveCount(0)
   await expect(page.locator('.home-brand .brand-logo').first()).toHaveAttribute('src', '/brand/logo.png')
   await expect(page.locator('link[rel="icon"]')).toHaveAttribute('href', '/brand/logo.png')
@@ -16,22 +16,18 @@ test('shows the product home to guests and keeps the mobile layout contained', a
   const layout = await page.evaluate(() => ({
     clientWidth: document.documentElement.clientWidth,
     scrollWidth: document.documentElement.scrollWidth,
-    heroBottom: Math.round(document.querySelector('.home-hero')?.getBoundingClientRect().bottom || 0),
+    heroBottom: Math.round(document.querySelector('.home-publish')?.getBoundingClientRect().bottom || 0),
   }))
   expect(layout.scrollWidth).toBe(layout.clientWidth)
   expect(layout.heroBottom).toBeLessThan(page.viewportSize()!.height)
 })
 
-test('carries a homepage idea into the selected creation mode', async ({ page }) => {
+test('carries publishing intent to the login page', async ({ page }) => {
   await page.request.post('/api/v1/auth/logout')
   await page.goto('/')
-
-  await page.locator('.mode-switcher').getByRole('button', { name: /Video/, exact: false }).click()
-  await page.getByRole('textbox', { name: 'Describe what you want to create' }).fill('A quiet product film in soft daylight')
-  await page.getByRole('button', { name: 'Continue to the creation workspace' }).click()
-
-  await expect(page).toHaveURL(/\/create\/video\?starter=A(?:\+|%20)quiet/)
-  await expect(page.getByPlaceholder('Describe the scene, camera movement, pacing, duration, and format…')).toHaveValue('A quiet product film in soft daylight')
+  await page.locator('.home-publish').click()
+  await expect(page).toHaveURL(/\/auth\?/)
+  expect(new URL(page.url()).searchParams.get('returnTo')).toBe('/market/demands?publish=1')
 })
 
 test('keeps the desktop hero inside a centered marketing container', async ({ page }) => {
@@ -40,9 +36,9 @@ test('keeps the desktop hero inside a centered marketing container', async ({ pa
   await page.goto('/')
 
   const layout = await page.evaluate(() => {
-    const hero = document.querySelector('.hero-main')?.getBoundingClientRect()
-    const copy = document.querySelector('.hero-copy')?.getBoundingClientRect()
-    const modes = document.querySelector('.mode-switcher')?.getBoundingClientRect()
+    const hero = document.querySelector('.home-hero')?.getBoundingClientRect()
+    const copy = document.querySelector('.home-hero-copy')?.getBoundingClientRect()
+    const modes = document.querySelector('.home-hero-links')?.getBoundingClientRect()
     return {
       heroWidth: Math.round(hero?.width || 0),
       leftMargin: Math.round(hero?.left || 0),
@@ -52,8 +48,8 @@ test('keeps the desktop hero inside a centered marketing container', async ({ pa
     }
   })
 
-  expect(layout.heroWidth).toBeLessThanOrEqual(1040)
-  expect(layout.leftMargin).toBeGreaterThanOrEqual(120)
+  expect(layout.heroWidth).toBeLessThanOrEqual(1280)
+  expect(layout.leftMargin).toBeGreaterThanOrEqual(40)
   expect(Math.abs(layout.leftMargin - layout.rightMargin)).toBeLessThanOrEqual(1)
   expect(layout.modesRight).toBeLessThanOrEqual(layout.copyRight)
 })

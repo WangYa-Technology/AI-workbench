@@ -177,6 +177,106 @@ export default {
     createSummary: 'Your current builder setup will be restored when you return to this creation mode.',
   },
   home: {
+    business: {
+      "nav": {
+        "projects": "Find projects",
+        "resources": "Resources"
+      },
+      "publish": "Post a brief",
+      "find": "Find a project",
+      "readyMade": "Need something ready-made? Explore resources",
+      "eyebrow": "BRIEFS · COLLABORATION · DELIVERY",
+      "title": "Creative projects.",
+      "titleEnd": "Built through collaboration.",
+      "summary": "Find a creator for your brief, take on your next project, or buy resources ready for your work. Keep delivery and usage rights in one place.",
+      "boardLabel": "How a project works",
+      "boardTitle": "A clear brief. A complete handoff.",
+      "boardSummary": "Keep requirements, delivery versions, reviews, and usage rights connected throughout a project.",
+      "scope": "Scope",
+      "budget": "Budget",
+      "deadline": "Deadline",
+      "handoff": "Files and rights, confirmed together",
+      "handoffSummary": "Find accepted assets and rights in your workspace.",
+      "pathsLabel": "Choose your next step",
+      "paths": {
+        "commission": {
+          "title": "Find a collaborator",
+          "summary": "Set your goals, budget, and deliverables. Review proposals and choose who to work with.",
+          "action": "Post a project brief"
+        },
+        "projects": {
+          "title": "Find your next project",
+          "summary": "Explore open briefs and budgets. Propose your approach and deliver your expertise.",
+          "action": "Browse open projects"
+        },
+        "resources": {
+          "title": "Find a useful resource",
+          "summary": "Shop assets, prompts, and workflows. Check the license before you buy and use them.",
+          "action": "Explore the marketplace"
+        }
+      },
+      "loading": "Loading public projects and resources…",
+      "loadError": "Some content could not load. You can still browse the marketplaces directly.",
+      "retry": "Try again",
+      "projectsLabel": "OPEN BRIEFS",
+      "projectsTitle": "Your next collaboration",
+      "allProjects": "All projects",
+      "due": "Due",
+      "resourcesLabel": "RESOURCE MARKETPLACE",
+      "resourcesTitle": "Resources for the work ahead",
+      "allResources": "All resources",
+      "processLabel": "COLLABORATION & DELIVERY",
+      "processTitle": "From a brief to a complete handoff",
+      "processSummary": "Track progress, file versions, and rights. Request revisions or open a dispute when something needs attention.",
+      "steps": {
+        "brief": {
+          "short": "Brief",
+          "title": "Define the work",
+          "summary": "Agree on scope, budget, timing, deliverables, and rights."
+        },
+        "collaborate": {
+          "short": "Collaborate",
+          "title": "Choose a collaborator",
+          "summary": "Review proposals and quotes. Confirm the assignment after the corresponding payment."
+        },
+        "deliver": {
+          "short": "Deliver",
+          "title": "Review each version",
+          "summary": "Submit files and source information. Review the delivery and request changes."
+        },
+        "accept": {
+          "short": "Accept",
+          "title": "Confirm the handoff",
+          "summary": "Accept the work, receive assets and rights, and move into settlement."
+        }
+      },
+      "worksLabel": "WORK & CREATORS",
+      "worksTitle": "Get to know the people behind the work",
+      "communityTitle": "Share your process. Meet your peers.",
+      "communitySummary": "Discuss techniques, share work, and learn how other creators approach a project.",
+      "toolTitle": "Tools when you need them",
+      "toolSummary": "Use the AI workspace to help with production, or upload work you already have.",
+      "faqLabel": "BEFORE YOU START",
+      "faqTitle": "A few useful answers",
+      "faq": {
+        "difference": {
+          "question": "How is a brief different from a resource purchase?",
+          "answer": "A brief commissions custom work through proposals, delivery, and acceptance. A resource purchase provides existing files with a specific license."
+        },
+        "ai": {
+          "question": "Do I have to use the AI tools to participate?",
+          "answer": "No. You can use eligible assets you own, or create with the AI tools. Files must meet scanning, source, license, and project requirements."
+        },
+        "rights": {
+          "question": "Can I commercially use or resell any file I receive?",
+          "answer": "No. Project rights follow the agreed terms and delivery grant. Product rights follow the license accepted at purchase. Download access does not grant unrestricted commercial use or resale."
+        },
+        "payment": {
+          "question": "Does acceptance mean the creator has been paid?",
+          "answer": "Acceptance and receipt of funds are separate states. Transfers or settlement follow acceptance and depend on account eligibility, the payment provider, and verification. Check the workspace for the recorded status."
+        }
+      }
+    },
     nav: { work: 'Explore work', tasks: 'Find briefs', community: 'Community' },
     signIn: 'Sign in', createAccount: 'Create account',
     title: 'Create, share, and earn with AI.',

@@ -175,6 +175,106 @@ export default {
     createSummary: '返回当前创作模式后，你的构建配置会继续保留。',
   },
   home: {
+    business: {
+      "nav": {
+        "projects": "寻找项目",
+        "resources": "资源市场"
+      },
+      "publish": "发布需求",
+      "find": "寻找项目",
+      "readyMade": "需要现成素材？逛逛资源市场",
+      "eyebrow": "需求 · 合作 · 交付",
+      "title": "创意项目，",
+      "titleEnd": "从这里开始合作。",
+      "summary": "发布需求，找到合适的创作者；承接项目，交付你的专业成果。也可以直接购买素材、工作流与作品许可。",
+      "boardLabel": "项目合作流程",
+      "boardTitle": "把需求说清楚，把成果交到位。",
+      "boardSummary": "从约定制作要求，到提交版本、审核与授权交接，每一步都有对应记录。",
+      "scope": "项目范围",
+      "budget": "预算",
+      "deadline": "截止时间",
+      "handoff": "交付文件与授权，一起确认",
+      "handoffSummary": "验收后在工作台查看资产与权利说明。",
+      "pathsLabel": "选择你的下一步",
+      "paths": {
+        "commission": {
+          "title": "有项目，找人做",
+          "summary": "写清项目目标、预算与交付要求，查看提案并选择合作方。",
+          "action": "发布一份需求"
+        },
+        "projects": {
+          "title": "有专长，找项目",
+          "summary": "查看真实需求与预算，提交制作方案，按约定交付成果。",
+          "action": "浏览开放项目"
+        },
+        "resources": {
+          "title": "好资源，直接用",
+          "summary": "寻找素材、提示词与工作流，确认许可后购买使用。",
+          "action": "浏览资源市场"
+        }
+      },
+      "loading": "正在读取公开项目与资源…",
+      "loadError": "部分内容暂时无法加载，你仍可进入对应市场浏览。",
+      "retry": "重新加载",
+      "projectsLabel": "开放需求",
+      "projectsTitle": "寻找下一次合作",
+      "allProjects": "全部项目",
+      "due": "截止",
+      "resourcesLabel": "资源市场",
+      "resourcesTitle": "为项目找到合适的资源",
+      "allResources": "全部资源",
+      "processLabel": "协作与履约",
+      "processTitle": "从一份需求，到一次完整交付",
+      "processSummary": "任务进展、文件版本与授权各有记录。遇到分歧，可通过返修或争议流程处理。",
+      "steps": {
+        "brief": {
+          "short": "发布需求",
+          "title": "明确需求与预算",
+          "summary": "约定制作范围、时间、交付清单与权利要求。"
+        },
+        "collaborate": {
+          "short": "确定合作",
+          "title": "选择合适的合作方",
+          "summary": "查看提案和报价，完成对应付款后确认承接。"
+        },
+        "deliver": {
+          "short": "提交交付",
+          "title": "按版本提交成果",
+          "summary": "提交文件与来源说明，委托方审核并提出修改。"
+        },
+        "accept": {
+          "short": "验收交接",
+          "title": "确认成果与授权",
+          "summary": "验收后交接资产及授权，并进入后续结算流程。"
+        }
+      },
+      "worksLabel": "作品与创作者",
+      "worksTitle": "从作品，了解创作者",
+      "communityTitle": "交流经验，认识同行",
+      "communitySummary": "在社区讨论制作方法、分享作品，了解创作者的思路。",
+      "toolTitle": "制作时，也有工具可用",
+      "toolSummary": "需要 AI 辅助时，进入创作工作台。也支持上传已有成果。",
+      "faqLabel": "合作之前",
+      "faqTitle": "先了解这些",
+      "faq": {
+        "difference": {
+          "question": "发布需求和购买资源有什么区别？",
+          "answer": "发布需求是请创作者按约定定制制作，需要提案、交付和验收。购买资源是取得已有商品的文件与相应许可。"
+        },
+        "ai": {
+          "question": "必须使用本站 AI 才能接单或发布资源吗？",
+          "answer": "不必。你可以使用符合要求的自有资产，也可以使用本站 AI 辅助制作。文件需符合扫描、来源、许可及任务约定。"
+        },
+        "rights": {
+          "question": "收到文件，就可以任意商用或转售吗？",
+          "answer": "不可以。任务以约定的权利条款和交付授权为准，商品以成交时确认的许可为准。下载权限不等于转售或不受限的商用权。"
+        },
+        "payment": {
+          "question": "验收之后，创作者会立即收到钱吗？",
+          "answer": "验收与到账是不同状态。验收后进入后续转账或结算流程，结果受收款账户、支付通道与核验状态影响；以工作台记录为准。"
+        }
+      }
+    },
     nav: { work: '浏览作品', tasks: '寻找需求', community: '社区' },
     signIn: '登录', createAccount: '创建账户',
     title: '一站完成所有 AI 创作。',
