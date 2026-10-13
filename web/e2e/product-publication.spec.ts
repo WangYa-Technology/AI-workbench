@@ -4,7 +4,7 @@ import { fixtureCredentials } from './helpers/identity'
 import { chooseOption } from './helpers/select'
 
 for (const width of [390, 1308]) {
-  test(`seller draft, review, publication and pause at ${width}px`, async ({ page }) => {
+  test(`seller draft, review, publication and pause at ${width}px`, async ({ page }, testInfo) => {
     test.setTimeout(90_000)
     await page.setViewportSize({ width, height: 900 })
     expect((await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('creator') })).ok()).toBeTruthy()
@@ -22,7 +22,7 @@ for (const width of [390, 1308]) {
     await page.getByLabel('AI disclosure and rights information', { exact: true }).fill('Original text written and reviewed by the seller.')
     await page.getByLabel('Delivered file label', { exact: true }).fill('original.txt')
     await page.getByLabel('Price (USD)', { exact: true }).fill('19.00')
-    await page.screenshot({ path: `/tmp/hcai-product-form-${width}.png`, fullPage: true })
+    await page.screenshot({ path: testInfo.outputPath(`product-form-${width}.png`), fullPage: true })
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
     await page.getByRole('button', { name: 'Save draft', exact: true }).click()
     await expect(page).toHaveURL(/\/workspace\/products\/[0-9a-f-]{36}$/)
@@ -51,7 +51,7 @@ for (const width of [390, 1308]) {
     await expect(page.getByRole('alertdialog')).toBeVisible()
     await page.getByRole('button', { name: 'Confirm decision', exact: true }).click()
     await expect(page.locator('.ui-card-actions').first()).toContainText('Approved')
-    await page.screenshot({ path: `/tmp/hcai-product-review-${width}.png`, fullPage: true })
+    await page.screenshot({ path: testInfo.outputPath(`product-review-${width}.png`), fullPage: true })
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
     const publicOffer = await (await page.request.get(`/api/v1/products/${id}`)).json()
     expect(publicOffer.listingManaged).toBe(true)

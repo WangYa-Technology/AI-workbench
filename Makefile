@@ -3,6 +3,9 @@
 # Payment integration fixtures each apply the full migration history. The
 # complete package now exceeds 30 minutes; keep a finite, overridable budget.
 GO_TEST_TIMEOUT ?= 60m
+# Keep local review snapshots and other non-module artifacts out of Go tooling.
+# `./...` recursively discovers ignored Go files under data/.
+GO_PACKAGES ?= ./cmd/... ./internal/...
 
 .PHONY: proxy-test runtime-image-check
 
@@ -41,13 +44,13 @@ dev:
 	./scripts/dev.sh
 
 test:
-	HCAI_REQUIRE_INTEGRATION_TESTS=1 go test -count=1 -timeout $(GO_TEST_TIMEOUT) ./...
+	HCAI_REQUIRE_INTEGRATION_TESTS=1 go test -count=1 -timeout $(GO_TEST_TIMEOUT) $(GO_PACKAGES)
 	npm --prefix services/waffo-connector test
 	npm --prefix web run test
 
 test-integration:
 	@test -n "$(TEST_DATABASE_URL)" || (echo "TEST_DATABASE_URL is required for integration tests." >&2; exit 1)
-	HCAI_REQUIRE_INTEGRATION_TESTS=1 go test -count=1 -timeout $(GO_TEST_TIMEOUT) ./...
+	HCAI_REQUIRE_INTEGRATION_TESTS=1 go test -count=1 -timeout $(GO_TEST_TIMEOUT) $(GO_PACKAGES)
 
 e2e:
 	npm --prefix web run test:e2e
@@ -60,14 +63,14 @@ proxy-test:
 	python3 scripts/test-production-proxy.py
 
 lint:
-	go vet ./...
+	go vet $(GO_PACKAGES)
 	npm --prefix web run lint
 	npm --prefix web run typecheck
 
 # Text output preserves govulncheck's nonzero exit status for imported-package findings.
 # The official npm registry supports auditing; some package mirrors do not.
 security:
-	go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 -scan=package ./...
+	go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 -scan=package $(GO_PACKAGES)
 	npm --prefix web audit --package-lock-only --omit=dev --audit-level=low --registry=https://registry.npmjs.org
 	npm --prefix services/waffo-connector audit --package-lock-only --omit=dev --audit-level=low --registry=https://registry.npmjs.org
 

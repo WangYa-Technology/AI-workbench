@@ -1,5 +1,9 @@
 # 资源市场完整链路
 
+> 2026-09-24 目标 4 更新：0179 新增来源返还异常的双人复核、永久禁止重发及只读恢复；部分/未知/矛盾继续保留全部预留。状态机、边界、迁移和实际测试记录见 [来源撤回手册第 9 节](resource-marketplace-source-reversal.md#9-目标-4异常处置双人复核与只读恢复01792026-09-24)。历史章节中的未实现描述不代表此修订。真实通道验收仍为目标 8。
+
+> 2026-09-23 目标 3 更新：0178 已实现基于 Provider 证据的拒付裁决、幂等撤权与卖家追偿、退款发送保护和隔离 Race 回归。当前状态以 [裁决审查](product-payment-dispute-adjudication-review.md) 与 [运行手册](product-payment-dispute-runbook.md) 为准；下文目标 1/2 的缺口描述保留为阶段记录。真实 Stripe 验收仍属目标 8。
+
 > 快速交接入口：[资源市场全链路地图](resource-marketplace-flow-map.md)。本文保留支付、结算、恢复和验收的详细规则。
 
 更新时间：2026-09-23
@@ -22,8 +26,8 @@
 | 范围 | 源码证据 | 本次/当前定向验证 | 部署状态 | 真实通道 |
 | --- | --- | --- | --- | --- |
 | 0173–0174 拒付事件与结算保护 | `internal/payments/product_dispute.go`、`workflow.go`；迁移 `0173_product_payment_disputes`、`0174_product_payment_dispute_ordering` | `go test -race ./internal/payments -run '^TestProductDispute' -count=1 -timeout 8m` 通过；另有空 schema 迁移、payment package compile 和 vet 历史记录 | 未部署；本轮未迁移运行库 | 未验收真实 Stripe |
-| 0175–0177 拒付运营基础 | `internal/admin/product_disputes.go`；`internal/transport/httpapi/admin_product_disputes.go`；`server.go` 中三条 `admin:finance` 路由；迁移 0175 operations、0176 reason check、0177 evidence-reference check | `go test ./internal/admin -run '^TestProductPaymentDispute' -count=1 -timeout 12m` 通过；`go test ./internal/platform/database -run '^TestMigrateEmptySchema$' -count=1 -timeout 12m` 通过。未运行拒付专门 HTTP 权限/幂等回归 | 未部署；不因迁移测试通过而推断已应用 | 未验收真实 Stripe |
-| 拒付 API/UI 契约 | OpenAPI `openapi.yaml`、`web/src/api/client.ts`、`schema.d.ts`、web routes/pages/components 均未找到 `admin/product-disputes` 运营入口（任务争议 API 不属于商品支付拒付） | 不适用：尚无契约/前端入口可验证 | 不可据源码宣称已部署完整运营功能 | 未验收 |
+| 0175–0177 拒付运营基础 | `internal/admin/product_disputes.go`；`internal/transport/httpapi/admin_product_disputes.go`；`server.go` 中三条 `admin:finance` 路由；迁移 0175 operations、0176 reason check、0177 evidence-reference check | 管理服务定向测试与本轮 `TestProductPaymentDisputeHTTPContract` 通过，覆盖授权、筛选/分页、幂等重放/冲突、旧版本和权限撤销；空 schema 迁移测试有独立通过记录 | 未部署；不因迁移测试通过而推断已应用 | 未验收真实 Stripe |
+| 拒付 API/UI 契约 | `openapi.yaml`、生成 `schema.d.ts`、`web/src/api/client.ts`、`ProductPaymentDisputesPage.vue` 与 `/admin/product-disputes` 路由已接线 | `openapi-typescript --check`、拒付 Web 单测、全 Web 单测、typecheck、build 通过；全 Web lint 通过但含 85 条格式警告 | 未部署 | 未验收真实 Stripe |
 | 来源撤回 0170 | `seller_source_reversal_command.go` 与迁移 `0170_seller_source_reversal_commands` | 先前隔离 Race 命令/执行选择 50 主测试／164 项结果通过，见[11.213](resource-marketplace-flows.md#11213-来源撤回持久命令与银行互斥0170) | 未部署 | 未验收真实 Stripe |
 | 来源撤回 0171 | `seller_source_reversal_execution.go`、`seller_source_reversal_recovery.go`、`cmd/worker` 注册及迁移 `0171_seller_source_reversal_execution` | 隔离 Race 执行/恢复 18 主测试／74 项、边界/控制/迁移 8／31、迁移往返各 1 项通过，见[11.215](resource-marketplace-flows.md#11215-来源撤回执行恢复与超时分类修复0171) | 未部署 | 未验收真实 Stripe |
 | 来源撤回 0172 | `seller_source_reversal_closure.go`、卖家安全投影/HTTP/页面及迁移 `0172_seller_source_reversal_closure` | 多组隔离资金、退款竞争、再次划转专项通过；0172 冻结快照全包 595／2084 是历史固定快照，不代表本轮当前工作树；详见[11.217](resource-marketplace-flows.md#11217-来源返还账本收尾与再次划转0172) | 未部署 | 未验收真实 Stripe/银行 |
@@ -34,7 +38,7 @@
 
 **2026-09-23 争议保护复核：** 0173 的状态转换已按数据库返回的权威状态继续保护已绑定记录；后续无法匹配的事件不会清除原绑定，`requires_review` 仍会冻结未出款结算或标记已出款结算需要追偿。0174 为拒付根记录增加 `latest_event_id`，按 `occurred_at` 和 Provider 事件 UUID 稳定排序；重复 Provider 事件完整 no-op，迟到事件只保留不可变证据而不覆盖当前投影。只有在没有其他未解决拒付时，`won` 才能释放 `dispute_hold`，且不会重开 `recovery_required`。争议转换专项、支付包编译、空库迁移、支付包静态检查和差异检查有通过记录。较早一次 `go test ./internal/payments -count=1 -timeout 5m` 曾因既有资金夹具 SQL 错误、导出断言和长时间 Checkout 检查未通过；该结果不是本轮 25 分钟 Race 全包的终态，最新结果见 [0.1](#01-目标-1-当前基线拒付来源撤回与验证边界2026-09-23)。真实 Stripe、生产迁移、举证裁决、完整账本与追偿仍未验收。
 
-**0175–0177 当前状态：** 迁移、管理服务及受 `admin:finance` 保护的目录/详情/操作 HTTP 路由存在；0175 管理服务定向测试及空 schema 迁移测试通过。本轮未验证专门的拒付 HTTP 权限竞态，也未找到对应 OpenAPI 契约或前端入口。因此拒付运营还不是完整用户/运营链路，不得以源码存在、隔离测试通过或其他迁移历史推断已部署；详见 [0.1 基线矩阵](#01-目标-1-当前基线拒付来源撤回与验证边界2026-09-23)。
+**0175–0177 当前状态：** 迁移、管理服务、受 `admin:finance` 保护的目录/详情/操作路由、OpenAPI/生成类型和财务前端均已接线。目标 2 的定向 HTTP/Web/OpenAPI 结果记录于[审查记录 11.219](resource-marketplace-flows.md#11219-目标2拒付运营-api-与前端闭环)。这是隔离源码验证，不代表运行库已迁移、服务已部署或真实 Stripe 已验收；裁决后的资金与权益协同仍属目标 3。
 
 本文是统一阅读入口；接口与模块交接见[资源市场全部链路交接文档](resource-marketplace-all-flows.md)，历史问题、修复经过与分阶段测试证据见[详细审查记录](resource-marketplace-flows.md)。旧文档中的阶段结论须结合本文的当前实现边界阅读。
 

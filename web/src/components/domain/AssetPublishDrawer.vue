@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { assetDisclosure } from '../../lib/assetDisclosure'
 import { textWithin } from '../../lib/unicodeText'
 import { Save, Send, ShieldCheck, Trash2, Upload, X } from 'lucide-vue-next'
 import { computed, ref, watch } from 'vue'
@@ -62,7 +63,7 @@ function resetForm() {
   summary.value = ''
   prompt.value = String(route.query.prompt || '')
   promptVisibility.value = 'public'
-  disclosure.value = t('publish.defaultDisclosure')
+  disclosure.value = assetDisclosure(asset.value)
   body.value = ''
   category.value = categories.value[0]?.code || ''
   error.value = ''

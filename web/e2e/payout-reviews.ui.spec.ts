@@ -914,3 +914,49 @@ test('source return confirmation closes on revoked finance authority without sen
   await expect(page.getByRole('region', { name: 'Source funds return', exact: true })).toHaveCount(0)
   expect(posts).toBe(0); expect(observed).toEqual({ unexpected: [], errors: [] })
 })
+
+for (const width of [390, 1308]) {
+  test(`source disposition requires independent review and never sends amounts at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 901 })
+    let who = 'finance-a'
+    let disposition: components['schemas']['SellerSourceDisposition'] | undefined
+    const posts: Record<string, unknown>[] = []
+    const observed = await mockApp(page, (route, url) => {
+      if (url.pathname === '/api/v1/auth/session') return route.fulfill({ json: { user: actor(who) } })
+      if (url.pathname.endsWith('/source-reversal')) return route.fulfill({ json: {
+        ...sourceOperation(true), canClose: false, canProposeDisposition: disposition?.phase !== 'approve',
+        canApproveDisposition: who === 'finance-b' && disposition?.phase === 'propose', disposition,
+        requiresReview: true, acceptedReadId: undefined, closeResolution: undefined, startedAt: undefined, jobStatus: 'cancelled',
+      } })
+      if (url.pathname.endsWith('/dispositions')) {
+        const body = route.request().postDataJSON()
+        posts.push(body)
+        disposition = { id: body.phase === 'propose' ? requestId : secondId, commandId: secondId, phase: body.phase, proposalId: body.proposalId, reason: body.reason, createdAt: sourceTimestamp, replayed: false }
+        return route.fulfill({ json: disposition })
+      }
+      if (url.pathname.endsWith('/bank-payout')) return route.fulfill({ json: { request: sourceOperation(true).request, canSubmit: false } })
+      if (url.pathname === `/api/v1/admin/seller-payout-requests/${requestId}`) return route.fulfill({ json: sourceOperation(true).request })
+    })
+    await page.goto(`/admin/payouts/${requestId}`)
+    await page.getByRole('textbox', { name: 'Funds disposition reason', exact: true }).fill(sourceReason)
+    await page.getByRole('button', { name: 'Propose read-only review', exact: true }).click()
+    await expect(page.getByRole('alertdialog')).toContainText('permanently blocks')
+    expect(posts).toHaveLength(0)
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Propose read-only review', exact: true }).click()
+    await expect.poll(() => posts.length).toBe(1)
+    await expect(page.getByRole('button', { name: 'Approve read-only review', exact: true })).toHaveCount(0)
+    who = 'finance-b'; await refreshSession(page)
+    await page.getByRole('textbox', { name: 'Funds disposition reason', exact: true }).fill(sourceReason)
+    await page.getByRole('button', { name: 'Approve read-only review', exact: true }).click()
+    await expect(page.getByRole('alertdialog')).toContainText('no money is released')
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Approve read-only review', exact: true }).click()
+    await expect.poll(() => posts.length).toBe(2)
+    expect(posts).toEqual([
+      { phase: 'propose', expectedUpdatedAt: sourceTimestamp, reason: sourceReason, confirmed: true },
+      { phase: 'approve', proposalId: requestId, expectedUpdatedAt: sourceTimestamp, reason: sourceReason, confirmed: true },
+    ])
+    await expect(page.getByRole('button', { name: 'Review ledger closure', exact: true })).toHaveCount(0)
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+    expect(observed).toEqual({ unexpected: [], errors: [] })
+  })
+}

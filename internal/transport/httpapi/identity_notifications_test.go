@@ -10,8 +10,6 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
-	"net/url"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -20,10 +18,8 @@ import (
 	"github.com/hcai-chat/hcai-chat/internal/identity"
 	"github.com/hcai-chat/hcai-chat/internal/notifications"
 	"github.com/hcai-chat/hcai-chat/internal/platform/config"
-	"github.com/hcai-chat/hcai-chat/internal/platform/database"
 	"github.com/hcai-chat/hcai-chat/internal/platform/jobs"
 	"github.com/hcai-chat/hcai-chat/internal/transport/httpapi"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -260,40 +256,5 @@ func claimHTTPJobKind(t *testing.T, ctx context.Context, pool *pgxpool.Pool, own
 
 func httpTestPool(t *testing.T) (*pgxpool.Pool, func()) {
 	t.Helper()
-	ctx := context.Background()
-	baseURL := os.Getenv("TEST_DATABASE_URL")
-	if baseURL == "" {
-		baseURL = "postgres://hcai:hcai@localhost:5432/hcai?sslmode=disable"
-	}
-	admin, err := pgxpool.New(ctx, baseURL)
-	if err != nil {
-		testutil.DatabaseUnavailable(t, err)
-	}
-	if err := admin.Ping(ctx); err != nil {
-		admin.Close()
-		testutil.DatabaseUnavailable(t, err)
-	}
-	schema := "test_http_identity_" + uuid.NewString()[:8]
-	if _, err := admin.Exec(ctx, "CREATE SCHEMA "+pgx.Identifier{schema}.Sanitize()); err != nil {
-		t.Fatal(err)
-	}
-	parsed, err := url.Parse(baseURL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	query := parsed.Query()
-	query.Set("search_path", schema)
-	parsed.RawQuery = query.Encode()
-	pool, err := database.Open(ctx, parsed.String())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := database.Migrate(ctx, pool); err != nil {
-		t.Fatal(err)
-	}
-	return pool, func() {
-		pool.Close()
-		_, _ = admin.Exec(ctx, "DROP SCHEMA "+pgx.Identifier{schema}.Sanitize()+" CASCADE")
-		admin.Close()
-	}
+	return testutil.DatabasePool(t)
 }

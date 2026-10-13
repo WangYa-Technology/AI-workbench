@@ -17,7 +17,7 @@ test('saves Community work as a reference-only workspace item', async ({ page })
   expect((await page.request.put(`/api/v1/community/posts/${target.id}/reactions/bookmark`, { data: { active: true } })).ok()).toBeTruthy()
 
   await page.goto('/workspace/assets?view=saved')
-  await expect(page.getByRole('tab', { name: 'Saved Works', exact: true })).toHaveAttribute('aria-selected', 'true')
+  await expect(page.getByRole('tab', { name: 'Saved', exact: true })).toHaveAttribute('aria-selected', 'true')
   await expect(page.getByText('Saving is not a license grant', { exact: true })).toBeVisible()
   await expect(page.getByText(/no download, commercial, or derivative rights/i)).toBeVisible()
   const savedCard = page.locator('.asset-row[data-type="saved"]').filter({ hasText: target.workTitle })

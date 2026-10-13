@@ -4,16 +4,12 @@ import (
 	"context"
 	"errors"
 	"github.com/hcai-chat/hcai-chat/internal/testutil"
-	"net/url"
-	"os"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/hcai-chat/hcai-chat/internal/platform/database"
 	"github.com/hcai-chat/hcai-chat/internal/platform/jobs"
 	"github.com/hcai-chat/hcai-chat/internal/reconciliation"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -118,42 +114,5 @@ func claimReconciliationJob(t *testing.T, ctx context.Context, pool *pgxpool.Poo
 
 func reconciliationTestPool(t *testing.T) (*pgxpool.Pool, func()) {
 	t.Helper()
-	ctx := context.Background()
-	baseURL := os.Getenv("TEST_DATABASE_URL")
-	if baseURL == "" {
-		baseURL = "postgres://hcai:hcai@localhost:5432/hcai?sslmode=disable"
-	}
-	root, err := pgxpool.New(ctx, baseURL)
-	if err != nil {
-		testutil.DatabaseUnavailable(t, err)
-	}
-	if err := root.Ping(ctx); err != nil {
-		root.Close()
-		testutil.DatabaseUnavailable(t, err)
-	}
-	schema := "test_reconciliation_" + uuid.NewString()[:8]
-	if _, err := root.Exec(ctx, "CREATE SCHEMA "+pgx.Identifier{schema}.Sanitize()); err != nil {
-		root.Close()
-		t.Fatal(err)
-	}
-	parsed, err := url.Parse(baseURL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	query := parsed.Query()
-	query.Set("search_path", schema)
-	parsed.RawQuery = query.Encode()
-	pool, err := database.Open(ctx, parsed.String())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := database.Migrate(ctx, pool); err != nil {
-		pool.Close()
-		t.Fatal(err)
-	}
-	return pool, func() {
-		pool.Close()
-		_, _ = root.Exec(ctx, "DROP SCHEMA "+pgx.Identifier{schema}.Sanitize()+" CASCADE")
-		root.Close()
-	}
+	return testutil.DatabasePool(t)
 }

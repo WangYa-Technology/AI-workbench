@@ -1,17 +1,18 @@
 <script setup lang="ts">
 import UiEmptyState from '../components/ui/UiEmptyState.vue'
 import UiActionBanner from '../components/ui/UiActionBanner.vue'
-import UiCardContent from '../components/ui/UiCardContent.vue'
 import UiCardActions from '../components/ui/UiCardActions.vue'
 import UiCardTag from '../components/ui/UiCardTag.vue'
-import UiFilterSearch from '../components/ui/UiFilterSearch.vue'
-import UiFilterBar from '../components/ui/UiFilterBar.vue'
+import CatalogToolbar from '../components/catalog/CatalogToolbar.vue'
+import CatalogViews from '../components/catalog/CatalogViews.vue'
+import CatalogKeyword from '../components/catalog/CatalogKeyword.vue'
+import CatalogResults from '../components/catalog/CatalogResults.vue'
+import CatalogEntry from '../components/catalog/CatalogEntry.vue'
 import DetailToolbar from '../components/ui/DetailToolbar.vue'
 import UiLayoutSwitcher from '../components/ui/UiLayoutSwitcher.vue'
 import UiCatalog from '../components/ui/UiCatalog.vue'
-import UiContentCard from '../components/ui/UiContentCard.vue'
 import {
-  ArrowLeft, BadgeCheck, Check, CircleDollarSign,
+  ArrowDownWideNarrow, ArrowLeft, BadgeCheck, Check, CircleDollarSign,
   Filter, LoaderCircle, LogIn, PackageCheck, RefreshCw, Search, ShieldCheck, ShoppingBag,
   UserPlus, X, Info, Layers, WandSparkles,
 } from 'lucide-vue-next'
@@ -30,7 +31,6 @@ import type { TaskType } from '../api/client'
 import PageHeader from '../components/ui/PageHeader.vue'
 import UiButton from '../components/ui/UiButton.vue'
 import UiCheckbox from '../components/ui/UiCheckbox.vue'
-import UiInput from '../components/ui/UiInput.vue'
 import UiForm from '../components/ui/UiForm.vue'
 import UiSelect from '../components/ui/UiSelect.vue'
 
@@ -61,6 +61,7 @@ const paymentEnabled = ref(false)
 const paymentLiveMode = ref(false)
 const search = ref(String(route.query.q || ''))
 const sort = ref(String(route.query.sort || 'newest'))
+const toolbarHeight = ref(56)
 const layoutMode = ref<'list' | 'grid'>('list')
 const hasFilters = computed(() => Boolean(search.value.trim() || category.value || sort.value !== 'newest'))
 async function clearFilters() {
@@ -272,7 +273,7 @@ onBeforeUnmount(() => { loadVersion++ })
 </script>
 
 <template>
-  <section class="market-page content-width" :class="{ 'is-detail': isDetail, 'has-category-sidebar': types.length > 0 }">
+  <section class="market-page content-width" :class="{ 'is-detail': isDetail, 'catalog-page': !isDetail, 'has-category-sidebar': types.length > 0 }" :style="{ '--catalog-toolbar-height': `${toolbarHeight}px` }">
     <template v-if="!isDetail">
       <PageHeader
         :title="t('marketplace.title')"
@@ -301,107 +302,104 @@ onBeforeUnmount(() => { loadVersion++ })
         </template>
       </PageHeader>
 
-      <UiFilterBar class="ui-filter-bar market-filters" role="search" @submit.prevent="applyFilters">
-        <UiFilterSearch class="market-search" :label="t('actions.search')">
-          <UiInput v-model="search" type="search" :placeholder="t('marketplace.searchPlaceholder')" />
-        </UiFilterSearch>
-        <UiSelect v-model="category" class="market-filter-control category-filter" :aria-label="t('marketplace.allTypes')" :align-item-with-trigger="false" @change="applyFilters">
-          <template #start>
-            <Filter :size="16" aria-hidden="true" />
-          </template>
-          <option value="">
-            {{ t('marketplace.allTypes') }}
-          </option>
-          <option v-for="item in types" :key="item.code" :value="item.code">
-            {{ categoryName(item.code) }}
-          </option>
-        </UiSelect>
-        <UiSelect v-model="sort" class="market-filter-control" :aria-label="t('marketplace.sortNewest')" @change="applyFilters">
-          <option value="newest">
-            {{ t('marketplace.sortNewest') }}
-          </option>
-          <option value="price_asc">
-            {{ t('marketplace.sortLow') }}
-          </option>
-          <option value="price_desc">
-            {{ t('marketplace.sortHigh') }}
-          </option>
-        </UiSelect>
-        <UiButton class="market-search-submit" variant="primary" type="submit">
-          <template #start>
-            <Search :size="17" />
-          </template>{{ t('actions.search') }}
-        </UiButton>
-      </UiFilterBar>
+      <CatalogToolbar :title="t('marketplace.title')" filter-class="market-filters" @resize="toolbarHeight = $event">
+        <CatalogViews model-value="all" :items="[{ value: 'all', label: t('catalog.views.all'), icon: ShoppingBag }]" :label="t('marketplace.layout')" :count="total" :pending="loading || Boolean(error)" :status="loading ? t('marketplace.loading') : error || t('marketplace.resourceCount', { count: total })" />
+        <div class="catalog-controls market-controls" role="group" :aria-label="t('marketplace.filtersLabel')">
+          <UiSelect v-model="category" class="category-filter" :aria-label="t('marketplace.allTypes')" :align-item-with-trigger="false" @change="applyFilters">
+            <template #start>
+              <Filter :size="15" aria-hidden="true" />
+            </template>
+            <option value="">
+              {{ t('marketplace.allTypes') }}
+            </option>
+            <option v-for="item in types" :key="item.code" :value="item.code">
+              {{ categoryName(item.code) }}
+            </option>
+          </UiSelect>
+          <UiButton v-if="hasFilters" class="catalog-reset" variant="secondary" @click="clearFilters">
+            {{ t('marketplace.clearFilters') }}
+          </UiButton>
+          <div class="catalog-display">
+            <UiSelect v-model="sort" class="market-sort" :aria-label="t('marketplace.sortLabel')" :align-item-with-trigger="false" @change="applyFilters">
+              <template #start>
+                <ArrowDownWideNarrow :size="15" aria-hidden="true" />
+              </template>
+              <option value="newest">
+                {{ t('marketplace.sortNewest') }}
+              </option>
+              <option value="price_asc">
+                {{ t('marketplace.sortLow') }}
+              </option>
+              <option value="price_desc">
+                {{ t('marketplace.sortHigh') }}
+              </option>
+            </UiSelect>
+            <UiLayoutSwitcher v-model="layoutMode" :label="t('marketplace.layout')" :list-label="t('marketplace.listView')" :grid-label="t('marketplace.gridView')" />
+          </div>
+        </div>
+        <CatalogKeyword :query="search" @clear="router.push({ query: { ...route.query, q: undefined } })" />
+      </CatalogToolbar>
 
       <CategoryBrowser :items="types" :model-value="category" :counts="categoryCounts" @update:model-value="selectCategory">
-        <div v-if="loading" class="page-state" aria-live="polite">
-          <LoaderCircle class="spin" :size="20" />{{ t('marketplace.loading') }}
-        </div>
-        <div v-else-if="error" class="page-state" role="alert">
-          <p>{{ error }}</p><UiButton class="command-button secondary" variant="secondary" @click="load">
-            <template #start>
-              <RefreshCw :size="17" />
-            </template>{{ t('actions.retry') }}
-          </UiButton>
-        </div>
-        <UiEmptyState v-else-if="!products.length" :title="t(hasFilters ? 'marketplace.noResults' : 'marketplace.emptyTitle')" :message="t(hasFilters ? 'marketplace.emptyFilteredSummary' : 'marketplace.emptySummary')">
-          <template #icon>
-            <component :is="hasFilters ? Search : ShoppingBag" :size="24" :stroke-width="1.75" />
-          </template>
-          <template v-if="hasFilters" #actions>
-            <UiButton variant="secondary" @click="clearFilters">
-              {{ t('marketplace.clearFilters') }}
+        <CatalogResults :loading="loading" class="market-results">
+          <div v-if="loading" class="page-state" aria-live="polite">
+            <LoaderCircle class="spin" :size="20" />{{ t('marketplace.loading') }}
+          </div>
+          <div v-else-if="error" class="page-state" role="alert">
+            <p>{{ error }}</p><UiButton class="command-button secondary" variant="secondary" @click="load">
+              <template #start>
+                <RefreshCw :size="17" />
+              </template>{{ t('actions.retry') }}
             </UiButton>
-          </template>
-        </UiEmptyState>
-        <template v-else>
-          <div class="task-results-meta market-results-summary">
-            <div><strong>{{ total }} {{ t('marketplace.results') }}</strong><span>{{ t('marketplace.browseSummary') }}</span></div>
-            <div class="task-results-actions">
-              <UiButton v-if="hasFilters" class="text-link" variant="ghost" size="sm" @click="clearFilters">
+          </div>
+          <UiEmptyState v-else-if="!products.length" :title="t(hasFilters ? 'marketplace.noResults' : 'marketplace.emptyTitle')" :message="t(hasFilters ? 'marketplace.emptyFilteredSummary' : 'marketplace.emptySummary')">
+            <template #icon>
+              <component :is="hasFilters ? Search : ShoppingBag" :size="24" :stroke-width="1.75" />
+            </template>
+            <template v-if="hasFilters" #actions>
+              <UiButton variant="secondary" @click="clearFilters">
                 {{ t('marketplace.clearFilters') }}
               </UiButton>
-              <UiLayoutSwitcher v-model="layoutMode" :label="t('marketplace.layout')" :list-label="t('marketplace.listView')" :grid-label="t('marketplace.gridView')" />
-            </div>
-          </div>
-          <UiCatalog class="ui-catalog market-catalog" :class="{ 'is-grid': layoutMode === 'grid' }">
-            <UiContentCard v-for="item in products" :key="item.id" class="ui-content-card product-card" :to="`/market/assets/${item.id}`">
-              <div class="ui-content-card__media product-media">
-                <AssetMedia :src="item.mediaUrl" :kind="item.mediaKind" :alt="item.title" :width="item.width || 1200" :height="item.height || 900" :controls="false" />
-              </div>
-              <UiCardContent :title="item.title" :summary="item.description">
-                <template #tags>
-                  <UiCardTag>{{ categoryName(item.category) }}</UiCardTag><UiCardTag v-if="item.ownedAssetId" variant="success">
+            </template>
+          </UiEmptyState>
+          <template v-else>
+            <UiCatalog class="market-catalog" :class="{ 'is-grid': layoutMode === 'grid' }">
+              <CatalogEntry v-for="item in products" :key="item.id" class="product-card" :title="item.title" :summary="item.description" :to="`/market/assets/${item.id}`" :open-label="t('marketplace.viewProduct')">
+                <template #media>
+                  <AssetMedia :src="item.mediaUrl" :kind="item.mediaKind" :alt="item.title" :width="item.width || 1200" :height="item.height || 900" :controls="false" />
+                </template>
+                <template #meta>
+                  <UiCardTag>{{ categoryName(item.category) }}</UiCardTag>
+                  <RouterLink :to="`/creators/${item.seller.handle}`" :title="`@${item.seller.handle}`">
+                    {{ item.seller.displayName || item.seller.handle }}
+                  </RouterLink>
+                  <span>{{ item.license.name }}</span>
+                  <UiCardTag v-if="item.ownedAssetId" variant="success">
                     <BadgeCheck :size="13" aria-hidden="true" />{{ t('marketplace.owned') }}
                   </UiCardTag>
                 </template>
-                <template #meta>
-                  <span>@{{ item.seller.handle }}</span><span>{{ item.license.name }}</span>
+                <template #aside>
+                  <strong class="market-product-price" :aria-label="`${t('marketplace.productPrice')}: ${money(item.priceCents, item.currency)}`">{{ money(item.priceCents, item.currency) }}</strong>
+                  <span class="market-product-license"><ShieldCheck :size="14" :stroke-width="1.75" aria-hidden="true" />{{ t(item.license.allowsCommercial ? 'marketplace.commercialYes' : 'marketplace.commercialNo') }}</span>
                 </template>
-              </UiCardContent>
-              <UiCardActions class="market-product-offer" :label="t('marketplace.productPrice')" :value="money(item.priceCents, item.currency)" numeric :action-label="t('marketplace.viewProduct')">
-                <template #description>
-                  <ShieldCheck :size="14" :stroke-width="1.75" aria-hidden="true" />{{ t(item.license.allowsCommercial ? 'marketplace.commercialYes' : 'marketplace.commercialNo') }}
-                </template>
-              </UiCardActions>
-            </UiContentCard>
-          </UiCatalog>
-          <div v-if="nextCursor" class="catalog-pagination">
-            <p v-if="moreError" class="form-error" role="alert">
-              {{ moreError }}
-            </p>
-            <UiButton variant="secondary" :loading="loadingMore" @click="loadMore">
-              {{ t(moreError ? 'actions.retry' : 'actions.loadMore') }}
-            </UiButton>
-          </div>
-        </template>
+              </CatalogEntry>
+            </UiCatalog>
+            <div v-if="nextCursor" class="catalog-pagination">
+              <p v-if="moreError" class="form-error" role="alert">
+                {{ moreError }}
+              </p>
+              <UiButton variant="secondary" :loading="loadingMore" @click="loadMore">
+                {{ t(moreError ? 'actions.retry' : 'actions.loadMore') }}
+              </UiButton>
+            </div>
+          </template>
+        </CatalogResults>
         <UiActionBanner :title="t('marketplace.reuseTitle')" :summary="t('marketplace.reuseSummary')">
           <template #icon>
             <Layers :size="24" :stroke-width="1.75" />
           </template>
           <template #actions>
-            <UiButton as="RouterLink" variant="primary" to="/create/image">
+            <UiButton as="RouterLink" variant="secondary" to="/create/image">
               <template #start>
                 <WandSparkles :size="17" :stroke-width="1.75" />
               </template>
@@ -553,20 +551,16 @@ onBeforeUnmount(() => { loadVersion++ })
 </template>
 
 <style scoped>
-.market-page .market-filters {  grid-template-columns: minmax(160px, 1fr) 150px 150px 84px; }
-.market-page.has-category-sidebar .market-filters { grid-template-columns: minmax(160px, 1fr) 150px 150px 84px; }
-.market-search-submit { height: 40px; padding-inline: 12px; }
+.market-controls .ui-select-root { width: auto; }
 .market-catalog { display: grid; gap: 12px; }
-.market-catalog .product-card { display: grid; grid-template-columns: 160px minmax(0, 1fr) var(--catalog-actions-width); grid-template-rows: auto; align-items: stretch; gap: 16px; }
-.market-catalog .product-media { aspect-ratio: auto; min-height: 138px; }
-.market-catalog .product-media img { position: absolute; inset: 0; transform: none; }
-
-@media (min-width: 1321px) { .market-page.has-category-sidebar .market-filters { grid-template-columns: minmax(0, 1fr) 150px 84px; } }
+.market-catalog .product-card { border: 1px solid var(--border); border-radius: var(--radius-surface); background: var(--surface); box-shadow: none; transform: none; }
+.market-product-price { color: var(--text); font-size: 18px; font-weight: 600; line-height: 1.4; font-variant-numeric: tabular-nums; }
+.market-product-license { display: inline-flex; align-items: flex-start; gap: 5px; max-width: 100%; text-align: right; line-height: 1.5; }
+.market-product-license svg { flex-shrink: 0; margin-top: 2px; }
+@media (min-width: 1321px) { .market-page.catalog-page :deep(.category-sidebar) { display: block; } }
 @media (max-width: 767px) {
-  .market-page .market-filters, .market-page.has-category-sidebar .market-filters { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 84px; }
-  .market-filters .market-search { grid-column: 1 / -1; }
-  .market-catalog:not(.is-grid) .product-card { grid-template-columns: 100px minmax(0, 1fr); gap: 12px; }
-  .market-results-summary { flex-wrap: wrap; }
+  .market-controls { flex-basis: 100%; justify-content: flex-start; }
+  .market-controls .ui-select-root { flex: 1 1 130px; min-width: 0; }
 }
 </style>
 

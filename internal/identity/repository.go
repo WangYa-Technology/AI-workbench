@@ -267,7 +267,9 @@ func (r *Repository) authenticate(ctx context.Context, token string) (User, uuid
 	if err != nil {
 		return User{}, uuid.Nil, fmt.Errorf("authenticate session: %w", err)
 	}
-	_, _ = r.pool.Exec(ctx, `UPDATE sessions SET last_seen_at=now() WHERE id=$1 AND last_seen_at < now()-interval '1 minute'`, sessionID)
+	if _, err := r.pool.Exec(ctx, `UPDATE sessions SET last_seen_at=now() WHERE id=$1 AND last_seen_at < now()-interval '1 minute'`, sessionID); err != nil {
+		return User{}, uuid.Nil, fmt.Errorf("update session activity: %w", err)
+	}
 	return user, sessionID, nil
 }
 

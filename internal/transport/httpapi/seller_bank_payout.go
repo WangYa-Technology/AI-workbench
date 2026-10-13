@@ -1,9 +1,7 @@
 package httpapi
 
 import (
-	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 
 	"github.com/hcai-chat/hcai-chat/internal/payments"
@@ -33,11 +31,8 @@ func (s *Server) adminSellerBankPayout(w http.ResponseWriter, r *http.Request) {
 		s.writeSellerBankPayout(w, r, nil, payments.ErrSellerBankPayoutInvalid)
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 16*1024)
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
 	var input payments.SellerBankPayoutInput
-	if decoder.Decode(&input) != nil || decoder.Decode(new(any)) != io.EOF {
+	if httputil.DecodeJSONBody(w, r, &input, 16*1024) != nil {
 		s.writeSellerBankPayout(w, r, nil, payments.ErrSellerBankPayoutInvalid)
 		return
 	}
@@ -59,11 +54,8 @@ func (s *Server) adminResumeSellerBankPayout(w http.ResponseWriter, r *http.Requ
 		s.writeSellerBankPayout(w, r, nil, payments.ErrSellerBankPayoutInvalid)
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 16*1024)
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
 	var input payments.SellerBankPayoutResumeInput
-	if decoder.Decode(&input) != nil || decoder.Decode(new(any)) != io.EOF {
+	if httputil.DecodeJSONBody(w, r, &input, 16*1024) != nil {
 		s.writeSellerBankPayout(w, r, nil, payments.ErrSellerBankPayoutInvalid)
 		return
 	}

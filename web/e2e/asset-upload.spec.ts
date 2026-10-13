@@ -19,7 +19,7 @@ test('uploads, scans, inspects, and administratively reviews an Asset', async ({
 
   const card = page.locator('.asset-row').filter({ hasText: title }).first()
   await expect(card).toBeVisible()
-  await expect(card.getByText('Clean', { exact: true })).toBeVisible()
+  await expect(card.getByText('Scan passed', { exact: true })).toBeVisible()
   await card.getByRole('link', { name: 'View details', exact: true }).click()
   await expect(page.getByRole('heading', { name: title, exact: true })).toBeVisible()
   await expect(page.getByText('Upload and scan evidence', { exact: true })).toBeVisible()

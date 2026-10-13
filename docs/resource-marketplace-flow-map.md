@@ -1,12 +1,16 @@
 # 资源市场全链路地图
 
+> 2026-09-24 目标 4 更新：0179 新增来源返还异常的双人复核、永久禁止重发及只读恢复；部分/未知/矛盾继续保留全部预留。状态机、边界、迁移和实际测试记录见 [来源撤回手册第 9 节](resource-marketplace-source-reversal.md#9-目标-4异常处置双人复核与只读恢复01792026-09-24)。历史章节中的未实现描述不代表此修订。真实通道验收仍为目标 8。
+
+> 2026-09-23 目标 3 更新：0178 已实现基于 Provider 证据的拒付裁决、幂等撤权与卖家追偿、退款发送保护和隔离 Race 回归。当前状态以 [裁决审查](product-payment-dispute-adjudication-review.md) 与 [运行手册](product-payment-dispute-runbook.md) 为准；下文目标 1/2 的缺口描述保留为阶段记录。真实 Stripe 验收仍属目标 8。
+
 更新时间：2026-09-23
 
 适用范围：当前工作区的资源市场源码、数据库迁移、前端路由和已记录的隔离测试。
 
 **最新复核（2026-09-23）：** 当前源码的 marketplace Race（156.893 秒），payments 的拒付、Checkout、交付、多文件、来源撤回、销售及结算 Race 选择集（1348.682 秒），marketplace 非 Race 包（163.092 秒）、资源市场／支付相关 HTTP 选择集（211.618 秒），以及 jobs／productdelivery Race 定向回归已有通过记录。目标 1 本轮启动的 `go test -race ./internal/payments -count=1 -timeout 25m` 已在 1500.057 秒以退出码 1 终止，`panic: test timed out after 25m0s`，栈停在 `TestRecoveredPaidCheckoutCrossSourceAgreement/true` 的 `paymentTestPool` 迁移等待；这是定位证据，不是通过，也不单凭栈认定业务死锁。全仓 `go test ./...` 本轮未重跑，现有失败记录仍未解决。历史冻结快照和各项定向专项不能合并解释为当前源码全包通过；部署及真实 Provider、银行、对象存储、扫描器、SMTP、多实例 worker 和生产验收均未由本次复核证明。
 
-**当前拒付边界：** 0173–0177 的迁移、拒付管理服务及 `admin:finance` 保护的目录/详情/操作 HTTP handler 与三条路由均存在；admin 领域定向测试和空 schema 迁移测试通过。拒付运营 OpenAPI 契约与 web client/管理页面入口未找到，专门 HTTP 权限/并发回归未执行；运行数据库未部署，真实 Stripe 未验收。不得把管理 HTTP 源码存在推断为完整运营闭环。证据矩阵见[完整链路 0.1](resource-marketplace-complete-flow.md#01-目标-1-当前基线拒付来源撤回与验证边界2026-09-23)及[审查记录 11.218](resource-marketplace-flows.md#11218-目标1源码基线与文档状态复核)。
+**当前拒付边界：** 0173–0177 的迁移、拒付管理服务、`admin:finance` 保护的目录/详情/操作 HTTP handler、OpenAPI/生成类型及管理前端均已接线；HTTP 合同、Web 单测和 OpenAPI 生成比对已通过，详见[目标 2 执行记录 11.219](resource-marketplace-flows.md#11219-目标2拒付运营-api-与前端闭环)。运行数据库未部署，真实 Stripe 未验收；裁决后的账本/追偿及退款撤权协同仍未完成。证据矩阵见[完整链路 0.1](resource-marketplace-complete-flow.md#01-目标-1-当前基线拒付来源撤回与验证边界2026-09-23)。
 
 本文是资源市场的交接入口。它回答四件事：用户从哪里进入、每一步产生什么业务证据、异常从哪里恢复、哪些能力还不能对外承诺。详细的支付、退款、来源返还和多文件交付规则继续分别维护在[资源市场完整链路](resource-marketplace-complete-flow.md)、[当前基线](resource-marketplace-current-flow.md)、[多文件商品交付](resource-marketplace-bundles.md)和[来源资金撤回](resource-marketplace-source-reversal.md)。
 

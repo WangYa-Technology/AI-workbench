@@ -49,7 +49,7 @@ func TestFinanceSettingsRejectRevokedAuthority(t *testing.T) {
 				version := 0
 				query := "SELECT balance_cents,reserved_cents FROM billing_accounts"
 				if action == "destination_create" || action == "destination_update" {
-					query = "SELECT id,version,destination_id,original_merchant_id FROM payment_destinations"
+					query = "SELECT id,version,destination_id FROM payment_destinations"
 				}
 				if action == "destination_update" {
 					version = 1

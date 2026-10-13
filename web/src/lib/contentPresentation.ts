@@ -4,9 +4,16 @@ export function creationPath(kind: string) {
   return `/create/${({ image: 'image', video: 'video', audio: 'music', music: 'music', document: 'chat', prompt: 'chat', workflow: 'chat', mixed: 'chat' } as Record<string, string>)[kind] || 'chat'}`
 }
 
+export function licenseKind(code: string) {
+  return ({ 'creator-owned': 'owned', 'creator-owned-local-test': 'owned',
+    'hcai-personal-v1': 'personal', 'hcai-commercial-v1': 'commercial',
+    'hcai-commercial-standard-v1': 'commercial', 'task-contract': 'task' } as Record<string, string>)[code] || 'review'
+}
 export function licenseLabel(code: string) {
-  const key = code === 'creator-owned-local-test' ? 'owned' : ({ 'hcai-personal-v1': 'personal', 'hcai-commercial-v1': 'commercial' } as Record<string, string>)[code] || 'review'
-  return i18n.global.t(`content.licenses.${key}`)
+  return i18n.global.t(`content.licenses.${licenseKind(code)}`)
+}
+export function licenseExplanation(code: string) {
+  return i18n.global.t(`content.licenseScopes.${licenseKind(code)}`)
 }
 
 const listPaths = ['/discover', '/community', '/market', '/market/demands', '/workspace/assets', '/workspace/purchases']

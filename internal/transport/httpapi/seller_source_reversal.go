@@ -1,9 +1,7 @@
 package httpapi
 
 import (
-	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 
 	"github.com/hcai-chat/hcai-chat/internal/payments"
@@ -61,10 +59,7 @@ func decodeSellerSourceCommand(w http.ResponseWriter, r *http.Request, input any
 	if len(r.Header.Values("Idempotency-Key")) != 1 {
 		return false
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 16*1024)
-	d := json.NewDecoder(r.Body)
-	d.DisallowUnknownFields()
-	return d.Decode(input) == nil && d.Decode(new(any)) == io.EOF
+	return httputil.DecodeJSONBody(w, r, input, 16*1024) == nil
 }
 
 func (s *Server) writeSellerSourceReversal(w http.ResponseWriter, r *http.Request, item any, err error) {
@@ -80,4 +75,23 @@ func (s *Server) writeSellerSourceReversal(w http.ResponseWriter, r *http.Reques
 	default:
 		s.writeSellerPayoutReview(w, r, item, err)
 	}
+}
+
+func (s *Server) adminDisposeSellerSourceReversal(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "private, no-store")
+	actor, ok := s.requirePermission(w, r, "admin:finance")
+	if !ok {
+		return
+	}
+	id, ok := pathUUID(w, r, "commandID")
+	if !ok {
+		return
+	}
+	var input payments.SellerSourceDispositionInput
+	if r.URL.RawQuery != "" || !decodeSellerSourceCommand(w, r, &input) {
+		s.writeSellerSourceReversal(w, r, nil, payments.ErrSellerSourceReversalInvalid)
+		return
+	}
+	item, err := s.payments.DisposeSellerSourceReversal(r.Context(), actor.ID, id, input, idempotencyKey(r), httputil.RequestID(r.Context()))
+	s.writeSellerSourceReversal(w, r, item, err)
 }

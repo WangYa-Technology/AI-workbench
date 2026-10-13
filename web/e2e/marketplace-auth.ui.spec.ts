@@ -21,6 +21,7 @@ for (const method of ['password', 'code', 'registration']) {
         policies: Object.fromEntries(['terms', 'privacy', 'cookies', 'acceptable', 'ai', 'licensing', 'refunds', 'copyright'].map(key => [key, { enUS: '', zhCN: '' }])),
       } })
       if (path === '/api/v1/auth/oauth/providers') return route.fulfill({ json: { items: [] } })
+      if (path === '/api/v1/works') return route.fulfill({ json: { items: [], total: 0 } })
       if (path === '/api/v1/notifications') return route.fulfill({ json: { items: [], unreadCount: 0 } })
       if (path === '/api/v1/auth/unified/start') return route.fulfill({ json: { email: user.email, accountExists: method !== 'registration', challenge: method === 'registration' ? challenge : undefined } })
       if (path === '/api/v1/auth/unified/send-code') return route.fulfill({ json: { challenge } })

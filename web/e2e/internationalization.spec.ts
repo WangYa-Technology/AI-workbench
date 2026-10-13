@@ -14,7 +14,7 @@ test('keeps the Chinese core workflow localized and within mobile and desktop vi
   const routes = [
     ['/create/image', 'AI 创作空间'],
     ['/workspace/assets', '资产'],
-    ['/market', '数字产品市场'],
+    ['/market', '资源市场'],
     ['/market/demands', '任务广场'],
     ['/community', '社区'],
     ['/search?q=architectural', '搜索创作网络'],

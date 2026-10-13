@@ -9,7 +9,8 @@ import UiButton from '../ui/UiButton.vue'
 const props = withDefaults(defineProps<{
   order?: Pick<Order, 'status' | 'assetId'> | null
   size?: 'sm' | 'md'
-}>(), { order: null, size: 'md' })
+  variant?: 'primary' | 'secondary'
+}>(), { order: null, size: 'md', variant: 'primary' })
 const { t } = useI18n()
 // Navigation does not grant access. Asset details and downloads still enforce
 // current server-side rights, including ordinary refunds that remain pending.
@@ -22,7 +23,7 @@ const destination = computed(() => {
 </script>
 
 <template>
-  <UiButton v-if="destination" as="RouterLink" class="product-order-delivery-link" variant="primary" :size="size" :to="destination">
+  <UiButton v-if="destination" as="RouterLink" class="product-order-delivery-link" :variant="variant" :size="size" :to="destination">
     <template #start>
       <PackageCheck :size="17" aria-hidden="true" />
     </template>

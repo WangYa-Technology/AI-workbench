@@ -187,8 +187,12 @@ func (s *Service) ConfirmLogin(ctx context.Context, challengeID uuid.UUID, email
 		return identity.User{}, "", ErrNotFound
 	}
 	if !expiresAt.After(s.now()) {
-		_, _ = tx.Exec(ctx, `UPDATE identity_auth_challenges SET status='expired',code_hash=NULL,code_nonce=NULL,code_ciphertext=NULL,updated_at=now() WHERE id=$1`, challengeID)
-		_ = tx.Commit(ctx)
+		if _, err := tx.Exec(ctx, `UPDATE identity_auth_challenges SET status='expired',code_hash=NULL,code_nonce=NULL,code_ciphertext=NULL,updated_at=now() WHERE id=$1`, challengeID); err != nil {
+			return identity.User{}, "", err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return identity.User{}, "", err
+		}
 		return identity.User{}, "", ErrExpired
 	}
 	if status != "queued" && status != "delivered" {
@@ -198,8 +202,12 @@ func (s *Service) ConfirmLogin(ctx context.Context, challengeID uuid.UUID, email
 		return identity.User{}, "", ErrRateLimited
 	}
 	if codeHash == nil || !s.matchesCode(challengeID, purpose, code, *codeHash) {
-		_, _ = tx.Exec(ctx, `UPDATE identity_auth_challenges SET verify_attempt_count=verify_attempt_count+1,updated_at=now() WHERE id=$1`, challengeID)
-		_ = tx.Commit(ctx)
+		if _, err := tx.Exec(ctx, `UPDATE identity_auth_challenges SET verify_attempt_count=verify_attempt_count+1,updated_at=now() WHERE id=$1`, challengeID); err != nil {
+			return identity.User{}, "", err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return identity.User{}, "", err
+		}
 		return identity.User{}, "", ErrInvalidCode
 	}
 	user, token, err := s.consumeLogin(ctx, tx, challengeID, storedEmail, client)
@@ -256,8 +264,12 @@ func (s *Service) CompleteRegistration(ctx context.Context, challengeID uuid.UUI
 		return identity.User{}, "", ErrNotFound
 	}
 	if !expiresAt.After(s.now()) {
-		_, _ = tx.Exec(ctx, `UPDATE identity_auth_challenges SET status='expired',code_hash=NULL,code_nonce=NULL,code_ciphertext=NULL,updated_at=now() WHERE id=$1`, challengeID)
-		_ = tx.Commit(ctx)
+		if _, err := tx.Exec(ctx, `UPDATE identity_auth_challenges SET status='expired',code_hash=NULL,code_nonce=NULL,code_ciphertext=NULL,updated_at=now() WHERE id=$1`, challengeID); err != nil {
+			return identity.User{}, "", err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return identity.User{}, "", err
+		}
 		return identity.User{}, "", ErrExpired
 	}
 	if status != "queued" && status != "delivered" {
@@ -267,8 +279,12 @@ func (s *Service) CompleteRegistration(ctx context.Context, challengeID uuid.UUI
 		return identity.User{}, "", ErrRateLimited
 	}
 	if codeHash == nil || !s.matchesCode(challengeID, purpose, code, *codeHash) {
-		_, _ = tx.Exec(ctx, `UPDATE identity_auth_challenges SET verify_attempt_count=verify_attempt_count+1,updated_at=now() WHERE id=$1`, challengeID)
-		_ = tx.Commit(ctx)
+		if _, err := tx.Exec(ctx, `UPDATE identity_auth_challenges SET verify_attempt_count=verify_attempt_count+1,updated_at=now() WHERE id=$1`, challengeID); err != nil {
+			return identity.User{}, "", err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return identity.User{}, "", err
+		}
 		return identity.User{}, "", ErrInvalidCode
 	}
 	user, token, err := identity.NewRepository(s.pool).RegisterVerifiedTx(ctx, tx, input, client)

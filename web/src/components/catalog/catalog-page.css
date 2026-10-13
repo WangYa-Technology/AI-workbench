@@ -1,0 +1,55 @@
+/* Opt-in baseline for catalog pages. Domain pages own fields, not control geometry. */
+.catalog-page { --catalog-sticky-top: calc(-1 * var(--space-page-y)); --catalog-sticky-bleed: var(--space-page-x); --category-sidebar-width: 168px; --catalog-toolbar-height: 56px; padding-top: 4px; }
+.catalog-page > .ui-page-header { border-bottom: 0; padding-bottom: 0; margin-bottom: 24px; }
+.catalog-page > .ui-page-header .page-header-main { min-height: 72px; }
+.catalog-page > .ui-page-header h1 { font-size: 26px; }
+.catalog-page > .ui-page-header :is(.page-header-visual, .page-hero-art) { width: 56px; height: 56px; }
+.catalog-page > .ui-page-header .page-hero-copy > p { margin-top: 6px; font-size: 13px; }
+.catalog-toolbar { --catalog-title-size: 15px; --catalog-title-weight: 500; --catalog-title-gap: 24px; --catalog-stuck-tabs-height: 40px; --catalog-stuck-padding: 8px; }
+.catalog-toolbar__row.ui-filter-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px; margin-bottom: 0; padding: 6px 0; border: 0; border-radius: 0; background: transparent; }
+.catalog-views.view-switcher-bar { min-width: 0; max-width: 100%; min-height: 44px; margin: 0; overflow-x: auto; scrollbar-width: none; }
+.catalog-view-tabs.ui-tabs { width: max-content; height: 44px; gap: 2px; padding: 3px; margin: 0; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-muted); }
+.catalog-view-tabs .ui-tabs__tab { flex: 0 0 auto; min-width: 0; min-height: 36px; gap: 5px; padding: 0 8px; border-radius: 8px; font-size: 14px; font-weight: 400; color: var(--text-secondary); }
+.catalog-view-tabs .ui-tabs__tab:hover { color: var(--text); }
+.catalog-view-tabs .ui-tabs__tab[aria-selected='true'] { color: var(--text); font-weight: 500; }
+.catalog-view-tabs .ui-tabs__tab:focus-visible { outline: 2px solid var(--border-strong); outline-offset: 2px; }
+.catalog-view-tabs .ui-tabs__indicator { inset-block: 3px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); box-shadow: var(--shadow-xs); }
+.catalog-controls { display: flex; flex-wrap: wrap; flex: 1 1 auto; justify-content: flex-end; align-items: center; gap: 10px; min-width: 0; padding: 0; margin: 0 0 0 auto; }
+/* Use the rendered view switcher, so guest/single-view states adapt without page flags. */
+.catalog-toolbar__row:not(:has(.catalog-views)) .catalog-controls { justify-content: flex-start; margin-inline-start: 0; }
+.catalog-display { display: flex; align-items: center; flex: 0 1 auto; flex-wrap: wrap; gap: 10px; min-width: 0; max-width: 100%; }
+.catalog-toolbar__row:not(:has(.catalog-views)) .catalog-display { margin-inline-start: auto; }
+/* With no business filters, spread sorting and layout across the available row. */
+.catalog-toolbar__row:not(:has(.catalog-views)) .catalog-display:only-child { flex-grow: 1; justify-content: space-between; margin-inline-start: 0; }
+@media (min-width: 1321px) {
+  .has-category-sidebar .catalog-toolbar__row:not(:has(.catalog-views)) .catalog-controls:not(:has(> :not(.category-filter, .catalog-display))) > .catalog-display { flex-grow: 1; justify-content: space-between; margin-inline-start: 0; }
+}
+.catalog-toolbar__row .ui-select__trigger, .catalog-toolbar__row .catalog-reset { height: 40px; min-height: 40px; border-radius: 12px; font-size: var(--font-size-control); font-weight: 400; }
+.catalog-toolbar__row .catalog-reset { flex-shrink: 0; padding-inline: 12px; }
+.catalog-toolbar__row .catalog-reset:hover { background: var(--surface); }
+.catalog-page .catalog-toolbar__row .ui-layout-switcher { flex-shrink: 0; height: 40px; border-color: var(--border); border-radius: 12px; background: var(--surface); }
+.catalog-page .catalog-toolbar__row .ui-layout-switcher button { height: 100%; border-radius: 8px; }
+.catalog-page .catalog-toolbar__row .ui-layout-switcher__indicator { border-color: transparent; border-radius: 8px; background: var(--surface-muted); box-shadow: none; }
+.catalog-page .catalog-toolbar__row .ui-layout-switcher button[aria-pressed='true'] { color: var(--text); }
+.catalog-keywords { flex-basis: 100%; min-width: 0; }
+.catalog-keyword { max-width: 100%; gap: 8px; border-radius: var(--radius-control); background: var(--surface-muted); color: var(--text-secondary); }
+.catalog-keyword span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.catalog-keyword svg { flex-shrink: 0; }
+.catalog-page .ui-category-sidebar { top: calc(var(--catalog-sticky-top) + var(--catalog-toolbar-height) + 12px); border-color: var(--border); border-radius: var(--radius-surface); background: var(--surface); }
+@media (min-width: 768px) and (max-width: 1023px) { .catalog-page { --catalog-sticky-top: -16px; --catalog-sticky-bleed: 18px; } }
+@media (min-width: 768px) {
+  /* Filter-only toolbars keep one compact group aligned with the content end. */
+  .catalog-toolbar__row:not(:has(.catalog-views, .catalog-display)) .catalog-controls { justify-content: flex-end; margin-inline-start: auto; }
+  .catalog-toolbar.is-stuck .catalog-reset { height: 36px; min-height: 36px; border-radius: 10px; font-size: 13px; }
+}
+@media (max-width: 767px) {
+  .catalog-page { --catalog-sticky-top: 52px; --catalog-sticky-bleed: 16px; }
+  .catalog-page > .ui-page-header { margin-bottom: 20px; }
+  .catalog-view-tabs .ui-tabs__tab { font-size: 13px; }
+  .catalog-toolbar__row .catalog-controls { gap: 8px; justify-content: flex-start; }
+  .catalog-display { gap: 8px; flex-basis: 100%; justify-content: flex-end; }
+  .catalog-toolbar__row .catalog-display > .ui-select-root { flex: 1 1 0; width: auto; min-width: 0; max-width: 100%; }
+  .catalog-toolbar__row .catalog-controls > .catalog-display { grid-column: 1 / -1; margin-inline-start: auto; }
+}
+
+.catalog-page .ui-catalog.ui-catalog.is-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); }

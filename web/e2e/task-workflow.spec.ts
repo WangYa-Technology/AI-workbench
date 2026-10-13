@@ -186,13 +186,13 @@ test('lets both creators and publishers publish and browse their activity', asyn
   await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('creator') })
   await page.goto('/market/demands')
 
-  await expect(page.getByRole('tab', { name: 'Available work', exact: true })).toHaveAttribute('aria-selected', 'true')
-  await expect(page.getByRole('tab', { name: 'My activity', exact: true })).toBeVisible()
+  await expect(page.getByRole('tab', { name: 'Available', exact: true })).toHaveAttribute('aria-selected', 'true')
+  await expect(page.getByRole('tab', { name: 'Mine', exact: true })).toBeVisible()
   await expect(page.locator('.ui-page-hero').getByRole('button', { name: 'Publish brief', exact: true })).toBeVisible()
 
-  await page.getByRole('tab', { name: 'My activity', exact: true }).click()
+  await page.getByRole('tab', { name: 'Mine', exact: true }).click()
   await expect(page).toHaveURL(/\/market\/demands\?view=mine$/)
-  await expect(page.getByRole('tab', { name: 'My activity', exact: true })).toHaveAttribute('aria-selected', 'true')
+  await expect(page.getByRole('tab', { name: 'Mine', exact: true })).toHaveAttribute('aria-selected', 'true')
   await expect(page.locator('.task-filters select').nth(1)).toHaveValue('')
 
   await page.request.post('/api/v1/auth/login', { data: fixtureCredentials('publisher') })

@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import UiEmptyState from '../components/ui/UiEmptyState.vue'
 import UiActionBanner from '../components/ui/UiActionBanner.vue'
-import UiCardContent from '../components/ui/UiCardContent.vue'
-import UiCardActions from '../components/ui/UiCardActions.vue'
 import UiCardTag from '../components/ui/UiCardTag.vue'
-import UiFilterSearch from '../components/ui/UiFilterSearch.vue'
-import UiFilterBar from '../components/ui/UiFilterBar.vue'
+import CatalogToolbar from '../components/catalog/CatalogToolbar.vue'
+import CatalogViews from '../components/catalog/CatalogViews.vue'
+import CatalogResults from '../components/catalog/CatalogResults.vue'
+import CatalogKeyword from '../components/catalog/CatalogKeyword.vue'
 import DetailToolbar from '../components/ui/DetailToolbar.vue'
 import UiLayoutSwitcher from '../components/ui/UiLayoutSwitcher.vue'
 import UiCatalog from '../components/ui/UiCatalog.vue'
@@ -13,16 +13,16 @@ import UiCategorySidebar from '../components/ui/UiCategorySidebar.vue'
 import UiCardMedia from '../components/ui/UiCardMedia.vue'
 import UiContentCard from '../components/ui/UiContentCard.vue'
 import {
-  AlertTriangle, ArrowLeft, BriefcaseBusiness,  Check, ChevronRight,
+  AlertTriangle, ArrowDownWideNarrow, ArrowLeft, BriefcaseBusiness,  Check, ChevronRight,
   CircleDollarSign, Clock3, FileCheck2, Filter, Image as ImageIcon, Lightbulb, LoaderCircle, LogIn,
-  MessageSquareText, Music2, Play, Plus, RefreshCw, Search, Shapes, ShieldCheck, Sparkles, UserPlus,
+  MessageSquareText, Music2, Play, Plus, RefreshCw, Search, Shapes, ShieldCheck, UserPlus,
   UserRound, Video, WandSparkles, Workflow, X,
 } from 'lucide-vue-next'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import {
-  api, messageFrom, type Asset, type TaskCreate, type TaskDetail, type TaskSummary, type TaskType,
+  api, APIError, messageFrom, type Asset, type TaskCreate, type TaskDetail, type TaskSummary, type TaskType,
 } from '../api/client'
 import { formatCurrency, formatDateTime } from '../lib/format'
 import { contentListReturn, creationPath } from '../lib/contentPresentation'
@@ -30,12 +30,12 @@ import AssetMedia from '../components/domain/AssetMedia.vue'
 import { openCheckoutWindow } from '../lib/checkout'
 import { useSessionStore } from '../stores/session'
 import PageHeader from '../components/ui/PageHeader.vue'
+import { taskExampleCovers } from '../dev/taskExampleCovers'
 import UiButton from '../components/ui/UiButton.vue'
 import UiCheckbox from '../components/ui/UiCheckbox.vue'
 import UiIconButton from '../components/ui/UiIconButton.vue'
 import UiInput from '../components/ui/UiInput.vue'
 import UiSelect from '../components/ui/UiSelect.vue'
-import UiTabs from '../components/ui/UiTabs.vue'
 import UiTextarea from '../components/ui/UiTextarea.vue'
 
 import { taskDeadlineISO, taskLocalMinute } from '../lib/taskDateTime'
@@ -50,8 +50,16 @@ const taskTotal = ref(0)
 const catalogTotal = computed(() => Object.values(taskTypeCounts.value).reduce((sum, count) => sum + count, 0))
 const nextTaskCursor = ref<string>()
 const loadingMore = ref(false)
+const loadMoreError = ref('')
 const detail = ref<TaskDetail | null>(null)
 const assets = ref<Asset[]>([])
+const assetSearch = ref('')
+const assetQuery = ref('')
+const assetCursor = ref<string>()
+const assetsLoading = ref(false)
+const assetsError = ref('')
+let assetVersion = 0
+let assetRetry = { more: false, pinID: '' }
 const loading = ref(true)
 const actionLoading = ref(false)
 const error = ref('')
@@ -75,9 +83,10 @@ const view = ref(route.query.view === 'mine' ? 'mine' : 'available')
 const status = ref(String(route.query.status ?? (view.value === 'mine' ? '' : 'open')))
 const sort = ref(String(route.query.sort || 'newest'))
 const layoutMode = ref<'list' | 'grid'>('list')
+const taskToolbarHeight = ref(56)
 const viewTabs = computed(() => [
-  { value: 'available', label: t('tasks.availableWork'), icon: Search },
-  { value: 'mine', label: t('tasks.myActivity'), icon: BriefcaseBusiness },
+  { value: 'available', label: t('catalog.views.available'), icon: BriefcaseBusiness },
+  { value: 'mine', label: t('catalog.views.mine'), icon: Clock3 },
 ])
 const hasTaskFilters = computed(() => Boolean(search.value.trim() || deliverableType.value || status.value !== (view.value === 'mine' ? '' : 'open')))
 const taskID = computed(() => String(route.params.id || ''))
@@ -91,10 +100,10 @@ const canFundDirect = computed(() => Boolean(
   detail.value?.viewerRole === 'client' && detail.value.status === 'open' && detail.value.allowDirectAccept
   && canStartFundingFor(),
 ))
-const canDeliver = computed(() => detail.value?.viewerRole === 'assignee' && ['assigned', 'revision'].includes(detail.value.status))
-const canReview = computed(() => detail.value?.viewerRole === 'client' && detail.value.status === 'submitted')
-const canDispute = computed(() => detail.value && ['assigned', 'submitted', 'revision'].includes(detail.value.status) && ['client', 'assignee'].includes(detail.value.viewerRole))
-const canCancel = computed(() => detail.value?.viewerRole === 'client' && detail.value.status === 'open')
+const canDeliver = computed(() => Boolean(session.user) && detail.value?.viewerRole === 'assignee' && ['assigned', 'revision'].includes(detail.value.status))
+const canReview = computed(() => Boolean(session.user) && detail.value?.viewerRole === 'client' && detail.value.status === 'submitted')
+const canDispute = computed(() => Boolean(session.user) && detail.value && ['assigned', 'submitted', 'revision'].includes(detail.value.status) && ['client', 'assignee'].includes(detail.value.viewerRole))
+const canCancel = computed(() => Boolean(session.user) && detail.value?.viewerRole === 'client' && detail.value.status === 'open')
 const taskActionLabel = computed(() => {
   if (!session.user) return t('tasks.signInToRespond')
   if (detail.value?.viewerRole === 'client') return t('tasks.manageTask')
@@ -104,16 +113,17 @@ const taskActionLabel = computed(() => {
 const minimumDeadline = computed(() => taskLocalMinute(new Date(Date.now() + 60_000), draft.timezone))
 
 const proposal = reactive({ approach: '', deliverables: '', amount: '', timelineDays: '7' })
-const delivery = reactive({ assetId: String(route.query.assetId || ''), note: '', extraAssetIds: [] as string[], rightsEvidence: '', aiDisclosure: '', rightsConfirmed: false })
+const delivery = reactive({ assetId: '', note: '', extraAssetIds: [] as string[], rightsEvidence: '', aiDisclosure: '', rightsConfirmed: false })
 const reviewNote = ref('')
 const disputeReason = ref('')
 const cancelReason = ref('')
 const deadlineRequest = reactive({ deadline: '', reason: '' })
 const deadlineFormOpen = ref(false)
-const draft = reactive({
+const freshDraft = () => ({
   title: '', summary: '', brief: '', deliverableType: 'image', budget: '', deadline: '', timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
   deliverables: '', acceptanceRules: '', rightsTerms: '', aiDisclosureRequirement: '', allowDirectAccept: false, allowDerivativeReuse: false,
 })
+const draft = reactive(freshDraft())
 
 const taskTypes = ref<TaskType[]>([])
 const types = computed(() => taskTypes.value.map((item) => item.code))
@@ -130,6 +140,12 @@ function money(cents: number, currency = 'USD') {
 
 function date(value: string, timeZone = 'UTC') {
   try { return formatDateTime(value, locale.value, timeZone) } catch { return formatDateTime(value, locale.value, 'UTC') }
+}
+
+function deadlineDate(value: string, timeZone = 'UTC') {
+  const options: Intl.DateTimeFormatOptions = { dateStyle: 'medium', timeZone }
+  try { return new Intl.DateTimeFormat(locale.value, options).format(new Date(value)) }
+  catch { return new Intl.DateTimeFormat(locale.value, { ...options, timeZone: 'UTC' }).format(new Date(value)) }
 }
 
 function lines(value: string) {
@@ -149,7 +165,9 @@ function taskTypeIcon(kind: string) {
   return Shapes
 }
 
-function taskThumbnail(kind: string) {
+function taskThumbnail(item: { id: string; deliverableType: string }) {
+  if (import.meta.env.DEV && taskExampleCovers[item.id]) return taskExampleCovers[item.id]
+  const kind = item.deliverableType
   if (kind === 'video') return '/tasks/task-video.webp'
   if (kind === 'audio') return '/tasks/task-audio.webp'
   if (kind === 'image') return '/tasks/task-image.webp'
@@ -162,11 +180,78 @@ function taskTypeLabel(code: string) {
 
 let loadVersion = 0
 let commandVersion = 0
+
+function resetTaskContext() {
+  commandVersion++
+  assetVersion++
+  detail.value = null
+  assets.value = []; assetCursor.value = undefined; assetSearch.value = ''; assetQuery.value = ''; assetsError.value = ''; assetsLoading.value = false
+  proposalOpen.value = false; disputeOpen.value = false; cancelOpen.value = false; deadlineFormOpen.value = false
+  actionLoading.value = false; fundingRefreshLoading.value = false; payoutReady.value = false
+  Object.assign(proposal, { approach: '', deliverables: '', amount: '', timelineDays: '7' })
+  Object.assign(delivery, { assetId: '', note: '', extraAssetIds: [], rightsEvidence: '', aiDisclosure: '', rightsConfirmed: false })
+  reviewNote.value = ''; disputeReason.value = ''; cancelReason.value = ''
+  Object.assign(deadlineRequest, { deadline: '', reason: '' })
+  if (fundingPollTimer !== undefined) globalThis.window.clearTimeout(fundingPollTimer)
+  fundingPollTimer = undefined
+}
+function failTask(reason: unknown) {
+  if (reason instanceof APIError && [401, 403, 404].includes(reason.status)) {
+    loadVersion++
+    resetTaskContext()
+    createOpen.value = false; Object.assign(draft, freshDraft())
+    tasks.value = []; nextTaskCursor.value = undefined; taskTotal.value = 0; taskTypeCounts.value = {}
+    loading.value = false; loadingMore.value = false
+  }
+  error.value = messageFrom(reason)
+}
+function eligibleAsset(asset: Asset) {
+  return asset.scanStatus === 'clean' && asset.sourceType !== 'purchase' && asset.licenseCode !== 'task-contract'
+}
+async function loadDeliveryAssets(more = false, pinID = '') {
+  if (!canDeliver.value || (more && (!assetCursor.value || assetsLoading.value))) return
+  const context = loadVersion
+  const version = ++assetVersion
+  const query = more ? assetQuery.value : assetSearch.value.trim()
+  const cursor = more ? assetCursor.value : undefined
+  assetRetry = { more, pinID }
+  assetsLoading.value = true; assetsError.value = ''
+  try {
+    const page = await api.listAssets({ purpose: 'task_delivery', q: query || undefined, limit: 20, cursor })
+    if (context !== loadVersion || version !== assetVersion) return
+    // Keep explicitly selected assets available while searching another page.
+    const keep = new Set([delivery.assetId, ...delivery.extraAssetIds])
+    const retained = more ? assets.value : assets.value.filter(item => keep.has(item.id))
+    const merged = new Map(retained.map(item => [item.id, item]))
+    for (const item of page.items.filter(eligibleAsset)) merged.set(item.id, item)
+    assets.value = [...merged.values()]
+    assetCursor.value = page.nextCursor || undefined
+    assetQuery.value = query
+    if (pinID && !merged.has(pinID)) {
+      const selected = await api.getAsset(pinID)
+      if (context !== loadVersion || version !== assetVersion) return
+      if (!selected.taskDeliveryEligible || !eligibleAsset(selected)) {
+        assetsError.value = t('tasks.assetUnavailable')
+      } else { assets.value.unshift(selected); delivery.assetId = selected.id }
+    } else if (pinID) delivery.assetId = pinID
+    if (!delivery.assetId && assets.value.length) delivery.assetId = assets.value[0]!.id
+  } catch (reason) {
+    if (context === loadVersion && version === assetVersion) {
+      if (reason instanceof APIError && reason.status === 401) failTask(reason)
+      else assetsError.value = messageFrom(reason)
+    }
+  } finally {
+    if (context === loadVersion && version === assetVersion) assetsLoading.value = false
+  }
+}
 async function load() {
   const version = ++loadVersion
   const id = taskID.value
+  actionLoading.value = false; fundingRefreshLoading.value = false; loadingMore.value = false; loadMoreError.value = ''
   if (detail.value?.id !== id) detail.value = null
   const criteria = { q: search.value, type: deliverableType.value, status: status.value, sort: sort.value, mine: view.value === 'mine' }
+  // Replacing a long list with skeletons must not clamp the scroll position
+  // and replay the sticky toolbar's expanded/compact transition.
   loading.value = true
   error.value = ''
   success.value = ''
@@ -189,11 +274,9 @@ async function load() {
       const task = await api.getTask(id)
       if (version !== loadVersion) return
       detail.value = task
-      if (detail.value.viewerRole === 'assignee') {
-        const response = await api.listAssets()
+      if (canDeliver.value) {
+        await loadDeliveryAssets(false, typeof route.query.assetId === 'string' ? route.query.assetId : '')
         if (version !== loadVersion) return
-        assets.value = response.items.filter((item) => item.scanStatus === 'clean' && item.sourceType !== 'purchase' && item.licenseCode !== 'task-contract')
-        if (!delivery.assetId && assets.value.length) delivery.assetId = assets.value[0].id
       }
       if (session.user && taskPaymentEnabled.value && ['viewer', 'assignee'].includes(task.viewerRole)) {
         const payout = await api.getPayoutStatus()
@@ -212,16 +295,17 @@ async function load() {
       detail.value = null
     }
   } catch (reason) {
-    if (version === loadVersion) error.value = messageFrom(reason)
+    if (version === loadVersion) failTask(reason)
   } finally {
     if (version === loadVersion) loading.value = false
   }
 }
 
 async function loadMoreTasks() {
-  if (!nextTaskCursor.value || loadingMore.value) return
+  if (loading.value || !nextTaskCursor.value || loadingMore.value) return
   const version = loadVersion
   loadingMore.value = true
+  loadMoreError.value = ''
   try {
     const response = await api.listTasks({ q: search.value, type: deliverableType.value, status: status.value, sort: sort.value, mine: view.value === 'mine', cursor: nextTaskCursor.value })
     if (version !== loadVersion) return
@@ -230,8 +314,11 @@ async function loadMoreTasks() {
     taskTotal.value = response.total
     taskTypeCounts.value = response.typeCounts
     nextTaskCursor.value = response.nextCursor
-  } catch (reason) { if (version === loadVersion) error.value = messageFrom(reason) }
-  finally { loadingMore.value = false }
+  } catch (reason) { if (version === loadVersion) {
+    if (reason instanceof APIError && [401, 403, 404].includes(reason.status)) failTask(reason)
+    else loadMoreError.value = messageFrom(reason)
+  } }
+  finally { if (version === loadVersion) loadingMore.value = false }
 }
 
 function fundingMatches(proposalId?: string) {
@@ -269,7 +356,8 @@ function fundingRequestKey(proposalId?: string) {
 }
 
 async function fundTask(proposalId?: string) {
-  if (!detail.value || !taskPaymentEnabled.value) return
+  if (!detail.value || !taskPaymentEnabled.value || actionLoading.value) return
+  commandVersion++
   const current = detail.value.funding
   if (fundingMatches(proposalId) && current?.status === 'checkout_open' && current.checkoutUrl) {
     const checkoutWindow = openCheckoutWindow(current.checkoutUrl)
@@ -294,6 +382,7 @@ async function fundTask(proposalId?: string) {
       proposalId ? { proposalId } : {},
       fundingRequestKey(proposalId),
     )
+    if (disposed || version !== loadVersion) { checkoutWindow.close(); return }
     checkoutWindow.location.href = checkout.checkoutUrl
     const task = await api.getTask(id)
     if (disposed || version !== loadVersion) return
@@ -301,10 +390,10 @@ async function fundTask(proposalId?: string) {
     scheduleFundingRefresh()
   } catch (reason) {
     checkoutWindow?.close()
-    if (version === loadVersion) error.value = messageFrom(reason)
+    if (version === loadVersion) failTask(reason)
     scheduleFundingRefresh()
   } finally {
-    actionLoading.value = false
+    if (version === loadVersion) actionLoading.value = false
   }
 }
 
@@ -340,12 +429,14 @@ async function refreshFunding() {
       payoutReady.value = payout.status === 'verified' && payout.chargesEnabled && payout.payoutsEnabled
     }
     applyPaymentReturnState()
-  } catch (reason) { if (!disposed && version === loadVersion) error.value = messageFrom(reason) }
-  finally { fundingRefreshLoading.value = false; scheduleFundingRefresh() }
+  } catch (reason) { if (!disposed && version === loadVersion && mutation === commandVersion) failTask(reason) }
+  finally { if (version === loadVersion) { fundingRefreshLoading.value = false; scheduleFundingRefresh() } }
 }
 
-function refreshOnReturn() {
-  if (globalThis.document.visibilityState !== 'hidden') void refreshFunding()
+async function refreshOnReturn() {
+  if (globalThis.document.visibilityState === 'hidden') return
+  await session.ensure(true)
+  if (!disposed && !loading.value) await refreshFunding()
 }
 
 async function applyFilters() {
@@ -353,7 +444,7 @@ async function applyFilters() {
     ...(view.value === 'mine' ? { view: 'mine' } : {}),
     ...(search.value.trim() ? { q: search.value.trim() } : {}),
     ...(deliverableType.value ? { type: deliverableType.value } : {}),
-    ...(status.value ? { status: status.value } : {}),
+    status: status.value,
     ...(sort.value !== 'newest' ? { sort: sort.value } : {}),
   } })
 }
@@ -369,6 +460,10 @@ async function selectTaskType(nextType: string) {
   if (deliverableType.value === nextType) return
   deliverableType.value = nextType
   await applyFilters()
+}
+
+async function clearSearch() {
+  await router.push({ path: route.path, query: { ...route.query, q: undefined } })
 }
 
 async function clearFilters() {
@@ -395,14 +490,9 @@ async function mutate(action: () => Promise<TaskDetail>, message: string) {
     proposalOpen.value = false
     disputeOpen.value = false
     cancelOpen.value = false
-    if (detail.value.viewerRole === 'assignee') {
-      const response = await api.listAssets()
-      if (version !== loadVersion) return
-      assets.value = response.items.filter((item) => item.scanStatus === 'clean' && item.sourceType !== 'purchase' && item.licenseCode !== 'task-contract')
-      if (!delivery.assetId && assets.value.length) delivery.assetId = assets.value[0].id
-    }
+    if (canDeliver.value) await loadDeliveryAssets()
   } catch (reason) {
-    if (version === loadVersion) error.value = messageFrom(reason)
+    if (version === loadVersion) failTask(reason)
   } finally {
     if (version === loadVersion) actionLoading.value = false
   }
@@ -432,7 +522,8 @@ async function acceptProposal(proposalId: string) {
 }
 
 async function submitDelivery() {
-  if (!detail.value) return
+  if (!canDeliver.value || !detail.value) return
+  if (new Set([delivery.assetId, ...delivery.extraAssetIds]).size > 20) { error.value = t('tasks.deliveryLimit'); return }
   await mutate(() => api.deliverTask(detail.value!.id, { assetIds: [delivery.assetId, ...delivery.extraAssetIds.filter(id => id !== delivery.assetId)], note: delivery.note.trim(), rightsEvidence: delivery.rightsEvidence.trim(), aiDisclosure: delivery.aiDisclosure.trim(), rightsConfirmed: delivery.rightsConfirmed }), t('tasks.delivered'))
 }
 
@@ -467,6 +558,8 @@ async function changeDeadline(decision: 'propose' | 'accept' | 'reject') {
 }
 
 async function publishTask() {
+  if (actionLoading.value || !session.user) return
+  const version = loadVersion
   let deadline: string
   try { deadline = taskDeadlineISO(draft.deadline, draft.timezone) } catch { error.value = t('tasks.invalidDeadline'); return }
   const input: TaskCreate = {
@@ -481,17 +574,24 @@ async function publishTask() {
   error.value = ''
   try {
     const created = await api.createTask(input)
+    if (version !== loadVersion || disposed) return
     createOpen.value = false
     await router.push(`/market/demands/${created.id}`)
-    success.value = t('tasks.created')
   } catch (reason) {
-    error.value = messageFrom(reason)
+    if (version === loadVersion) failTask(reason)
   } finally {
-    actionLoading.value = false
+    if (version === loadVersion) actionLoading.value = false
   }
 }
 
-watch(() => route.fullPath, () => {
+watch([() => route.fullPath, () => session.user?.id], (current, previous) => {
+  const identityChanged = current[1] !== previous[1]
+  const taskChanged = detail.value?.id !== taskID.value
+  if (identityChanged || taskChanged) resetTaskContext()
+  if (identityChanged) {
+    tasks.value = []; taskTypeCounts.value = {}; taskTotal.value = 0; nextTaskCursor.value = undefined
+    createOpen.value = false; Object.assign(draft, freshDraft())
+  }
   if (fundingPollTimer !== undefined) globalThis.window.clearTimeout(fundingPollTimer)
   fundingPollTimer = undefined
   search.value = String(route.query.q || '')
@@ -499,9 +599,8 @@ watch(() => route.fullPath, () => {
   view.value = route.query.view === 'mine' ? 'mine' : 'available'
   status.value = String(route.query.status ?? (view.value === 'mine' ? '' : 'open'))
   sort.value = String(route.query.sort || 'newest')
-  delivery.assetId = String(route.query.assetId || delivery.assetId || '')
   void load()
-})
+}, { flush: 'sync' })
 
 watch(createOpen, async (open) => {
   if (open) {
@@ -563,7 +662,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="task-market content-width" :class="{ 'is-detail': isDetail }">
+  <section class="task-market content-width" :class="{ 'is-detail': isDetail, 'catalog-page': !isDetail }" :style="{ '--catalog-toolbar-height': `${taskToolbarHeight}px` }">
     <template v-if="!isDetail">
       <PageHeader
         :title="t('tasks.title')"
@@ -594,59 +693,56 @@ onBeforeUnmount(() => {
         </template>
       </PageHeader>
 
-      <UiFilterBar as="div" split class="ui-filter-bar controls-with-switcher task-controls-row" :class="{ 'has-switcher': session.user }">
-        <div v-if="session.user" class="view-switcher-bar">
-          <UiTabs class="view-switcher" :model-value="view" :items="viewTabs" :label="t('tasks.views')" @update:model-value="selectView($event as 'available' | 'mine')" />
-        </div>
-
-        <form class="ui-filter-bar__controls task-filters" role="search" @submit.prevent="applyFilters">
-          <UiFilterSearch class="task-search" :label="t('actions.search')">
-            <UiInput v-model="search" type="search" :placeholder="t('tasks.searchPlaceholder')" />
-          </UiFilterSearch>
-          <UiSelect v-model="deliverableType" class="task-filter-control" :aria-label="t('tasks.allTypes')" :align-item-with-trigger="false" @change="applyFilters">
+      <CatalogToolbar class="task-catalog-bar" filter-class="task-toolbar" :title="t('tasks.title')" @resize="taskToolbarHeight = $event">
+        <CatalogViews class="task-view-tabs" :model-value="view" :items="session.user ? viewTabs : viewTabs.slice(0, 1)" :label="t('tasks.views')" :count="taskTotal" :pending="loading || Boolean(error)" :status="loading ? t('tasks.loading') : error ? t('tasks.unavailable') : `${taskTotal} ${t('tasks.results')}`" @update:model-value="selectView($event as 'available' | 'mine')" />
+        <div class="task-filters catalog-controls" role="group" :aria-label="t('search.taskFilters')">
+          <UiSelect v-model="deliverableType" class="task-toolbar__type" :aria-label="t('tasks.allTypes')" :align-item-with-trigger="false" @change="applyFilters">
             <template #start>
               <Filter :size="15" aria-hidden="true" />
             </template>
             <option value="">
               {{ t('tasks.allTypes') }}
-            </option><option v-for="item in types" :key="item" :value="item">
+            </option>
+            <option v-for="item in types" :key="item" :value="item">
               {{ taskTypeLabel(item) }}
             </option>
           </UiSelect>
-          <UiSelect v-model="status" class="task-filter-control" :aria-label="t('tasks.allStatuses')" @change="applyFilters">
+          <UiSelect v-model="status" class="task-toolbar__status" :align-item-with-trigger="false" :aria-label="t('tasks.allStatuses')" @change="applyFilters">
             <option value="">
               {{ t('tasks.allStatuses') }}
-            </option><option v-for="item in statuses" :key="item" :value="item">
+            </option>
+            <option v-for="item in statuses" :key="item" :value="item">
               {{ t(`tasks.status.${item}`) }}
             </option>
           </UiSelect>
-          <UiSelect v-model="sort" class="task-filter-control" :aria-label="t('tasks.sortNewest')" @change="applyFilters">
-            <option value="newest">
-              {{ t('tasks.sortNewest') }}
-            </option><option value="deadline">
-              {{ t('tasks.sortDeadline') }}
-            </option><option value="budget_desc">
-              {{ t('tasks.sortBudget') }}
-            </option>
-          </UiSelect>
-          <UiButton class="command-button primary task-filter-submit" variant="primary" type="submit">
-            <template #start>
-              <Search :size="17" />
-            </template>{{ t('actions.search') }}
+          <UiButton v-if="hasTaskFilters || sort !== 'newest'" class="task-toolbar__reset catalog-reset" variant="secondary" @click="clearFilters">
+            {{ t('tasks.clearFilters') }}
           </UiButton>
-        </form>
-      </UiFilterBar>
+          <div class="catalog-display">
+            <UiSelect v-model="sort" class="task-toolbar__sort" :align-item-with-trigger="false" :aria-label="t('tasks.sortNewest')" @change="applyFilters">
+              <template #start>
+                <ArrowDownWideNarrow :size="15" aria-hidden="true" />
+              </template>
+              <option value="newest">
+                {{ t('tasks.sortNewest') }}
+              </option>
+              <option value="deadline">
+                {{ t('tasks.sortDeadline') }}
+              </option>
+              <option value="budget_desc">
+                {{ t('tasks.sortBudget') }}
+              </option>
+            </UiSelect>
+            <UiLayoutSwitcher v-model="layoutMode" :label="t('tasks.layout')" :list-label="t('tasks.listView')" :grid-label="t('tasks.gridView')" />
+          </div>
+        </div>
+        <CatalogKeyword :query="search" @clear="clearSearch" />
+      </CatalogToolbar>
 
       <div class="task-browser-layout">
-        <UiCategorySidebar :title="t('tasks.categories')" :model-value="deliverableType" :items="[{ value: '', label: t('tasks.allTasks'), icon: BriefcaseBusiness, count: catalogTotal }, ...types.map(type => ({ value: type, label: taskTypeLabel(type), icon: taskTypeIcon(type), count: taskTypeCounts[type] || 0 }))]" @update:model-value="selectTaskType">
-          <section class="task-creator-program">
-            <span><Sparkles :size="20" /></span><div><strong>{{ t('tasks.creatorProgram') }}</strong><p>{{ t('tasks.creatorProgramSummary') }}</p></div><RouterLink class="text-link" :to="session.user ? '/settings' : { path: '/auth', query: { returnTo: '/settings' } }">
-              {{ t('tasks.learnMore') }}<ChevronRight :size="15" />
-            </RouterLink>
-          </section>
-        </UiCategorySidebar>
+        <UiCategorySidebar :title="t('tasks.categories')" :model-value="deliverableType" :items="[{ value: '', label: t('catalog.views.all'), icon: BriefcaseBusiness, count: catalogTotal }, ...types.map(type => ({ value: type, label: taskTypeLabel(type), icon: taskTypeIcon(type), count: taskTypeCounts[type] || 0 }))]" @update:model-value="selectTaskType" />
 
-        <div class="task-results" :aria-busy="loading">
+        <CatalogResults class="task-results" :loading="loading">
           <div v-if="loading" class="task-skeleton" aria-live="polite">
             <span v-for="item in 4" :key="item"></span><p>{{ t('tasks.loading') }}</p>
           </div>
@@ -658,36 +754,34 @@ onBeforeUnmount(() => {
             </UiButton>
           </div>
           <template v-else>
-            <div class="task-results-meta">
-              <div><strong>{{ taskTotal }} {{ t('tasks.results') }}</strong><span>{{ t(view === 'mine' ? 'tasks.myActivitySummary' : 'tasks.availableWorkSummary') }}</span></div>
-              <div class="task-results-actions">
-                <UiButton v-if="search || deliverableType || status !== (view === 'mine' ? '' : 'open') || sort !== 'newest'" class="text-link" variant="ghost" size="sm" @click="clearFilters">
-                  {{ t('tasks.clearFilters') }}
-                </UiButton>
-                <UiLayoutSwitcher v-model="layoutMode" :label="t('tasks.layout')" :list-label="t('tasks.listView')" :grid-label="t('tasks.gridView')" />
-              </div>
-            </div>
             <UiCatalog class="ui-catalog task-result-list" :class="{ 'is-grid': layoutMode === 'grid' }">
-              <UiContentCard v-for="item in tasks" :key="item.id" layout="media" class="ui-content-card task-row" :class="{ 'is-direct': item.allowDirectAccept && item.status === 'open' }" :data-type="item.deliverableType" :to="`/market/demands/${item.id}`">
+              <UiContentCard v-for="item in tasks" :key="item.id" class="task-row" :data-type="item.deliverableType" :to="`/market/demands/${item.id}`">
                 <UiCardMedia class="task-row-media">
-                  <img :src="taskThumbnail(item.deliverableType)" :alt="item.title" /><span v-if="item.deliverableType === 'video'" class="task-media-play"><Play :size="18" fill="currentColor" /></span>
+                  <img :src="taskThumbnail(item)" alt="" loading="lazy" />
                 </UiCardMedia>
-                <UiCardContent class="task-card-content" :title="item.title" :summary="item.summary">
-                  <template #tags>
-                    <UiCardTag><component :is="taskTypeIcon(item.deliverableType)" :size="13" aria-hidden="true" />{{ taskTypeLabel(item.deliverableType) }}</UiCardTag>
-                    <UiCardTag :variant="item.status === 'open' || item.status === 'accepted' ? 'success' : item.status === 'disputed' ? 'danger' : item.status === 'revision' ? 'warning' : 'neutral'">
-                      {{ t(`tasks.status.${item.status}`) }}
-                    </UiCardTag>
-                  </template>
-                  <template #meta>
-                    <span>@{{ item.client.handle }}</span><span>{{ item.proposalCount }} {{ t('tasks.proposalCount') }}</span><span v-if="item.allowDirectAccept && item.status === 'open'">{{ t('tasks.direct') }}</span>
-                  </template>
-                </UiCardContent>
-                <UiCardActions class="task-row-commercial" :label="t('content.budget')" :value="money(item.budgetCents, item.currency)" numeric :action-label="t('tasks.reviewBrief')">
-                  <template #description>
-                    <Clock3 :size="13" :stroke-width="1.75" aria-hidden="true" /><span>{{ t('tasks.deadline') }} · {{ date(item.deadline, item.clientTimezone) }}</span>
-                  </template>
-                </UiCardActions>
+                <h2 class="task-card-title">
+                  {{ item.title }}
+                </h2>
+                <p class="task-card-summary">
+                  {{ item.summary }}
+                </p>
+                <div class="task-card-tags">
+                  <span class="task-card-type"><component :is="taskTypeIcon(item.deliverableType)" :size="14" aria-hidden="true" />{{ taskTypeLabel(item.deliverableType) }}</span>
+                  <UiCardTag :variant="item.status === 'open' || item.status === 'accepted' ? 'success' : item.status === 'disputed' ? 'danger' : item.status === 'revision' ? 'warning' : 'neutral'">
+                    {{ t(`tasks.status.${item.status}`) }}
+                  </UiCardTag>
+                  <span v-if="item.allowDirectAccept && item.status === 'open'">{{ t('tasks.direct') }}</span>
+                </div>
+                <div class="task-card-meta">
+                  <span>@{{ item.client.handle }}</span><span>{{ item.proposalCount }} {{ t('tasks.proposalCount') }}</span>
+                </div>
+                <div class="task-card-budget">
+                  <span>{{ t('content.budget') }}</span><strong>{{ money(item.budgetCents, item.currency) }}</strong>
+                </div>
+                <div class="task-card-footer">
+                  <span class="task-card-deadline" :title="date(item.deadline, item.clientTimezone)"><Clock3 :size="13" aria-hidden="true" />{{ t('tasks.deadline') }} · <time :datetime="item.deadline">{{ deadlineDate(item.deadline, item.clientTimezone) }}</time></span>
+                  <span class="task-card-open">{{ t('tasks.reviewBrief') }}<ChevronRight :size="15" aria-hidden="true" /></span>
+                </div>
               </UiContentCard>
               <UiEmptyState
                 v-if="!tasks.length" class="task-market-empty"
@@ -710,15 +804,18 @@ onBeforeUnmount(() => {
                 </template>
               </UiEmptyState>
             </UiCatalog>
+            <div v-if="loadMoreError" class="task-feedback error" role="alert">
+              {{ loadMoreError }}
+            </div>
             <UiButton v-if="nextTaskCursor" variant="secondary" :loading="loadingMore" @click="loadMoreTasks">
-              {{ t('actions.loadMore') }}
+              {{ t(loadMoreError ? 'actions.retry' : 'actions.loadMore') }}
             </UiButton>
             <UiActionBanner v-if="canPublishBrief" :title="t('tasks.publishIdea')" :summary="t('tasks.publishIdeaSummary')">
               <template #icon>
                 <Lightbulb :size="24" :stroke-width="1.75" />
               </template>
               <template #actions>
-                <UiButton variant="primary" @click="createOpen = true">
+                <UiButton variant="secondary" @click="createOpen = true">
                   <template #start>
                     <Plus :size="17" :stroke-width="1.75" />
                   </template>
@@ -727,7 +824,7 @@ onBeforeUnmount(() => {
               </template>
             </UiActionBanner>
           </template>
-        </div>
+        </CatalogResults>
       </div>
     </template>
 
@@ -737,7 +834,7 @@ onBeforeUnmount(() => {
           <ArrowLeft :size="17" />{{ t('tasks.back') }}
         </RouterLink>
         <div v-if="detail" class="task-detail-toolbar-actions">
-          <UiButton v-if="canDeliver" as="RouterLink" class="command-button primary" variant="primary" :to="{ path: creationPath(detail.deliverableType), query: { taskId: detail.id } }">
+          <UiButton v-if="canDeliver" as="RouterLink" class="command-button primary" variant="primary" :to="{ path: creationPath(detail.deliveryKind || detail.deliverableType), query: { taskId: detail.id } }">
             <template #start>
               <WandSparkles :size="17" />
             </template>{{ t('tasks.startCreating') }}
@@ -788,7 +885,9 @@ onBeforeUnmount(() => {
             </section>
           </div>
           <section class="task-trust-block">
-            <div><ShieldCheck :size="18" /><h2>{{ t('tasks.rights') }}</h2></div><p>{{ detail.rightsTerms }}</p>
+            <div><ShieldCheck :size="18" /><h2>{{ t('tasks.rights') }}</h2></div><p>{{ detail.rightsTerms }}</p><p v-if="detail.deliveryKind">
+              {{ t('tasks.deliveryKindLabel') }} · {{ t(`tasks.deliveryKinds.${detail.deliveryKind}`) }}
+            </p>
           </section>
           <section class="task-trust-block">
             <div><WandSparkles :size="18" /><h2>{{ t('tasks.disclosure') }}</h2></div><p>{{ detail.aiDisclosureRequirement }}</p>
@@ -813,24 +912,42 @@ onBeforeUnmount(() => {
             </form>
 
             <template v-if="canDeliver">
-              <UiButton as="RouterLink" class="command-button primary wide" variant="primary" :to="{ path: creationPath(detail.deliverableType), query: { taskId: detail.id } }">
+              <UiButton as="RouterLink" class="command-button primary wide" variant="primary" :to="{ path: creationPath(detail.deliveryKind || detail.deliverableType), query: { taskId: detail.id } }">
                 <template #start>
                   <WandSparkles :size="17" />
                 </template>{{ t('tasks.createForTask') }}
-              </UiButton><form class="task-action-form" @submit.prevent="submitDelivery">
+              </UiButton>
+              <form class="task-action-form delivery-asset-search" @submit.prevent="loadDeliveryAssets()">
+                <label>{{ t('tasks.searchDeliveryAssets') }}<UiInput v-model="assetSearch" type="search" maxlength="120" /></label>
+                <UiButton type="submit" :loading="assetsLoading">
+                  {{ t('actions.search') }}
+                </UiButton>
+              </form>
+              <p v-if="assetsError" class="task-feedback error" role="alert">
+                {{ assetsError }} <UiButton type="button" :disabled="assetsLoading" @click="loadDeliveryAssets(assetRetry.more, assetRetry.pinID)">
+                  {{ t('actions.retry') }}
+                </UiButton>
+              </p>
+              <UiButton v-if="assetCursor" class="delivery-assets-more" type="button" :loading="assetsLoading" @click="loadDeliveryAssets(true)">
+                {{ t('tasks.moreDeliveryAssets') }}
+              </UiButton>
+              <p class="task-inline-help">
+                {{ t('tasks.deliveryLimit') }}
+              </p>
+              <form class="task-action-form delivery-submit-form" @submit.prevent="submitDelivery">
                 <label>{{ t('tasks.asset') }}<UiSelect v-model="delivery.assetId" required><option v-for="asset in assets" :key="asset.id" :value="asset.id">{{ asset.title }}</option></UiSelect></label><label>{{ t('tasks.deliveryNote') }}<UiTextarea v-model="delivery.note" rows="4" minlength="5" required /></label><fieldset v-if="assets.length > 1">
                   <legend>{{ t('tasks.extraDeliveryAssets') }}</legend>
-                  <label v-for="asset in assets.filter(item => item.id !== delivery.assetId)" :key="asset.id" class="check-label"><UiCheckbox :model-value="delivery.extraAssetIds.includes(asset.id)" @update:model-value="checked => delivery.extraAssetIds = checked ? [...delivery.extraAssetIds, asset.id] : delivery.extraAssetIds.filter(id => id !== asset.id)" />{{ asset.title }}</label>
+                  <label v-for="asset in assets.filter(item => item.id !== delivery.assetId)" :key="asset.id" class="check-label"><UiCheckbox :model-value="delivery.extraAssetIds.includes(asset.id)" :disabled="!delivery.extraAssetIds.includes(asset.id) && new Set([delivery.assetId, ...delivery.extraAssetIds]).size >= 20" @update:model-value="checked => delivery.extraAssetIds = checked ? [...delivery.extraAssetIds, asset.id] : delivery.extraAssetIds.filter(id => id !== asset.id)" />{{ asset.title }}</label>
                 </fieldset>
                 <label>{{ t('tasks.rightsEvidence') }}<UiTextarea v-model="delivery.rightsEvidence" rows="3" minlength="10" required /></label>
                 <label>{{ t('tasks.aiDisclosure') }}<UiTextarea v-model="delivery.aiDisclosure" rows="3" minlength="5" required /></label>
                 <label class="check-label"><UiCheckbox v-model="delivery.rightsConfirmed" required />{{ t('tasks.rightsConfirmed') }}</label>
-                <UiButton class="command-button secondary wide" variant="secondary" type="submit" :loading="actionLoading" :disabled="!assets.length">
+                <UiButton class="command-button secondary wide" variant="secondary" type="submit" :loading="actionLoading" :disabled="!delivery.assetId || assetsLoading || new Set([delivery.assetId, ...delivery.extraAssetIds]).size > 20">
                   <template #start>
                     <FileCheck2 v-if="!actionLoading" :size="17" />
                   </template>{{ t('tasks.submitDelivery') }}
                 </UiButton>
-              </form><p v-if="!assets.length" class="task-inline-help">
+              </form><p v-if="!assets.length && !assetsLoading && !assetsError" class="task-inline-help">
                 {{ t('tasks.noDeliveryAssets') }}
               </p>
             </template>
@@ -1037,7 +1154,7 @@ onBeforeUnmount(() => {
           </fieldset>
           <fieldset class="task-form-section">
             <legend>{{ t('tasks.scheduleSection') }}</legend><div class="form-pair">
-              <label>{{ t('tasks.typeLabel') }}<UiSelect v-model="draft.deliverableType"><option v-for="item in types" :key="item" :value="item">{{ taskTypeLabel(item) }}</option></UiSelect></label><label>{{ t('tasks.budgetLabel') }}<UiInput v-model="draft.budget" type="number" min="0.50" max="999999.99" step="0.01" required /></label>
+              <label>{{ t('tasks.typeLabel') }}<UiSelect v-model="draft.deliverableType"><option v-for="item in types" :key="item" :value="item">{{ taskTypeLabel(item) }}</option></UiSelect><small v-if="taskTypes.find(item => item.code === draft.deliverableType)?.deliveryKind">{{ t('tasks.deliveryKindLabel') }} · {{ t(`tasks.deliveryKinds.${taskTypes.find(item => item.code === draft.deliverableType)?.deliveryKind}`) }}</small></label><label>{{ t('tasks.budgetLabel') }}<UiInput v-model="draft.budget" type="number" min="0.50" max="999999.99" step="0.01" required /></label>
             </div><div class="form-pair">
               <label>{{ t('tasks.deadlineLabel') }}<UiInput v-model="draft.deadline" type="datetime-local" :min="minimumDeadline" required /></label><label>{{ t('tasks.timezoneLabel') }}<UiSelect v-model="draft.timezone" :aria-label="t('tasks.timezoneLabel')" required><option v-for="item in timezoneOptions" :key="item" :value="item">{{ item }}</option></UiSelect>
               </label>
@@ -1059,6 +1176,52 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.task-result-list.ui-catalog { gap: 12px; }
+.task-result-list.ui-catalog .task-row { display: grid; grid-template-columns: 176px minmax(0, 1fr) 180px; grid-template-areas: 'media title budget' 'media summary budget' 'media tags footer' 'media meta footer'; gap: 6px 20px; padding: 16px; align-items: start; text-decoration: none; }
+.task-row .task-row-media { grid-area: media; height: auto; min-height: 0; aspect-ratio: 16 / 10; align-self: center; }
+.task-card-title { grid-area: title; margin: 0; color: var(--text); font-size: 16px; font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; }
+.task-card-summary { grid-area: summary; margin: 0; color: var(--text-secondary); font-size: 13px; line-height: 1.65; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.task-card-tags { grid-area: tags; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12px; color: var(--text-secondary); }
+.task-card-type { display: inline-flex; align-items: center; gap: 5px; }
+.task-card-meta { grid-area: meta; display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: 12px; color: var(--text-secondary); overflow-wrap: anywhere; }
+.task-card-budget { grid-area: budget; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.task-card-budget > span { color: var(--text-secondary); font-size: 12px; }
+.task-card-budget strong { font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.5; color: var(--text); }
+.task-card-footer { grid-area: footer; align-self: end; display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }
+.task-card-deadline { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-size: 12px; color: var(--text-secondary); }
+.task-card-open { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text-secondary); }
+.task-row:hover .task-card-open { color: var(--accent-readable); }
+.task-result-list.ui-catalog.is-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); }
+.task-result-list.ui-catalog.is-grid .task-row { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto auto 1fr auto auto auto; grid-template-areas: 'media' 'title' 'budget' 'summary' 'tags' 'meta' 'footer'; gap: 10px; }
+.task-result-list.ui-catalog.is-grid .task-row-media { height: auto; min-height: 0; aspect-ratio: 16 / 10; }
+.task-result-list.is-grid .task-card-title { min-height: 48px; }
+.task-result-list.is-grid .task-card-budget { flex-direction: row; align-items: baseline; gap: 8px; }
+.task-result-list.is-grid .task-card-budget strong { order: -1; }
+.task-result-list.is-grid .task-card-footer { flex-direction: row; align-items: center; justify-content: space-between; gap: 8px; padding-top: 10px; border-top: 1px solid var(--border); }
+@media (min-width: 768px) and (max-width: 1100px) { .task-result-list.ui-catalog .task-row { grid-template-columns: 132px minmax(0, 1fr) 160px; gap: 6px 14px; } }
+@media (max-width: 767px) {
+  .task-result-list.ui-catalog .task-row, .task-result-list.ui-catalog.is-grid .task-row { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto; grid-template-areas: 'media' 'title' 'budget' 'summary' 'tags' 'meta' 'footer'; padding: 14px; gap: 10px; }
+  .task-result-list.ui-catalog .task-row-media { height: auto; min-height: 0; aspect-ratio: 16 / 10; }
+  .task-card-budget { flex-direction: row; align-items: baseline; gap: 8px; }
+  .task-card-budget strong { order: -1; }
+  .task-card-footer { flex-direction: row; align-items: center; justify-content: space-between; gap: 8px; padding-top: 10px; border-top: 1px solid var(--border); }
+}
+.task-toolbar .task-toolbar__type, .task-toolbar .task-toolbar__status { flex: 0 0 auto; max-width: 190px; }
+.task-toolbar .task-toolbar__sort { width: auto; max-width: 200px; }
+.task-skeleton { padding-top: 0; }
+@media (min-width: 1321px) {
+  .task-toolbar .task-toolbar__type { display: none; }
+}
+@media (max-width: 767px) {
+  .task-toolbar.ui-filter-bar { display: grid; }
+  .task-toolbar .task-filters { margin-left: 0; }
+  .task-keyword { justify-self: start; }
+  .task-toolbar .task-filters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .task-toolbar .task-toolbar__type, .task-toolbar .task-toolbar__status { width: 100%; max-width: none; }
+  .task-toolbar__type :deep(.ui-select__trigger), .task-toolbar__status :deep(.ui-select__trigger) { width: 100%; }
+  .task-toolbar__reset { justify-self: start; }
+}
+
 .task-market.is-detail { --content-max: 1400px; padding-top: 0; }
 .task-detail-layout { display: grid; grid-template-columns: minmax(0, 1fr) 288px; gap: 24px; }
 .task-brief-header { grid-column: 1 / -1; padding: 24px; border: 1px solid var(--border); border-radius: var(--radius-surface); background: var(--surface); }

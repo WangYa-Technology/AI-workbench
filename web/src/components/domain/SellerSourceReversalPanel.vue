@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { api, APIError, messageFrom, type SellerSourceReversalInput, type SellerSourceClosureInput, type SellerSourceReversalOperation, type SellerPayoutReviewItem } from '../../api/client'
+import { api, APIError, messageFrom, type SellerSourceReversalInput, type SellerSourceClosureInput, type SellerSourceDispositionInput, type SellerSourceReversalOperation, type SellerPayoutReviewItem } from '../../api/client'
 import { createScopedApi } from '../../lib/scopedApi'
 import { formatCurrency, formatDateTime } from '../../lib/format'
 import { textWithin } from '../../lib/unicodeText'
@@ -23,7 +23,7 @@ const session = useSessionStore()
 const allowed = computed(() => session.initialized && session.user?.status === 'active' && session.user.permissions.includes('admin:finance'))
 const operation = ref<SellerSourceReversalOperation>()
 type Pending = { requestId: string; snapshot: SellerSourceReversalOperation; attempted: boolean } & (
-  { kind: 'return'; id: string; input: SellerSourceReversalInput } | { kind: 'close'; id: string; input: SellerSourceClosureInput }
+  { kind: 'return'; id: string; input: SellerSourceReversalInput } | { kind: 'close'; id: string; input: SellerSourceClosureInput } | { kind: 'dispose'; id: string; input: SellerSourceDispositionInput }
 )
 const pending = ref<Pending>()
 const reason = ref(''), error = ref(''), success = ref('')
@@ -31,8 +31,11 @@ const loading = ref(false), busy = ref(false), confirmation = ref(false), denied
 let generation = 0
 const money = (value: number) => formatCurrency(value, 'USD', locale.value)
 const date = (value: string) => formatDateTime(value, locale.value, session.user?.timezone || 'UTC')
-const actionable = computed(() => allowed.value && !denied.value && !props.blocked && operation.value?.request.id === props.requestId && operation.value.request.sellerId !== session.user?.id && (operation.value.canSubmit || operation.value.canClose))
+const actionable = computed(() => allowed.value && !denied.value && !props.blocked && operation.value?.request.id === props.requestId && operation.value.request.sellerId !== session.user?.id && (operation.value.canSubmit || operation.value.canClose || operation.value.canProposeDisposition || operation.value.canApproveDisposition))
 const closing = computed(() => pending.value ? pending.value.kind === 'close' : operation.value?.canClose === true)
+const disposing = computed(() => pending.value ? pending.value.kind === 'dispose' : !operation.value?.canClose && !operation.value?.canSubmit && !!operation.value?.canProposeDisposition)
+const approving = computed(() => pending.value?.kind === 'dispose' ? pending.value.input.phase === 'approve' : operation.value?.canApproveDisposition === true)
+const actionLabel = computed(() => disposing.value ? (approving.value ? 'sourceReversal.approveRead' : 'sourceReversal.proposeRead') : closing.value ? 'sourceReversal.closePrepare' : 'sourceReversal.prepare')
 const validReason = computed(() => textWithin(reason.value, 10, 1000) && !reason.value.includes('\0'))
 const bankLabels = { not_reserved: 'notReserved', not_started: 'notStarted', failed: 'failed', returned: 'returned' } as const
 function clear() { operation.value = undefined; pending.value = undefined; emit('pending', false); reason.value = ''; confirmation.value = false; success.value = '' }
@@ -67,6 +70,10 @@ function prepare() {
     sourceTransferId: op.request.funding.transferId, expectedUpdatedAt: op.expectedUpdatedAt,
     bankCommandId: op.bank.commandId ?? null, bankResultId: op.bank.resultId ?? null, reason: reason.value.trim(), confirmed: true,
   } }
+  else if (op.canProposeDisposition && op.command) pending.value = { kind: 'dispose', id: op.command.id, requestId: props.requestId, snapshot, attempted: false, input: {
+    phase: op.canApproveDisposition ? 'approve' : 'propose', ...(op.canApproveDisposition && op.disposition ? { proposalId: op.disposition.id } : {}),
+    expectedUpdatedAt: op.expectedUpdatedAt, reason: reason.value.trim(), confirmed: true,
+  } }
   else return
   emit('pending', true); confirmation.value = true
 }
@@ -77,10 +84,11 @@ async function submit() {
   const current = generation
   command.attempted = true; busy.value = true; emit('busy', true); confirmation.value = false; error.value = ''; success.value = ''
   try {
-    if (command.kind === 'close') await scoped(current).closeSellerSourceReversal(command.id, command.input)
+    if (command.kind === 'dispose') await scoped(current).disposeSellerSourceReversal(command.id, command.input)
+    else if (command.kind === 'close') await scoped(current).closeSellerSourceReversal(command.id, command.input)
     else await scoped(current).submitSellerSourceReversal(command.id, command.input)
     pending.value = undefined; emit('pending', false); reason.value = ''; operation.value = undefined
-    success.value = t(command.kind === 'close' ? 'sourceReversal.closed' : 'sourceReversal.saved')
+    success.value = t(command.kind === 'dispose' ? 'sourceReversal.dispositionSaved' : command.kind === 'close' ? 'sourceReversal.closed' : 'sourceReversal.saved')
     emit('changed')
     // The command is known accepted. A subsequent GET failure must not
     // reintroduce an unknown POST or offer to submit it again.
@@ -117,6 +125,7 @@ onBeforeUnmount(() => { generation++; emit('busy', false); emit('pending', false
         <span v-if="operation.command">{{ t('sourceReversal.command', { id: operation.command.id }) }}</span>
         <span v-if="operation.jobStatus">{{ t('bankPayout.job') }} · {{ t(`payoutReviews.funding.jobs.${operation.jobStatus}`) }}</span>
         <span v-if="operation.latestRead?.finishedAt">{{ t('sourceReversal.checked', { date: date(operation.latestRead.finishedAt) }) }}</span>
+        <span v-if="operation.disposition">{{ t('sourceReversal.dispositionState', { phase: t(`sourceReversal.phase.${operation.disposition.phase}`) }) }}</span>
         <span v-if="operation.acceptedReadId">{{ t('sourceReversal.receipt', { id: operation.acceptedReadId }) }}</span>
       </template>
     </UiCardContent>
@@ -126,6 +135,9 @@ onBeforeUnmount(() => { generation++; emit('busy', false); emit('pending', false
     <UiAlert v-if="error" variant="danger" role="alert" :message="error" />
     <UiAlert v-if="success" variant="success" role="status" :message="success" />
     <template v-if="!denied">
+      <p v-if="operation?.disposition">
+        {{ operation.disposition.reason }}
+      </p>
       <UiAlert v-if="operation?.requiresReview" variant="warning" :message="t('sourceReversal.review')" />
       <UiAlert v-if="operation?.command && !operation.startedAt && ['failed', 'cancelled', 'succeeded'].includes(operation.jobStatus || '')" variant="warning" :message="t('sourceReversal.stopped')" />
       <UiForm v-if="actionable || pending" :disabled="busy || !!pending || !!blocked" @submit="prepare">
@@ -133,7 +145,7 @@ onBeforeUnmount(() => { generation++; emit('busy', false); emit('pending', false
           <UiTextarea v-model="reason" :aria-label="t('sourceReversal.reason')" rows="3" required />
         </UiFormField>
         <UiButton type="submit" :disabled="!validReason">
-          {{ t(closing ? 'sourceReversal.closePrepare' : 'sourceReversal.prepare') }}
+          {{ t(actionLabel) }}
         </UiButton>
       </UiForm>
       <p v-else-if="operation && !operation.closure">
@@ -149,7 +161,7 @@ onBeforeUnmount(() => { generation++; emit('busy', false); emit('pending', false
         </UiButton>
       </UiToolbar>
     </template>
-    <UiAlertDialog v-model:open="confirmation" :title="t(closing ? 'sourceReversal.closeTitle' : 'sourceReversal.confirmTitle')" :description="t(closing ? 'sourceReversal.closeHelp' : 'sourceReversal.confirmHelp')" :confirm-label="t(closing ? 'sourceReversal.closeConfirm' : 'sourceReversal.confirm')" :cancel-label="t('payoutReviews.edit')" :busy="busy" @confirm="submit" @cancel="cancel">
+    <UiAlertDialog v-model:open="confirmation" :title="t(disposing ? 'sourceReversal.dispositionTitle' : closing ? 'sourceReversal.closeTitle' : 'sourceReversal.confirmTitle')" :description="t(disposing ? 'sourceReversal.dispositionHelp' : closing ? 'sourceReversal.closeHelp' : 'sourceReversal.confirmHelp')" :confirm-label="t(disposing ? actionLabel : closing ? 'sourceReversal.closeConfirm' : 'sourceReversal.confirm')" :cancel-label="t('payoutReviews.edit')" :busy="busy" @confirm="submit" @cancel="cancel">
       <div v-if="pending" class="source-reversal-confirmation">
         <strong>{{ money(pending.snapshot.request.amountCents) }} · {{ t(`sellerSales.env.${pending.snapshot.request.environment}`) }}</strong>
         <p>{{ t('payoutReviews.seller') }} · {{ pending.snapshot.request.sellerId }}</p>

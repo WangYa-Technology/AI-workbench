@@ -12,6 +12,7 @@ import (
 	"path"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/hcai-chat/hcai-chat/internal/accountlifecycle"
@@ -43,33 +44,35 @@ const (
 )
 
 type Asset struct {
-	UploadReplayed    bool           `json:"-"`
-	ID                uuid.UUID      `json:"id"`
-	Kind              string         `json:"kind"`
-	Title             string         `json:"title"`
-	MediaURL          string         `json:"mediaUrl"`
-	MimeType          string         `json:"mimeType"`
-	Width             *int           `json:"width,omitempty"`
-	Height            *int           `json:"height,omitempty"`
-	ScanStatus        string         `json:"scanStatus"`
-	SourceType        string         `json:"sourceType"`
-	SourceID          *uuid.UUID     `json:"sourceId,omitempty"`
-	OriginAssetID     *uuid.UUID     `json:"originAssetId,omitempty"`
-	LicenseCode       string         `json:"licenseCode"`
-	UploadedFilename  *string        `json:"uploadedFilename,omitempty"`
-	SizeBytes         *int64         `json:"sizeBytes,omitempty"`
-	ScanReason        *string        `json:"scanReason,omitempty"`
-	ScannedAt         *time.Time     `json:"scannedAt,omitempty"`
-	CreatedAt         time.Time      `json:"createdAt"`
-	FamilyID          uuid.UUID      `json:"familyId"`
-	VersionNumber     int            `json:"versionNumber"`
-	VersionNote       *string        `json:"versionNote,omitempty"`
-	SupersedesAssetID *uuid.UUID     `json:"supersedesAssetId,omitempty"`
-	IsLatestVersion   bool           `json:"isLatestVersion"`
-	Versions          []AssetVersion `json:"versions,omitempty"`
-	Provenance        *Provenance    `json:"provenance,omitempty"`
-	Usages            []AssetUsage   `json:"usages,omitempty"`
-	UsageNextCursor   *string        `json:"usageNextCursor,omitempty"`
+	TaskDeliveryEligible *bool           `json:"taskDeliveryEligible,omitempty"`
+	PurchaseAccess       *PurchaseAccess `json:"purchaseAccess,omitempty"`
+	UploadReplayed       bool            `json:"-"`
+	ID                   uuid.UUID       `json:"id"`
+	Kind                 string          `json:"kind"`
+	Title                string          `json:"title"`
+	MediaURL             string          `json:"mediaUrl"`
+	MimeType             string          `json:"mimeType"`
+	Width                *int            `json:"width,omitempty"`
+	Height               *int            `json:"height,omitempty"`
+	ScanStatus           string          `json:"scanStatus"`
+	SourceType           string          `json:"sourceType"`
+	SourceID             *uuid.UUID      `json:"sourceId,omitempty"`
+	OriginAssetID        *uuid.UUID      `json:"originAssetId,omitempty"`
+	LicenseCode          string          `json:"licenseCode"`
+	UploadedFilename     *string         `json:"uploadedFilename,omitempty"`
+	SizeBytes            *int64          `json:"sizeBytes,omitempty"`
+	ScanReason           *string         `json:"scanReason,omitempty"`
+	ScannedAt            *time.Time      `json:"scannedAt,omitempty"`
+	CreatedAt            time.Time       `json:"createdAt"`
+	FamilyID             uuid.UUID       `json:"familyId"`
+	VersionNumber        int             `json:"versionNumber"`
+	VersionNote          *string         `json:"versionNote,omitempty"`
+	SupersedesAssetID    *uuid.UUID      `json:"supersedesAssetId,omitempty"`
+	IsLatestVersion      bool            `json:"isLatestVersion"`
+	Versions             []AssetVersion  `json:"versions,omitempty"`
+	Provenance           *Provenance     `json:"provenance,omitempty"`
+	Usages               []AssetUsage    `json:"usages,omitempty"`
+	UsageNextCursor      *string         `json:"usageNextCursor,omitempty"`
 }
 
 // SavedWork is a reference-only projection of a Community bookmark. It does
@@ -114,10 +117,13 @@ type AssetUsage struct {
 }
 
 type ListInput struct {
-	Cursor  string
-	Limit   int
-	Source  string
-	Purpose string
+	Query      string
+	Kind       string
+	ScanStatus string
+	Cursor     string
+	Limit      int
+	Source     string
+	Purpose    string
 }
 
 type AssetPage struct {
@@ -137,14 +143,19 @@ type UsagePage struct {
 }
 
 type assetCursor struct {
-	CreatedAt time.Time `json:"createdAt"`
-	ID        uuid.UUID `json:"id"`
-	OwnerID   uuid.UUID `json:"ownerId"`
-	Source    string    `json:"source,omitempty"`
-	Purpose   string    `json:"purpose,omitempty"`
+	Query      string    `json:"query,omitempty"`
+	Kind       string    `json:"kind,omitempty"`
+	ScanStatus string    `json:"scanStatus,omitempty"`
+	CreatedAt  time.Time `json:"createdAt"`
+	ID         uuid.UUID `json:"id"`
+	OwnerID    uuid.UUID `json:"ownerId"`
+	Source     string    `json:"source,omitempty"`
+	Purpose    string    `json:"purpose,omitempty"`
 }
 
 type savedWorkCursor struct {
+	Query   string    `json:"query,omitempty"`
+	Kind    string    `json:"kind,omitempty"`
 	SavedAt time.Time `json:"savedAt"`
 	PostID  uuid.UUID `json:"postId"`
 }
@@ -237,13 +248,19 @@ func NewScannerFromConfig(cfg config.Config) media.Scanner {
 	return deterministicScanner{}
 }
 
+// Asset text uses Unicode code points, matching the web textWithin contract.
+// The byte bound also bounds validation work for direct service callers.
+func validAssetText(value string, min, max int) bool {
+	return len(value) <= 4*max && utf8.ValidString(value) && utf8.RuneCountInString(value) >= min && utf8.RuneCountInString(value) <= max
+}
+
 func (s *Service) Upload(ctx context.Context, ownerID uuid.UUID, input UploadInput) (Asset, error) {
 	return s.storeUpload(ctx, ownerID, input, nil, "")
 }
 
 func (s *Service) UploadVersion(ctx context.Context, ownerID, baseAssetID uuid.UUID, input VersionInput) (Asset, error) {
 	input.Note = strings.TrimSpace(input.Note)
-	if baseAssetID == uuid.Nil || len(input.Note) < 3 || len(input.Note) > 500 {
+	if baseAssetID == uuid.Nil || !validAssetText(input.Note, 3, 500) {
 		return Asset{}, ErrInvalid
 	}
 	return s.storeUpload(ctx, ownerID, input.UploadInput, &baseAssetID, input.Note)
@@ -252,7 +269,7 @@ func (s *Service) UploadVersion(ctx context.Context, ownerID, baseAssetID uuid.U
 func (s *Service) storeUpload(ctx context.Context, ownerID uuid.UUID, input UploadInput, baseAssetID *uuid.UUID, versionNote string) (Asset, error) {
 	input.Title = strings.TrimSpace(input.Title)
 	input.Filename = path.Base(strings.TrimSpace(input.Filename))
-	if ownerID == uuid.Nil || len(input.Title) < 3 || len(input.Title) > 120 || input.Filename == "." || len(input.Filename) > 180 || input.Reader == nil {
+	if ownerID == uuid.Nil || !validAssetText(input.Title, 3, 120) || input.Filename == "." || !validAssetText(input.Filename, 1, 180) || input.Reader == nil {
 		return Asset{}, ErrInvalid
 	}
 	// Direct in-process callers may request a fresh operation. HTTP callers must
@@ -546,21 +563,33 @@ func finishScanTx(ctx context.Context, tx pgx.Tx, assetID, ownerID uuid.UUID, re
 	return nil
 }
 
+func validAssetFilters(input ListInput) bool {
+	return validAssetText(input.Query, 0, 120) &&
+		(input.Kind == "" || input.Kind == "image" || input.Kind == "video" || input.Kind == "audio" || input.Kind == "document") &&
+		(input.ScanStatus == "" || input.ScanStatus == "pending" || input.ScanStatus == "clean" || input.ScanStatus == "review" || input.ScanStatus == "rejected")
+}
+
 const assetListConditions = ` WHERE a.owner_id=$1
 	AND ($2='' OR a.source_type=$2)
+ AND ($4='' OR position(lower($4) in lower(a.title))>0)
+ AND ($5='' OR a.kind=$5)
+ AND ($6='' OR a.scan_status=$6)
 	AND ($3='' OR ($3='product_preview' AND EXISTS(SELECT 1 FROM product_preview_candidates candidate WHERE candidate.asset_id=a.id))
- OR ($3='product_source' AND EXISTS(SELECT 1 FROM product_source_candidates candidate WHERE candidate.asset_id=a.id)))
+ OR ($3='product_source' AND EXISTS(SELECT 1 FROM product_source_candidates candidate WHERE candidate.asset_id=a.id))
+ OR ($3='task_delivery' AND a.scan_status='clean' AND a.source_type<>'purchase' AND a.license_code<>'task-contract'
+ AND NOT EXISTS(SELECT 1 FROM product_delivery_roots root WHERE root.asset_id=COALESCE(a.origin_asset_id,a.id))))
 	AND (a.source_type<>'purchase' OR EXISTS(SELECT 1 FROM entitlements e WHERE e.asset_id=a.id AND e.user_id=$1 AND e.status='active'))
 	AND NOT (a.source_type='generation' AND EXISTS(SELECT 1 FROM generations chat_generation WHERE chat_generation.id=a.source_id AND chat_generation.mode='chat'))
 	AND NOT EXISTS(SELECT 1 FROM assets newer WHERE newer.family_id=a.family_id AND newer.version_number>a.version_number)`
 
 func (s *Service) List(ctx context.Context, ownerID uuid.UUID, input ListInput) (AssetPage, error) {
+	input.Query = strings.TrimSpace(input.Query)
 	if input.Limit == 0 {
 		input.Limit = 20
 	}
 	if ownerID == uuid.Nil || input.Limit < 1 || input.Limit > 50 || len(input.Cursor) > 1024 ||
-		(input.Source != "" && input.Source != "purchase") ||
-		(input.Purpose != "" && input.Purpose != "product_preview" && input.Purpose != "product_source") || (input.Purpose != "" && input.Source != "") {
+		!validAssetFilters(input) || (input.Source != "" && input.Source != "purchase" && input.Source != "upload" && input.Source != "generation" && input.Source != "delivery") ||
+		(input.Purpose != "" && input.Purpose != "product_preview" && input.Purpose != "product_source" && input.Purpose != "task_delivery") || (input.Purpose != "" && input.Source != "") {
 		return AssetPage{}, ErrInvalidList
 	}
 	var cursorTime *time.Time
@@ -570,7 +599,7 @@ func (s *Service) List(ctx context.Context, ownerID uuid.UUID, input ListInput) 
 		if err != nil {
 			return AssetPage{}, err
 		}
-		if cursor.OwnerID != ownerID || cursor.Source != input.Source || cursor.Purpose != input.Purpose {
+		if cursor.OwnerID != ownerID || cursor.Source != input.Source || cursor.Purpose != input.Purpose || cursor.Query != input.Query || cursor.Kind != input.Kind || cursor.ScanStatus != input.ScanStatus {
 			return AssetPage{}, ErrInvalidList
 		}
 		cursorTime, cursorID = &cursor.CreatedAt, &cursor.ID
@@ -581,12 +610,12 @@ func (s *Service) List(ctx context.Context, ownerID uuid.UUID, input ListInput) 
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	var total int
-	if err := tx.QueryRow(ctx, `SELECT count(*) FROM assets a`+assetListConditions, ownerID, input.Source, input.Purpose).Scan(&total); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM assets a`+assetListConditions, ownerID, input.Source, input.Purpose, input.Query, input.Kind, input.ScanStatus).Scan(&total); err != nil {
 		return AssetPage{}, err
 	}
 	rows, err := tx.Query(ctx, assetSelect+assetListConditions+`
-		  AND ($4::timestamptz IS NULL OR (a.created_at,a.id)<($4,$5::uuid))
-		ORDER BY a.created_at DESC,a.id DESC LIMIT $6`, ownerID, input.Source, input.Purpose, cursorTime, cursorID, input.Limit+1)
+		  AND ($7::timestamptz IS NULL OR (a.created_at,a.id)<($7,$8::uuid))
+		ORDER BY a.created_at DESC,a.id DESC LIMIT $9`, ownerID, input.Source, input.Purpose, input.Query, input.Kind, input.ScanStatus, cursorTime, cursorID, input.Limit+1)
 	if err != nil {
 		return AssetPage{}, fmt.Errorf("list assets: %w", err)
 	}
@@ -606,17 +635,22 @@ func (s *Service) List(ctx context.Context, ownerID uuid.UUID, input ListInput) 
 	if len(page.Items) > input.Limit {
 		page.Items = page.Items[:input.Limit]
 		last := page.Items[len(page.Items)-1]
-		cursor := encodeCursor(assetCursor{CreatedAt: last.CreatedAt, ID: last.ID, OwnerID: ownerID, Source: input.Source, Purpose: input.Purpose})
+		cursor := encodeCursor(assetCursor{CreatedAt: last.CreatedAt, ID: last.ID, OwnerID: ownerID, Source: input.Source, Purpose: input.Purpose, Query: input.Query, Kind: input.Kind, ScanStatus: input.ScanStatus})
 		page.NextCursor = &cursor
+	}
+	rows.Close()
+	if err := populatePurchaseAccess(ctx, tx, ownerID, page.Items); err != nil {
+		return AssetPage{}, err
 	}
 	return page, tx.Commit(ctx)
 }
 
 func (s *Service) ListSavedWorks(ctx context.Context, userID uuid.UUID, input ListInput) (SavedWorkPage, error) {
+	input.Query = strings.TrimSpace(input.Query)
 	if input.Limit == 0 {
 		input.Limit = 20
 	}
-	if userID == uuid.Nil || input.Limit < 1 || input.Limit > 50 {
+	if userID == uuid.Nil || input.Limit < 1 || input.Limit > 50 || len(input.Cursor) > 1024 || !validAssetFilters(input) || input.ScanStatus != "" || input.Source != "" || input.Purpose != "" {
 		return SavedWorkPage{}, ErrInvalidList
 	}
 	var cursorTime *time.Time
@@ -625,6 +659,9 @@ func (s *Service) ListSavedWorks(ctx context.Context, userID uuid.UUID, input Li
 		cursor, err := decodeSavedWorkCursor(input.Cursor)
 		if err != nil {
 			return SavedWorkPage{}, err
+		}
+		if cursor.Query != input.Query || cursor.Kind != input.Kind {
+			return SavedWorkPage{}, ErrInvalidList
 		}
 		cursorTime, cursorID = &cursor.SavedAt, &cursor.PostID
 	}
@@ -638,9 +675,10 @@ func (s *Service) ListSavedWorks(ctx context.Context, userID uuid.UUID, input Li
 		JOIN users u ON u.id=w.author_id
 		WHERE pr.user_id=$1 AND pr.kind='bookmark'
 		  AND p.status='published' AND w.status='published' AND a.scan_status='clean'
+ AND ($5='' OR position(lower($5) in lower(w.title))>0) AND ($6='' OR a.kind=$6)
 		  AND ($2::timestamptz IS NULL OR (pr.created_at,p.id)<($2,$3::uuid))
 		ORDER BY pr.created_at DESC,p.id DESC
-		LIMIT $4`, userID, cursorTime, cursorID, input.Limit+1)
+		LIMIT $4`, userID, cursorTime, cursorID, input.Limit+1, input.Query, input.Kind)
 	if err != nil {
 		return SavedWorkPage{}, fmt.Errorf("list saved works: %w", err)
 	}
@@ -662,7 +700,7 @@ func (s *Service) ListSavedWorks(ctx context.Context, userID uuid.UUID, input Li
 	if len(page.Items) > input.Limit {
 		page.Items = page.Items[:input.Limit]
 		last := page.Items[len(page.Items)-1]
-		cursor := encodeCursor(savedWorkCursor{SavedAt: last.SavedAt, PostID: last.PostID})
+		cursor := encodeCursor(savedWorkCursor{SavedAt: last.SavedAt, PostID: last.PostID, Query: input.Query, Kind: input.Kind})
 		page.NextCursor = &cursor
 	}
 	return page, nil
@@ -679,6 +717,18 @@ func (s *Service) GetOwned(ctx context.Context, ownerID, assetID uuid.UUID) (Ass
 	if actualOwner != ownerID {
 		return Asset{}, ErrForbidden
 	}
+	capabilityItems := []Asset{item}
+	if err := populatePurchaseAccess(ctx, s.pool, ownerID, capabilityItems); err != nil {
+		return Asset{}, err
+	}
+	item = capabilityItems[0]
+	var eligible bool
+	if err := s.pool.QueryRow(ctx, `SELECT a.scan_status='clean' AND a.source_type<>'purchase' AND a.license_code<>'task-contract'
+ AND NOT EXISTS(SELECT 1 FROM product_delivery_roots root WHERE root.asset_id=COALESCE(a.origin_asset_id,a.id))
+ FROM assets a WHERE a.id=$1 AND a.owner_id=$2`, assetID, ownerID).Scan(&eligible); err != nil {
+		return Asset{}, err
+	}
+	item.TaskDeliveryEligible = &eligible
 	provenance := &Provenance{}
 	switch item.SourceType {
 	case "delivery":
@@ -761,7 +811,8 @@ func (s *Service) usages(ctx context.Context, ownerID, familyID uuid.UUID, input
 			   left(g.prompt,120) AS title,g.status,
 			   CASE WHEN g.conversation_id IS NULL THEN '/create/image?generationId='||g.id::text
 			            ELSE '/create/image?conversationId='||g.conversation_id::text||'&generationId='||g.id::text END AS target_path,g.created_at
-			FROM generations g JOIN family_assets fa ON fa.id=g.source_asset_id
+			FROM generations g JOIN family_assets fa ON fa.id=g.source_asset_id OR fa.id=g.mask_asset_id
+ OR EXISTS(SELECT 1 FROM generation_reference_assets r WHERE r.generation_id=g.id AND r.asset_id=fa.id)
 			WHERE g.owner_id=$2
 			UNION ALL
 			SELECT 'work',w.id,fa.id,fa.version_number,w.title,w.status,
@@ -779,11 +830,13 @@ func (s *Service) usages(ctx context.Context, ownerID, familyID uuid.UUID, input
 			       '/market/demands/'||d.demand_id::text,d.created_at
 			FROM deliveries d
 			JOIN family_assets fa ON fa.id=d.asset_id
+ OR EXISTS(SELECT 1 FROM delivery_assets da WHERE da.delivery_id=d.id AND da.asset_id=fa.id)
 			JOIN demands dem ON dem.id=d.demand_id
 			WHERE d.creator_id=$2
 		)
 		SELECT kind,resource_id,asset_id,version_number,title,status,target_path,created_at
-		FROM usage_rows
+		FROM (SELECT DISTINCT ON (kind,resource_id) * FROM usage_rows
+          ORDER BY kind,resource_id,version_number DESC,asset_id) AS unique_usages
 		WHERE $3::timestamptz IS NULL OR created_at<$3
 		   OR (created_at=$3 AND (kind>$4 OR (kind=$4 AND resource_id>$5::uuid)))
 		ORDER BY created_at DESC,kind,resource_id LIMIT $6`, familyID, ownerID, cursorTime, cursorKind, cursorID, input.Limit+1)

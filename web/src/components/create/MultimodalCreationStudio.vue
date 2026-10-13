@@ -865,14 +865,14 @@ onMounted(async () => {
 .creation-composer textarea::placeholder { color: var(--text-tertiary); }
 .creation-composer-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .creation-composer-tools { min-width: 0; display: flex; align-items: center; gap: 7px; }
-.creation-tool-button { --ui-size: var(--control-height-md); display: grid; place-items: center; padding: 0; border: 1px solid var(--border); border-radius: 50%; background: var(--surface-muted); color: var(--text-secondary); line-height: 0; }
+.creation-tool-button { --ui-size: var(--control-height-md); display: grid; place-items: center; padding: 0; border: 1px solid var(--border); border-radius: var(--radius-button); background: var(--surface-muted); color: var(--text-secondary); line-height: 0; }
 .creation-tool-button:hover, .creation-tool-button.active { border-color: var(--studio-accent); background: var(--studio-accent-soft); color: var(--studio-accent); }
 .creation-mode-chip { height: 32px; display: inline-flex; align-items: center; gap: 5px; box-sizing: border-box; padding: 0 7px 0 9px; border: 1px solid color-mix(in srgb, var(--studio-accent) 35%, var(--border)); border-radius: 999px; background: var(--studio-accent-soft); color: var(--accent-readable); font-size: 11px; font-weight: 650; line-height: 1; }
 .creation-mode-chip > svg, .creation-mode-chip-label { display: block; flex: 0 0 auto; }
 .creation-mode-chip-label { line-height: 1; }
 .creation-mode-chip button { width: 22px; height: 22px; display: grid; place-items: center; flex: 0 0 22px; margin: 0; padding: 0; border: 0; border-radius: 50%; background: transparent; color: inherit; }
 .creation-mode-chip button:hover { background: rgb(0 0 0 / 10%); }
-.creation-submit { --ui-height: var(--control-height-md); height: var(--control-height-md); display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 0 13px; border: 0; border-radius: var(--radius-control); background: var(--studio-accent); color: var(--accent-contrast); font-size: 12px; font-weight: 650; }
+.creation-submit { --ui-height: var(--control-height-md); height: var(--control-height-md); display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 0 13px; border: 0; border-radius: var(--radius-button); background: var(--studio-accent); color: var(--accent-contrast); font-size: 12px; font-weight: 650; }
 .creation-submit:hover:not(:disabled) { background: var(--accent-hover); }
 .creation-submit:disabled { background: var(--surface-muted); color: var(--text-tertiary); cursor: not-allowed; }
 .creation-notice { width: 100%; min-width: 0; min-height: 42px; box-sizing: border-box; display: flex; align-items: flex-start; gap: 8px; margin: 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: 9px; font-size: 11px; line-height: 1.45; overflow-wrap: anywhere; }
@@ -955,7 +955,7 @@ onMounted(async () => {
   .creation-text { font-size: 14px; }
   .creation-composer { width: calc(100% - 20px); margin-bottom: 10px; padding: 9px 10px 8px; border-radius: 18px; }
   .creation-composer textarea { min-height: 48px; font-size: 14px; }
-  .creation-submit { width: var(--control-height-md); min-width: var(--control-height-md); padding: 0; border-radius: 50%; }
+  .creation-submit { width: var(--control-height-md); min-width: var(--control-height-md); padding: 0; border-radius: var(--radius-button); }
   .creation-submit span { display: none; }
   .creation-popover { left: 10px; width: min(300px, calc(100vw - 28px)); }
   .creation-settings { width: min(260px, calc(100vw - 28px)); }

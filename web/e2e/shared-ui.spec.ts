@@ -11,7 +11,7 @@ for (const width of [390, 1308]) {
       const card = page.locator('.ui-content-card').first()
       await expect(card).toBeVisible()
       await expect(card).toHaveCSS('border-top-width', '1px')
-      await expect(card).toHaveCSS('padding-top', width < 768 ? '10px' : '12px')
+      await expect(card).toHaveCSS('padding-top', width < 768 ? '10px' : '16px')
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
       const select = filter.locator('.ui-select__trigger:visible').first()
       await select.click()

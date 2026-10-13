@@ -11,10 +11,10 @@ test('market catalog switches layouts, filters and opens product details', async
   await expect(catalog.locator('.product-card')).toHaveCount(count)
   await page.getByRole('button', { name: 'List view', exact: true }).click()
   await expect(catalog).not.toHaveClass(/is-grid/)
-  await page.locator('.market-search input').fill('no-such-product-987654321')
-  await page.locator('.market-search-submit').click()
+  await page.locator('.global-search-input').fill('no-such-product-987654321')
+  await page.locator('.global-search-input').press('Enter')
   await expect(page).toHaveURL(/q=no-such-product/)
-  await page.getByRole('button', { name: 'Clear filters', exact: true }).click()
+  await page.locator('.catalog-reset').click()
   await expect(catalog.locator('.product-card')).toHaveCount(count)
   for (const width of [1551, 1308, 390]) {
     await page.setViewportSize({ width, height: 901 })

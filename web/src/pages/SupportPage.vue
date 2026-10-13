@@ -39,6 +39,8 @@ const form = reactive<SupportCaseCreate>({
 const terminal = computed(() => activeCase.value ? ['resolved', 'closed'].includes(activeCase.value.status) : false)
 const isCopyright = computed(() => form.category === 'copyright')
 const selectedID = computed(() => String(route.params.caseId || ''))
+const relatedOrderID = computed(() => typeof route.query.orderId === 'string' ? route.query.orderId : '')
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const openCaseCount = computed(() => cases.value.filter(item => item.status === 'open').length)
 const resolvedCaseCount = computed(() => cases.value.filter(item => item.status === 'resolved').length)
 const supportHeroStats = computed(() => [
@@ -79,6 +81,8 @@ async function load() {
       activeCase.value = await api.getSupportCase(selectedID.value)
     } else {
       activeCase.value = null
+      showCreate.value = false
+      applyOrderContext()
     }
   } catch (reason) {
     error.value = messageFrom(reason)
@@ -108,6 +112,14 @@ async function selectCase(item: SupportCase) {
   await router.push(`/support/${item.id}`)
 }
 
+function applyOrderContext() {
+  if (selectedID.value || !uuidPattern.test(relatedOrderID.value)) return
+  form.category = 'task_or_order'
+  form.relatedResourceType = 'order'
+  form.relatedResourceId = relatedOrderID.value
+  showCreate.value = true
+}
+
 function startCreate(category: SupportCaseCreate['category'] = 'general_support') {
   activeCase.value = null
   form.category = category
@@ -127,6 +139,8 @@ function resetCopyrightFields() {
 
 function backToSupport() {
   showCreate.value = false
+  form.relatedResourceType = ''
+  form.relatedResourceId = undefined
   void router.push('/support')
 }
 
@@ -169,6 +183,9 @@ async function submitReply() {
 }
 
 watch(() => route.params.caseId, () => void load())
+watch(() => route.query.orderId, () => {
+  if (session.user) applyOrderContext()
+})
 onMounted(() => void load())
 </script>
 
@@ -235,6 +252,9 @@ onMounted(() => void load())
         </aside>
 
         <section v-if="showCreate" class="support-detail support-create-panel">
+          <p v-if="form.relatedResourceType === 'order' && form.relatedResourceId" class="support-intake-note" role="status">
+            {{ t('support.orderContextHint') }}
+          </p>
           <UiForm surface="muted" class="support-form" :disabled="actionLoading" @submit.prevent="createCase">
             <div class="support-intake-columns">
               <section class="support-intake-section" aria-labelledby="support-problem-heading">

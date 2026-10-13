@@ -17,6 +17,9 @@ export default defineConfig({
         // Cache the shared framework separately from application code and translations.
         onlyExplicitManualChunks: true,
         manualChunks(id) {
+          // Keep each static locale independently cacheable without changing synchronous language switching.
+          const locale = id.match(/\/src\/i18n\/messages\/(en-US|zh-CN)\.ts$/)?.[1]
+          if (locale) return `locale-${locale}`
           if (/\/node_modules\/(?:@vue\/|@intlify\/|vue\/|vue-router\/|vue-i18n\/|pinia\/)/.test(id)) return 'framework'
         },
       },

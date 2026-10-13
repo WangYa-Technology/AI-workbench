@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import UiSidebarGroup from '../ui/UiSidebarGroup.vue'
 import UiSidebarItem from '../ui/UiSidebarItem.vue'
-import { ArrowLeft, Bell, CircleUserRound, ClipboardList, Compass, Headphones, Images, Languages, ListChecks, Moon, PanelLeftClose, PanelLeftOpen, ReceiptText, Search, ShieldAlert, ShoppingBag, Store, Sun, UsersRound, WalletCards, WandSparkles } from 'lucide-vue-next'
+import { ArrowLeft, Bell, CircleUserRound, ClipboardList, Compass, Globe2, Headphones, Images, Languages, ListChecks, Moon, PanelLeftClose, PanelLeftOpen, ReceiptText, Search, ShieldAlert, ShoppingBag, Store, Sun, UsersRound, WalletCards, WandSparkles, X } from 'lucide-vue-next'
 import { computed, nextTick, onMounted, ref, useTemplateRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
@@ -16,6 +16,9 @@ import MarkdownContent from '../ui/MarkdownContent.vue'
 import UiAnnouncement from '../ui/UiAnnouncement.vue'
 import UiIconButton from '../ui/UiIconButton.vue'
 import UiInput from '../ui/UiInput.vue'
+import UiSelect from '../ui/UiSelect.vue'
+import { textLength } from '../../lib/unicodeText'
+import { catalogSearchScopes } from '../catalog/searchScopes'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -25,6 +28,38 @@ const session = useSessionStore()
 const siteConfig = useSiteConfigStore()
 const notifications = useNotificationsStore()
 const searchQuery = ref(String(route.query.q || ''))
+const searchContext = computed(() => catalogSearchScopes.find(scope => scope.route === route.name && (!scope.matches || scope.matches(route))))
+const localSearchScope = computed(() => searchContext.value?.value || 'all')
+const searchScope = ref(localSearchScope.value)
+const mobileSearchOpen = ref(false)
+const searchInvalid = ref(false)
+const searchInput = useTemplateRef('searchInput')
+const searchesCatalog = computed(() => Boolean(searchContext.value) && searchScope.value === localSearchScope.value)
+const searchLabel = computed(() => searchesCatalog.value ? searchContext.value!.label : 'search.fullSite')
+const searchPlaceholder = computed(() => searchesCatalog.value ? searchContext.value!.placeholder : 'search.sitePlaceholder')
+const searchInputLabel = computed(() => searchesCatalog.value ? searchContext.value!.inputLabel : 'actions.search')
+const searchError = computed(() => searchesCatalog.value ? 'inspiration.queryTooLong' : 'inspiration.searchLength')
+
+watch(localSearchScope, value => { searchScope.value = value })
+watch([searchQuery, searchScope], () => { searchInvalid.value = false })
+watch(() => route.fullPath, () => {
+  searchQuery.value = String(route.query.q || '')
+  searchInvalid.value = false
+})
+
+async function toggleMobileSearch() {
+  mobileSearchOpen.value = !mobileSearchOpen.value
+  if (mobileSearchOpen.value) {
+    await nextTick()
+    searchInput.value?.focus()
+  }
+}
+
+function closeMobileSearch() {
+  if (!mobileSearchOpen.value) return
+  mobileSearchOpen.value = false
+  globalThis.document.getElementById('mobile-search-toggle')?.focus()
+}
 const mainContent = useTemplateRef('mainContent')
 const routeAnnouncement = ref('')
 const authAnnouncementDismissed = ref(false)
@@ -150,11 +185,8 @@ const active = (key: string) => {
   return name === key
 }
 
-watch(() => route.query.q, (value) => {
-  searchQuery.value = String(value || '')
-})
-
 watch(() => route.path, async () => {
+  mobileSearchOpen.value = false
   if (!routeFocusReady) return
   await nextTick()
   await new Promise<void>((resolve) => globalThis.requestAnimationFrame(() => resolve()))
@@ -171,7 +203,22 @@ watch(() => session.user?.id, (userID) => {
 
 const submitSearch = () => {
   const q = searchQuery.value.trim()
-  if (q.length >= 2) void router.push({ path: '/search', query: { q } })
+  if (searchesCatalog.value) {
+    if (searchContext.value?.maxLength && textLength(q) > searchContext.value.maxLength) {
+      searchInvalid.value = true
+      searchInput.value?.focus()
+      return
+    }
+    searchQuery.value = q
+    void router.push({ path: route.path, query: { ...route.query, q: q || undefined } })
+    return
+  }
+  if (textLength(q) < 2 || textLength(q) > 120) {
+    searchInvalid.value = true
+    searchInput.value?.focus()
+    return
+  }
+  void router.push({ path: '/search', query: { q } })
 }
 
 </script>
@@ -248,19 +295,35 @@ const submitSearch = () => {
 
         <div v-if="isAdminRoute" id="admin-header-slot" class="admin-header-slot"></div>
 
-        <div v-else class="search-stack">
-          <form class="global-search" role="search" @submit.prevent="submitSearch">
-            <UiInput v-model="searchQuery" class="global-search-input" size="sm" type="search" :placeholder="t('actions.searchPlaceholder')" :aria-label="t('actions.search')" />
+        <div v-else id="header-search" class="search-stack" :class="{ 'is-mobile-open': mobileSearchOpen }" @keydown.esc="closeMobileSearch">
+          <form class="global-search" role="search" :aria-label="t(searchLabel)" @submit.prevent="submitSearch">
+            <UiSelect v-if="localSearchScope !== 'all'" v-model="searchScope" class="global-search-scope" size="sm" :align-item-with-trigger="false" :aria-label="t('search.scope')">
+              <template #start>
+                <component :is="searchContext?.icon" v-if="searchesCatalog" :size="15" :stroke-width="1.75" aria-hidden="true" />
+                <Globe2 v-else :size="15" :stroke-width="1.75" aria-hidden="true" />
+              </template>
+              <option v-if="searchContext" :value="searchContext.value">
+                {{ t(searchContext.label) }}
+              </option>
+              <option value="all">
+                {{ t('search.fullSite') }}
+              </option>
+            </UiSelect>
+            <UiInput ref="searchInput" v-model="searchQuery" class="global-search-input" size="sm" type="search" :placeholder="t(searchPlaceholder)" :aria-label="t(searchInputLabel)" :aria-invalid="searchInvalid || undefined" :aria-describedby="searchInvalid ? 'header-search-error' : undefined" />
             <UiIconButton class="global-search-submit" type="submit" :label="t('actions.search')">
               <Search :size="18" :stroke-width="1.75" />
             </UiIconButton>
           </form>
-          <p class="quick-links-context">
-            {{ t('actions.explore') }}
+          <p v-if="searchInvalid" id="header-search-error" class="global-search-error" role="alert">
+            {{ t(searchError) }}
           </p>
         </div>
 
         <div class="header-actions">
+          <UiIconButton v-if="!isAdminRoute" id="mobile-search-toggle" class="mobile-search-toggle" size="sm" :label="t(mobileSearchOpen ? 'search.closeSearch' : 'search.openSearch')" aria-controls="header-search" :aria-expanded="mobileSearchOpen" @click="toggleMobileSearch">
+            <X v-if="mobileSearchOpen" :size="19" />
+            <Search v-else :size="19" />
+          </UiIconButton>
           <UiIconButton as="RouterLink" class="notification-action" size="sm" to="/notifications" :label="t('actions.notifications')">
             <Bell :size="19" :stroke-width="1.75" />
             <span class="t-badge" :data-open="String(Boolean(notifications.unreadCount))">
@@ -312,3 +375,47 @@ const submitSearch = () => {
     </nav>
   </div>
 </template>
+
+<style scoped>
+.search-stack { position: relative; }
+.global-search { display: flex; align-items: center; gap: 2px; height: 40px; padding: 4px; border-radius: 12px; background: var(--surface); box-shadow: var(--shadow-xs); }
+.global-search .global-search-input {
+  --field-focus-background: transparent;
+  --field-focus-border: transparent;
+  --field-focus-shadow: none;
+  flex: 1; min-width: 0; height: 32px; padding: 0 8px 0 12px; border: 0; background: transparent; box-shadow: none; color: var(--text); font-size: 14px; font-weight: 400;
+}
+.global-search .global-search-input:focus { outline: none; background: transparent; border-color: transparent; box-shadow: none; }
+.global-search .global-search-input::placeholder { color: var(--text-secondary); opacity: 1; }
+.global-search-scope { position: relative; flex: 0 0 auto; width: auto; max-width: 160px; padding-right: 4px; }
+.global-search-scope::after { content: ''; position: absolute; right: 0; top: 8px; bottom: 8px; width: 1px; background: var(--border); pointer-events: none; }
+.global-search-scope :deep(.ui-select__trigger) { min-height: 32px; height: 32px; gap: 4px; padding: 0 4px 0 6px; border: 0; border-radius: 6px; background: transparent; box-shadow: none; color: var(--text-secondary); font-size: 13px; font-weight: 400; transition: none; }
+.global-search-scope :deep(.ui-select__start) { color: inherit; }
+.global-search-scope :deep(.ui-select__trigger:hover),
+.global-search-scope :deep(.ui-select__trigger[aria-expanded='true']) { color: var(--text); background: transparent; }
+.global-search-scope :deep(.ui-select__trigger:focus-visible) { text-decoration: underline; text-underline-offset: 4px; }
+.global-search-scope :deep(.ui-select__chevron) { width: 14px; height: 14px; margin-left: 0; color: inherit; }
+.global-search .global-search-submit { --ui-size: 32px; position: static; flex: 0 0 32px; border-radius: 8px; color: var(--text-secondary); }
+.global-search .global-search-submit:hover { color: var(--text); background: var(--surface-muted); }
+.global-search-error { position: absolute; top: calc(100% + 6px); left: 0; right: 0; margin: 0; padding: 8px 12px; border-radius: var(--radius-control); background: var(--surface); color: var(--danger); box-shadow: var(--shadow-sm); font-size: 12px; }
+.header-actions .mobile-search-toggle { display: none; }
+@media (min-width: 1024px) {
+  .search-stack {
+    position: absolute;
+    grid-column: auto;
+    /* Header width follows the sidebar animation; keep the viewport center fixed. */
+    left: calc(100% - 50vw);
+    top: 50%;
+    width: min(540px, calc(100% - 360px));
+    transform: translate(-50%, -50%);
+  }
+}
+@media (max-width: 1023px) {
+  .header-actions .mobile-search-toggle { display: inline-flex; }
+  .search-stack.is-mobile-open { display: grid; position: absolute; top: 100%; left: 8px; right: 8px; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface); box-shadow: var(--shadow-sm); }
+  .global-search { height: 44px; }
+  .global-search .global-search-input { height: 36px; padding-left: 8px; font-size: 16px; }
+  .global-search-scope :deep(.ui-select__trigger) { height: 36px; padding-inline: 6px; }
+  .global-search-error { position: static; margin-top: 6px; padding: 4px 0; box-shadow: none; }
+}
+</style>

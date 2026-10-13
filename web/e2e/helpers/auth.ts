@@ -1,3 +1,4 @@
+import { join } from 'node:path'
 import { readFile } from 'node:fs/promises'
 import { expect, type Page } from '@playwright/test'
 
@@ -9,7 +10,7 @@ export async function registerFromEmail(page: Page, handle: string, password = '
   expect(response.ok()).toBeTruthy()
   const { challenge } = await response.json()
   expect(challenge.challengeId).toMatch(/^[0-9a-f-]{36}$/)
-  const mailbox = new URL(`../../../data/e2e-media/mailbox/auth-challenges/${challenge.challengeId}.eml`, import.meta.url)
+  const mailbox = process.env.E2E_MEDIA_ROOT ? join(process.env.E2E_MEDIA_ROOT, 'mailbox/auth-challenges', `${challenge.challengeId}.eml`) : new URL(`../../../data/e2e-media/mailbox/auth-challenges/${challenge.challengeId}.eml`, import.meta.url)
   let code = ''
   await expect.poll(async () => {
     const mail = await readFile(mailbox, 'utf8').catch(() => '')

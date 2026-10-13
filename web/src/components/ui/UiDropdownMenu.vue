@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { nextTick, ref } from 'vue'
 import { onClickOutside } from '@vueuse/core'
+const emit = defineEmits<{ select: [] }>()
 const open = ref(false)
 const root = ref<globalThis.HTMLElement | null>(null)
 onClickOutside(root, () => { open.value = false })
@@ -26,7 +27,7 @@ withDefaults(defineProps<{ label?: string; triggerClass?: string; transitionName
         {{ label }}
       </slot>
     </button><Transition :name="transitionName">
-      <div v-if="open" class="ui-dropdown-menu__content ui-menu-surface" role="menu" @click="close">
+      <div v-if="open" class="ui-dropdown-menu__content ui-menu-surface" role="menu" @click="close(); emit('select')">
         <slot></slot>
       </div>
     </Transition>

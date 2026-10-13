@@ -3,15 +3,15 @@ import { textWithin } from '../lib/unicodeText'
 import UiEmptyState from '../components/ui/UiEmptyState.vue'
 import UiActionBanner from '../components/ui/UiActionBanner.vue'
 import UiAvatar from '../components/ui/UiAvatar.vue'
-import UiCardContent from '../components/ui/UiCardContent.vue'
-import UiCardTag from '../components/ui/UiCardTag.vue'
-import UiFilterSearch from '../components/ui/UiFilterSearch.vue'
-import UiFilterBar from '../components/ui/UiFilterBar.vue'
+import CatalogToolbar from '../components/catalog/CatalogToolbar.vue'
+import CatalogViews from '../components/catalog/CatalogViews.vue'
+import CatalogResults from '../components/catalog/CatalogResults.vue'
+import CatalogKeyword from '../components/catalog/CatalogKeyword.vue'
 import UiLayoutSwitcher from '../components/ui/UiLayoutSwitcher.vue'
 import UiCatalog from '../components/ui/UiCatalog.vue'
-import UiContentCard from '../components/ui/UiContentCard.vue'
-import { Clock3, Eye, Heart, LoaderCircle, LogIn, MessageCircle, MessageSquareText, MoreHorizontal, Plus, Search, ShieldCheck, UserPlus, X } from 'lucide-vue-next'
-import { computed, nextTick, onMounted, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import CatalogEntry from '../components/catalog/CatalogEntry.vue'
+import { ArrowDownWideNarrow, Clock3, Eye, Filter, Heart, LoaderCircle, LogIn, MessageCircle, MessageSquareText, MoreHorizontal, Plus, Search, ShieldCheck, UserPlus, X } from 'lucide-vue-next'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import UiDropdownMenu from '../components/ui/UiDropdownMenu.vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
@@ -24,9 +24,7 @@ import { useSessionStore } from '../stores/session'
 import PageHeader from '../components/ui/PageHeader.vue'
 import UiButton from '../components/ui/UiButton.vue'
 import UiIconButton from '../components/ui/UiIconButton.vue'
-import UiInput from '../components/ui/UiInput.vue'
 import UiSelect from '../components/ui/UiSelect.vue'
-import UiTabs from '../components/ui/UiTabs.vue'
 import UiTextarea from '../components/ui/UiTextarea.vue'
 
 const { locale, t } = useI18n()
@@ -38,22 +36,19 @@ const posts = ref<CommunityPost[]>([])
 const total = ref(0)
 const capabilities = ref<Awaited<ReturnType<typeof api.communityCapabilities>> | null>(null)
 const activeView = computed(() => ['mine','saved','following','drafts'].includes(String(route.query.view)) ? String(route.query.view) as 'mine' | 'saved' | 'following' | 'drafts' : 'all')
-const viewTabs = computed(() => (session.user ? ['all','mine','saved','following','drafts'] : ['all']).map(value => ({ value, label: t(`community.views.${value}`) })))
-const viewBar = ref<globalThis.HTMLElement | null>(null)
-let viewObserver: globalThis.ResizeObserver | undefined
-function revealSelectedView() {
-  const bar = viewBar.value
-  const selected = bar?.querySelector<globalThis.HTMLElement>('[aria-selected="true"]')
-  if (!bar || !selected) return
-  const bounds = bar.getBoundingClientRect(), tab = selected.getBoundingClientRect()
-  if (tab.left < bounds.left) bar.scrollLeft += tab.left - bounds.left
-  else if (tab.right > bounds.right) bar.scrollLeft += tab.right - bounds.right
-}
-watch(activeView, () => { void nextTick(revealSelectedView) })
-onBeforeUnmount(() => viewObserver?.disconnect())
+const viewTabs = computed(() => (session.user ? ['all','mine','saved','following','drafts'] : ['all']).map(value => ({ value, label: t(`catalog.views.${value}`) })))
+const toolbarHeight = ref(56)
 function selectView(value: string) { void router.push({ path: '/community', query: { ...route.query, view: value === 'all' ? undefined : value } }) }
 const editPostId = ref('')
-function openEdit(post: CommunityPost) { editPostId.value = post.id; createOpen.value = true }
+function postDestination(post: CommunityPost) {
+  return post.status === 'draft' ? `/community?view=drafts&edit=${post.id}` : `/community/posts/${post.id}`
+}
+
+function postExcerpt(body: string) {
+  const paragraph = body.trim().split(/\n\s*\n/)[0]?.replace(/\s+/g, ' ').trim() || ''
+  const characters = Array.from(paragraph)
+  return characters.length > 160 ? `${characters.slice(0, 160).join('')}…` : paragraph
+}
 async function loadFocusedCase() {
   if (!route.params.reportId || !await requireAccount()) return
   showCases.value = true
@@ -79,15 +74,11 @@ const sortTabs = computed(() => [
 ])
 const search = ref(String(route.query.q || ''))
 const categoryCounts = ref<Record<string, number>>()
-let searchTimer: ReturnType<typeof globalThis.setTimeout>
-watch(search, value => { globalThis.clearTimeout(searchTimer); searchTimer = globalThis.setTimeout(() => { void router.replace({ query: { ...route.query, q: value.trim() || undefined } }) }, 250) })
-onBeforeUnmount(() => globalThis.clearTimeout(searchTimer))
 const categories = ref<TaskType[]>([])
 const category = ref(String(route.query.category || ''))
 const categoryName = (code?: string) => { const item = categories.value.find(i => i.code === code); return item ? (locale.value.startsWith('zh') ? item.nameZh : item.nameEn) : code || '' }
 async function selectCategory(value: string) { await router.push({ query: { ...route.query, q: search.value.trim() || undefined, category: value || undefined } }) }
-watch(() => [route.query.category, route.query.view, route.query.q, route.query.sort], () => { category.value = String(route.query.category || ''); search.value = String(route.query.q || ''); mineOnly.value = route.query.view === 'mine' && Boolean(session.user); postNextCursor.value = null; void load() })
-const mineOnly = ref(false)
+watch(() => [route.query.category, route.query.view, route.query.q, route.query.sort], () => { category.value = String(route.query.category || ''); search.value = String(route.query.q || ''); postNextCursor.value = null; void load() })
 const createOpen = ref(false)
 function openRouteEditor() { if (route.query.edit && session.user) { editPostId.value = String(route.query.edit); createOpen.value = true } }
 watch(() => route.query.edit, openRouteEditor)
@@ -139,7 +130,6 @@ const displayedPosts = computed(() => posts.value)
 const hasActiveFilters = computed(() => Boolean(search.value.trim()) || Boolean(category.value))
 
 function clearFilters() {
-  globalThis.clearTimeout(searchTimer)
   search.value = ''
   void router.replace({ query: { ...route.query, q: undefined, category: undefined } })
 }
@@ -258,19 +248,15 @@ async function submitAppeal() {
 }
 
 onMounted(async () => {
-  viewObserver = new globalThis.ResizeObserver(revealSelectedView)
-  if (viewBar.value) viewObserver.observe(viewBar.value)
   await session.ensure()
-  mineOnly.value = route.query.view === 'mine' && Boolean(session.user)
   await load()
   await loadFocusedCase()
   openRouteEditor()
-  await nextTick(revealSelectedView)
 })
 </script>
 
 <template>
-  <section class="community-page content-width">
+  <section class="community-page catalog-page content-width" :style="{ '--catalog-toolbar-height': `${toolbarHeight}px` }">
     <PageHeader
       :title="t('community.title')"
       :summary="t('community.summary')"
@@ -295,20 +281,13 @@ onMounted(async () => {
       </template>
     </PageHeader>
     <div :class="{ 'has-category-sidebar': categories.length > 0 }">
-      <UiFilterBar as="div" split class="ui-filter-bar controls-with-switcher community-controls-row has-switcher">
-        <div ref="viewBar" class="view-switcher-bar">
-          <UiTabs class="view-switcher" :model-value="activeView" :items="viewTabs" :label="t('community.browseView')" @update:model-value="selectView(String($event))" />
-        </div>
-        <section class="ui-filter-bar__controls community-toolbar" :aria-label="t('community.filtersLabel')">
-          <UiFilterSearch class="community-search-control" :label="t('community.searchLabel')">
-            <UiInput v-model="search" type="search" maxlength="120" :placeholder="t('community.searchPlaceholder')" />
-          </UiFilterSearch>
-          <UiSelect :model-value="sortMode" :aria-label="t('community.sortLabel')" @update:model-value="selectSort(String($event))">
-            <option v-for="item in sortTabs" :key="item.value" :value="item.value">
-              {{ item.label }}
-            </option>
-          </UiSelect>
-          <UiSelect :model-value="category" class="community-type-control category-filter" :aria-label="t('community.typeLabel')" @update:model-value="selectCategory(String($event))">
+      <CatalogToolbar class="community-catalog-bar" filter-class="community-controls-row" :title="t('community.title')" @resize="toolbarHeight = $event">
+        <CatalogViews class="community-view-tabs" :model-value="activeView" :items="viewTabs" :label="t('community.browseView')" :count="total" :pending="loading || Boolean(error)" :status="loading ? t('status.loadingCommunity') : error || t('community.discussionCount', { count: total })" @update:model-value="selectView" />
+        <section class="community-toolbar catalog-controls" :aria-label="t('community.filtersLabel')">
+          <UiSelect :align-item-with-trigger="false" :model-value="category" class="community-type-control category-filter" :aria-label="t('community.typeLabel')" @update:model-value="selectCategory(String($event))">
+            <template #start>
+              <Filter :size="15" aria-hidden="true" />
+            </template>
             <option value="">
               {{ t('community.allTypes') }}
             </option>
@@ -316,25 +295,40 @@ onMounted(async () => {
               {{ categoryName(item.code) }}
             </option>
           </UiSelect>
-          <UiDropdownMenu class="community-tools" trigger-class="ui-select__trigger" transition-name="ui-select-menu" :label="t('community.communityActions')">
-            <template #trigger>
-              <MoreHorizontal :size="19" aria-hidden="true" />
-            </template>
-            <UiButton role="menuitem" variant="ghost" :class="{ active: showCases }" @click="toggleCases">
+          <UiButton v-if="hasActiveFilters" class="community-reset catalog-reset" variant="secondary" @click="clearFilters">
+            {{ t('community.clearFilters') }}
+          </UiButton>
+          <div class="catalog-display">
+            <UiSelect class="community-sort-control" :align-item-with-trigger="false" :model-value="sortMode" :aria-label="t('community.sortLabel')" @update:model-value="selectSort(String($event))">
               <template #start>
-                <ShieldCheck :size="17" :stroke-width="1.75" aria-hidden="true" />
+                <ArrowDownWideNarrow :size="15" aria-hidden="true" />
               </template>
-              {{ t('community.myCases') }}
-            </UiButton>
-            <UiButton as="RouterLink" role="menuitem" variant="ghost" to="/discover">
-              <template #start>
-                <Eye :size="17" :stroke-width="1.75" aria-hidden="true" />
+              <option v-for="item in sortTabs" :key="item.value" :value="item.value">
+                {{ item.label }}
+              </option>
+            </UiSelect>
+            <UiLayoutSwitcher v-model="layout" :label="t('community.layout')" :list-label="t('community.listView')" :grid-label="t('community.gridView')" />
+            <UiDropdownMenu class="community-tools" trigger-class="ui-select__trigger" transition-name="ui-select-menu" :label="t('community.communityActions')">
+              <template #trigger>
+                <MoreHorizontal :size="19" aria-hidden="true" />
               </template>
-              {{ t('actions.browseWorks') }}
-            </UiButton>
-          </UiDropdownMenu>
+              <UiButton role="menuitem" variant="ghost" :class="{ active: showCases }" @click="toggleCases">
+                <template #start>
+                  <ShieldCheck :size="17" :stroke-width="1.75" aria-hidden="true" />
+                </template>
+                {{ t('community.myCases') }}
+              </UiButton>
+              <UiButton as="RouterLink" role="menuitem" variant="ghost" to="/discover">
+                <template #start>
+                  <Eye :size="17" :stroke-width="1.75" aria-hidden="true" />
+                </template>
+                {{ t('actions.browseWorks') }}
+              </UiButton>
+            </UiDropdownMenu>
+          </div>
         </section>
-      </UiFilterBar>
+        <CatalogKeyword class="community-keywords" :query="search" @clear="router.push({ query: { ...route.query, q: undefined } })" />
+      </CatalogToolbar>
       <p v-if="feedback" class="task-feedback" :class="[t('community.reportSubmitted'), t('community.appealSubmitted'), t('community.postPublished')].includes(feedback) ? 'success' : 'error'" role="status">
         {{ feedback }}
       </p>
@@ -379,98 +373,79 @@ onMounted(async () => {
         </form>
       </section>
       <CategoryBrowser :items="categories" :model-value="category" :counts="categoryCounts" @update:model-value="selectCategory">
-        <div v-if="loading" class="page-state" aria-live="polite">
-          <LoaderCircle class="spin" :size="20" />{{ t('status.loadingCommunity') }}
-        </div>
-        <div v-else-if="error" class="page-state" role="alert">
-          <p>{{ error }}</p><UiButton variant="secondary" @click="load">
-            {{ t('actions.retry') }}
+        <CatalogResults class="community-results" :loading="loading">
+          <div v-if="loading" class="page-state" aria-live="polite">
+            <LoaderCircle class="spin" :size="20" />{{ t('status.loadingCommunity') }}
+          </div>
+          <div v-else-if="error" class="page-state" role="alert">
+            <p>{{ error }}</p><UiButton variant="secondary" @click="load">
+              {{ t('actions.retry') }}
+            </UiButton>
+          </div>
+          <div v-else-if="posts.length" class="community-topics">
+            <UiCatalog v-if="displayedPosts.length" class="ui-catalog community-feed" :grid="layout === 'grid'">
+              <CatalogEntry v-for="post in displayedPosts" :key="post.id" class="community-post-row" :data-post-id="post.id" :title="post.title || t('community.untitledDraft')" :summary="postExcerpt(post.body)" :to="postDestination(post)" :has-media="Boolean(post.mediaUrl)" :open-label="t(post.status === 'draft' ? 'community.editPost' : 'community.openDiscussion')">
+                <template #media>
+                  <AssetMedia :src="post.mediaUrl || ''" :kind="post.mediaKind || 'image'" :alt="post.title" :width="720" :height="450" :controls="false" />
+                </template>
+                <template #meta>
+                  <span>{{ categoryName(post.category) }}</span>
+                  <span v-if="post.mediaUrl" class="community-post-kind">{{ formatMediaKind(post.mediaKind) }}</span>
+                  <RouterLink class="community-author-link" :to="`/creators/${post.authorHandle}`" :title="`@${post.authorHandle}`">
+                    <UiAvatar class="community-author-avatar" :initials="authorInitials(post.authorName)" aria-hidden="true" />
+                    <span>{{ post.authorName || post.authorHandle }}</span>
+                  </RouterLink>
+                </template>
+                <template #aside>
+                  <div v-if="post.status !== 'draft'" class="community-post-activity">
+                    <span class="community-post-stat" :aria-label="`${post.commentCount} ${t('community.repliesColumn')}`">
+                      <MessageCircle :size="15" :stroke-width="1.75" aria-hidden="true" /><span>{{ post.commentCount }} {{ t('community.repliesColumn') }}</span>
+                    </span>
+                    <span class="community-post-stat" :class="{ active: post.viewerLiked }" :aria-label="`${post.likeCount} ${t('community.likesColumn')}`">
+                      <Heart :size="15" :stroke-width="1.75" :fill="post.viewerLiked ? 'currentColor' : 'none'" aria-hidden="true" /><span>{{ post.likeCount }} {{ t('community.likesColumn') }}</span>
+                    </span>
+                  </div>
+                  <time class="community-post-time" :datetime="post.publishedAt" :title="formatPublishedAt(post.publishedAt)">{{ formatActivity(post.publishedAt) }}</time>
+                </template>
+              </CatalogEntry>
+            </UiCatalog>
+          </div>
+          <UiButton v-if="postNextCursor" class="command-button secondary community-feed-load-more" type="button" :disabled="postLoadingMore" variant="secondary" @click="loadMorePosts">
+            <LoaderCircle v-if="postLoadingMore" class="spin" :size="16" />{{ t('actions.loadMore') }}
           </UiButton>
-        </div>
-        <div v-else-if="posts.length" class="community-topics">
-          <div class="community-results-meta">
-            <div><strong>{{ t('community.discussionCount', { count: total }) }}</strong><span>{{ t(mineOnly ? 'community.myDiscussionsSummary' : 'community.discussionsSummary') }}</span></div>
-            <div class="task-results-actions">
-              <UiButton v-if="hasActiveFilters" class="text-link" variant="ghost" size="sm" type="button" @click="clearFilters">
+          <UiEmptyState
+            v-if="!loading && !error && !posts.length" class="community-empty"
+            :title="hasActiveFilters ? t('community.noFilteredResults') : t(activeView === 'all' ? 'community.empty' : activeView === 'mine' ? 'community.noMyPosts' : `community.emptyViews.${activeView}.title`)"
+            :message="hasActiveFilters ? t('community.filteredEmptySummary') : t(activeView === 'all' ? 'community.emptySummary' : activeView === 'mine' ? 'community.noMyPostsSummary' : `community.emptyViews.${activeView}.summary`)"
+          >
+            <template #icon>
+              <component :is="hasActiveFilters ? Search : MessageSquareText" :size="24" :stroke-width="1.75" />
+            </template>
+            <template #actions>
+              <UiButton v-if="hasActiveFilters" variant="secondary" @click="clearFilters">
                 {{ t('community.clearFilters') }}
               </UiButton>
-              <UiLayoutSwitcher v-model="layout" :label="t('community.layout')" :list-label="t('community.listView')" :grid-label="t('community.gridView')" />
-            </div>
-          </div>
-          <UiCatalog v-if="displayedPosts.length" class="ui-catalog community-feed" :grid="layout === 'grid'">
-            <UiContentCard v-for="post in displayedPosts" :key="post.id" class="ui-content-card community-post-row" :data-post-id="post.id">
-              <div class="community-post-topic">
-                <RouterLink class="ui-content-card__media community-post-thumbnail" :class="{ 'is-discussion': !post.mediaUrl }" :to="post.status === 'draft' ? `/community?view=drafts&edit=${post.id}` : `/community/posts/${post.id}`" :aria-label="post.title">
-                  <AssetMedia v-if="post.mediaUrl && post.mediaKind" :src="post.mediaUrl" :kind="post.mediaKind" :alt="post.title" :width="720" :height="540" :controls="false" />
-                  <span v-else class="community-discussion-thumbnail"><MessageSquareText :size="28" :stroke-width="1.45" aria-hidden="true" /></span>
-                </RouterLink>
-                <UiCardContent :title="post.title || t('community.untitledDraft')" :summary="post.body" :to="post.status === 'draft' ? `/community?view=drafts&edit=${post.id}` : `/community/posts/${post.id}`">
-                  <template #tags>
-                    <UiCardTag>{{ categoryName(post.category) }}</UiCardTag><UiCardTag variant="neutral">
-                      {{ formatMediaKind(post.mediaKind) }}
-                    </UiCardTag>
-                  </template>
-                  <template #meta>
-                    <RouterLink class="community-author-link" :to="`/creators/${post.authorHandle}`">
-                      <UiAvatar class="community-author-avatar" :initials="authorInitials(post.authorName)" aria-hidden="true" />
-                      <span>{{ post.authorName }} <small>@{{ post.authorHandle }}</small></span>
-                    </RouterLink><time :datetime="post.publishedAt">{{ formatActivity(post.publishedAt) }}</time>
-                  </template>
-                </UiCardContent>
-                <UiButton v-if="post.status === 'draft'" variant="secondary" size="sm" @click="openEdit(post)">
-                  {{ t('community.editPost') }}
-                </UiButton>
-              </div>
-              <RouterLink class="community-post-stat" :to="post.status === 'draft' ? `/community?view=drafts&edit=${post.id}` : `/community/posts/${post.id}`" :aria-label="`${post.commentCount} ${t('community.repliesColumn')}`">
-                <MessageCircle :size="17" :stroke-width="1.75" aria-hidden="true" /><span>{{ post.commentCount }}</span>
-              </RouterLink>
-              <RouterLink class="community-post-stat" :to="post.status === 'draft' ? `/community?view=drafts&edit=${post.id}` : `/community/posts/${post.id}`" :class="{ active: post.viewerLiked }" :aria-label="`${post.likeCount} ${t('community.likesColumn')}`">
-                <Heart :size="17" :stroke-width="1.75" :fill="post.viewerLiked ? 'currentColor' : 'none'" aria-hidden="true" /><span>{{ post.likeCount }}</span>
-              </RouterLink>
-              <RouterLink class="community-post-time" :to="post.status === 'draft' ? `/community?view=drafts&edit=${post.id}` : `/community/posts/${post.id}`" :aria-label="formatPublishedAt(post.publishedAt)">
-                <time :datetime="post.publishedAt" :title="formatPublishedAt(post.publishedAt)">{{ formatActivity(post.publishedAt) }}</time>
-              </RouterLink>
-              <RouterLink class="community-post-more" :to="post.status === 'draft' ? `/community?view=drafts&edit=${post.id}` : `/community/posts/${post.id}`" :aria-label="t('community.openDiscussion')">
-                <MoreHorizontal :size="19" :stroke-width="1.75" aria-hidden="true" />
-              </RouterLink>
-            </UiContentCard>
-          </UiCatalog>
-        </div>
-        <UiButton v-if="postNextCursor" class="command-button secondary community-feed-load-more" type="button" :disabled="postLoadingMore" variant="secondary" @click="loadMorePosts">
-          <LoaderCircle v-if="postLoadingMore" class="spin" :size="16" />{{ t('actions.loadMore') }}
-        </UiButton>
-        <UiEmptyState
-          v-if="!loading && !error && !posts.length" class="community-empty"
-          :title="hasActiveFilters ? t('community.noFilteredResults') : t(activeView === 'all' ? 'community.empty' : activeView === 'mine' ? 'community.noMyPosts' : `community.emptyViews.${activeView}.title`)"
-          :message="hasActiveFilters ? t('community.filteredEmptySummary') : t(activeView === 'all' ? 'community.emptySummary' : activeView === 'mine' ? 'community.noMyPostsSummary' : `community.emptyViews.${activeView}.summary`)"
-        >
-          <template #icon>
-            <component :is="hasActiveFilters ? Search : MessageSquareText" :size="24" :stroke-width="1.75" />
-          </template>
-          <template #actions>
-            <UiButton v-if="hasActiveFilters" variant="secondary" @click="clearFilters">
-              {{ t('community.clearFilters') }}
-            </UiButton>
-            <UiButton v-else-if="activeView !== 'all'" variant="secondary" @click="selectView('all')">
-              {{ t('community.allPosts') }}
-            </UiButton>
-            <UiButton v-else as="RouterLink" variant="secondary" to="/discover">
-              {{ t('actions.browseWorks') }}
-            </UiButton>
-          </template>
-        </UiEmptyState>
+              <UiButton v-else-if="activeView !== 'all'" variant="secondary" @click="selectView('all')">
+                {{ t('community.allPosts') }}
+              </UiButton>
+              <UiButton v-else as="RouterLink" variant="secondary" to="/discover">
+                {{ t('actions.browseWorks') }}
+              </UiButton>
+            </template>
+          </UiEmptyState>
+        </CatalogResults>
         <UiActionBanner :title="t('community.shareIdeaTitle')" :summary="t('community.shareIdeaSummary')">
           <template #icon>
             <MessageSquareText :size="24" :stroke-width="1.75" />
           </template>
           <template #actions>
-            <UiButton v-if="capabilities?.canSaveDraft" variant="primary" @click="openCreatePost">
+            <UiButton v-if="capabilities?.canSaveDraft" variant="secondary" @click="openCreatePost">
               <template #start>
                 <Plus :size="17" :stroke-width="1.75" />
               </template>
               {{ t('community.publishPost') }}
             </UiButton>
-            <UiButton v-else as="RouterLink" variant="primary" :to="{ path: '/auth', query: { auth: 'login', returnTo: route.fullPath } }">
+            <UiButton v-else as="RouterLink" variant="secondary" :to="{ path: '/auth', query: { auth: 'login', returnTo: route.fullPath } }">
               <template #start>
                 <LogIn :size="17" :stroke-width="1.75" />
               </template>
@@ -485,17 +460,15 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-
-.community-feed.is-grid .community-post-row { grid-template-columns: auto auto minmax(0, 1fr) auto; grid-template-rows: 1fr auto; align-items: start; column-gap: 12px; }
-.community-feed.is-grid .community-post-topic { grid-column: 1 / -1; display: flex; flex-direction: column; align-items: stretch; gap: 12px; padding-right: 0; }
-.community-feed.is-grid .community-post-thumbnail { width: 100%; }
-.community-feed.is-grid .community-post-stat, .community-feed.is-grid .community-post-time, .community-feed.is-grid .community-post-more { position: static; margin: 0; align-self: end; justify-content: center; }
-.community-feed.is-grid .community-post-time { justify-content: flex-end; }
-
-.community-controls-row.controls-with-switcher { overflow: visible; grid-template-columns: minmax(0, 1fr); }
-.community-controls-row .view-switcher-bar { min-width: 0; max-width: 100%; overflow-x: auto; }
-.community-controls-row :deep(.ui-tabs) { flex-shrink: 0; width: max-content; }
-.community-controls-row :deep(.ui-tabs__tab) { flex: 0 0 auto; }
+.community-feed.ui-catalog { gap: 12px; margin-top: 0; }
+.community-post-kind { color: var(--text-tertiary); }
+.community-author-link { max-width: 100%; gap: 6px; }
+.community-author-link .community-author-avatar { flex-shrink: 0; width: 20px; height: 20px; border-color: var(--border); background: var(--surface-muted); color: var(--text-secondary); font-size: 8px; }
+.community-post-activity { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px 12px; }
+.community-post-stat { min-height: 24px; gap: 4px; font-size: 12px; font-weight: 400; white-space: nowrap; }
+.community-post-stat svg { flex-shrink: 0; }
+.community-post-time { min-height: 24px; margin: 0; color: var(--text-tertiary); font-size: 12px; font-weight: 400; }
+.community-post-stat:hover, .community-post-time:hover { background: transparent; }
 .community-tools { position: relative; justify-self: end; }
 .community-tools :deep(> .ui-button) { width: var(--community-toolbar-control-height); height: var(--community-toolbar-control-height); min-height: var(--community-toolbar-control-height); justify-content: center; padding: 0; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface); color: var(--text-secondary); }
 .community-tools :deep(> .ui-button):hover:not(:disabled) { border-color: var(--border-strong); background: var(--surface); transform: none; }
@@ -503,11 +476,14 @@ onMounted(async () => {
 .community-tools :deep(.ui-dropdown-menu__content .ui-button) { justify-content: flex-start; gap: 10px; width: 100%; height: auto; min-height: 36px; padding: 8px 12px; border: 0; border-radius: 8px; color: var(--text); font-size: 13px; font-weight: 500; line-height: 20px; box-shadow: none; }
 .community-tools :deep(.ui-dropdown-menu__content .ui-button):hover { background: var(--surface-muted); transform: none; }
 .community-tools :deep(.ui-dropdown-menu__content .ui-button svg) { color: var(--text-secondary); }
-@media (max-width: 1080px) {
-  .community-controls-row .community-toolbar { grid-template-columns: minmax(0, 1fr) 150px 40px; }
+
+.community-tools :deep(> .ui-button) { border-radius: 12px; }
+@media (max-width: 1199px) {
+  .community-controls-row .community-toolbar { flex: 1 1 auto; }
 }
-@media (max-width: 560px) {
-  .community-controls-row .community-toolbar { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 40px; }
-  .community-search-control { grid-column: 1 / -1; }
+@media (max-width: 767px) {
+  .community-controls-row .community-toolbar { gap: 8px; }
+  .community-controls-row .community-toolbar > .ui-select-root { flex: 1 1 120px; width: auto; min-width: 0; max-width: 100%; }
+  .community-controls-row .community-tools { margin-left: auto; }
 }
 </style>

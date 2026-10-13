@@ -1234,7 +1234,7 @@ func (s *Service) BeginProductRefund(ctx context.Context, buyerID, orderID uuid.
 		return false, ErrRefundConflict
 	}
 	var needsReview bool
-	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM product_refund_review WHERE payment_id=$1)`, paymentID).Scan(&needsReview); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM product_refund_review WHERE payment_id=$1) OR EXISTS(SELECT 1 FROM product_payment_disputes WHERE payment_id=$1 AND action_status<>'won')`, paymentID).Scan(&needsReview); err != nil {
 		return false, err
 	}
 	if needsReview {
@@ -1316,7 +1316,7 @@ func (s *Service) createProviderRefund(ctx context.Context, runtime ProviderRunt
 		return false, tx.Commit(ctx)
 	}
 	var needsReview bool
-	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM product_refund_review WHERE payment_id=$1)`, paymentID).Scan(&needsReview); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM product_refund_review WHERE payment_id=$1) OR EXISTS(SELECT 1 FROM product_payment_disputes WHERE payment_id=$1 AND action_status<>'won')`, paymentID).Scan(&needsReview); err != nil {
 		return false, err
 	}
 	if needsReview {
@@ -1419,12 +1419,21 @@ func (s *Service) HandlePaymentEventJob(ctx context.Context, job jobs.Job) error
 	} else if err != nil {
 		return err
 	}
-	if status == "processed" || status == "ignored" {
+	historicalDispute := false
+	if status == "processed" {
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM product_payment_disputes d WHERE d.latest_event_id=$1 AND d.payment_id IS NOT NULL AND d.action_status IN ('won','lost','charge_refunded') AND NOT EXISTS(SELECT 1 FROM product_payment_dispute_adjudications a WHERE a.dispute_id=d.id))`, payload.EventID).Scan(&historicalDispute); err != nil {
+			return err
+		}
+	}
+	if status == "ignored" || (status == "processed" && !historicalDispute) {
 		return tx.Commit(ctx)
 	}
-	if _, err := tx.Exec(ctx, `UPDATE payment_provider_event_processing SET status='processing',attempt_count=attempt_count+1,version=version+1,updated_at=now() WHERE event_id=$1`, payload.EventID); err != nil {
-		return err
+	if !historicalDispute {
+		if _, err := tx.Exec(ctx, `UPDATE payment_provider_event_processing SET status='processing',attempt_count=attempt_count+1,version=version+1,updated_at=now() WHERE event_id=$1`, payload.EventID); err != nil {
+			return err
+		}
 	}
+
 	var provider, eventType, objectID, objectType string
 	var eventResourceID *uuid.UUID
 	var eventLiveMode bool
@@ -1477,8 +1486,10 @@ func (s *Service) HandlePaymentEventJob(ctx context.Context, job jobs.Job) error
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `UPDATE payment_provider_event_processing SET status='processed',processed_at=now(),version=version+1,updated_at=now() WHERE event_id=$1`, payload.EventID); err != nil {
-			return err
+		if !historicalDispute {
+			if _, err := tx.Exec(ctx, `UPDATE payment_provider_event_processing SET status='processed',processed_at=now(),version=version+1,updated_at=now() WHERE event_id=$1`, payload.EventID); err != nil {
+				return err
+			}
 		}
 		return tx.Commit(ctx)
 	}

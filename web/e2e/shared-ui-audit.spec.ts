@@ -6,12 +6,12 @@ for (const width of [390, 1308]) {
     await page.setViewportSize({ width, height: 900 })
     for (const route of ['/market', '/discover', '/community', '/market/demands']) {
       await page.goto(route)
-      await expect(page.locator('.ui-card-content').first()).toBeVisible()
+      await expect(page.locator('.ui-card-content, .catalog-entry__copy').first()).toBeVisible()
       await page.locator('.ui-layout-switcher button').last().click()
-      await expect(page.locator('.ui-card-content').first()).toHaveCSS('justify-content', 'flex-start')
+      await expect(page.locator('.ui-card-content, .catalog-entry__copy').first()).toHaveCSS('justify-content', 'flex-start')
       await expect(page.locator('.ui-catalog').first()).not.toHaveCSS('justify-content', 'flex-start')
-      const dimensions = await page.locator('.ui-card-content__meta').first().evaluate(el => {
-        const content = el.closest('.ui-card-content')!
+      const dimensions = await page.locator('.ui-card-content__meta, .catalog-entry__meta').first().evaluate(el => {
+        const content = el.closest('.ui-card-content, .catalog-entry__copy')!
         return { bottom: el.getBoundingClientRect().bottom, contentBottom: content.getBoundingClientRect().bottom, padding: parseFloat(getComputedStyle(content).paddingBottom) }
       })
       expect(Math.abs(dimensions.bottom - dimensions.contentBottom + dimensions.padding)).toBeLessThan(1)

@@ -39,6 +39,7 @@ test('publishes from an individual asset drawer instead of a global page', async
   const publishedTitle = `Published from asset drawer ${Date.now().toString(36)}`
   await legacyDrawer.getByLabel('Work title', { exact: true }).fill(publishedTitle)
   await legacyDrawer.getByLabel('Short description', { exact: true }).fill('Published from the selected asset without a standalone workflow page.')
+  await legacyDrawer.getByLabel('AI disclosure', { exact: true }).fill('Creator-confirmed source disclosure for this isolated fixture asset.')
   await legacyDrawer.getByRole('button', { name: 'Publish work', exact: true }).click()
   await expect(page).toHaveURL(/\/works\/[0-9a-f-]+$/)
   await expect(page.getByRole('heading', { name: publishedTitle, exact: true })).toBeVisible()

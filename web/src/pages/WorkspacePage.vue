@@ -1,35 +1,34 @@
 <script setup lang="ts">
 import UiEmptyState from '../components/ui/UiEmptyState.vue'
 import { usdAmountCents } from '../lib/topupSettings'
-import UiCardContent from '../components/ui/UiCardContent.vue'
-import UiCardMedia from '../components/ui/UiCardMedia.vue'
 import UiCardActions from '../components/ui/UiCardActions.vue'
-import UiCardTag from '../components/ui/UiCardTag.vue'
 import DetailToolbar from '../components/ui/DetailToolbar.vue'
 import PageHeading from '../components/ui/PageHeading.vue'
 import UiFilterBar from '../components/ui/UiFilterBar.vue'
-import UiCatalog from '../components/ui/UiCatalog.vue'
+import AssetCatalogViewport from '../components/domain/AssetCatalogViewport.vue'
 import UiLayoutSwitcher from '../components/ui/UiLayoutSwitcher.vue'
-import UiContentCard from '../components/ui/UiContentCard.vue'
 import {
-  ArrowLeft, ArrowRight, Boxes, ClipboardList, Clock3, FileCheck2, Maximize2, PackageCheck, Plus,
-  Ban, Bookmark, BookmarkX, Coins, Download, GitBranch, ListFilter, ReceiptText, RefreshCw, RotateCcw, ShieldCheck, ShoppingBag, Store, TrendingUp, Upload, UsersRound, WalletCards, WandSparkles, X,
+  ArrowLeft, ArrowRight, Boxes, ClipboardList, Clock3, FileCheck2, Maximize2, Plus,
+  Ban, Bookmark, Coins, Download, GitBranch, ListFilter, ReceiptText, RefreshCw, RotateCcw, ShieldCheck, ShoppingBag, Store, TrendingUp, Upload, WalletCards, WandSparkles, X,
 } from 'lucide-vue-next'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
-import { api, messageFrom, type Asset, type BillingStatement, type Generation, type Meta, type Order, type PointOverview, type SavedWork, type TaskSummary } from '../api/client'
-import { contentListReturn, creationPath, licenseLabel } from '../lib/contentPresentation'
+import { api, APIError, messageFrom, type Asset, type BillingStatement, type Generation, type Meta, type Order, type PointOverview, type SavedWork, type TaskSummary, type TaskType } from '../api/client'
+import { checkLicensedDownload, DownloadCheckError } from '../lib/licensedDownload'
+import { contentListReturn, creationPath, licenseLabel, licenseExplanation } from '../lib/contentPresentation'
+import { textWithin } from '../lib/unicodeText'
+import { pollAssetScan } from '../lib/assetScan'
 import { formatCurrency, formatDateTime } from '../lib/format'
 import { openCheckoutWindow } from '../lib/checkout'
+import { mergeOrder, refundFeedback } from '../lib/orderState'
 import { validRefundReason } from '../lib/productRefund'
 import { validProductReturnID } from '../lib/productPayment'
 import { useSessionStore } from '../stores/session'
 import AssetPublishDrawer from '../components/domain/AssetPublishDrawer.vue'
 import AssetMedia from '../components/domain/AssetMedia.vue'
 import ProductPaymentStatus from '../components/domain/ProductPaymentStatus.vue'
-import ProductOrderDeliveryLink from '../components/domain/ProductOrderDeliveryLink.vue'
-import ProductCheckoutClosure from '../components/domain/ProductCheckoutClosure.vue'
+import OrderRecord from '../components/domain/OrderRecord.vue'
 import AuthRequiredState from '../components/domain/AuthRequiredState.vue'
 import MotionFavoriteIcon from '../components/ui/MotionFavoriteIcon.vue'
 import PageHeader from '../components/ui/PageHeader.vue'
@@ -42,7 +41,14 @@ import UiIconButton from '../components/ui/UiIconButton.vue'
 import UiFileInput from '../components/ui/UiFileInput.vue'
 import UiInput from '../components/ui/UiInput.vue'
 import UiSelect from '../components/ui/UiSelect.vue'
-import UiTabs from '../components/ui/UiTabs.vue'
+import CatalogToolbar from '../components/catalog/CatalogToolbar.vue'
+import CatalogViews from '../components/catalog/CatalogViews.vue'
+import CatalogKeyword from '../components/catalog/CatalogKeyword.vue'
+import CatalogResults from '../components/catalog/CatalogResults.vue'
+import CatalogResultSummary from '../components/catalog/CatalogResultSummary.vue'
+import AssetLibraryEntry from '../components/domain/AssetLibraryEntry.vue'
+import WorkspaceTaskEntry from '../components/domain/WorkspaceTaskEntry.vue'
+import UiCatalog from '../components/ui/UiCatalog.vue'
 import UiTextarea from '../components/ui/UiTextarea.vue'
 
 const { t, locale } = useI18n()
@@ -57,23 +63,96 @@ const tasks = ref<TaskSummary[]>([])
 const nextTaskCursor = ref<string>()
 const taskTotal = ref(0)
 const loadingMoreTasks = ref(false)
+const taskMoreError = ref('')
+const taskReadKnown = ref(false)
+const workspaceTaskTypes = ref<TaskType[]>([])
+const workspaceTaskLayout = ref<'list' | 'grid'>('list')
+const workspaceTaskStatuses: TaskSummary['status'][] = ['open', 'assigned', 'submitted', 'revision', 'accepted', 'disputed', 'cancelled']
+function taskFilter(key: string, fallback = '') {
+  return typeof route.query[key] === 'string' ? route.query[key] as string : fallback
+}
+function updateTaskFilter(key: string, value: string) {
+  void router.push({ query: { ...route.query, [key]: value || undefined } })
+}
+const workspaceTaskSearch = computed(() => taskFilter('q').slice(0, 120))
+const workspaceTaskType = computed({ get: () => taskFilter('type'), set: value => updateTaskFilter('type', value) })
+const workspaceTaskStatus = computed({ get: () => taskFilter('status'), set: value => updateTaskFilter('status', value) })
+const workspaceTaskSort = computed({ get: () => ['deadline', 'budget_desc'].includes(taskFilter('sort')) ? taskFilter('sort') : 'newest', set: value => updateTaskFilter('sort', value === 'newest' ? '' : value) })
+const hasWorkspaceTaskFilters = computed(() => Boolean(workspaceTaskSearch.value || workspaceTaskType.value || workspaceTaskStatus.value || workspaceTaskSort.value !== 'newest'))
+const workspaceTaskTypeCodes = computed(() => [...new Set([...workspaceTaskTypes.value.map(type => type.code), ...tasks.value.map(item => item.deliverableType), ...(workspaceTaskType.value ? [workspaceTaskType.value] : [])])])
+function workspaceTaskTypeLabel(code: string) {
+  const type = workspaceTaskTypes.value.find(type => type.code === code)
+  if (type) return locale.value.startsWith('zh') ? type.nameZh : type.nameEn
+  return ['image', 'video', 'audio', 'prompt', 'workflow', 'mixed'].includes(code) ? t(`tasks.types.${code}`) : code
+}
+function workspaceTaskQuery() {
+  return { mine: true, q: workspaceTaskSearch.value || undefined, type: workspaceTaskType.value || undefined, status: workspaceTaskStatus.value || undefined, sort: workspaceTaskSort.value }
+}
+function clearWorkspaceTaskFilters() {
+  void router.push({ query: { ...route.query, q: undefined, type: undefined, status: undefined, sort: undefined } })
+}
 const orders = ref<Order[]>([])
 const orderNextCursor = ref<string | null>(null)
 const ordersLoadingMore = ref(false)
+const orderReadFailed = ref(false)
+const refreshingOrder = ref('')
+// Filters apply only to the loaded batch; query updates must not restart payment work.
+function orderQuery(key: string) {
+  return typeof route.query[key] === 'string' ? route.query[key] as string : ''
+}
+function setOrderQuery(key: string, value: string) {
+  void router.push({ query: { ...route.query, [key]: value || undefined } })
+}
+const orderSearch = computed(() => orderQuery('q').slice(0, 120))
+const orderStatusFilter = computed({ get: () => orderQuery('status'), set: value => setOrderQuery('status', value) })
+const orderDateFrom = computed({ get: () => orderQuery('from'), set: value => setOrderQuery('from', value) })
+const orderDateTo = computed({ get: () => orderQuery('to'), set: value => setOrderQuery('to', value) })
+const hasOrderFilters = computed(() => Boolean(orderSearch.value || orderStatusFilter.value || orderDateFrom.value || orderDateTo.value))
+const copiedOrder = ref('')
+let copyOrderAttempt = 0
+const orderStatuses: Order['status'][] = ['payment_pending', 'payment_paid', 'fulfilled', 'refund_requested', 'refunded', 'cancelled', 'payment_failed', 'test_pending', 'test_paid', 'test_refunded']
+const visibleOrders = computed(() => orders.value.filter(order => {
+  const query = orderSearch.value.trim().toLocaleLowerCase()
+  if (query && !(order.id + ' ' + order.productTitle).toLocaleLowerCase().includes(query)) return false
+  if (orderStatusFilter.value && order.status !== orderStatusFilter.value) return false
+  const date = new Date(order.createdAt)
+  const day = [date.getFullYear(), String(date.getMonth() + 1).padStart(2, '0'), String(date.getDate()).padStart(2, '0')].join('-')
+  return (!orderDateFrom.value || day >= orderDateFrom.value) && (!orderDateTo.value || day <= orderDateTo.value)
+}))
+function clearOrderFilters() {
+  void router.push({ query: { ...route.query, q: undefined, status: undefined, from: undefined, to: undefined } })
+}
+async function copyOrderReference(order: Order) {
+  const version = workspaceLoadVersion
+  const attempt = ++copyOrderAttempt
+  copiedOrder.value = ''
+  try {
+    await globalThis.navigator.clipboard.writeText(order.id)
+    if (version === workspaceLoadVersion && attempt === copyOrderAttempt) copiedOrder.value = order.id
+  } catch {
+    if (version === workspaceLoadVersion && attempt === copyOrderAttempt) error.value = t('workspace.copyOrderFailed')
+  }
+}
+const refundFeedbackOrderID = ref('')
+const orderRefundFeedback = computed(() => {
+  const order = orders.value.find(item => item.id === refundFeedbackOrderID.value)
+  return order ? refundFeedback(order) : null
+})
+const returnedOrder = computed(() => orders.value.find(item => item.id === returnedOrderID.value))
 const returnedOrderID = computed(() => typeof route.query.orderId === 'string' ? route.query.orderId : '')
 const returnedPaymentID = computed(() => typeof route.query.paymentId === 'string' ? route.query.paymentId : '')
 const productPaymentReturn = computed(() => route.query.payment === 'success' || route.query.payment === 'cancelled')
 
 function updateClosedOrder(order: Order) {
   if (section.value !== 'orders') return
-  orders.value = orders.value.map(item => item.id === order.id ? order : item)
+  orders.value = orders.value.map(item => item.id === order.id ? mergeOrder(item, order) : item)
 }
 
 function updateReturnedOrder(order: Order) {
   if (section.value !== 'orders' || order.id !== returnedOrderID.value || order.paymentId !== returnedPaymentID.value) return
   const current = orders.value.find(item => item.id === order.id)
-  if ((current?.paymentVersion ?? 0) > (order.paymentVersion ?? 0)) return
-  orders.value = [order, ...orders.value.filter(item => item.id !== order.id)]
+  const merged = mergeOrder(current, order)
+  orders.value = [merged, ...orders.value.filter(item => item.id !== order.id)]
 }
 const billing = ref<BillingStatement | null>(null)
 const points = ref<PointOverview | null>(null)
@@ -135,20 +214,127 @@ const publishRequested = computed(() => section.value === 'assets' && Boolean(pu
 const publishOpen = computed(() => publishRequested.value && Boolean(session.user))
 const assetView = computed(() => section.value === 'assets' && route.query.view === 'saved' ? 'saved' : 'owned')
 const isAssetCatalog = computed(() => section.value === 'assets' || section.value === 'purchases')
+const isWorkspaceCatalog = computed(() => isAssetCatalog.value || section.value === 'orders' || section.value === 'tasks')
+const assetSearch = ref('')
+const assetKindFilter = ref('')
+const assetSourceFilter = ref('')
+const assetScanFilter = ref('')
+const assetFilters = computed(() => ({
+  q: String(route.query.q || ''), kind: String(route.query.kind || '') as 'image' | 'video' | 'audio' | 'document' | '',
+  source: String(route.query.source || '') as 'upload' | 'generation' | 'purchase' | 'delivery' | '',
+  scanStatus: String(route.query.scanStatus || '') as 'pending' | 'clean' | 'review' | 'rejected' | '',
+}))
+const hasAssetFilters = computed(() => isAssetCatalog.value && Boolean(assetFilters.value.q || assetFilters.value.kind || assetFilters.value.source || assetFilters.value.scanStatus))
+function ownedAssetQuery() {
+  const filters = isAssetCatalog.value && assetView.value === 'owned' ? assetFilters.value : undefined
+  return { q: filters?.q || undefined, kind: filters?.kind || undefined, source: section.value === 'purchases' ? 'purchase' as const : filters?.source || undefined, scanStatus: filters?.scanStatus || undefined }
+}
+function savedAssetQuery() { return assetView.value === 'saved' ? { q: assetFilters.value.q || undefined, kind: assetFilters.value.kind || undefined } : {} }
+async function applyAssetFilters(clear = false) {
+  const query: Record<string, string> = assetView.value === 'saved' ? { view: 'saved' } : {}
+  if (!clear) {
+    if (assetSearch.value.trim()) query.q = assetSearch.value.trim()
+    if (assetKindFilter.value) query.kind = assetKindFilter.value
+    if (assetView.value === 'owned') {
+      if (section.value === 'assets' && assetSourceFilter.value) query.source = assetSourceFilter.value
+      if (assetScanFilter.value) query.scanStatus = assetScanFilter.value
+    }
+  }
+  await router.push({ path: section.value === 'purchases' ? '/workspace/purchases' : '/workspace/assets', query })
+}
+const downloadState = ref<'' | 'checking' | 'started'>('')
+const downloadError = ref('')
+let downloadController: globalThis.AbortController | undefined
+function cancelDownloadCheck() { downloadController?.abort(); downloadController = undefined; downloadState.value = ''; downloadError.value = '' }
+async function downloadPurchase(fileIndex?: number) {
+  const item = selectedAsset.value
+  if (!item?.provenance?.purchase?.canDownload || downloadState.value === 'checking') return
+  const version = workspaceLoadVersion
+  const controller = new globalThis.AbortController()
+  downloadController = controller
+  downloadState.value = 'checking'; downloadError.value = ''
+  const timeout = globalThis.setTimeout(() => controller.abort(), 120_000)
+  const url = `/api/v1/assets/${item.id}/content${fileIndex === undefined ? '' : `?fileIndex=${fileIndex}`}`
+  try {
+    await checkLicensedDownload(url, controller.signal)
+    if (version !== workspaceLoadVersion) return
+    if (controller.signal.aborted) throw new DownloadCheckError('downloadUnavailable')
+    const link = globalThis.document.createElement('a')
+    link.href = url
+    link.download = fileIndex === undefined ? item.title : (item.provenance.purchase.delivery?.files[fileIndex]?.name || item.title)
+    globalThis.document.body.append(link); link.click(); link.remove()
+    downloadState.value = 'started'
+  } catch (reason) {
+    if (version !== workspaceLoadVersion || downloadController !== controller) return
+    downloadError.value = t(`workspace.purchaseExperience.${reason instanceof DownloadCheckError ? reason.reason : 'downloadUnavailable'}`)
+    downloadState.value = ''
+  } finally {
+    globalThis.clearTimeout(timeout)
+    if (downloadController === controller) downloadController = undefined
+  }
+}
 const assetLayout = ref<'list' | 'grid'>('list')
 const generationFocus = computed(() => String(route.query.generationId || ''))
 const visibleAssets = computed(() => assets.value)
-const cleanAssetCount = computed(() => assets.value.filter(item => item.scanStatus === 'clean').length)
-const purchasedCleanCount = computed(() => visibleAssets.value.filter(item => item.scanStatus === 'clean').length)
-const purchasedKindCount = computed(() => new Set(visibleAssets.value.map(item => item.kind)).size)
-const fulfilledOrderCount = computed(() => orders.value.filter(item => item.status === 'fulfilled').length)
-const refundedOrderCount = computed(() => orders.value.filter(item => ['test_refunded', 'refunded'].includes(item.status)).length)
-const openTaskCount = computed(() => tasks.value.filter(item => item.status === 'open').length)
-const taskProposalCount = computed(() => tasks.value.reduce((total, item) => total + item.proposalCount, 0))
-const taskRewardTotal = computed(() => tasks.value.reduce((total, item) => total + item.budgetCents, 0))
+const ownedReadError = ref('')
+const savedReadError = ref('')
+const assetCountKnown = ref(false)
+const savedCountKnown = ref(false)
+const countNotice = ref('')
+const catalogError = computed(() => error.value || (assetView.value === 'saved' ? savedReadError.value : ownedReadError.value))
+const scanPaused = ref<string[]>([])
+let scanController = new globalThis.AbortController()
+const scanningIDs = new Set<string>()
+const scanRequests = new Map<string, globalThis.AbortController>()
+function stopScanPolling() {
+  scanController.abort()
+  scanRequests.forEach(controller => controller.abort()); scanRequests.clear()
+  scanController = new globalThis.AbortController()
+  scanningIDs.clear()
+  scanPaused.value = []
+}
+function startScanPolling(item: Asset, version = workspaceLoadVersion) {
+  if (item.scanStatus !== 'pending' || scanningIDs.has(item.id)) return
+  const request = new globalThis.AbortController()
+  const parentSignal = scanController.signal
+  const cancel = () => request.abort()
+  parentSignal.addEventListener('abort', cancel, { once: true })
+  const signal = request.signal
+  scanRequests.set(item.id, request)
+  scanningIDs.add(item.id)
+  scanPaused.value = scanPaused.value.filter(id => id !== item.id)
+  void pollAssetScan({ signal, read: signal => api.getAsset(item.id, signal),
+    update: updated => {
+      if (version !== workspaceLoadVersion || signal.aborted) return
+      assets.value = assets.value.map(asset => asset.id === updated.id ? updated : asset)
+      if (!assetID.value && updated.scanStatus !== 'pending') success.value = t(updated.scanStatus === 'clean' ? 'workspace.uploadReady' : 'workspace.uploadReview')
+      if (selectedAsset.value?.id === updated.id) {
+        // A scan read must not reset separately paginated usage evidence.
+        selectedAsset.value = { ...updated, usages: selectedAsset.value.usages, usageNextCursor: selectedAsset.value.usageNextCursor }
+      }
+    },
+    paused: () => { if (version === workspaceLoadVersion && !signal.aborted) scanPaused.value = [...scanPaused.value, item.id] },
+  }).finally(() => {
+    parentSignal.removeEventListener('abort', cancel)
+    if (scanRequests.get(item.id) === request) { scanRequests.delete(item.id); scanningIDs.delete(item.id) }
+  })
+}
+function syncVisibleAssetScans(ranges: Array<{ start: number; end: number }>) {
+  if (assetID.value || assetView.value === 'saved') return
+  const visible = ranges.flatMap(({ start, end }) => assets.value.slice(start, end))
+  const ids = new Set(visible.map(item => item.id))
+  scanRequests.forEach((controller, id) => {
+    if (!ids.has(id)) { controller.abort(); scanRequests.delete(id); scanningIDs.delete(id) }
+  })
+  visible.filter(item => !scanPaused.value.includes(item.id)).forEach(item => startScanPolling(item))
+}
+function retryScanPolling() {
+  const items = selectedAsset.value ? [selectedAsset.value] : assets.value
+  items.filter(item => scanPaused.value.includes(item.id)).forEach(item => startScanPolling(item))
+}
 const assetViewTabs = computed(() => [
-  { value: 'owned', label: t('workspace.ownedAssets'), icon: Boxes },
-  { value: 'saved', label: t('workspace.savedWorks'), icon: Bookmark },
+  { value: 'owned', label: t('catalog.views.mine'), icon: Boxes },
+  { value: 'saved', label: t('catalog.views.saved'), icon: Bookmark },
 ])
 const selectedGenerations = computed(() => generations.value.filter(item => selectedGenerationIDs.value.includes(item.id)))
 const allGenerationsSelected = computed(() => generations.value.length > 0 && selectedGenerations.value.length === generations.value.length)
@@ -218,25 +404,21 @@ const pointTrendGeometry = computed(() => {
   }
 })
 const sectionMeta = computed(() => ({
-  assets: { title: t('workspace.assets'), summary: assetView.value === 'saved' ? t('workspace.savedSummary') : t('workspace.assetsSummary'), count: assetView.value === 'saved' ? savedWorks.value.length : assetTotal.value, icon: Boxes, actionIcon: Upload, actionLabel: t('workspace.uploadAsset'), actionTo: '' },
+  assets: { title: t('workspace.assets'), summary: assetView.value === 'saved' ? t('workspace.savedSummary') : t('workspace.assetsSummary'), count: assetView.value === 'saved' ? (savedCountKnown.value ? savedWorks.value.length : '—') : (assetCountKnown.value ? assetTotal.value : '—'), icon: Boxes, actionIcon: Upload, actionLabel: t('workspace.uploadAsset'), actionTo: '' },
   generations: { title: t('workspace.generations'), summary: t('workspace.generationsSummary'), count: generations.value.length, icon: Clock3, actionIcon: Plus, actionLabel: t('actions.newCreation'), actionTo: '/create/image' },
-  purchases: { title: t('workspace.purchases'), summary: t('workspace.purchasesSummary'), count: assetTotal.value, icon: ShoppingBag, actionIcon: Store, actionLabel: t('workspace.browseMarket'), actionTo: '/market' },
+  purchases: { title: t('workspace.purchases'), summary: t('workspace.purchasesSummary'), count: assetCountKnown.value ? assetTotal.value : '—', icon: ShoppingBag, actionIcon: Store, actionLabel: t('workspace.browseMarket'), actionTo: '/market' },
   orders: { title: t('workspace.orders'), summary: t('workspace.ordersSummary'), count: orders.value.length, icon: ReceiptText, actionIcon: Store, actionLabel: t('workspace.browseMarket'), actionTo: '/market' },
   tasks: { title: t('workspace.tasks'), summary: t('workspace.tasksSummary'), count: taskTotal.value, icon: ClipboardList, actionIcon: ArrowRight, actionLabel: t('workspace.browseTasks'), actionTo: '/market/demands' },
   billing: { title: t('workspace.billing'), summary: t('workspace.billingSummary'), count: billing.value?.entries.length || 0, icon: WalletCards, actionIcon: Plus, actionLabel: t('actions.newCreation'), actionTo: '/create/image' },
 })[section.value]!)
 const workspaceHero = computed(() => {
-  const eyebrow = `${t('workspace.workbenchLabel')} · ${t('workspace.itemCount', { count: sectionMeta.value.count })}`
+  const eyebrow = `${t('workspace.workbenchLabel')} · ${t(section.value === 'assets' && assetView.value === 'saved' ? 'workspace.loadedCount' : 'workspace.itemCount', { count: sectionMeta.value.count })}`
   if (section.value === 'assets') {
     return {
       eyebrow,
       eyebrowIcon: Boxes,
       statsLabel: t('workspace.assetViewsLabel'),
-      stats: [
-        { value: visibleAssets.value.length, label: t('workspace.ownedAssets'), icon: Boxes, tone: 'blue' as const },
-        { value: savedWorks.value.length, label: t('workspace.savedWorks'), icon: Bookmark, tone: 'violet' as const },
-        { value: cleanAssetCount.value, label: t('workspace.scanStatus.clean'), icon: ShieldCheck, tone: 'green' as const },
-      ],
+      stats: [],
       artworkSrc: '/illustrations/headers/tasks.webp',
     }
   }
@@ -245,11 +427,7 @@ const workspaceHero = computed(() => {
       eyebrow,
       eyebrowIcon: ShoppingBag,
       statsLabel: t('workspace.purchases'),
-      stats: [
-        { value: assetTotal.value, label: t('workspace.purchases'), icon: ShoppingBag, tone: 'blue' as const },
-        { value: purchasedKindCount.value, label: t('workspace.loadedMediaTypes'), icon: Boxes, tone: 'violet' as const },
-        { value: purchasedCleanCount.value, label: t('workspace.loadedCleanAssets'), icon: ShieldCheck, tone: 'green' as const },
-      ],
+      stats: [],
       artworkSrc: '/illustrations/headers/purchases.webp',
     }
   }
@@ -258,11 +436,7 @@ const workspaceHero = computed(() => {
       eyebrow,
       eyebrowIcon: ReceiptText,
       statsLabel: t('workspace.orders'),
-      stats: [
-        { value: orders.value.length, label: t('workspace.orderRecords'), icon: ReceiptText, tone: 'blue' as const },
-        { value: refundedOrderCount.value, label: t('workspace.refundedOrders'), icon: RotateCcw, tone: 'violet' as const },
-        { value: fulfilledOrderCount.value, label: t('workspace.activeEntitlements'), icon: ShieldCheck, tone: 'green' as const },
-      ],
+      stats: [],
       artworkSrc: '/illustrations/headers/orders.webp',
     }
   }
@@ -271,11 +445,7 @@ const workspaceHero = computed(() => {
       eyebrow,
       eyebrowIcon: ClipboardList,
       statsLabel: t('workspace.tasks'),
-      stats: [
-        { value: openTaskCount.value, label: t('workspace.openBriefs'), icon: ClipboardList, tone: 'blue' as const },
-        { value: formatCurrency(taskRewardTotal.value, 'USD', locale.value), label: t('workspace.taskRewardTotal'), icon: Coins, tone: 'violet' as const },
-        { value: taskProposalCount.value, label: t('tasks.proposals'), icon: UsersRound, tone: 'green' as const },
-      ],
+      stats: [],
       artworkSrc: '/illustrations/headers/tasks.webp',
     }
   }
@@ -307,34 +477,12 @@ function updatePublishOpen(open: boolean) {
   if (!open) void closePublish()
 }
 
-function orderEventLabel(status: string) {
-  return t(`marketplace.orderEvents.${status}`)
-}
-
 function orderPaymentModeLabel(order: Order) {
   if (order.paymentMode === 'unverified') return t('workspace.unverifiedPaymentMode')
   if (order.paymentMode === 'test') return t('workspace.localTestMode')
   if (order.paymentMode === 'waffo_pancake') return t(order.realCharge ? 'workspace.waffoLiveMode' : 'workspace.waffoTestMode')
   if (order.paymentMode === 'epay') return t('workspace.epayMode')
   return t(order.realCharge ? 'workspace.stripeLiveMode' : 'workspace.stripeTestMode')
-}
-
-function orderStatusTone(status: Order['status']) {
-  if (status === 'fulfilled') return 'accepted'
-  if (['test_pending', 'payment_pending', 'test_paid', 'payment_paid', 'refund_requested'].includes(status)) return 'submitted'
-  return 'disputed'
-}
-
-function taskRoleLabel(item: TaskSummary) {
-  if (item.client.id === session.user?.id) return t('workspace.taskRoleCommissioner')
-  if (item.assignee?.id === session.user?.id) return t('workspace.taskRoleCreator')
-  return t('workspace.taskRoleParticipant')
-}
-
-function taskNextAction(item: TaskSummary) {
-  if (item.status === 'open') return t('tasks.reviewBrief')
-  if (item.status === 'accepted') return t('tasks.reviewBrief')
-  return t('tasks.continueTask')
 }
 
 function generationStatusLabel(item: Generation) {
@@ -583,7 +731,12 @@ async function clearGenerationFilters() {
 
 let workspaceLoadVersion = 0
 async function load() {
+  cancelDownloadCheck()
   const version = ++workspaceLoadVersion
+  stopScanPolling()
+  assetSearch.value = assetFilters.value.q; assetKindFilter.value = assetFilters.value.kind
+  assetSourceFilter.value = assetFilters.value.source; assetScanFilter.value = assetFilters.value.scanStatus
+  countNotice.value = ''
   ordersLoadingMore.value = false
   assetLoadingMore.value = false
   savedWorkLoadingMore.value = false
@@ -591,6 +744,7 @@ async function load() {
   versionUploading.value = false
   uploading.value = false
   refunding.value = ''
+  refreshingOrder.value = ''
   loadingMoreTasks.value = false
   billingLoadingMore.value = false
   pointLoadingMore.value = false
@@ -603,8 +757,10 @@ async function load() {
   selectedGenerationIDs.value = []
   const id = assetID.value
   const currentSection = section.value
+  taskMoreError.value = ''
+  if (currentSection === 'tasks') { taskReadKnown.value = false; nextTaskCursor.value = undefined }
   const requestedOrderID = productPaymentReturn.value ? '' : returnedOrderID.value
-  if (currentSection === 'orders') { orders.value = []; orderNextCursor.value = null }
+  if (currentSection === 'orders') { orders.value = []; orderNextCursor.value = null; orderReadFailed.value = false; refundFeedbackOrderID.value = ''; copiedOrder.value = '' }
   if (selectedAsset.value?.id !== id) selectedAsset.value = null
 	if (paymentConfirmationTimer !== undefined) {
 		globalThis.clearTimeout(paymentConfirmationTimer)
@@ -626,20 +782,28 @@ async function load() {
       selectedAsset.value = item
       versionTitle.value = selectedAsset.value.title
       versionOpen.value = false
+      startScanPolling(item, version)
       return
     }
     if (currentSection === 'assets' || currentSection === 'purchases') {
-      const [assetResponse, savedResponse] = await Promise.all([
-        api.listAssets(currentSection === 'purchases' ? { source: 'purchase' } : {}),
-        currentSection === 'assets' ? api.listSavedWorks() : Promise.resolve(null),
+      const [assetResult, savedResult] = await Promise.allSettled([
+        api.listAssets(ownedAssetQuery()),
+        currentSection === 'assets' ? api.listSavedWorks(savedAssetQuery()) : Promise.resolve(null),
       ])
       if (version !== workspaceLoadVersion) return
-      assets.value = assetResponse.items
-      assetTotal.value = assetResponse.total
-      assetNextCursor.value = assetResponse.nextCursor || null
-      if (savedResponse) {
-        savedWorks.value = savedResponse.items
-        savedWorkNextCursor.value = savedResponse.nextCursor || null
+      ownedReadError.value = assetResult.status === 'rejected' ? messageFrom(assetResult.reason) : ''
+      savedReadError.value = savedResult.status === 'rejected' ? messageFrom(savedResult.reason) : ''
+      assetCountKnown.value = assetResult.status === 'fulfilled'
+      savedCountKnown.value = savedResult.status === 'fulfilled' && Boolean(savedResult.value)
+      if (assetResult.status === 'fulfilled') {
+        assets.value = assetResult.value.items
+        assetTotal.value = assetResult.value.total
+        assetNextCursor.value = assetResult.value.nextCursor || null
+
+      }
+      if (savedResult.status === 'fulfilled' && savedResult.value) {
+        savedWorks.value = savedResult.value.items
+        savedWorkNextCursor.value = savedResult.value.nextCursor || null
       }
     } else if (currentSection === 'generations') {
       await loadGenerationList(version)
@@ -655,14 +819,23 @@ async function load() {
       if (requestedOrder && requestedOrder.id !== requestedOrderID) {
         throw new Error(t('workspace.productPayment.unavailableBody'))
       }
-      orders.value = requestedOrder ? [requestedOrder, ...page.items.filter(item => item.id !== requestedOrder.id)] : page.items
+      const items = page.items.map(item => mergeOrder(orders.value.find(existing => existing.id === item.id), item))
+      orders.value = [...orders.value.filter(item => !items.some(next => next.id === item.id)), ...items]
+      if (requestedOrder) {
+        const merged = mergeOrder(orders.value.find(item => item.id === requestedOrder.id), requestedOrder)
+        orders.value = [merged, ...orders.value.filter(item => item.id !== merged.id)]
+      }
       orderNextCursor.value = page.nextCursor || null
     } else if (currentSection === 'tasks') {
-      const page = await api.listTasks({ mine: true })
+      const [result, types] = await Promise.allSettled([api.listTasks(workspaceTaskQuery()), api.listTaskTypes()])
       if (version !== workspaceLoadVersion) return
+      if (types.status === 'fulfilled') workspaceTaskTypes.value = types.value.items
+      if (result.status === 'rejected') throw result.reason
+      const page = result.value
       tasks.value = page.items
       nextTaskCursor.value = page.nextCursor
       taskTotal.value = page.total
+      taskReadKnown.value = true
     } else if (currentSection === 'billing') {
       syncBillingFilters()
       const [, pointOverview, runtime, settings] = await Promise.all([loadBillingStatement('', version), api.pointOverview(), api.meta(), api.walletTopupSettings()])
@@ -680,7 +853,10 @@ async function load() {
     }
     if (version === workspaceLoadVersion) selectedAsset.value = null
   } catch (reason) {
-    if (version === workspaceLoadVersion) error.value = messageFrom(reason)
+    if (version === workspaceLoadVersion) {
+      error.value = messageFrom(reason)
+      if (currentSection === 'orders') orderReadFailed.value = true
+    }
   } finally {
     if (version === workspaceLoadVersion) loading.value = false
   }
@@ -690,14 +866,20 @@ async function loadMoreTasks() {
   if (loading.value || !nextTaskCursor.value || loadingMoreTasks.value) return
   const version = workspaceLoadVersion
   loadingMoreTasks.value = true
+  taskMoreError.value = ''
   try {
-    const page = await api.listTasks({ mine: true, cursor: nextTaskCursor.value })
+    const page = await api.listTasks({ ...workspaceTaskQuery(), cursor: nextTaskCursor.value })
     if (version !== workspaceLoadVersion) return
     const known = new Set(tasks.value.map(item => item.id))
     tasks.value.push(...page.items.filter(item => !known.has(item.id)))
     nextTaskCursor.value = page.nextCursor
     taskTotal.value = page.total
-  } catch (reason) { if (version === workspaceLoadVersion) error.value = messageFrom(reason) }
+  } catch (reason) { if (version === workspaceLoadVersion) {
+    if (reason instanceof APIError && [401, 403, 404].includes(reason.status)) {
+      tasks.value = []; nextTaskCursor.value = undefined; taskTotal.value = 0; taskReadKnown.value = false
+      error.value = messageFrom(reason)
+    } else taskMoreError.value = messageFrom(reason)
+  } }
   finally { if (version === workspaceLoadVersion) loadingMoreTasks.value = false }
 }
 
@@ -710,7 +892,10 @@ async function loadMoreOrders() {
     const page = await api.listOrders({ limit: 20, cursor: orderNextCursor.value })
     if (version !== workspaceLoadVersion) return
     const known = new Set(orders.value.map(item => item.id))
-    orders.value = [...orders.value, ...page.items.filter(item => !known.has(item.id))]
+    orders.value = [...orders.value.map(item => {
+      const next = page.items.find(candidate => candidate.id === item.id)
+      return next ? mergeOrder(item, next) : item
+    }), ...page.items.filter(item => !known.has(item.id))]
     orderNextCursor.value = page.nextCursor || null
   } catch (reason) {
     if (version === workspaceLoadVersion) error.value = messageFrom(reason)
@@ -725,12 +910,13 @@ async function loadMoreAssets() {
   assetLoadingMore.value = true
   error.value = ''
   try {
-    const page = await api.listAssets({ cursor: assetNextCursor.value, ...(section.value === 'purchases' ? { source: 'purchase' as const } : {}) })
+    const page = await api.listAssets({ ...ownedAssetQuery(), cursor: assetNextCursor.value })
     if (version !== workspaceLoadVersion) return
     const known = new Set(assets.value.map(item => item.id))
     assets.value = [...assets.value, ...page.items.filter(item => !known.has(item.id))]
     assetTotal.value = page.total
     assetNextCursor.value = page.nextCursor || null
+
   } catch (reason) {
     if (version === workspaceLoadVersion) error.value = messageFrom(reason)
   } finally {
@@ -744,7 +930,7 @@ async function loadMoreSavedWorks() {
   savedWorkLoadingMore.value = true
   error.value = ''
   try {
-    const page = await api.listSavedWorks({ cursor: savedWorkNextCursor.value })
+    const page = await api.listSavedWorks({ ...savedAssetQuery(), cursor: savedWorkNextCursor.value })
     if (version !== workspaceLoadVersion) return
     const known = new Set(savedWorks.value.map(item => item.postId))
     savedWorks.value = [...savedWorks.value, ...page.items.filter(item => !known.has(item.postId))]
@@ -898,17 +1084,36 @@ async function applyGenerationBatch(action: 'favorite' | 'unfavorite' | 'cancel'
   }
 }
 
+async function refreshOrder(order: Order) {
+  if (refreshingOrder.value) return
+  const version = workspaceLoadVersion
+  refreshingOrder.value = order.id
+  error.value = ''
+  try {
+    const updated = await api.getOrder(order.id)
+    if (version !== workspaceLoadVersion) return
+    if (updated.id !== order.id || updated.paymentId !== order.paymentId) throw new Error(t('workspace.productPayment.unavailableBody'))
+    updateClosedOrder(updated)
+  } catch (reason) {
+    if (version === workspaceLoadVersion) error.value = messageFrom(reason)
+  } finally {
+    if (version === workspaceLoadVersion) refreshingOrder.value = ''
+  }
+}
+
 async function requestRefund(order: Order) {
   if (loading.value || refunding.value || !order.canRequestRefund || !validRefundReason(refundReasons.value[order.id] || '')) return
   const version = workspaceLoadVersion
   refunding.value = order.id
+  refundFeedbackOrderID.value = ''
   error.value = ''
   success.value = ''
   try {
     const updated = await api.refundOrder(order.id, refundReasons.value[order.id] || '')
     if (version !== workspaceLoadVersion) return
-    orders.value = orders.value.map((item) => item.id === updated.id ? updated : item)
-    success.value = t(updated.status === 'refund_requested' ? 'workspace.refundPending' : 'workspace.refundComplete')
+    if (updated.id !== order.id || updated.paymentId !== order.paymentId) throw new Error(t('workspace.productPayment.unavailableBody'))
+    orders.value = orders.value.map(item => item.id === order.id ? mergeOrder(item, updated) : item)
+    refundFeedbackOrderID.value = order.id
   } catch (reason) {
     if (version === workspaceLoadVersion) error.value = messageFrom(reason)
   } finally {
@@ -919,7 +1124,7 @@ async function requestRefund(order: Order) {
 function chooseUpload(event: globalThis.Event) {
   const input = event.target as globalThis.HTMLInputElement
   uploadFile.value = input.files?.[0] || null
-  if (uploadFile.value && !uploadTitle.value) uploadTitle.value = uploadFile.value.name.replace(/\.[^.]+$/, '').slice(0, 120)
+  if (uploadFile.value && !uploadTitle.value) uploadTitle.value = Array.from(uploadFile.value.name.replace(/\.[^.]+$/, '')).slice(0, 120).join('')
 }
 
 function chooseVersion(event: globalThis.Event) {
@@ -928,7 +1133,7 @@ function chooseVersion(event: globalThis.Event) {
 }
 
 async function uploadVersion() {
-  if (loading.value || versionUploading.value || !selectedAsset.value || !versionFile.value) return
+  if (loading.value || versionUploading.value || !selectedAsset.value || !versionFile.value || !textWithin(versionTitle.value || selectedAsset.value.title, 3, 120) || !textWithin(versionNote.value, 3, 500)) return
   const version = workspaceLoadVersion
   versionUploading.value = true
   error.value = ''
@@ -951,7 +1156,7 @@ async function uploadVersion() {
 }
 
 async function uploadAsset() {
-  if (loading.value || uploading.value || !uploadFile.value) return
+  if (loading.value || uploading.value || !uploadFile.value || !textWithin(uploadTitle.value, 3, 120)) return
   const version = workspaceLoadVersion
   uploading.value = true
   error.value = ''
@@ -967,7 +1172,23 @@ async function uploadAsset() {
     uploadTitle.value = ''
     uploadFile.value = null
     uploadOpen.value = false
-    void pollUpload(item.id, version)
+    startScanPolling(item, version)
+    // Canonical total avoids double-counting an idempotent replay, including a
+    // previously committed upload that was not in the currently loaded page.
+    try {
+      const page = await api.listAssets(ownedAssetQuery())
+      if (version !== workspaceLoadVersion) return
+      assets.value = page.items
+      assetTotal.value = page.total
+      assetNextCursor.value = page.nextCursor || null
+      assetCountKnown.value = true
+      ownedReadError.value = ''
+
+    } catch {
+      if (version !== workspaceLoadVersion) return
+      assetCountKnown.value = false
+      countNotice.value = t('workspace.assetCountUnknown')
+    }
   } catch (reason) {
     if (version === workspaceLoadVersion) error.value = messageFrom(reason)
   } finally {
@@ -975,31 +1196,15 @@ async function uploadAsset() {
   }
 }
 
-async function pollUpload(id: string, version: number) {
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    await new Promise(resolve => globalThis.setTimeout(resolve, 750))
-    if (version !== workspaceLoadVersion) return
-    try {
-      const updated = await api.getAsset(id)
-      if (version !== workspaceLoadVersion) return
-      assets.value = assets.value.map(item => item.id === updated.id ? updated : item)
-      if (updated.scanStatus !== 'pending') {
-        success.value = updated.scanStatus === 'clean' ? t('workspace.uploadReady') : t('workspace.uploadReview')
-        return
-      }
-    } catch {
-      return
-    }
-  }
-}
-
 function clearPrivateState() {
+  stopScanPolling()
+  ownedReadError.value = ''; savedReadError.value = ''; assetCountKnown.value = false; savedCountKnown.value = false; countNotice.value = ''
   // A different identity must not inherit data, cursors or unsent form contents
   // from the previous account, even while the new owner's read is still pending.
   assets.value = []; assetTotal.value = 0; assetNextCursor.value = null
   savedWorks.value = []; savedWorkNextCursor.value = null
-  orders.value = []; orderNextCursor.value = null; refundReasons.value = {}
-  tasks.value = []; taskTotal.value = 0; nextTaskCursor.value = undefined
+  orders.value = []; orderNextCursor.value = null; refundReasons.value = {}; orderReadFailed.value = false; refundFeedbackOrderID.value = ''
+  tasks.value = []; taskTotal.value = 0; nextTaskCursor.value = undefined; taskMoreError.value = ''; taskReadKnown.value = false
   generations.value = []; generationNextCursor.value = null; selectedGenerationIDs.value = []
   billing.value = null; billingNextCursor.value = null; points.value = null; pointNextCursor.value = null; paymentProvider.value = null
   selectedAsset.value = null
@@ -1008,19 +1213,36 @@ function clearPrivateState() {
   topupAmount.value = '20.00'
 }
 
-watch([() => route.fullPath, () => session.user?.id], (current, previous) => {
+const workspaceLoadKey = computed(() => {
+  if (section.value !== 'orders') return route.fullPath
+  const query = Object.fromEntries(Object.entries(route.query).filter(([key]) => !['q', 'status', 'from', 'to'].includes(key)).sort(([a], [b]) => a.localeCompare(b)))
+  return `${route.path}:${JSON.stringify(query)}`
+})
+watch([workspaceLoadKey, () => session.user?.id], (current, previous) => {
   if (current[1] !== previous[1]) clearPrivateState()
   void load()
 })
 onMounted(() => void load())
 onBeforeUnmount(() => {
+  cancelDownloadCheck()
   workspaceLoadVersion++
+  stopScanPolling()
   if (paymentConfirmationTimer !== undefined) globalThis.clearTimeout(paymentConfirmationTimer)
 })
 </script>
 
 <template>
-  <section class="workspace-page content-width" :class="{ 'assets-task-page': section === 'assets' && !assetID, 'asset-detail-workspace-page': Boolean(assetID) }">
+  <section class="workspace-page content-width" :class="{ 'assets-task-page catalog-page': isWorkspaceCatalog && !assetID, 'orders-catalog-page': section === 'orders', 'asset-detail-workspace-page': Boolean(assetID) }">
+    <div v-if="scanPaused.length" class="task-feedback" role="status">
+      <p>{{ t('workspace.scanPaused') }}</p><UiButton variant="secondary" @click="retryScanPolling">
+        {{ t('workspace.refreshScan') }}
+      </UiButton>
+    </div>
+    <div v-if="countNotice" class="task-feedback" role="status">
+      <p>{{ countNotice }}</p><UiButton variant="secondary" @click="load">
+        {{ t('actions.retry') }}
+      </UiButton>
+    </div>
     <AuthRequiredState
       v-if="!loading && needsAuthentication"
       :title="t(publishRequested ? 'authRequired.publishTitle' : 'authRequired.workspaceTitle')"
@@ -1113,7 +1335,7 @@ onBeforeUnmount(() => {
             </p>
             <small class="asset-detail-muted">{{ orderPaymentModeLabel({ paymentMode: selectedAsset.provenance.purchase.paymentMode, realCharge: selectedAsset.provenance.purchase.realCharge } as Order) }} · {{ t(`marketplace.orderStatus.${selectedAsset.provenance.purchase.orderStatus}`) }}</small>
             <div class="asset-detail-card-actions">
-              <UiButton v-if="selectedAsset.provenance.purchase.canDownload" as="a" class="command-button secondary" variant="secondary" :href="selectedAsset.mediaUrl" :download="selectedAsset.title">
+              <UiButton v-if="selectedAsset.provenance.purchase.canDownload" as="a" class="command-button secondary" variant="secondary" :href="`/api/v1/assets/${selectedAsset.id}/content`" :download="selectedAsset.title" :disabled="downloadState === 'checking'" @click.prevent="downloadPurchase()">
                 <template #start>
                   <Download :size="16" />
                 </template>{{ t(selectedAsset.provenance.purchase.delivery ? 'workspace.downloadPackage' : 'actions.downloadLicensed') }}
@@ -1124,9 +1346,29 @@ onBeforeUnmount(() => {
                 </template>{{ t('marketplace.viewOrder') }}
               </UiButton>
             </div>
+            <div class="purchase-access-feedback" aria-live="polite">
+              <p v-if="selectedAsset.purchaseAccess">
+                {{ t(`workspace.purchaseExperience.reason.${selectedAsset.purchaseAccess.status}`) }}
+              </p>
+              <p v-if="selectedAsset.provenance.purchase.canDownload && !selectedAsset.provenance.purchase.canReuse">
+                {{ t('workspace.purchaseExperience.noReuse') }}
+              </p>
+              <p v-if="downloadState">
+                {{ t(`workspace.purchaseExperience.${downloadState}`) }}
+              </p>
+              <p v-if="downloadError" role="alert">
+                {{ downloadError }}
+              </p>
+              <UiButton variant="secondary" @click="load">
+                {{ t('workspace.purchaseExperience.refreshAccess') }}
+              </UiButton>
+              <UiButton as="RouterLink" variant="ghost" to="/support">
+                {{ t('workspace.purchaseExperience.contactSupport') }}
+              </UiButton>
+            </div>
             <UiDataList v-if="selectedAsset.provenance.purchase.delivery" :aria-label="t('workspace.packageFiles')">
               <UiCardActions v-for="(file, index) in selectedAsset.provenance.purchase.delivery.files" :key="index" :value="file.name" :label="file.mimeType" :description="t('workspace.fileSize', { size: file.sizeBytes })">
-                <UiButton v-if="selectedAsset.provenance.purchase.canDownload" as="a" variant="secondary" size="sm" :href="`/api/v1/assets/${selectedAsset.id}/content?fileIndex=${index}`" :download="file.name" :aria-label="`${t('actions.download')} ${file.name}`">
+                <UiButton v-if="selectedAsset.provenance.purchase.canDownload" as="a" variant="secondary" size="sm" :href="`/api/v1/assets/${selectedAsset.id}/content?fileIndex=${index}`" :download="file.name" :disabled="downloadState === 'checking'" :aria-label="`${t('actions.download')} ${file.name}`" @click.prevent="downloadPurchase(index)">
                   <template #start>
                     <Download :size="16" />
                   </template>{{ t('actions.download') }}
@@ -1163,7 +1405,15 @@ onBeforeUnmount(() => {
           <UiCard class="asset-detail-card asset-provenance-card">
             <span class="asset-provenance-heading"><ShieldCheck :size="17" /><span class="status-label">{{ t('workspace.provenance') }}</span></span>
             <dl class="asset-facts">
-              <div><dt>{{ t('marketplace.license') }}</dt><dd>{{ licenseLabel(selectedAsset.licenseCode) }}</dd></div><div><dt>{{ t('workspace.sourceAsset') }}</dt><dd>{{ t(`workspace.sourceTypes.${selectedAsset.sourceType}`) }}</dd></div><div><dt>{{ t('workspace.assetVersion') }}</dt><dd>v{{ selectedAsset.versionNumber }}</dd></div><div><dt>{{ t('workspace.granted') }}</dt><dd>{{ date(selectedAsset.createdAt) }}</dd></div>
+              <div>
+                <dt>{{ t('marketplace.license') }}</dt><dd>
+                  {{ selectedAsset.provenance?.purchase?.licenseName || licenseLabel(selectedAsset.licenseCode) }}
+                  <p>{{ licenseExplanation(selectedAsset.licenseCode) }}</p>
+                  <RouterLink to="/policies/licensing">
+                    {{ t('workspace.licensePolicy') }}
+                  </RouterLink>
+                </dd>
+              </div><div><dt>{{ t('workspace.sourceAsset') }}</dt><dd>{{ t(`workspace.sourceTypes.${selectedAsset.sourceType}`) }}</dd></div><div><dt>{{ t('workspace.assetVersion') }}</dt><dd>v{{ selectedAsset.versionNumber }}</dd></div><div><dt>{{ t('workspace.granted') }}</dt><dd>{{ date(selectedAsset.createdAt) }}</dd></div>
             </dl>
           </UiCard>
 
@@ -1187,11 +1437,11 @@ onBeforeUnmount(() => {
               </template>{{ t('workspace.uploadVersion') }}
             </UiButton>
             <form v-if="versionOpen" class="asset-version-form" @submit.prevent="uploadVersion">
-              <label>{{ t('workspace.versionTitle') }}<UiInput v-model="versionTitle" type="text" minlength="3" maxlength="120" :placeholder="selectedAsset.title" /></label>
-              <label>{{ t('workspace.versionNote') }}<UiTextarea v-model="versionNote" rows="2" minlength="3" maxlength="500" required /></label>
+              <small>{{ t('workspace.titleLengthHint') }}</small><label>{{ t('workspace.versionTitle') }}<UiInput v-model="versionTitle" type="text" :placeholder="selectedAsset.title" /></label>
+              <label>{{ t('workspace.versionNote') }}<UiTextarea v-model="versionNote" rows="2" required /></label>
               <label>{{ t('workspace.versionFile') }}<UiFileInput :accept="versionAccept" required @change="chooseVersion" /></label>
               <small>{{ t('workspace.versionScanBoundary') }}</small>
-              <UiButton class="command-button primary wide" variant="primary" type="submit" :loading="versionUploading" :disabled="!versionFile">
+              <UiButton class="command-button primary wide" variant="primary" type="submit" :loading="versionUploading" :disabled="!versionFile || !textWithin(versionTitle || selectedAsset.title, 3, 120) || !textWithin(versionNote, 3, 500)">
                 <template #start>
                   <Upload v-if="!versionUploading" :size="16" />
                 </template>{{ t('workspace.queueVersion') }}
@@ -1230,7 +1480,7 @@ onBeforeUnmount(() => {
     <template v-else>
       <PageHeader
         v-if="workspaceHero"
-        :eyebrow="workspaceHero.eyebrow"
+        :eyebrow="isWorkspaceCatalog ? undefined : workspaceHero.eyebrow"
         :eyebrow-icon="workspaceHero.eyebrowIcon"
         :title="sectionMeta.title"
         :summary="sectionMeta.summary"
@@ -1265,15 +1515,15 @@ onBeforeUnmount(() => {
             </template>{{ t('workspace.purchases') }}
           </UiButton>
           <template v-if="section === 'tasks'">
-            <UiButton as="RouterLink" class="command-button primary" variant="primary" to="/market/demands">
+            <UiButton as="RouterLink" class="command-button secondary" variant="secondary" to="/market/demands">
               <template #start>
                 <ClipboardList :size="17" />
               </template>{{ t('workspace.browseTasks') }}
             </UiButton>
-            <UiButton as="RouterLink" class="command-button secondary" variant="secondary" to="/market/demands?view=mine">
+            <UiButton as="RouterLink" class="command-button primary" variant="primary" to="/market/demands?publish=1">
               <template #start>
-                <ArrowRight :size="17" />
-              </template>{{ t('tasks.myActivity') }}
+                <Plus :size="17" />
+              </template>{{ t('tasks.publishBrief') }}
             </UiButton>
           </template>
         </template>
@@ -1293,7 +1543,7 @@ onBeforeUnmount(() => {
           </template>{{ sectionMeta.actionLabel }}
         </UiButton>
       </PageHeading>
-      <nav v-if="section !== 'assets'" class="section-tabs workspace-switcher" :aria-label="t('workspace.sectionsLabel')">
+      <nav v-if="!isWorkspaceCatalog" class="section-tabs workspace-switcher" :aria-label="t('workspace.sectionsLabel')">
         <RouterLink to="/workspace/assets" :class="{ active: section === 'assets' }">
           <Boxes :size="17" />{{ t('workspace.assets') }}
         </RouterLink>
@@ -1311,11 +1561,98 @@ onBeforeUnmount(() => {
         </RouterLink>
       </nav>
 
-      <UiFilterBar v-if="section === 'assets'" as="div" split class="controls-with-switcher has-switcher asset-view-toolbar">
-        <div class="view-switcher-bar">
-          <UiTabs class="view-switcher" :model-value="assetView" :items="assetViewTabs" :label="t('workspace.assetViewsLabel')" @update:model-value="selectAssetView" />
+      <CatalogToolbar v-if="isAssetCatalog" :title="sectionMeta.title" filter-class="asset-library-toolbar">
+        <CatalogViews :model-value="assetView" :items="section === 'assets' ? assetViewTabs : [{ value: 'owned', label: t('catalog.views.all') }]" id-prefix="workspace-assets" :label="t('workspace.assetViewsLabel')" :count="Number(sectionMeta.count) || 0" :pending="loading || Boolean(catalogError) || sectionMeta.count === '—'" :status="loading ? t('status.loadingWorkspace') : catalogError || (assetView === 'saved' ? t('workspace.loadedCount', { count: sectionMeta.count }) : `${sectionMeta.count} ${sectionMeta.title}`)" @update:model-value="selectAssetView" />
+        <div class="catalog-controls asset-library-controls" role="group" :aria-label="t('workspace.applyFilters')">
+          <UiSelect v-model="assetKindFilter" :align-item-with-trigger="false" :aria-label="t('workspace.mediaFilter')" @update:model-value="applyAssetFilters()">
+            <option value="">
+              {{ t('workspace.allMedia') }}
+            </option><option v-for="kind in ['image','video','audio','document']" :key="kind" :value="kind">
+              {{ t(`workspace.mediaKinds.${kind}`) }}
+            </option>
+          </UiSelect>
+          <UiSelect v-if="section === 'assets' && assetView === 'owned'" v-model="assetSourceFilter" :align-item-with-trigger="false" :aria-label="t('workspace.sourceFilter')" @update:model-value="applyAssetFilters()">
+            <option value="">
+              {{ t('workspace.allSources') }}
+            </option><option v-for="source in ['upload','generation','purchase','delivery']" :key="source" :value="source">
+              {{ t(`workspace.sourceTypes.${source}`) }}
+            </option>
+          </UiSelect>
+          <UiSelect v-if="assetView === 'owned'" v-model="assetScanFilter" :align-item-with-trigger="false" :aria-label="t('workspace.scanFilter')" @update:model-value="applyAssetFilters()">
+            <option value="">
+              {{ t('workspace.allScans') }}
+            </option><option v-for="scan in ['pending','clean','review','rejected']" :key="scan" :value="scan">
+              {{ t(`workspace.scanStatus.${scan}`) }}
+            </option>
+          </UiSelect>
+          <UiButton v-if="hasAssetFilters" class="catalog-reset" variant="secondary" @click="applyAssetFilters(true)">
+            <RotateCcw :size="14" />{{ t('workspace.clearFilters') }}
+          </UiButton>
+          <div class="catalog-display">
+            <UiLayoutSwitcher v-model="assetLayout" :label="t('workspace.assetLayout')" :list-label="t('workspace.listView')" :grid-label="t('workspace.gridView')" />
+          </div>
         </div>
-      </UiFilterBar>
+        <CatalogKeyword :query="assetFilters.q" @clear="router.push({ query: { ...route.query, q: undefined } })" />
+      </CatalogToolbar>
+
+      <CatalogToolbar v-if="section === 'orders'" :title="sectionMeta.title" filter-class="order-catalog-toolbar">
+        <div class="catalog-controls order-catalog-controls" role="group" :aria-label="t('workspace.filterLoadedOrders')">
+          <UiSelect v-model="orderStatusFilter" :align-item-with-trigger="false" :aria-label="t('workspace.orderStatusFilter')">
+            <option value="">
+              {{ t('workspace.allOrderStatuses') }}
+            </option>
+            <option v-for="status in orderStatuses" :key="status" :value="status">
+              {{ t('marketplace.orderStatus.' + status) }}
+            </option>
+          </UiSelect>
+          <div class="order-date-range">
+            <label><span>{{ t('workspace.orderFromShort') }}</span><UiInput v-model="orderDateFrom" type="date" :aria-label="t('workspace.orderDateFrom')" :max="orderDateTo || undefined" /></label>
+            <span aria-hidden="true">—</span>
+            <label><span class="sr-only">{{ t('workspace.orderDateTo') }}</span><UiInput v-model="orderDateTo" type="date" :aria-label="t('workspace.orderDateTo')" :min="orderDateFrom || undefined" /></label>
+          </div>
+          <UiButton v-if="hasOrderFilters" class="catalog-reset" variant="secondary" @click="clearOrderFilters">
+            <RotateCcw :size="14" />{{ t('workspace.clearFilters') }}
+          </UiButton>
+        </div>
+        <CatalogKeyword :query="orderSearch" @clear="setOrderQuery('q', '')" />
+      </CatalogToolbar>
+
+      <CatalogToolbar v-if="section === 'tasks'" :title="sectionMeta.title" filter-class="workspace-task-toolbar">
+        <div class="catalog-controls workspace-task-controls" role="group" :aria-label="t('search.taskFilters')">
+          <UiSelect v-model="workspaceTaskType" :aria-label="t('tasks.allTypes')" :align-item-with-trigger="false">
+            <option value="">
+              {{ t('tasks.allTypes') }}
+            </option>
+            <option v-for="code in workspaceTaskTypeCodes" :key="code" :value="code">
+              {{ workspaceTaskTypeLabel(code) }}
+            </option>
+          </UiSelect>
+          <UiSelect v-model="workspaceTaskStatus" :aria-label="t('tasks.allStatuses')" :align-item-with-trigger="false">
+            <option value="">
+              {{ t('tasks.allStatuses') }}
+            </option>
+            <option v-for="status in workspaceTaskStatuses" :key="status" :value="status">
+              {{ t(`tasks.status.${status}`) }}
+            </option>
+          </UiSelect>
+          <UiButton v-if="hasWorkspaceTaskFilters" class="catalog-reset" variant="secondary" @click="clearWorkspaceTaskFilters">
+            <RotateCcw :size="14" />{{ t('tasks.clearFilters') }}
+          </UiButton>
+          <div class="catalog-display">
+            <UiSelect v-model="workspaceTaskSort" :aria-label="t('tasks.sortNewest')" :align-item-with-trigger="false">
+              <option value="newest">
+                {{ t('tasks.sortNewest') }}
+              </option><option value="deadline">
+                {{ t('tasks.sortDeadline') }}
+              </option><option value="budget_desc">
+                {{ t('tasks.sortBudget') }}
+              </option>
+            </UiSelect>
+            <UiLayoutSwitcher v-model="workspaceTaskLayout" :label="t('tasks.layout')" :list-label="t('tasks.listView')" :grid-label="t('tasks.gridView')" />
+          </div>
+        </div>
+        <CatalogKeyword :query="workspaceTaskSearch" @clear="updateTaskFilter('q', '')" />
+      </CatalogToolbar>
 
       <form v-if="uploadOpen && section === 'assets' && assetView === 'owned'" class="asset-upload-panel" @submit.prevent="uploadAsset">
         <header>
@@ -1323,8 +1660,8 @@ onBeforeUnmount(() => {
             <X :size="17" />
           </UiIconButton>
         </header>
-        <div><label>{{ t('workspace.uploadTitle') }}<UiInput v-model="uploadTitle" type="text" minlength="3" maxlength="120" required /></label><label>{{ t('workspace.uploadFile') }}<UiFileInput accept="image/jpeg,image/png,video/mp4,audio/wav,audio/mpeg,text/plain" required @change="chooseUpload" /></label></div>
-        <small>{{ t('workspace.uploadLimits') }}</small><UiButton class="command-button primary" variant="primary" type="submit" :loading="uploading" :disabled="!uploadFile">
+        <div><label>{{ t('workspace.uploadTitle') }}<UiInput v-model="uploadTitle" type="text" required /></label><label>{{ t('workspace.uploadFile') }}<UiFileInput accept="image/jpeg,image/png,video/mp4,audio/wav,audio/mpeg,text/plain" required @change="chooseUpload" /></label></div>
+        <small>{{ t('workspace.uploadLimits') }} {{ t('workspace.titleLengthHint') }}</small><UiButton class="command-button primary" variant="primary" type="submit" :loading="uploading" :disabled="!uploadFile || !textWithin(uploadTitle, 3, 120)">
           <template #start>
             <Upload v-if="!uploading" :size="17" />
           </template>{{ uploading ? t('workspace.uploading') : t('workspace.queueUpload') }}
@@ -1335,10 +1672,10 @@ onBeforeUnmount(() => {
         <FileCheck2 :size="18" />{{ success }}
       </div>
 
-      <div v-if="loading && !isAssetCatalog" class="page-state" aria-live="polite">
+      <div v-if="loading && !isWorkspaceCatalog" class="page-state" aria-live="polite">
         {{ t('status.loadingWorkspace') }}
       </div>
-      <div v-else-if="error && section !== 'orders' && !isAssetCatalog" class="page-state" role="alert">
+      <div v-else-if="error && !isWorkspaceCatalog" class="page-state" role="alert">
         <p>{{ error }}</p><UiButton class="command-button secondary" variant="secondary" @click="load">
           <template #start>
             <RefreshCw :size="17" />
@@ -1347,17 +1684,14 @@ onBeforeUnmount(() => {
       </div>
 
       <template v-else-if="isAssetCatalog">
+        <div v-if="section === 'assets'" :id="`workspace-assets-panel-${assetView === 'owned' ? 'saved' : 'owned'}`" role="tabpanel" :aria-labelledby="`workspace-assets-tab-${assetView === 'owned' ? 'saved' : 'owned'}`" hidden></div>
         <div class="asset-browser-layout">
-          <div class="task-results asset-results" :aria-busy="loading">
-            <div v-if="section === 'assets'" class="task-results-meta">
-              <div><strong>{{ sectionMeta.count }} {{ t('workspace.assets') }}</strong><span>{{ sectionMeta.summary }}</span></div>
-              <UiLayoutSwitcher v-model="assetLayout" :label="t('workspace.assetLayout')" :list-label="t('workspace.listView')" :grid-label="t('workspace.gridView')" />
-            </div>
+          <CatalogResults :id="section === 'assets' ? `workspace-assets-panel-${assetView}` : undefined" :loading="loading" :role="section === 'assets' ? 'tabpanel' : undefined" :aria-labelledby="section === 'assets' ? `workspace-assets-tab-${assetView}` : undefined" :tabindex="section === 'assets' ? 0 : undefined" class="task-results asset-results" :aria-busy="loading">
             <div v-if="loading" class="page-state" aria-live="polite">
               {{ t('status.loadingWorkspace') }}
             </div>
-            <div v-else-if="error" class="page-state" role="alert">
-              <p>{{ error }}</p><UiButton variant="secondary" @click="load">
+            <div v-else-if="catalogError" class="page-state" role="alert">
+              <p>{{ catalogError }}</p><UiButton variant="secondary" @click="load">
                 <RefreshCw :size="17" />{{ t('actions.retry') }}
               </UiButton>
             </div>
@@ -1366,84 +1700,38 @@ onBeforeUnmount(() => {
                 <ShieldCheck :size="19" /><div><strong>{{ t('workspace.savedRightsTitle') }}</strong><p>{{ t('workspace.savedRightsSummary') }}</p></div>
               </div>
 
-              <UiCatalog class="task-result-list asset-result-list" :grid="section === 'assets' && assetLayout === 'grid'">
-                <template v-if="assetView === 'saved'">
-                  <UiContentCard v-for="item in savedWorks" :key="item.postId" layout="media" class="task-row asset-row" data-type="saved">
-                    <UiCardMedia class="asset-row-media" :to="`/works/${item.workId}`">
-                      <AssetMedia :src="item.mediaUrl" :kind="item.mediaKind" :alt="item.title" :width="item.width || 800" :height="item.height || 800" :controls="false" />
-                    </UiCardMedia>
-                    <UiCardContent class="task-card-content" :title="item.title" :summary="licenseLabel(item.licenseCode)" :to="`/works/${item.workId}`">
-                      <template #tags>
-                        <UiCardTag><Bookmark :size="13" aria-hidden="true" />{{ t('workspace.referenceOnly') }}</UiCardTag>
-                      </template>
-                      <template #meta>
-                        <span>@{{ item.authorHandle }}</span><span>{{ date(item.savedAt) }}</span>
-                      </template>
-                    </UiCardContent>
-                    <UiCardActions class="task-row-commercial" :label="t('workspace.referenceOnly')" :value="t('workspace.savedWorks')">
-                      <UiButton as="RouterLink" variant="secondary" size="sm" :to="`/works/${item.workId}`">
-                        {{ t('actions.viewDetails') }}<template #end>
-                          <ArrowRight :size="16" />
-                        </template>
-                      </UiButton>
-                      <UiIconButton size="sm" variant="outline" :label="t('workspace.removeSaved')" @click="removeSavedWork(item)">
-                        <BookmarkX :size="16" />
-                      </UiIconButton>
-                    </UiCardActions>
-                  </UiContentCard>
-                </template>
-                <template v-else>
-                  <UiContentCard v-for="asset in visibleAssets" :key="asset.id" layout="media" class="task-row asset-row" :data-type="asset.sourceType">
-                    <UiCardMedia class="asset-row-media" :to="`/workspace/assets/${asset.id}`">
-                      <AssetMedia v-if="asset.scanStatus === 'clean'" :src="asset.mediaUrl" :kind="asset.kind" :mime-type="asset.mimeType" :alt="asset.title" :width="asset.width || 800" :height="asset.height || 800" :controls="false" />
-                      <span v-else class="asset-row-scan-state"><ShieldCheck :size="24" /><strong>{{ t(`workspace.scanStatus.${asset.scanStatus}`) }}</strong></span>
-                    </UiCardMedia>
-                    <UiCardContent class="task-card-content" :title="asset.title" :to="`/workspace/assets/${asset.id}`">
-                      <template #tags>
-                        <UiCardTag><Boxes :size="13" aria-hidden="true" />{{ t(`workspace.sourceTypes.${asset.sourceType}`) }}</UiCardTag>
-                        <UiCardTag :variant="asset.scanStatus === 'clean' ? 'success' : asset.scanStatus === 'rejected' ? 'danger' : 'warning'">
-                          {{ t(`workspace.scanStatus.${asset.scanStatus}`) }}
-                        </UiCardTag>
-                      </template>
-                      <template #meta>
-                        <span>{{ date(asset.createdAt) }}</span><span>{{ t(`create.modes.${asset.kind === 'audio' ? 'music' : asset.kind === 'document' ? 'chat' : asset.kind}`) }}</span>
-                      </template>
-                    </UiCardContent>
-                    <UiCardActions class="task-row-commercial" :label="t('workspace.assetVersion')" :value="`v${asset.versionNumber}`" :description="`${t('marketplace.license')} · ${licenseLabel(asset.licenseCode)}`">
-                      <UiButton as="RouterLink" variant="secondary" size="sm" :to="`/workspace/assets/${asset.id}`">
-                        {{ t('actions.viewDetails') }}<template #end>
-                          <ArrowRight :size="16" />
-                        </template>
-                      </UiButton>
-                      <UiIconButton v-if="!['purchase', 'delivery'].includes(asset.sourceType) && asset.scanStatus === 'clean'" size="sm" variant="outline" class="asset-publish-action" :label="t('actions.publishAsset')" @click="openPublish(asset.id)">
-                        <Upload :size="16" />
-                      </UiIconButton>
-                      <UiIconButton v-if="asset.sourceType === 'purchase' && asset.provenance?.purchase?.canReuse" as="RouterLink" size="sm" variant="outline" :to="{ path: creationPath(asset.kind), query: { sourceAssetId: asset.id } }" :label="t('actions.useInCreate')">
-                        <WandSparkles :size="16" />
-                      </UiIconButton>
-                    </UiCardActions>
-                  </UiContentCard>
-                </template>
+              <AssetCatalogViewport :count="assetView === 'saved' ? savedWorks.length : visibleAssets.length" :grid="assetLayout === 'grid'" :min-card-width="300" :reset-key="route.fullPath" class="task-result-list asset-result-list" @visible="syncVisibleAssetScans">
+                <template #default="{ start, end }">
+                  <template v-if="assetView === 'saved'">
+                    <AssetLibraryEntry v-for="item in savedWorks.slice(start, end)" :key="item.postId" :saved="item" :date-label="date(item.savedAt)" @remove="removeSavedWork(item)" />
+                  </template>
+                  <template v-else>
+                    <AssetLibraryEntry v-for="asset in visibleAssets.slice(start, end)" :key="asset.id" :asset="asset" :date-label="date(asset.createdAt)" @publish="openPublish(asset.id)" />
+                  </template>
 
-                <UiEmptyState v-if="(assetView === 'saved' ? !savedWorks.length : !visibleAssets.length)" class="task-market-empty" :title="assetView === 'saved' ? t('workspace.noSavedTitle') : section === 'purchases' ? t('workspace.noPurchasesTitle') : t('workspace.noAssetsTitle')" :message="assetView === 'saved' ? t('workspace.noSaved') : section === 'purchases' ? t('workspace.noPurchases') : t('workspace.noAssets')">
-                  <template #icon>
-                    <Bookmark v-if="assetView === 'saved'" :size="20" /><ShoppingBag v-else-if="section === 'purchases'" :size="20" /><Boxes v-else :size="20" />
-                  </template>
-                  <template #actions>
-                    <UiButton v-if="assetView === 'saved'" as="RouterLink" class="command-button secondary" variant="secondary" to="/community">
-                      {{ t('workspace.browseCommunity') }}<ArrowRight :size="16" />
-                    </UiButton>
-                    <UiButton v-else-if="section !== 'purchases'" as="RouterLink" class="command-button secondary" variant="secondary" to="/create/image">
-                      {{ t('actions.startCreating') }}<ArrowRight :size="16" />
-                    </UiButton>
-                  </template>
-                </UiEmptyState>
-              </UiCatalog>
+                  <UiEmptyState v-if="(assetView === 'saved' ? !savedWorks.length : !visibleAssets.length)" class="task-market-empty" :title="hasAssetFilters ? t('workspace.noMatchingAssets') : assetView === 'saved' ? t('workspace.noSavedTitle') : section === 'purchases' ? t('workspace.noPurchasesTitle') : t('workspace.noAssetsTitle')" :message="hasAssetFilters ? t('workspace.tryDifferentFilters') : assetView === 'saved' ? t('workspace.noSaved') : section === 'purchases' ? t('workspace.noPurchases') : t('workspace.noAssets')">
+                    <template #icon>
+                      <Bookmark v-if="assetView === 'saved'" :size="20" /><ShoppingBag v-else-if="section === 'purchases'" :size="20" /><Boxes v-else :size="20" />
+                    </template>
+                    <template #actions>
+                      <UiButton v-if="hasAssetFilters" variant="secondary" @click="applyAssetFilters(true)">
+                        {{ t('workspace.clearFilters') }}
+                      </UiButton>
+                      <UiButton v-else-if="assetView === 'saved'" as="RouterLink" class="command-button secondary" variant="secondary" to="/community">
+                        {{ t('workspace.browseCommunity') }}<ArrowRight :size="16" />
+                      </UiButton>
+                      <UiButton v-else-if="section !== 'purchases'" as="RouterLink" class="command-button secondary" variant="secondary" to="/create/image">
+                        {{ t('actions.startCreating') }}<ArrowRight :size="16" />
+                      </UiButton>
+                    </template>
+                  </UiEmptyState>
+                </template>
+              </AssetCatalogViewport>
               <UiButton v-if="assetView === 'saved' ? savedWorkNextCursor : assetNextCursor" class="command-button secondary generation-load-more" variant="secondary" :loading="assetView === 'saved' ? savedWorkLoadingMore : assetLoadingMore" @click="assetView === 'saved' ? loadMoreSavedWorks() : loadMoreAssets()">
                 {{ t('actions.loadMore') }}
               </UiButton>
             </template>
-          </div>
+          </CatalogResults>
         </div>
       </template>
 
@@ -1495,7 +1783,7 @@ onBeforeUnmount(() => {
         <article v-for="item in generations" :key="item.id" class="generation-row" :class="{ 'usage-focus': generationFocus === item.id }">
           <label class="generation-row-select"><UiCheckbox :model-value="selectedGenerationIDs.includes(item.id)" :aria-label="t('workspace.selectGeneration', { prompt: item.prompt })" @click.stop @update:model-value="toggleGenerationSelection(item)" /></label>
           <div v-if="item.outputMediaUrl" class="generation-thumb">
-            <AssetMedia :src="item.outputMediaUrl" :kind="item.mode === 'music' ? 'audio' : item.mode === 'chat' ? 'document' : item.mode" :alt="item.prompt" :text="item.outputText" :width="100" :height="100" :controls="false" />
+            <AssetMedia :src="item.outputMediaUrl" :kind="item.mode === 'music' ? 'audio' : item.mode === 'chat' ? 'document' : item.mode" :alt="item.prompt" :text="item.outputText" :width="100" :height="100" :controls="false" preview-only />
           </div><div v-else class="generation-thumb placeholder">
             <Clock3 :size="20" />
           </div><div class="generation-row-copy">
@@ -1555,77 +1843,42 @@ onBeforeUnmount(() => {
       </div>
 
       <div v-else-if="section === 'orders'" class="orders-workspace">
-        <ProductPaymentStatus v-if="productPaymentReturn" :order-id="returnedOrderID" :payment-id="returnedPaymentID" :return-kind="String(route.query.payment)" @updated="updateReturnedOrder" />
-        <div v-if="success" class="task-feedback success" role="status">
-          <FileCheck2 :size="18" />{{ success }}
+        <ProductPaymentStatus v-if="productPaymentReturn" :order-id="returnedOrderID" :payment-id="returnedPaymentID" :return-kind="String(route.query.payment)" :current-order="returnedOrder" @updated="updateReturnedOrder" />
+        <div v-if="orderRefundFeedback" class="task-feedback" :class="orderRefundFeedback.error ? 'error' : 'success'" :role="orderRefundFeedback.error ? 'alert' : 'status'">
+          <FileCheck2 :size="18" />{{ t('workspace.' + orderRefundFeedback.key) }}
         </div>
         <div v-if="error" class="task-feedback error" role="alert">
           <RefreshCw :size="18" />{{ error }}
-        </div>
-        <div class="order-list">
-          <article v-for="order in orders" :key="order.id" class="order-row" :data-order-status="order.status">
-            <header class="order-card-header">
-              <div class="order-card-identity">
-                <span class="task-status" :data-status="orderStatusTone(order.status)">{{ t(`marketplace.orderStatus.${order.status}`) }}</span>
-                <RouterLink :to="`/market/assets/${order.productId}`">
-                  <h2>{{ order.productTitle }}</h2>
-                </RouterLink>
-                <small>{{ t('workspace.orderReference') }} · {{ order.id }}</small>
-              </div>
-              <div class="order-card-amount">
-                <strong>{{ formatCurrency(order.amountCents, order.currency, locale) }}</strong><span>{{ orderPaymentModeLabel(order) }}</span>
-                <ProductOrderDeliveryLink :order="order" size="sm" />
-              </div>
-            </header>
-            <dl class="order-summary-grid">
-              <div><dt>{{ t('marketplace.license') }}</dt><dd>{{ order.licenseName }} · v{{ order.licenseVersion }}</dd></div>
-              <div><dt>{{ t('workspace.paymentMode') }}</dt><dd>{{ orderPaymentModeLabel(order) }}</dd></div>
-              <div><dt>{{ t('workspace.placedAt') }}</dt><dd>{{ date(order.createdAt) }}</dd></div>
-              <div><dt>{{ t('marketplace.refundWindow') }}</dt><dd>{{ t('marketplace.refundDays', { count: order.refundWindowDays }) }}</dd></div>
-              <div v-if="order.refundDeadlineAt">
-                <dt>{{ t('workspace.refundDeadline') }}</dt><dd>{{ date(order.refundDeadlineAt) }}</dd>
-              </div>
-            </dl>
-            <div class="order-evidence">
-              <section class="order-license-panel">
-                <h3><ShieldCheck :size="17" />{{ t('workspace.licenseSnapshot') }}</h3>
-                <p>{{ order.licenseTerms }}</p>
-                <small><FileCheck2 :size="14" />{{ licenseLabel(order.licenseCode) }} · v{{ order.licenseVersion }}</small>
-              </section>
-              <section class="order-history-panel">
-                <h3><ReceiptText :size="17" />{{ t('workspace.eventHistory') }}</h3>
-                <ol>
-                  <li v-for="event in order.events" :key="`${event.toStatus}-${event.createdAt}`">
-                    <span><PackageCheck :size="15" /></span><div>
-                      <strong>{{ orderEventLabel(event.toStatus) }}</strong><small>{{ date(event.createdAt) }}</small><p v-if="event.toStatus === 'refund_requested'">
-                        {{ event.reason }}
-                      </p>
-                    </div>
-                  </li>
-                </ol>
-              </section>
-            </div>
-            <ProductCheckoutClosure :order="order" @updated="updateClosedOrder" />
-            <form v-if="order.canRequestRefund" class="refund-form" @submit.prevent="requestRefund(order)">
-              <label>{{ t('workspace.refundReason') }}<UiTextarea v-model="refundReasons[order.id]" rows="2" required :placeholder="t('workspace.refundPlaceholder')" /><small>{{ t('workspace.refundReasonLength') }}</small></label><UiButton class="command-button secondary" variant="secondary" type="submit" :loading="refunding === order.id" :disabled="refunding !== '' || !validRefundReason(refundReasons[order.id] || '')">
-                <template #start>
-                  <RotateCcw v-if="refunding !== order.id" :size="17" />
-                </template>{{ t(order.paymentMode === 'test' ? 'workspace.requestRefund' : 'workspace.requestProviderRefund') }}
-              </UiButton>
-            </form>
-            <p v-else-if="order.status === 'fulfilled' && order.refundUnavailableReason" class="muted">
-              {{ t(`workspace.refundUnavailable.${order.refundUnavailableReason}`) }}
-            </p>
-          </article>
-          <UiEmptyState v-if="!orders.length" class="task-market-empty" :title="t('workspace.noOrdersTitle')" :message="t('workspace.noOrders')">
-            <template #icon>
-              <ReceiptText :size="24" />
-            </template>
-          </UiEmptyState>
-          <UiButton v-if="orderNextCursor" class="command-button secondary generation-load-more" variant="secondary" :loading="ordersLoadingMore" @click="loadMoreOrders">
-            {{ t('actions.loadMore') }}
+          <UiButton v-if="orderReadFailed" variant="secondary" @click="load">
+            {{ t('actions.retry') }}
           </UiButton>
         </div>
+        <CatalogResultSummary class="order-results-summary" :note="t('workspace.orderCountsHint')" :note-label="t('workspace.orderCountsHelp')">
+          <p class="order-loaded-count" role="status">
+            {{ loading ? t('status.loadingWorkspace') : orderReadFailed ? '—' : t('workspace.orderLoadedSummary', { count: visibleOrders.length }) }}
+          </p>
+        </CatalogResultSummary>
+        <CatalogResults :loading="loading">
+          <div v-if="loading" class="page-state">
+            {{ t('status.loadingWorkspace') }}
+          </div>
+          <template v-else>
+            <p v-if="orders.length && !visibleOrders.length" class="order-filter-empty" role="status">
+              {{ t('workspace.noLoadedOrdersMatch') }}
+            </p>
+            <div class="order-list">
+              <OrderRecord v-for="order in visibleOrders" :key="order.id" :order="order" :timezone="session.user?.timezone || 'UTC'" :refreshing="refreshingOrder" :refunding="refunding" :copied="copiedOrder === order.id" :refund-reason="refundReasons[order.id] || ''" :initial-open="returnedOrderID === order.id && !route.query.payment" @refresh="refreshOrder(order)" @copy="copyOrderReference(order)" @updated="updateClosedOrder" @refund="requestRefund(order)" @update:refund-reason="refundReasons[order.id] = $event" />
+              <UiEmptyState v-if="!orders.length && !orderReadFailed" class="task-market-empty" :title="t('workspace.noOrdersTitle')" :message="t('workspace.noOrders')">
+                <template #icon>
+                  <ReceiptText :size="24" />
+                </template>
+              </UiEmptyState>
+              <UiButton v-if="orderNextCursor" class="command-button secondary generation-load-more" variant="secondary" :loading="ordersLoadingMore" @click="loadMoreOrders">
+                {{ t('actions.loadMore') }}
+              </UiButton>
+            </div>
+          </template>
+        </CatalogResults>
       </div>
 
       <div v-else-if="section === 'billing' && billing && points" class="billing-dashboard">
@@ -1843,33 +2096,82 @@ onBeforeUnmount(() => {
         </section>
       </div>
 
-      <div v-else class="tasks-workspace">
-        <div class="workspace-task-list">
-          <RouterLink v-for="item in tasks" :key="item.id" class="workspace-task-card" :data-status="item.status" :data-type="item.deliverableType" :to="`/market/demands/${item.id}`">
-            <div class="workspace-task-card-main">
-              <span class="workspace-task-card-labels"><UiCardTag><ClipboardList :size="13" aria-hidden="true" />{{ t(`tasks.types.${item.deliverableType}`) }}</UiCardTag><span class="task-status" :data-status="item.status">{{ t(`tasks.status.${item.status}`) }}</span></span>
-              <h2>{{ item.title }}</h2>
-              <p>{{ item.summary }}</p>
-              <span class="workspace-task-card-byline"><strong>{{ taskRoleLabel(item) }}</strong><span>@{{ item.client.handle }}</span><span v-if="item.assignee">{{ t('workspace.taskAssignee') }} · @{{ item.assignee.handle }}</span></span>
+      <div v-else-if="section === 'tasks'" class="tasks-workspace">
+        <CatalogResultSummary class="workspace-task-summary" :note="t('workspace.taskCardBudgetHint')" :note-label="t('workspace.taskBudgetHelp')">
+          <p class="workspace-task-count" role="status">
+            {{ loading ? t('status.loadingWorkspace') : taskReadKnown ? t('workspace.taskResultCount', { count: taskTotal }) : '—' }}
+          </p>
+        </CatalogResultSummary>
+        <CatalogResults :loading="loading">
+          <div v-if="loading" class="page-state" aria-live="polite">
+            {{ t('status.loadingWorkspace') }}
+          </div>
+          <div v-else-if="error" class="task-feedback error" role="alert">
+            <p>{{ error }}</p><UiButton variant="secondary" @click="load">
+              {{ t('actions.retry') }}
+            </UiButton>
+          </div>
+          <template v-else>
+            <UiCatalog class="workspace-task-list" :grid="workspaceTaskLayout === 'grid'">
+              <WorkspaceTaskEntry v-for="item in tasks" :key="item.id" :item="item" :user-id="session.user?.id || ''" :type-label="workspaceTaskTypeLabel(item.deliverableType)" />
+            </UiCatalog>
+            <div class="catalog-pagination">
+              <p v-if="taskMoreError" class="task-feedback error" role="alert">
+                {{ taskMoreError }}
+              </p>
+              <UiButton v-if="nextTaskCursor" variant="secondary" :loading="loadingMoreTasks" @click="loadMoreTasks">
+                {{ t(taskMoreError ? 'actions.retry' : 'actions.loadMore') }}
+              </UiButton>
             </div>
-            <dl class="workspace-task-card-facts">
-              <div><dt><Coins :size="14" />{{ t('tasks.reward') }}</dt><dd>{{ formatCurrency(item.budgetCents, item.currency, locale) }}</dd></div>
-              <div><dt><Clock3 :size="14" />{{ t('tasks.deadline') }}</dt><dd>{{ formatDateTime(item.deadline, locale, item.clientTimezone) }}</dd></div>
-              <div><dt><ClipboardList :size="14" />{{ t('tasks.proposals') }}</dt><dd>{{ item.proposalCount }}</dd></div>
-            </dl>
-            <span class="workspace-task-card-action">{{ taskNextAction(item) }}<ArrowRight :size="16" /></span>
-          </RouterLink>
-          <UiButton v-if="nextTaskCursor" variant="secondary" :loading="loadingMoreTasks" @click="loadMoreTasks">
-            {{ t('actions.loadMore') }}
-          </UiButton>
-          <UiEmptyState v-if="!tasks.length" class="task-market-empty" :title="t('workspace.noTasksTitle')" :message="t('workspace.noTasks')">
-            <template #icon>
-              <ClipboardList :size="24" />
-            </template>
-          </UiEmptyState>
-        </div>
+            <UiEmptyState v-if="!tasks.length" class="task-market-empty" :title="t(hasWorkspaceTaskFilters ? 'workspace.noTaskMatches' : 'workspace.noTasksTitle')" :message="t(hasWorkspaceTaskFilters ? 'workspace.noTaskMatchesHint' : 'workspace.noTasks')">
+              <template #icon>
+                <ClipboardList :size="24" />
+              </template>
+              <template v-if="hasWorkspaceTaskFilters" #actions>
+                <UiButton variant="secondary" @click="clearWorkspaceTaskFilters">
+                  {{ t('tasks.clearFilters') }}
+                </UiButton>
+              </template>
+            </UiEmptyState>
+          </template>
+        </CatalogResults>
       </div>
     </template>
     <AssetPublishDrawer :open="publishOpen" :asset-id="publishAssetID" @update:open="updatePublishOpen" />
   </section>
 </template>
+
+<style scoped>
+.assets-task-page.catalog-page { padding-top: 4px; }
+.assets-task-page .saved-rights-notice { padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface-muted); }
+.assets-task-page .saved-rights-notice > svg { color: var(--text-secondary); }
+@media (max-width: 767px) {
+  .asset-library-controls { justify-content: flex-start; flex-basis: 100%; }
+  .asset-library-controls :deep(.ui-select-root) { flex: 1 1 100px; max-width: none; }
+}
+
+.order-catalog-controls :deep(.ui-select-root) { flex: 0 1 140px; min-width: 140px; }
+.orders-catalog-page .order-catalog-controls :deep(.ui-select-root .ui-select__trigger) { width: 100%; }
+.order-date-range { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--text-tertiary); }
+.order-date-range label { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 12px; font-weight: 400; }
+.order-date-range label > span { flex-shrink: 0; }
+.order-date-range :deep(input) { width: 140px; min-width: 0; height: 40px; padding: 0 10px; font-size: 12px; font-weight: 400; border-radius: 12px; }
+.orders-catalog-page .order-list { gap: 12px; }
+.orders-catalog-page .order-filter-empty { margin-bottom: 16px; }
+@media (min-width: 768px) {
+  .is-stuck .order-date-range :deep(input) { height: 36px; border-radius: 10px; }
+}
+@media (max-width: 767px) {
+  .order-catalog-controls { flex-basis: 100%; }
+  .order-catalog-controls :deep(.ui-select-root) { flex: 1 1 140px; }
+  .order-date-range { flex-basis: 100%; flex-wrap: wrap; }
+  .order-date-range label { flex: 1 1 100px; }
+  .order-date-range label > span:not(.sr-only) { display: none; }
+  .order-date-range :deep(input) { width: 100%; }
+}
+.workspace-task-controls :deep(.ui-select-root) { flex: 0 1 auto; min-width: 0; max-width: 200px; }
+@media (max-width: 767px) {
+  .workspace-task-controls { flex-basis: 100%; }
+  .workspace-task-controls :deep(.ui-select-root) { flex: 1 1 100px; max-width: none; }
+}
+</style>

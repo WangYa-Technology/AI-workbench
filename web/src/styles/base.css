@@ -21,7 +21,7 @@ select:not([multiple]) {
   cursor: pointer;
 }
 select:not([multiple]):hover { border-color: var(--border-strong); }
-select:not([multiple]):focus { border-color: var(--focus); box-shadow: 0 0 0 2px color-mix(in srgb, var(--focus) 18%, transparent); }
+select:not([multiple]):focus { border-color: var(--field-focus-border); box-shadow: var(--field-focus-shadow); }
 select:not([multiple]):disabled { cursor: not-allowed; opacity: .56; }
 select option { background: var(--surface-raised); color: var(--text); }
 button, a { -webkit-tap-highlight-color: transparent; }
@@ -32,13 +32,22 @@ img, video { display: block; max-width: 100%; }
 h1, h2, h3, p { margin-top: 0; }
 h1, h2, h3 { font-weight: 450; letter-spacing: 0; }
 :focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
+/* A surface tint marks the active field without a border or outer halo. */
+input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color']):not([type='file']):not([type='submit']):not([type='button']):focus,
+textarea:focus,
+select:focus {
+  outline: none;
+  border-color: var(--field-focus-border);
+  background-color: var(--field-focus-background);
+  box-shadow: var(--field-focus-shadow);
+}
 ::selection { background: var(--accent); color: var(--accent-contrast); }
 .content-width { width: min(100%, var(--content-max)); margin-inline: auto; }
 .icon-button { width: 32px; height: 32px; display: inline-grid; place-items: center; flex: 0 0 auto; box-sizing: border-box; padding: 0; border-radius: var(--radius-control); border: 1px solid transparent; background: transparent; color: inherit; cursor: pointer; line-height: 0; vertical-align: middle; transition: background-color var(--duration-quick) var(--ease-smooth-out), border-color var(--duration-quick) var(--ease-smooth-out), color var(--duration-quick) var(--ease-smooth-out), filter var(--duration-quick) var(--ease-smooth-out); }
 .icon-button > svg { display: block; flex: 0 0 auto; }
 .icon-button:hover { border-color: var(--border); background: var(--surface); }
 .icon-button:active:not(:disabled) { filter: brightness(.95); }
-.command-button { min-height: 36px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 0 12px; border-radius: var(--radius-control); font-size: 12px; font-weight: 520; white-space: nowrap; user-select: none; transition: background-color var(--duration-quick) var(--ease-smooth-out), border-color var(--duration-quick) var(--ease-smooth-out), color var(--duration-quick) var(--ease-smooth-out), filter var(--duration-quick) var(--ease-smooth-out); }
+.command-button { min-height: 36px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 0 12px; border-radius: var(--radius-button); font-size: 12px; font-weight: 520; white-space: nowrap; user-select: none; transition: background-color var(--duration-quick) var(--ease-smooth-out), border-color var(--duration-quick) var(--ease-smooth-out), color var(--duration-quick) var(--ease-smooth-out), filter var(--duration-quick) var(--ease-smooth-out); }
 .command-button > svg { display: block; flex: 0 0 auto; }
 .command-button.primary { background: var(--accent); color: var(--accent-contrast); }
 .command-button.primary:hover { background: var(--accent-hover); }

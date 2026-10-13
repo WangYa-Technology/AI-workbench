@@ -12,6 +12,8 @@ import (
 	"github.com/hcai-chat/hcai-chat/internal/platform/jobs"
 	"github.com/hcai-chat/hcai-chat/internal/platform/media"
 	"github.com/hcai-chat/hcai-chat/internal/testutil"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestScanRecoveryCannotDeferAnInFlightRecovery(t *testing.T) {
@@ -166,5 +168,88 @@ func TestScanRecoveryLockedHeadDoesNotStarveLaterAssets(t *testing.T) {
 				t.Fatal("lock recovery called external scanner")
 			}
 		})
+	}
+}
+
+// Release a competing binding lock between SKIP LOCKED returning no rows and
+// the caller deciding whether to back off. The old caller deferred work it had
+// never claimed, even though it was immediately runnable again.
+func TestScanRecoveryMissedBindingRemainsDue(t *testing.T) {
+	pool, cleanup := assetTestPool(t)
+	defer cleanup()
+	ctx := t.Context()
+	owner := uuid.New()
+	if _, err := pool.Exec(ctx, `INSERT INTO users(id,email,handle,display_name,role) VALUES($1,$2,$3,'Owner','creator')`, owner, owner.String()+"@test.local", "binding_"+owner.String()[:8]); err != nil {
+		t.Fatal(err)
+	}
+	stores := media.NewCatalog(media.NewLocalStore(t.TempDir()))
+	scanner := &executionScanner{}
+	service := assets.NewServiceWithMedia(pool, stores, scanner)
+	a, err := service.Upload(ctx, owner, assets.UploadInput{Title: "Binding race", Filename: "race.txt", Reader: strings.NewReader("binding race")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	job := claimAssetJobKind(t, ctx, pool, "binding-race", assets.ScanJobKind)
+	if err = jobs.NewRepository(pool).Fail(ctx, job, "binding-race", permanentScanFailure{}); err != nil {
+		t.Fatal(err)
+	}
+	tracer := &bindingMissTracer{t: t, pool: pool, id: a.ID}
+	cfg := pool.Config()
+	cfg.ConnConfig.Tracer = tracer
+	traced, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer traced.Close()
+	n, err := assets.NewServiceWithMedia(traced, stores, scanner).ReconcileScanExecutions(ctx, 1)
+	if err != nil || n != 0 || !tracer.used {
+		t.Fatal(n, err, tracer.used)
+	}
+	var due bool
+	if err = pool.QueryRow(ctx, `SELECT recovery_after<=clock_timestamp() FROM asset_scan_executions WHERE asset_id=$1`, a.ID).Scan(&due); err != nil || !due {
+		t.Fatal("unclaimed binding was deferred", err)
+	}
+	n, err = service.ReconcileScanExecutions(ctx, 1)
+	if err != nil || n != 1 {
+		t.Fatal("immediate recovery", n, err)
+	}
+	n, err = service.ReconcileScanExecutions(ctx, 1)
+	if err != nil || n != 0 {
+		t.Fatal("duplicate recovery", n, err)
+	}
+	var audits, notices int
+	if err = pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM audit_events WHERE action='asset.scan_recovered' AND resource_id=$1),(SELECT count(*) FROM notifications WHERE resource_id=$1)`, a.ID).Scan(&audits, &notices); err != nil || audits != 1 || notices != 1 {
+		t.Fatal(audits, notices, err)
+	}
+}
+
+type bindingMissTracer struct {
+	t      *testing.T
+	pool   *pgxpool.Pool
+	id     uuid.UUID
+	locked pgx.Tx
+	used   bool
+}
+
+func (g *bindingMissTracer) TraceQueryStart(ctx context.Context, _ *pgx.Conn, d pgx.TraceQueryStartData) context.Context {
+	if !g.used && strings.Contains(d.SQL, "SELECT job_id FROM asset_scan_executions") {
+		g.used = true
+		var err error
+		g.locked, err = g.pool.Begin(ctx)
+		if err != nil {
+			g.t.Fatal(err)
+		}
+		if _, err = g.locked.Exec(ctx, `SELECT asset_id FROM asset_scan_executions WHERE asset_id=$1 FOR UPDATE`, g.id); err != nil {
+			g.t.Fatal(err)
+		}
+	}
+	return ctx
+}
+func (g *bindingMissTracer) TraceQueryEnd(ctx context.Context, _ *pgx.Conn, _ pgx.TraceQueryEndData) {
+	if g.locked != nil {
+		if err := g.locked.Commit(ctx); err != nil {
+			g.t.Fatal(err)
+		}
+		g.locked = nil
 	}
 }

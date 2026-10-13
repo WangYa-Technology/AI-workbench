@@ -28,19 +28,22 @@ type SellerSourceReversalRead struct {
 }
 
 type SellerSourceReversalOperation struct {
-	Request           SellerPayoutReviewItem         `json:"request"`
-	ExpectedUpdatedAt time.Time                      `json:"expectedUpdatedAt"`
-	Bank              *SellerSourceReversalBankState `json:"bank,omitempty"`
-	Command           *SellerSourceReversalCommand   `json:"command,omitempty"`
-	JobStatus         *string                        `json:"jobStatus,omitempty"`
-	StartedAt         *time.Time                     `json:"startedAt,omitempty"`
-	LatestRead        *SellerSourceReversalRead      `json:"latestRead,omitempty"`
-	AcceptedReadID    *uuid.UUID                     `json:"acceptedReadId,omitempty"`
-	Closure           *SellerSourceClosure           `json:"closure,omitempty"`
-	RequiresReview    bool                           `json:"requiresReview"`
-	CanSubmit         bool                           `json:"canSubmit"`
-	CanClose          bool                           `json:"canClose"`
-	CloseResolution   *string                        `json:"closeResolution,omitempty"`
+	Request               SellerPayoutReviewItem         `json:"request"`
+	ExpectedUpdatedAt     time.Time                      `json:"expectedUpdatedAt"`
+	Bank                  *SellerSourceReversalBankState `json:"bank,omitempty"`
+	Command               *SellerSourceReversalCommand   `json:"command,omitempty"`
+	JobStatus             *string                        `json:"jobStatus,omitempty"`
+	StartedAt             *time.Time                     `json:"startedAt,omitempty"`
+	LatestRead            *SellerSourceReversalRead      `json:"latestRead,omitempty"`
+	AcceptedReadID        *uuid.UUID                     `json:"acceptedReadId,omitempty"`
+	Closure               *SellerSourceClosure           `json:"closure,omitempty"`
+	CanProposeDisposition bool                           `json:"canProposeDisposition"`
+	CanApproveDisposition bool                           `json:"canApproveDisposition"`
+	Disposition           *SellerSourceDisposition       `json:"disposition,omitempty"`
+	RequiresReview        bool                           `json:"requiresReview"`
+	CanSubmit             bool                           `json:"canSubmit"`
+	CanClose              bool                           `json:"canClose"`
+	CloseResolution       *string                        `json:"closeResolution,omitempty"`
 }
 
 // GetSellerSourceReversalOperation performs no financial writes, scheduling
@@ -124,6 +127,23 @@ func (s *Service) GetSellerSourceReversalOperation(ctx context.Context, actor, r
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return out, err
 	}
+	if out.Command != nil {
+		var d SellerSourceDisposition
+		err := tx.QueryRow(ctx, `SELECT id,command_id,phase,proposal_id,created_at,reason FROM seller_source_reversal_dispositions WHERE command_id=$1 ORDER BY created_at DESC,id DESC LIMIT 1`, out.Command.ID).Scan(&d.ID, &d.CommandID, &d.Phase, &d.ProposalID, &d.CreatedAt, &d.Reason)
+		if err == nil {
+			out.Disposition = &d
+			out.RequiresReview = true
+			if d.Phase == "propose" {
+				if err := tx.QueryRow(ctx, `SELECT x.actor_id<>$2 AND x.created_at+interval '24 hours'>clock_timestamp() AND x.snapshot=seller_source_disposition_snapshot(x.command_id) AND EXISTS(SELECT 1 FROM users u JOIN role_permissions rp ON rp.role=u.role WHERE u.id=x.actor_id AND u.status='active' AND rp.permission_id='admin:finance') FROM seller_source_reversal_dispositions x WHERE x.id=$1`, d.ID, actor).Scan(&out.CanApproveDisposition); err != nil {
+					return out, err
+				}
+			}
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return out, err
+		}
+	}
+	out.CanProposeDisposition = out.Command != nil && out.Closure == nil && out.Request.SellerID != actor && (out.Disposition == nil || out.Disposition.Phase != "approve")
+	out.CanApproveDisposition = out.CanApproveDisposition && out.CanProposeDisposition
 	runtime, runtimeErr := s.runtimes.Runtime("stripe")
 	_, supported := runtime.(TransferReversalProvider)
 	out.CanSubmit = ready && out.Request.SellerID != actor && s.config.Enabled && runtimeErr == nil && supported
@@ -131,5 +151,12 @@ func (s *Service) GetSellerSourceReversalOperation(ctx context.Context, actor, r
 	// external-write configuration or the original command author's authority.
 	out.CanClose = out.Command != nil && out.Closure == nil && proven && out.CloseResolution != nil &&
 		out.AcceptedReadID != nil && out.Request.SellerID != actor && out.Request.Status == "reconciliation_required"
+	if out.CanClose {
+		var maker bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM seller_source_reversal_commands WHERE id=$1 AND actor_id=$2) OR EXISTS(SELECT 1 FROM seller_source_reversal_dispositions WHERE command_id=$1 AND phase='propose' AND actor_id=$2)`, out.Command.ID, actor).Scan(&maker); err != nil {
+			return out, err
+		}
+		out.CanClose = !maker
+	}
 	return out, tx.Commit(ctx)
 }

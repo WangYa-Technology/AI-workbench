@@ -124,6 +124,7 @@ type Funding struct {
 }
 
 type Detail struct {
+	DeliveryKind         string          `json:"deliveryKind"`
 	DeadlineChange       *DeadlineChange `json:"deadlineChange,omitempty"`
 	AllowDerivativeReuse bool            `json:"allowDerivativeReuse"`
 	Summary
@@ -218,7 +219,7 @@ func (s *Service) Get(ctx context.Context, actorID, demandID uuid.UUID) (Detail,
 		SELECT d.id,d.title,d.summary,d.deliverable_type,d.budget_cents,d.currency,d.deadline,d.status,
 		       d.client_timezone,d.allow_direct_accept,(SELECT COUNT(*) FROM proposals p WHERE p.demand_id=d.id),
 		       c.id,c.handle,c.display_name,a.id,a.handle,a.display_name,d.created_at,d.updated_at,
-		       d.brief,d.deliverables,d.acceptance_rules,d.rights_terms,d.ai_disclosure_requirement,d.client_id,d.assignee_id,d.allow_derivative_reuse
+		       d.brief,d.deliverables,d.acceptance_rules,d.rights_terms,d.ai_disclosure_requirement,d.client_id,d.assignee_id,d.allow_derivative_reuse,d.delivery_kind
 		FROM demands d JOIN users c ON c.id=d.client_id LEFT JOIN users a ON a.id=d.assignee_id WHERE d.id=$1
 		AND ($3 OR c.status='active' OR d.client_id=$2 OR d.assignee_id=$2 OR EXISTS(SELECT 1 FROM proposals mine WHERE mine.demand_id=d.id AND mine.creator_id=$2))`, demandID, actorID, operator)
 	var assigneeID *uuid.UUID
@@ -229,7 +230,7 @@ func (s *Service) Get(ctx context.Context, actorID, demandID uuid.UUID) (Detail,
 		&item.Deadline, &item.Status, &item.ClientTimezone, &item.AllowDirectAccept, &item.ProposalCount,
 		&item.Client.ID, &item.Client.Handle, &item.Client.DisplayName, &assigneeID, &assigneeHandle, &assigneeName,
 		&item.CreatedAt, &item.UpdatedAt, &item.Brief, &deliverablesJSON, &rulesJSON, &item.RightsTerms,
-		&item.AIDisclosureRequirement, &clientID, &assignedID, &item.AllowDerivativeReuse)
+		&item.AIDisclosureRequirement, &clientID, &assignedID, &item.AllowDerivativeReuse, &item.DeliveryKind)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Detail{}, ErrNotFound
 	}
@@ -326,7 +327,7 @@ func (s *Service) Create(ctx context.Context, actorID uuid.UUID, input CreateInp
 	input.Deliverables = cleanStrings(input.Deliverables)
 	input.AcceptanceRules = cleanStrings(input.AcceptanceRules)
 	var validType int
-	if err := s.pool.QueryRow(ctx, `SELECT 1 FROM task_types WHERE code=$1`, input.DeliverableType).Scan(&validType); err != nil {
+	if err := s.pool.QueryRow(ctx, `SELECT 1 FROM task_types WHERE code=$1 AND scope='task'`, input.DeliverableType).Scan(&validType); err != nil {
 		return Detail{}, ErrInvalid
 	}
 	if utf8.RuneCountInString(input.Title) < 5 || utf8.RuneCountInString(input.Summary) < 10 || utf8.RuneCountInString(input.Brief) < 30 || input.BudgetCents < 50 || input.BudgetCents > 99999999 || input.Currency != "USD" || len(input.Deliverables) == 0 || len(input.AcceptanceRules) == 0 || input.RightsTerms == "" || input.AIDisclosureRequirement == "" {
@@ -601,7 +602,7 @@ func (s *Service) Deliver(ctx context.Context, actorID, demandID uuid.UUID, inpu
 	var assigneeID *uuid.UUID
 	var clientID uuid.UUID
 	var status, taskTitle, deliverableType string
-	if err = tx.QueryRow(ctx, `SELECT assignee_id,client_id,status,title,deliverable_type FROM demands WHERE id=$1 FOR UPDATE`, demandID).Scan(&assigneeID, &clientID, &status, &taskTitle, &deliverableType); errors.Is(err, pgx.ErrNoRows) {
+	if err = tx.QueryRow(ctx, `SELECT assignee_id,client_id,status,title,delivery_kind FROM demands WHERE id=$1 FOR UPDATE`, demandID).Scan(&assigneeID, &clientID, &status, &taskTitle, &deliverableType); errors.Is(err, pgx.ErrNoRows) {
 		return Detail{}, ErrNotFound
 	} else if err != nil {
 		return Detail{}, err

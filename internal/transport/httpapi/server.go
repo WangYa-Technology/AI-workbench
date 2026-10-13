@@ -213,6 +213,7 @@ func New(cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger) http.Handle
 		api.Get("/admin/seller-payout-requests/{requestID}/source-reversal", server.adminSellerSourceReversal)
 		api.Post("/admin/seller-payout-requests/{requestID}/source-reversal", server.adminSellerSourceReversal)
 		api.Post("/admin/seller-source-reversals/{commandID}/close", server.adminCloseSellerSourceReversal)
+		api.Post("/admin/seller-source-reversals/{commandID}/dispositions", server.adminDisposeSellerSourceReversal)
 		api.Get("/seller/payout-options", server.listSellerPayoutOptions)
 		api.Get("/seller/payout-requests", server.listSellerPayoutRequests)
 		api.Post("/seller/payout-requests", server.createSellerPayoutRequest)

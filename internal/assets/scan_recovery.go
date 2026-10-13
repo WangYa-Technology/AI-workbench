@@ -22,6 +22,8 @@ const failedScanExecutionPredicate = `j.kind='asset.scan' AND j.status='failed'
  AND a.error_code=j.last_error_code AND (a.status='failed' OR
  (a.status='lease_expired' AND a.error_code='worker_lease_expired' AND j.attempts>=j.max_attempts)))`
 
+var errScanRecoveryNotClaimed = errors.New("scan recovery binding not claimed")
+
 func (s *Service) ReconcileScanExecutions(ctx context.Context, limit int) (int, error) {
 	if limit < 1 || limit > 100 {
 		limit = 100
@@ -54,6 +56,12 @@ func (s *Service) ReconcileScanExecutions(ctx context.Context, limit int) (int, 
 			return processed, errors.Join(append(failures, ctx.Err())...)
 		}
 		done, recoverErr := s.reconcileScanExecution(ctx, id)
+		if errors.Is(recoverErr, errScanRecoveryNotClaimed) {
+			// A missed binding is not downstream contention. Discovery/another
+			// worker can release it before a separate backoff UPDATE; do not
+			// postpone a recovery we never owned.
+			continue
+		}
 		if recoverErr != nil {
 			failures = append(failures, recoverErr)
 			// Independent context records a safe backoff even after a pass timeout.
@@ -94,7 +102,7 @@ func (s *Service) reconcileScanExecution(ctx context.Context, id uuid.UUID) (boo
 	var jobID uuid.UUID
 	err = tx.QueryRow(ctx, `SELECT job_id FROM asset_scan_executions WHERE asset_id=$1 AND recovery_after<=clock_timestamp() FOR UPDATE SKIP LOCKED`, id).Scan(&jobID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil
+		return false, errScanRecoveryNotClaimed
 	}
 	if err != nil {
 		return false, err

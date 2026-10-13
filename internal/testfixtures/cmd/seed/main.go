@@ -156,6 +156,7 @@ func main() {
 		log.Fatal(err)
 	}
 	_, err = tx.Exec(ctx, `
+		-- Keep open task fixtures actionable whenever the isolated suite runs.
 		INSERT INTO demands(id,client_id,title,summary,brief,deliverable_type,deliverables,acceptance_rules,rights_terms,
 		 ai_disclosure_requirement,budget_cents,currency,deadline,status,client_timezone,allow_direct_accept,idempotency_key)
 		VALUES
@@ -165,21 +166,21 @@ func main() {
 		  'video','["20-second 4K master in 16:9","10-second vertical crop in 9:16","Prompt and model disclosure sheet"]',
 		  '["Garment silhouette remains consistent across the sequence","No visible brand marks or third-party characters","Both exports are clean and playable"]',
 		  'Worldwide commercial campaign use for 12 months. Creator retains portfolio display rights after launch.',
-		  'List every generative model and disclose any source media used in the final sequence.',120000,'USD','2026-09-15T17:00:00Z','open','Europe/London',false,'seed-video-2026'),
+		  'List every generative model and disclose any source media used in the final sequence.',120000,'USD',now()+interval '30 days','open','Europe/London',false,'seed-video-2026'),
 		 ($2,$4,'Modular album artwork for an electronic release',
 		  'Design a square cover system with one master composition and three color-safe release variants.',
 		  'Build a visual identity for a four-track electronic release using architectural light, crisp typography-safe negative space, and a restrained material palette. The artwork must remain clear at streaming thumbnail size.',
 		  'image','["3000x3000 master cover","Three alternate color treatments","Layered source or reproducible workflow"]',
 		  '["Title-safe area remains unobstructed","No copyrighted logos or recognizable people","All variants share one coherent composition"]',
 		  'Exclusive commercial release artwork license. Creator may show the work after the public release date.',
-		  'Identify generated elements and provide the final prompt or workflow summary.',65000,'USD','2026-09-02T20:00:00Z','open','Europe/London',true,'seed-image-2026'),
+		  'Identify generated elements and provide the final prompt or workflow summary.',65000,'USD',now()+interval '45 days','open','Europe/London',true,'seed-image-2026'),
 		 ($3,$4,'Spatial audio identity for a research podcast',
 		  'Produce a short sonic identity that works as an intro, transition, and clean instrumental bed.',
 		  'The series covers urban systems and climate research. The sound should be precise, calm, and contemporary without imitating a known artist. Voice samples are not permitted. Deliver stems so the publisher can make accessible mixes.',
 		  'audio','["12-second stereo intro","4-second transition","30-second loop and separated stems"]',
 		  '["Integrated loudness is suitable for spoken-word use","No voice or uncleared samples","Loop has no audible seam"]',
 		  'Perpetual commercial podcast use. No resale as a standalone sample pack.',
-		  'Disclose generative music tools, source samples, and any manual post-production.',90000,'USD','2026-09-22T16:00:00Z','open','Europe/London',false,'seed-audio-2026')
+		  'Disclose generative music tools, source samples, and any manual post-production.',90000,'USD',now()+interval '60 days','open','Europe/London',false,'seed-audio-2026')
 		ON CONFLICT (id) DO UPDATE SET title=excluded.title,summary=excluded.summary,brief=excluded.brief,
 		 deliverables=excluded.deliverables,acceptance_rules=excluded.acceptance_rules,rights_terms=excluded.rights_terms,
 		 ai_disclosure_requirement=excluded.ai_disclosure_requirement,deadline=excluded.deadline,updated_at=now()`,

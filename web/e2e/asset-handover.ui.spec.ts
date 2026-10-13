@@ -161,9 +161,9 @@ test('saved work pagination from a previous visit cannot merge into the new visi
   const more = page.locator('main').getByRole('button', { name: 'Load more', exact: true })
   await more.click()
   await expect.poll(() => pending.length).toBe(1)
-  await page.getByRole('tab', { name: 'Owned Assets', exact: true }).click()
+  await page.getByRole('tab', { name: 'Mine', exact: true }).click()
   await expect(page.locator('.asset-results')).toHaveAttribute('aria-busy', 'false')
-  await page.getByRole('tab', { name: 'Saved Works', exact: true }).click()
+  await page.getByRole('tab', { name: 'Saved', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'Saved reference', exact: true })).toBeVisible()
   await expect(more).toBeEnabled()
   await more.click()
@@ -180,8 +180,10 @@ for (const pendingRead of [false, true]) {
   test(`upload scan polling stops when its view is left: in-flight=${pendingRead}`, async ({ page }) => {
     let poll: Route | undefined
     let assetReads = 0
+    let uploaded = false
     const unexpected = await mockApp(page, (route, url) => {
-      if (url.pathname === '/api/v1/assets/uploads' && route.request().method() === 'POST') return route.fulfill({ json: { ...asset(firstID, 'Uploaded source'), scanStatus: 'pending' } })
+      if (url.pathname === '/api/v1/assets/uploads' && route.request().method() === 'POST') { uploaded = true; return route.fulfill({ json: { ...asset(firstID, 'Uploaded source'), scanStatus: 'pending' } }) }
+      if (url.pathname === '/api/v1/assets') return route.fulfill({ json: { items: uploaded ? [{ ...asset(firstID, 'Uploaded source'), scanStatus: 'pending' }] : [], total: uploaded ? 1 : 0 } })
       if (url.pathname === `/api/v1/assets/${firstID}`) {
         assetReads++
         poll = route
@@ -202,12 +204,13 @@ for (const pendingRead of [false, true]) {
       await page.clock.runFor(800)
       await expect.poll(() => Boolean(poll)).toBe(true)
     }
-    await page.getByRole('tab', { name: 'Saved Works', exact: true }).click()
+    const cancelled = pendingRead ? page.waitForEvent('requestfailed', request => request.url().endsWith(`/assets/${firstID}`)) : undefined
+    await page.getByRole('tab', { name: 'Saved', exact: true }).click()
     await expect(page.locator('.asset-results')).toHaveAttribute('aria-busy', 'false')
     if (pendingRead) {
-      const response = page.waitForResponse(r => r.url().endsWith(`/assets/${firstID}`))
+      // Navigation now aborts the read instead of only ignoring its response.
+      expect((await cancelled!).failure()).toBeTruthy()
       await poll!.fulfill({ json: asset(firstID, 'Uploaded source') })
-      await (await response).finished()
     }
     await page.clock.runFor(2000)
     await expect(page.locator('main .task-feedback.success')).toHaveCount(0)
@@ -230,13 +233,15 @@ test(`refund feedback belongs only to its original order view: leave=${leave}`, 
     if (url.pathname === `/api/v1/orders/${orderID}/refund`) { refund = route; return Promise.resolve() }
   })
   await page.goto('/workspace/orders')
+  await page.locator('.order-more-trigger').click()
+  await page.locator('.order-refund-toggle').click()
   await page.locator('.order-row textarea').fill('The delivered file cannot be used for this project.')
   await page.locator('.order-row').getByRole('button', { name: 'Request payment gateway refund', exact: true }).click()
   await expect.poll(() => Boolean(refund)).toBe(true)
   if (leave) {
     await page.locator('#primary-navigation a[href="/workspace/assets"]').click()
     await expect(page).toHaveURL(/\/workspace\/assets$/)
-    await expect(page.locator('main .asset-view-toolbar')).toBeVisible()
+    await expect(page.locator('main .asset-library-toolbar')).toBeVisible()
   }
   await drainResponse(page, () => refund!.fulfill({ json: { ...order, status: 'refund_requested' } }), `/orders/${orderID}/refund`)
   if (leave) await expect(page.locator('main .task-feedback.success')).toHaveCount(0)

@@ -19,5 +19,5 @@ defineProps<{
 
 <style scoped>
 .nav-section { display: grid; gap: 3px; }
-.nav-section-label { min-height: 20px; display: flex; align-items: center; padding: 0 10px; color: var(--sidebar-muted); font-size: 9px; line-height: 1; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; }
+.nav-section-label { min-height: 20px; display: flex; align-items: center; padding: 0 10px; color: var(--sidebar-muted); font-size: 11px; line-height: 1; font-weight: 650; letter-spacing: .04em; text-transform: uppercase; }
 </style>

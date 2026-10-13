@@ -24,6 +24,7 @@ for (const outcome of ['confirmed', 'still_authenticated', 'unknown_session']) {
         policies: Object.fromEntries(['terms', 'privacy', 'cookies', 'acceptable', 'ai', 'licensing', 'refunds', 'copyright'].map(key => [key, { enUS: '', zhCN: '' }])),
       } })
       if (['/api/v1/auth/oauth/providers', '/api/v1/account/sessions', '/api/v1/account/email-actions', '/api/v1/account/data-rights'].includes(path)) return route.fulfill({ json: { items: [] } })
+      if (path === '/api/v1/works') return route.fulfill({ json: { items: [], total: 0 } })
       if (path === '/api/v1/notifications') return route.fulfill({ json: { items: [], unreadCount: 0 } })
       unexpected.push(`${route.request().method()} ${path}`)
       return route.fulfill({ status: 500, json: { error: { code: 'unexpected_response', message: 'Unmocked request', retryable: false } } })

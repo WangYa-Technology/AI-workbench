@@ -1,0 +1,137 @@
+{
+  "reviewDate": "2026-09-27",
+  "decision": "no_go",
+  "reviewComplete": true,
+  "deployed": false,
+  "deploymentAuthorization": null,
+  "source": {
+    "head": "aa4c6125e7a26d80870e217bb9fec9004df5bdd8",
+    "dirty": true,
+    "approvedReleaseCommit": null,
+    "approvedImageDigests": null,
+    "migrationTarget": "0179",
+    "verifiedRepositoryBaseline": "ad93fd9/0177",
+    "actualDeployedBaseline": null
+  },
+  "gates": [
+    {
+      "id": "G01",
+      "gate": "release_identity_and_images",
+      "status": "blocked",
+      "ownerRole": "发布负责人",
+      "reviewerRole": "安全负责人",
+      "ownerName": null,
+      "backupName": null,
+      "signoff": null,
+      "finding": "Dirty tree; no approved release SHA; Docker Hub base image authorization timed out."
+    },
+    {
+      "id": "G02",
+      "gate": "final_revision_regressions",
+      "status": "blocked",
+      "ownerRole": "QA",
+      "reviewerRole": "后端负责人",
+      "ownerName": null,
+      "backupName": null,
+      "signoff": null,
+      "finding": "Isolated suites pass; final full-repository successful run missing."
+    },
+    {
+      "id": "G03",
+      "gate": "actual_baseline_and_migration",
+      "status": "partial",
+      "ownerRole": "DBA",
+      "reviewerRole": "后端负责人",
+      "ownerName": null,
+      "backupName": null,
+      "signoff": null,
+      "finding": "177->179 and empty 179 passed; actual deployed manifest and representative scale unknown."
+    },
+    {
+      "id": "G04",
+      "gate": "payment_and_bank_acceptance",
+      "status": "blocked",
+      "ownerRole": "支付集成负责人",
+      "reviewerRole": "独立财务负责人",
+      "ownerName": null,
+      "backupName": null,
+      "signoff": null,
+      "finding": "Only synthetic facilities verified. Waffo unsupported capabilities remain unavailable."
+    },
+    {
+      "id": "G05",
+      "gate": "infrastructure_and_secrets",
+      "status": "blocked",
+      "ownerRole": "平台及安全负责人",
+      "reviewerRole": "DBA",
+      "ownerName": null,
+      "backupName": null,
+      "signoff": null,
+      "finding": "Target TLS/storage/scanner/SMTP and key rotation evidence missing."
+    },
+    {
+      "id": "G06",
+      "gate": "real_alert_receipt",
+      "status": "blocked",
+      "ownerRole": "值班负责人",
+      "reviewerRole": "发布负责人",
+      "ownerName": null,
+      "backupName": null,
+      "signoff": null,
+      "finding": "Local detector pass/fail verified; no recipient, real page, ACK or escalation evidence."
+    },
+    {
+      "id": "G07",
+      "gate": "financial_reconciliation",
+      "status": "blocked",
+      "ownerRole": "财务负责人",
+      "reviewerRole": "独立财务复核人",
+      "ownerName": null,
+      "backupName": null,
+      "signoff": null,
+      "finding": "No actual merchant/bank statements or unresolved obligation signoff."
+    },
+    {
+      "id": "G08",
+      "gate": "backup_restore_and_rpo_rto",
+      "status": "partial",
+      "ownerRole": "DBA",
+      "reviewerRole": "存储负责人",
+      "ownerName": null,
+      "backupName": null,
+      "signoff": null,
+      "finding": "384 tables/5 files restored locally; production backup retention and RPO/RTO unverified."
+    },
+    {
+      "id": "G09",
+      "gate": "representative_capacity",
+      "status": "blocked",
+      "ownerRole": "平台负责人",
+      "reviewerRole": "QA",
+      "ownerName": null,
+      "backupName": null,
+      "signoff": null,
+      "finding": "Only small readiness sample; no representative workload or accepted resource budget."
+    },
+    {
+      "id": "G10",
+      "gate": "deployment_authorization_and_rota",
+      "status": "blocked",
+      "ownerRole": "发布指挥",
+      "reviewerRole": "业务及财务负责人",
+      "ownerName": null,
+      "backupName": null,
+      "signoff": null,
+      "finding": "No explicit deployment authorization, target, named primary/backup rota or approved fallback."
+    }
+  ],
+  "evidence": {
+    "review": "deploy/RESOURCE_MARKETPLACE_RELEASE.md",
+    "isolatedRehearsal": "data/release-rehearsals/hcai_release_7d4f1dbdebd444e985637740ea7afaa7/result.json",
+    "runtimeTests": "data/release-review-20260927/test-summary.json",
+    "imageAttempt": "data/release-review-20260927/images.json",
+    "priorIndex": "data/release-review-20260927/prior-evidence-index.json",
+    "e2e": "docs/resource-marketplace-e2e-acceptance.md"
+  },
+  "nextAction": "Close applicable gates on the frozen candidate, obtain named signoffs and explicit deployment authorization. Do not deploy from this review."
+}

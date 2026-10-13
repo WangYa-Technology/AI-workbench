@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "evidenceKind": "template_not_executed",
+  "facility": "stripe|waffo|bank|object_storage|media_scanner|smtp",
+  "runId": null,
+  "caseId": null,
+  "sourceManifestSHA256": null,
+  "startedUTC": null,
+  "finishedUTC": null,
+  "authorizationRecordRef": null,
+  "target": {"environment": "test", "accountRef": null, "resourceScopeRef": null, "identityVerified": false},
+  "budget": {"currency": null, "amountMinorUnits": null, "maxCalls": null, "callsConsumed": null},
+  "request": {"method": null, "routeTemplate": null, "attempt": null, "commandRefHash": null, "idempotencyKeyHash": null, "bodySHA256": null, "bytes": null},
+  "response": {"statusCode": null, "errorCode": null, "providerRequestRef": null, "objectRefHash": null, "signatureVerified": null, "identityBound": null, "amountBound": null, "pages": null, "complete": null},
+  "recovery": {"restartPerformed": false, "originalCommandRetained": null, "readOnlyLookup": null, "additionalPOSTs": null, "localFinancialEntries": null, "outcome": "not_executed"},
+  "cleanup": {"complete": false, "pendingResourceRefs": [], "unknownOutcomes": []},
+  "externalAcceptancePassed": false,
+  "limitations": ["Template only. Replace pipe-separated facility with one closed facility name.", "Never copy credentials, signatures, hosted URLs, full addresses or raw Provider bodies into evidence.", "Unknown is not failure or absence; retain original command references in a restricted registry."]
+}

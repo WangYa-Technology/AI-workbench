@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -162,8 +163,13 @@ func (s *Server) listOrders(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	query, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil || len(query["limit"]) > 1 || len(query["cursor"]) > 1 {
+		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_order_filters", "Use one page size and one unmodified order cursor.", false)
+		return
+	}
 	limit := 0
-	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+	if raw := strings.TrimSpace(query.Get("limit")); raw != "" {
 		parsed, err := strconv.Atoi(raw)
 		if err != nil {
 			httputil.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_order_filters", "Use a page size from 1 to 50 and an unmodified order cursor.", false)
@@ -171,7 +177,7 @@ func (s *Server) listOrders(w http.ResponseWriter, r *http.Request) {
 		}
 		limit = parsed
 	}
-	page, err := s.marketplace.ListOrders(r.Context(), user.ID, marketplace.OrderListInput{Cursor: r.URL.Query().Get("cursor"), Limit: limit})
+	page, err := s.marketplace.ListOrders(r.Context(), user.ID, marketplace.OrderListInput{Cursor: query.Get("cursor"), Limit: limit})
 	if err != nil {
 		if errors.Is(err, marketplace.ErrInvalidOrderFilter) {
 			httputil.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_order_filters", "Use a page size from 1 to 50 and an unmodified order cursor.", false)

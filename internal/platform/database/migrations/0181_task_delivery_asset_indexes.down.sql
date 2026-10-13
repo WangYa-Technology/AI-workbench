@@ -1,0 +1,1 @@
+DROP INDEX assets_task_delivery_owner_created_idx;

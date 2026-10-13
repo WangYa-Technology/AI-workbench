@@ -1,10 +1,8 @@
 package httpapi
 
 import (
-	"encoding/json"
 	"errors"
 	"github.com/google/uuid"
-	"io"
 	"net/http"
 	"strconv"
 
@@ -45,16 +43,8 @@ func (s *Server) createSellerPayoutRequest(w http.ResponseWriter, r *http.Reques
 		s.writeSellerFundsError(w, r, payments.ErrSellerPayoutConflict)
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 16*1024)
 	var input sellerPayoutRequestInput
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&input); err != nil {
-		s.writeSellerFundsError(w, r, payments.ErrInvalidSellerPayout)
-		return
-	}
-	var extra struct{}
-	if err := decoder.Decode(&extra); err != io.EOF {
+	if httputil.DecodeJSONBody(w, r, &input, 16*1024) != nil {
 		s.writeSellerFundsError(w, r, payments.ErrInvalidSellerPayout)
 		return
 	}

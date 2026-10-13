@@ -25,7 +25,7 @@ function align() {
 
 function sync(force = false) {
   const root = props.root
-  const next = !props.disabled && root ? root.querySelector<globalThis.HTMLElement>('[data-page-context], [data-page-heading], .page-hero-header.page-hero-banner') : null
+  const next = !props.disabled && root && !root.querySelector('[data-catalog-sticky]') ? root.querySelector<globalThis.HTMLElement>('[data-page-context], [data-page-heading], .page-hero-header.page-hero-banner') : null
   const link = next?.matches('[data-page-context]') ? next.querySelector('a') : null
   const hadTitle = Boolean(title.value)
   title.value = (link || next?.querySelector('h1'))?.textContent?.trim() || ''
@@ -84,7 +84,7 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .content-context-bar { margin-inline: calc(-1 * var(--space-page-x)); position: sticky; z-index: 18; top: calc(-1 * var(--space-page-y)); height: 0; pointer-events: none; }
-.content-context-bar-surface { min-width: 0; height: 48px; display: flex; align-items: center; padding: 0 18px; overflow: hidden; border-bottom: 1px solid color-mix(in srgb, var(--border) 78%, transparent); background: color-mix(in srgb, var(--surface) 82%, transparent); color: var(--text); opacity: 0; visibility: hidden; transform: translateY(-8px); -webkit-backdrop-filter: saturate(150%) blur(18px); backdrop-filter: saturate(150%) blur(18px); transition: opacity var(--duration-quick) var(--ease-smooth-out), transform var(--duration-quick) var(--ease-smooth-out), visibility 0s linear var(--duration-quick); }
+.content-context-bar-surface { min-width: 0; height: 48px; display: flex; align-items: center; padding: 0 18px; overflow: hidden; border-bottom: 1px solid var(--content-sticky-border); background: var(--content-sticky-background); color: var(--text); opacity: 0; visibility: hidden; transform: translateY(-8px); -webkit-backdrop-filter: var(--content-sticky-backdrop); backdrop-filter: var(--content-sticky-backdrop); transition: opacity var(--duration-quick) var(--ease-smooth-out), transform var(--duration-quick) var(--ease-smooth-out), visibility 0s linear var(--duration-quick); }
 .content-context-bar-surface span { min-width: 0; overflow: hidden; font-size: 14px; font-weight: 650; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap; }
 .content-context-bar.is-visible .content-context-bar-surface { opacity: 1; visibility: visible; transform: translateY(0); transition-delay: 0s; }
 @media (min-width: 768px) and (max-width: 1023px) { .content-context-bar { top: -16px; margin-inline: -18px; } }

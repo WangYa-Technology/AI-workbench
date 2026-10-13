@@ -287,7 +287,7 @@ test('removing a saved reference cannot put its old feedback on the new view', a
   await page.goto('/workspace/assets?view=saved')
   await page.getByRole('button', { name: 'Remove saved work', exact: true }).click()
   await expect.poll(() => Boolean(removal)).toBe(true)
-  await page.getByRole('tab', { name: 'Owned Assets', exact: true }).click()
+  await page.getByRole('tab', { name: 'Mine', exact: true }).click()
   await expect(page.locator('.asset-results')).toHaveAttribute('aria-busy', 'false')
   await settle(page, removal!, {})
   await expect(page.locator('main .task-feedback.success')).toHaveCount(0)

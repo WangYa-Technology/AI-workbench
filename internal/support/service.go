@@ -16,6 +16,7 @@ import (
 )
 
 var (
+	ErrForbidden          = errors.New("support operation forbidden")
 	ErrInvalid            = errors.New("invalid support case input")
 	ErrInvalidAdminFilter = errors.New("invalid admin support filter")
 	ErrInvalidOwnerFilter = errors.New("invalid owner support filter")
@@ -215,6 +216,25 @@ func (s *Service) GetAdmin(ctx context.Context, caseID uuid.UUID) (Case, error) 
 	return s.get(ctx, caseID, nil)
 }
 
+// Pin current authority after waiting for the case lock and retain it through
+// the message, state change, event and notification commit.
+func pinOperator(ctx context.Context, tx pgx.Tx, actor uuid.UUID) error {
+	var role, status string
+	err := tx.QueryRow(ctx, `SELECT role,status FROM users WHERE id=$1 FOR SHARE`, actor).Scan(&role, &status)
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && status != "active") {
+		return ErrForbidden
+	}
+	if err != nil {
+		return err
+	}
+	var permission string
+	err = tx.QueryRow(ctx, `SELECT permission_id FROM role_permissions WHERE role=$1 AND permission_id='admin:support' FOR SHARE`, role).Scan(&permission)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrForbidden
+	}
+	return err
+}
+
 func (s *Service) AdminReply(ctx context.Context, actorID, caseID uuid.UUID, input AdminReplyInput, _ string) (Case, error) {
 	input.Body = clean(input.Body)
 	if !validText(input.Body, 2, 4000) || input.ExpectedVersion < 1 {
@@ -236,6 +256,9 @@ func (s *Service) AdminReply(ctx context.Context, actorID, caseID uuid.UUID, inp
 		return Case{}, ErrNotFound
 	}
 	if err != nil {
+		return Case{}, err
+	}
+	if err := pinOperator(ctx, tx, actorID); err != nil {
 		return Case{}, err
 	}
 	if version != input.ExpectedVersion || !oneOf(status, "open", "in_review", "waiting_for_requester") {
@@ -286,6 +309,9 @@ func (s *Service) AdminUpdate(ctx context.Context, actorID, caseID uuid.UUID, in
 		return Case{}, ErrNotFound
 	}
 	if err != nil {
+		return Case{}, err
+	}
+	if err := pinOperator(ctx, tx, actorID); err != nil {
 		return Case{}, err
 	}
 	if version != input.ExpectedVersion || !transitionAllowed(status, input.Status) {

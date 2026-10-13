@@ -2,18 +2,13 @@ package authchallenges
 
 import (
 	"context"
+	"github.com/hcai-chat/hcai-chat/internal/identity"
+	"github.com/hcai-chat/hcai-chat/internal/platform/jobs"
 	"github.com/hcai-chat/hcai-chat/internal/testutil"
-	"net/url"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/google/uuid"
-	"github.com/hcai-chat/hcai-chat/internal/identity"
-	"github.com/hcai-chat/hcai-chat/internal/platform/database"
-	"github.com/hcai-chat/hcai-chat/internal/platform/jobs"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestRegistrationChallengeVerifiesBeforeCreatingAccount(t *testing.T) {
@@ -93,37 +88,5 @@ func TestLoginChallengeDeliveryAndConfirmation(t *testing.T) {
 
 func challengeTestPool(t *testing.T) (*pgxpool.Pool, func()) {
 	t.Helper()
-	ctx := context.Background()
-	baseURL := os.Getenv("TEST_DATABASE_URL")
-	if baseURL == "" {
-		baseURL = "postgres://hcai:hcai@localhost:5432/hcai?sslmode=disable"
-	}
-	admin, err := pgxpool.New(ctx, baseURL)
-	if err != nil {
-		testutil.DatabaseUnavailable(t, err)
-	}
-	if err := admin.Ping(ctx); err != nil {
-		admin.Close()
-		testutil.DatabaseUnavailable(t, err)
-	}
-	schema := "test_auth_challenge_" + uuid.NewString()[:8]
-	if _, err := admin.Exec(ctx, "CREATE SCHEMA "+pgx.Identifier{schema}.Sanitize()); err != nil {
-		t.Fatal(err)
-	}
-	parsed, _ := url.Parse(baseURL)
-	query := parsed.Query()
-	query.Set("search_path", schema)
-	parsed.RawQuery = query.Encode()
-	pool, err := database.Open(ctx, parsed.String())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := database.Migrate(ctx, pool); err != nil {
-		t.Fatal(err)
-	}
-	return pool, func() {
-		pool.Close()
-		_, _ = admin.Exec(ctx, "DROP SCHEMA "+pgx.Identifier{schema}.Sanitize()+" CASCADE")
-		admin.Close()
-	}
+	return testutil.DatabasePool(t)
 }

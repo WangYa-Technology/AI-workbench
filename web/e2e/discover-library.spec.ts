@@ -7,7 +7,7 @@ test('library filters restore from URL and both layouts preserve work actions', 
   await expect(cards.first()).toBeVisible()
   const title = await cards.first().locator('h2').innerText()
   await page.getByRole('searchbox', { name: 'Search works', exact: true }).fill(title)
-  await page.locator('.inspiration-filters').getByRole('button', { name: 'Search', exact: true }).click()
+  await page.getByRole('searchbox', { name: 'Search works', exact: true }).press('Enter')
   await expect(page).toHaveURL(/q=/)
   await page.reload()
   await expect(page.getByRole('searchbox', { name: 'Search works', exact: true })).toHaveValue(title)

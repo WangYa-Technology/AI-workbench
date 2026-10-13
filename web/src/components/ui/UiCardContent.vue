@@ -30,8 +30,8 @@ defineProps<{ title: string; summary?: string; to?: RouteLocationRaw }>()
 .ui-card-content__title { margin: 0; color: var(--text); font-size: 15px; font-weight: 650; line-height: 1.35; overflow-wrap: anywhere; }
 .ui-card-content__title, .ui-card-content__summary { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
 .ui-card-content__title a:hover { color: var(--accent-readable); }
-.ui-card-content__summary { margin: 0; color: var(--text-secondary); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
-.ui-card-content__meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; color: var(--text-tertiary); font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
+.ui-card-content__summary { margin: 0; color: var(--text-secondary); font-size: var(--font-size-control); line-height: 1.5; overflow-wrap: anywhere; }
+.ui-card-content__meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; color: var(--text-tertiary); font-size: var(--font-size-caption); line-height: 1.5; overflow-wrap: anywhere; }
 .ui-card-content__meta :deep(a) { color: var(--text-secondary); }
 .ui-card-content__meta :deep(small) { font-size: inherit; }
 .ui-catalog.is-grid .ui-card-content { justify-content: flex-start; }

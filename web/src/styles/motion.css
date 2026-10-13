@@ -317,3 +317,115 @@ html[data-theme-transition='fallback'] *::after {
   .t-like-icon, .t-like-particles i { animation: none !important; }
   .t-toggle-thumb { animation: none !important; }
 }
+/* The login button opens into a page; closing returns to that same destination. */
+/* The page transition owns movement; home entrance motion must not replay. */
+html[data-public-home-entry='static'] .home-hero-copy > *,
+html[data-public-home-entry='static'] .home-project-board,
+html[data-public-home-entry='static'] .home-board-flow li::after,
+html[data-public-home-entry='static'] .home-entered,
+html[data-public-home-entry='static'] .home-entered :is(.home-pathway, .home-task, .home-product, .home-work, .home-process-grid li, .home-supporting > a) {
+  animation: none;
+}
+html[data-public-page-transition],
+html[data-public-page-fallback] {
+  --public-page-duration: 460ms;
+  --public-page-ease: cubic-bezier(.22, 1, .36, 1);
+  scroll-behavior: auto;
+}
+/* Restore the destination header before the browser captures its snapshot. */
+html[data-public-home-restoring] .home-header,
+html[data-public-page-transition='back'] .home-header,
+html[data-public-page-transition='slide-back'] .home-header { transition: none; }
+html[data-public-page-transition='back'],
+html[data-public-page-fallback='back'] {
+  --public-page-duration: var(--duration-medium);
+  --public-page-ease: cubic-bezier(.4, 0, .2, 1);
+}
+html[data-public-page-transition]::view-transition-group(root) { animation: none; }
+html[data-public-page-transition]::view-transition-old(root),
+html[data-public-page-transition]::view-transition-new(root) {
+  animation-duration: var(--public-page-duration);
+  animation-timing-function: var(--public-page-ease);
+  animation-fill-mode: both;
+  mix-blend-mode: normal;
+  transform-origin: var(--public-page-origin);
+}
+html[data-public-page-transition='forward']::view-transition-old(root) {
+  z-index: 1;
+  animation-name: public-page-recede;
+}
+html[data-public-page-transition='forward']::view-transition-new(root) {
+  z-index: 2;
+  transform-origin: 0 0;
+  animation-name: public-page-open;
+}
+html[data-public-page-transition='back']::view-transition-old(root) {
+  z-index: 2;
+  transform-origin: 0 0;
+  animation-name: public-page-close, public-page-close-fade;
+  animation-timing-function: var(--public-page-ease), linear;
+}
+html[data-public-page-transition='back']::view-transition-new(root) {
+  z-index: 1;
+  animation-name: public-page-restore;
+}
+html[data-public-page-fallback] :is(.guest-shell, .auth-shell) > main {
+  transform-origin: var(--public-page-origin);
+  animation: public-page-fallback-enter var(--public-page-duration) var(--public-page-ease) both;
+}
+/* Other home entries use the original, quiet directional crossfade. */
+html[data-public-page-transition^='slide-'],
+html[data-public-page-fallback^='slide-'] {
+  --public-page-duration: 280ms;
+  --public-page-ease: var(--ease-smooth-out);
+  --public-page-distance: 40px;
+}
+html[data-public-page-transition='slide-back'],
+html[data-public-page-fallback='slide-back'] { --public-page-distance: -40px; }
+html[data-public-page-transition^='slide-']::view-transition-old(root) {
+  animation-name: public-page-slide-out;
+}
+html[data-public-page-transition^='slide-']::view-transition-new(root) {
+  animation-name: public-page-slide-in;
+}
+html[data-public-page-fallback^='slide-'] #main-content {
+  animation: public-page-slide-in var(--public-page-duration) var(--public-page-ease) both;
+}
+@keyframes public-page-slide-in {
+  from { opacity: 0; transform: translateX(var(--public-page-distance)); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes public-page-slide-out {
+  from { opacity: 1; transform: translateX(0); }
+  to { opacity: 0; transform: translateX(calc(-1 * var(--public-page-distance))); }
+}
+@keyframes public-page-open {
+  from { opacity: 0; transform: var(--public-page-start-transform); clip-path: var(--public-page-button-clip); }
+  15% { opacity: 1; }
+  to { opacity: 1; transform: translate(0, 0) scale(1); clip-path: inset(0px 0px round 0px); }
+}
+@keyframes public-page-close {
+  from { transform: translate(0, 0) scale(1); clip-path: inset(0px 0px round 0px); }
+  to { transform: var(--public-page-start-transform); clip-path: var(--public-page-button-clip); }
+}
+@keyframes public-page-close-fade {
+  0%, 25% { opacity: 1; }
+  80%, 100% { opacity: 0; }
+}
+@keyframes public-page-recede {
+  from { opacity: 1; transform: scale(1); }
+  to { opacity: .75; transform: scale(.985); }
+}
+@keyframes public-page-restore {
+  from { opacity: .75; transform: scale(.985); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes public-page-fallback-enter {
+  from { opacity: 0; transform: scale(.97); }
+  to { opacity: 1; transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  html[data-public-page-transition]::view-transition-old(root),
+  html[data-public-page-transition]::view-transition-new(root),
+  html[data-public-page-fallback] #main-content { animation: none; }
+}

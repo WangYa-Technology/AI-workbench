@@ -11,12 +11,18 @@ import (
 
 func applySourceReversalClosureMigration(t *testing.T, pool *pgxpool.Pool, direction string) {
 	t.Helper()
+	if direction == "down" {
+		applySourceDispositionMigration(t, pool, "down")
+	}
 	body, err := os.ReadFile("../platform/database/migrations/0172_seller_source_reversal_closure." + direction + ".sql")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(t.Context(), string(body)); err != nil {
 		t.Fatal(err)
+	}
+	if direction == "up" {
+		applySourceDispositionMigration(t, pool, "up")
 	}
 }
 
@@ -27,6 +33,10 @@ func sourceClosureInput(t *testing.T, pool *pgxpool.Pool, commandID uuid.UUID) (
 	if err := pool.QueryRow(t.Context(), `SELECT c.actor_id,x.read_id,r.updated_at
  FROM seller_source_reversal_commands c JOIN seller_source_reversal_results x ON x.command_id=c.id
  JOIN seller_payout_requests r ON r.id=c.payout_request_id WHERE c.id=$1`, commandID).Scan(&actor, &input.ReadID, &input.ExpectedUpdatedAt); err != nil {
+		t.Fatal(err)
+	}
+	// Closing is independently reviewed, never by the original command maker.
+	if err := pool.QueryRow(t.Context(), `INSERT INTO users(email,handle,display_name,role) VALUES('source-checker@test.local','source_checker','Source checker','admin') ON CONFLICT(lower(handle)) DO UPDATE SET handle=EXCLUDED.handle RETURNING id`).Scan(&actor); err != nil {
 		t.Fatal(err)
 	}
 	return actor, input

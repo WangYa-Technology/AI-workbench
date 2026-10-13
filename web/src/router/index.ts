@@ -1,12 +1,15 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { rememberContentList } from '../lib/contentPresentation'
+import { installPublicPageTransition, restorePublicHomePosition } from './publicPageTransition'
 
 export const router = createRouter({
   history: createWebHistory(),
-  scrollBehavior: (to, from, savedPosition) => {
+  scrollBehavior: async (to, from, savedPosition) => {
     const publishStateChanged = to.path === from.path
       && (to.query.publish !== from.query.publish || to.query.draftId !== from.query.draftId)
     if (publishStateChanged) return false
+    const homePosition = await restorePublicHomePosition(to, from, savedPosition)
+    if (homePosition) return homePosition
     return savedPosition || { top: 0 }
   },
   routes: [
@@ -55,3 +58,4 @@ export const router = createRouter({
   ],
 })
 router.afterEach(to => rememberContentList(to.path, to.fullPath))
+installPublicPageTransition(router)

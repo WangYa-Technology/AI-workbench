@@ -62,7 +62,7 @@ export type TaskDeliveryCreate = components['schemas']['TaskDeliveryCreate']
 export type TaskReview = components['schemas']['TaskReview']
 export type TaskCheckoutRequest = components['schemas']['TaskCheckoutRequest']
 export type TaskPaymentCheckout = components['schemas']['TaskPaymentCheckout']
-export type TaskType = { scope?: string; code: string; nameZh: string; nameEn: string; icon: string; sortOrder: number }
+export type TaskType = { deliveryKind?: string; scope?: string; code: string; nameZh: string; nameEn: string; icon: string; sortOrder: number }
 export type Product = components['schemas']['Product']
 export type ProductDraft = components['schemas']['ProductDraft']
 export type SellerProduct = components['schemas']['SellerProduct']
@@ -80,6 +80,7 @@ export type SellerBankPayoutInput = operations['submitSellerBankPayout']['reques
 export type SellerBankPayoutResumeInput = operations['resumeSellerBankPayout']['requestBody']['content']['application/json']
 export type SellerBankPayoutOperation = components['schemas']['SellerBankPayoutOperation']
 export type SellerSourceReversalInput = components['schemas']['SellerSourceReversalInput']
+export type SellerSourceDispositionInput = components['schemas']['SellerSourceDispositionInput']
 export type SellerSourceClosureInput = components['schemas']['SellerSourceClosureInput']
 export type SellerSourceReversalOperation = components['schemas']['SellerSourceReversalOperation']
 export type SellerFundingAdmissionInput = operations['admitSellerPayoutFunding']['requestBody']['content']['application/json']
@@ -469,9 +470,7 @@ export const api = {
 		return request<AssetPage>(`/assets${params.size ? `?${params}` : ''}`)
 	},
 	listSavedWorks: (query: SavedWorkListQuery = {}) => {
-		const params = new URLSearchParams()
-		if (query.cursor) params.set('cursor', query.cursor)
-		if (query.limit) params.set('limit', String(query.limit))
+		const params = queryParameters(query)
 		return request<SavedWorkPage>(`/assets/saved-works${params.size ? `?${params}` : ''}`)
 	},
 	listAssetUsages: (id: string, query: AssetUsageListQuery = {}) => {
@@ -482,7 +481,7 @@ export const api = {
 	},
 	uploadAsset: (form: globalThis.FormData) => uploadCommand('/assets/uploads', form),
 	uploadAssetVersion: (id: string, form: globalThis.FormData) => uploadCommand(`/assets/${encodeURIComponent(id)}/versions`, form),
-	getAsset: (id: string) => request<Asset>(`/assets/${encodeURIComponent(id)}`),
+	getAsset: (id: string, signal?: globalThis.AbortSignal) => request<Asset>(`/assets/${encodeURIComponent(id)}`, { signal, cache: 'no-store' }),
 	publish: (input: PublicationCreate) => request<Publication>('/publications', {
 		method: 'POST', body: JSON.stringify(input),
 	}),
@@ -580,6 +579,13 @@ export const api = {
     const path = `/admin/seller-payout-requests/${encodeURIComponent(id)}/source-reversal`
     const snapshot = { sourceTransferId: input.sourceTransferId, expectedUpdatedAt: input.expectedUpdatedAt, bankCommandId: input.bankCommandId ?? null, bankResultId: input.bankResultId ?? null, reason: input.reason, confirmed: input.confirmed }
     return runFinanceCommand(path, snapshot, key => request<components['schemas']['SellerSourceReversalSubmission']>(path, {
+      method: 'POST', headers: { 'Idempotency-Key': key }, body: JSON.stringify(snapshot),
+    }))
+  },
+  disposeSellerSourceReversal: (id: string, input: SellerSourceDispositionInput) => {
+    const path = `/admin/seller-source-reversals/${encodeURIComponent(id)}/dispositions`
+    const snapshot = { ...input }
+    return runFinanceCommand(path, snapshot, key => request<components['schemas']['SellerSourceDisposition']>(path, {
       method: 'POST', headers: { 'Idempotency-Key': key }, body: JSON.stringify(snapshot),
     }))
   },

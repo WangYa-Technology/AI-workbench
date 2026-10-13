@@ -1207,9 +1207,12 @@ paths:
       security:
         - sessionCookie: []
       parameters:
+        - { name: q, in: query, schema: { type: string, maxLength: 120 }, description: Literal case-insensitive title substring applied before pagination }
+        - { name: kind, in: query, schema: { type: string, enum: [image, video, audio, document] } }
+        - { name: scanStatus, in: query, schema: { type: string, enum: [pending, clean, review, rejected] } }
         - { name: cursor, in: query, schema: { type: string, maxLength: 1024 }, description: Opaque stable Asset cursor bound to the owner and source and purpose filters }
-        - { name: source, in: query, schema: { type: string, enum: [purchase] }, description: Filter active purchased assets before pagination; omitted means all owned assets }
-        - { name: purpose, in: query, schema: { type: string, enum: [product_preview, product_source] }, description: Filter eligible independent product samples or private delivery originals before pagination; cannot be combined with source; selection alone does not publish anything }
+        - { name: source, in: query, schema: { type: string, enum: [upload, generation, purchase, delivery] }, description: Filter source before pagination; omitted means all owned assets }
+        - { name: purpose, in: query, schema: { type: string, enum: [product_preview, product_source, task_delivery] }, description: Filter eligible independent product samples, private product originals, or clean owned task delivery assets before pagination; cannot be combined with source; selection alone does not publish anything }
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
       responses:
         '200':
@@ -1227,6 +1230,8 @@ paths:
       description: Lists the current user's published Community bookmarks as reference-only works. Saving does not transfer Asset ownership or license rights.
       security: [{ sessionCookie: [] }]
       parameters:
+        - { name: q, in: query, schema: { type: string, maxLength: 120 }, description: Literal case-insensitive title substring applied before pagination }
+        - { name: kind, in: query, schema: { type: string, enum: [image, video, audio, document] } }
         - { name: cursor, in: query, schema: { type: string }, description: Opaque stable saved-work cursor }
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
       responses:
@@ -1714,7 +1719,7 @@ paths:
       tags: [Admin]
       operationId: closeSellerSourceReversal
       security: [{ sessionCookie: [] }]
-      description: Independent finance confirmation consuming an accepted complete source return. Rechecks original bank, refund and debt evidence and the current request version. Atomically releases the reservation or settles full refund recovery; never creates new income or contacts the provider. Same-key replay returns the original closure. Available after new external writes are disabled. Query parameters are rejected; body limit 16 KiB and exactly one Idempotency-Key required.
+      description: Independent finance confirmation by an actor other than the original command maker and disposition proposers, consuming an accepted complete source return. Rechecks original bank, refund and debt evidence and the current request version. Atomically releases the reservation or settles full refund recovery; never creates new income or contacts the provider. Same-key replay returns the original closure. Available after new external writes are disabled. Query parameters are rejected; body limit 16 KiB and exactly one Idempotency-Key required.
       parameters:
         - { name: commandID, in: path, required: true, schema: { type: string, format: uuid } }
         - { name: Idempotency-Key, in: header, required: true, schema: { type: string, pattern: '^[A-Za-z0-9._:-]{8,128}$' } }
@@ -1725,6 +1730,28 @@ paths:
             schema: { $ref: '#/components/schemas/SellerSourceClosureInput' }
       responses:
         '200': { description: Original or newly consumed source return closure, content: { application/json: { schema: { $ref: '#/components/schemas/SellerSourceClosureSubmission' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /admin/seller-source-reversals/{commandID}/dispositions:
+    post:
+      tags: [Admin]
+      operationId: disposeSellerSourceReversal
+      security: [{ sessionCookie: [] }]
+      description: Finance proposes a permanent no-POST restriction, then another active finance actor approves read-only recovery against the same server evidence snapshot within 24 hours. No amounts or Provider results accepted; never releases reservations, settles debt, refreshes the original send window, or retries a POST. Unknown or partial evidence remains held. Same-key replay is authority checked. Query parameters rejected; exactly one Idempotency-Key required. All writes and audit are atomic.
+      parameters:
+        - { name: commandID, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string, pattern: '^[A-Za-z0-9._:-]{8,128}$' } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SellerSourceDispositionInput' }
+      responses:
+        '200': { description: Immutable read-only disposition, content: { application/json: { schema: { $ref: '#/components/schemas/SellerSourceDisposition' } } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -2210,9 +2237,10 @@ paths:
     get:
       tags: [Marketplace]
       operationId: listOrders
+      description: Buyer-scoped order history. Supply cursor and limit at most once each.
       security: [{ sessionCookie: [] }]
       parameters:
-        - { name: cursor, in: query, schema: { type: string }, description: Opaque stable order-history cursor }
+        - { name: cursor, in: query, schema: { type: string, maxLength: 512 }, description: Opaque stable order-history cursor }
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
       responses:
         '200':
@@ -4259,14 +4287,15 @@ components:
       properties:
         action: { $ref: '#/components/schemas/ProductDisputeAction' }
         route: { $ref: '#/components/schemas/ProductDisputeRoute' }
-        evidenceReference: { type: string, pattern: '^[A-Za-z0-9][A-Za-z0-9._:/#-]{2,499}$', description: Required only for record_evidence_submission; otherwise omitted or empty. Use an opaque receipt reference without credentials or personal data. }
+        evidenceReference: { type: string, pattern: '^(?:[A-Za-z0-9][A-Za-z0-9._:/#-]{2,499})?$', description: Required only for record_evidence_submission; otherwise omitted or empty. Use an opaque receipt reference without credentials or personal data. }
         expectedVersion: { type: integer, format: int64, minimum: 1 }
         reason: { type: string, minLength: 10, maxLength: 2000, description: Trimmed Unicode character length; NUL is rejected. }
         confirmed: { type: boolean, const: true }
-      description: Action and route are normalized to lowercase; reason and reference are trimmed. escalate_recovery requires collections. A successful operation increments exactly one version; provider outcome and money remain unchanged.
+      description: Describes canonical client values. The server also accepts normalization of surrounding whitespace and lowercase action/route; reason and reference are trimmed. escalate_recovery requires collections. A successful operation increments exactly one version; provider outcome and money remain unchanged.
       allOf:
         - if: { properties: { action: { const: record_evidence_submission } } }
-          then: { required: [evidenceReference] }
+          then: { required: [evidenceReference], properties: { evidenceReference: { minLength: 3 } } }
+          else: { properties: { evidenceReference: { const: '' } } }
         - if: { properties: { action: { const: escalate_recovery } } }
           then: { properties: { route: { const: collections } } }
     ProductPaymentDisputeCommandResult:
@@ -4282,6 +4311,7 @@ components:
       additionalProperties: false
       required: [nameZh, nameEn, icon, sortOrder]
       properties:
+        deliveryKind: { type: string, enum: [image, video, audio, document, prompt, workflow, mixed], description: Task delivery kind; omitted on create defaults from the legacy code or icon; omitted on update preserves the existing contract for new tasks }
         code: { type: string, pattern: '^[a-z][a-z0-9_-]{0,47}$' }
         scope: { type: string, enum: [task, community, marketplace] }
         nameZh: { type: string, minLength: 1, maxLength: 80 }
@@ -5368,10 +5398,21 @@ components:
           items: { $ref: '#/components/schemas/Generation' }
         nextCursor:
           type: string
+    PurchaseAccess:
+      type: object
+      required: [canDownload, canReuse, status]
+      properties:
+        orderId: {type: string, format: uuid}
+        canDownload: {type: boolean}
+        canReuse: {type: boolean}
+        status:
+          type: string
+          enum: [available, refund_pending, revoked, scan_blocked, unavailable]
     Asset:
       type: object
       required: [id, kind, title, mediaUrl, mimeType, scanStatus, sourceType, licenseCode, createdAt, familyId, versionNumber, isLatestVersion]
       properties:
+        taskDeliveryEligible: { type: boolean, description: Present on owned detail reads; task delivery eligibility is rechecked on submission }
         id:
           type: string
           format: uuid
@@ -5418,6 +5459,8 @@ components:
         versions:
           type: array
           items: { $ref: '#/components/schemas/AssetVersion' }
+        purchaseAccess:
+          $ref: '#/components/schemas/PurchaseAccess'
         provenance:
           $ref: '#/components/schemas/AssetProvenance'
         usages:
@@ -5833,6 +5876,27 @@ components:
         bankResultId: { type: string, format: uuid, nullable: true }
         reason: { type: string, minLength: 10, maxLength: 1000 }
         confirmed: { type: boolean, enum: [true] }
+    SellerSourceDispositionInput:
+      type: object
+      additionalProperties: false
+      required: [phase, expectedUpdatedAt, reason, confirmed]
+      properties:
+        phase: { type: string, enum: [propose, approve] }
+        proposalId: { type: string, format: uuid, description: Required only for approve; must reference the unchanged proposal of another current finance actor. }
+        expectedUpdatedAt: { type: string, format: date-time }
+        reason: { type: string, minLength: 10, maxLength: 1000 }
+        confirmed: { type: boolean, enum: [true] }
+    SellerSourceDisposition:
+      type: object
+      required: [id, commandId, phase, createdAt, replayed, reason]
+      properties:
+        id: { type: string, format: uuid }
+        commandId: { type: string, format: uuid }
+        phase: { type: string, enum: [propose, approve] }
+        proposalId: { type: string, format: uuid }
+        createdAt: { type: string, format: date-time }
+        replayed: { type: boolean }
+        reason: { type: string, minLength: 10, maxLength: 1000 }
     SellerSourceClosureInput:
       type: object
       additionalProperties: false
@@ -5876,6 +5940,9 @@ components:
         requiresReview: { type: boolean }
         canSubmit: { type: boolean }
         canClose: { type: boolean }
+        canProposeDisposition: { type: boolean }
+        canApproveDisposition: { type: boolean }
+        disposition: { $ref: '#/components/schemas/SellerSourceDisposition' }
         closeResolution: { type: string, enum: [released, refund_recovered] }
         bank:
           type: object
@@ -6483,7 +6550,7 @@ components:
         id: { type: string, format: uuid }
         title: { type: string }
         summary: { type: string }
-        deliverableType: { type: string, enum: [image, video, audio, prompt, workflow, mixed] }
+        deliverableType: { type: string, description: Configured task category code }
         budgetCents: { type: integer, minimum: 1 }
         currency: { type: string, enum: [USD] }
         deadline: { type: string, format: date-time }
@@ -6600,6 +6667,7 @@ components:
         - type: object
           required: [brief, deliverables, acceptanceRules, rightsTerms, aiDisclosureRequirement, viewerRole, proposals, deliveries, events]
           properties:
+            deliveryKind: { type: string, enum: [image, video, audio, document, prompt, workflow, mixed], description: Media contract fixed when the task was published }
             deadlineChange: { $ref: '#/components/schemas/TaskDeadlineChange' }
             allowDerivativeReuse: { type: boolean, default: false }
             brief: { type: string }
@@ -6622,7 +6690,7 @@ components:
         title: { type: string, minLength: 5 }
         summary: { type: string, minLength: 10 }
         brief: { type: string, minLength: 30 }
-        deliverableType: { type: string, enum: [image, video, audio, prompt, workflow, mixed] }
+        deliverableType: { type: string, description: Configured task category code }
         deliverables: { type: array, minItems: 1, items: { type: string } }
         acceptanceRules: { type: array, minItems: 1, items: { type: string } }
         rightsTerms: { type: string, minLength: 1 }
@@ -6935,7 +7003,7 @@ components:
         id: { type: string, format: uuid }
         title: { type: string }
         status: { type: string, enum: [draft, open, assigned, submitted, revision, accepted, disputed, cancelled] }
-        deliverableType: { type: string, enum: [image, video, audio, prompt, workflow, mixed] }
+        deliverableType: { type: string, description: Configured task category code }
         amountCents: { type: integer, minimum: 1 }
         currency: { type: string, enum: [USD] }
         deadline: { type: string, format: date-time }

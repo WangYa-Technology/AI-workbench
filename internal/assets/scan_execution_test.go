@@ -240,6 +240,14 @@ func TestScanExecutionCrashRecovery(t *testing.T) {
 						err = r.err
 					}
 				}
+				// SKIP LOCKED discovery may transiently exclude both claims.
+				// Once both passes finish, the binding must remain immediately
+				// recoverable (no clock advance/backoff) and finish exactly once.
+				if err == nil {
+					count, e := service.ReconcileScanExecutions(ctx, 100)
+					n += count
+					err = e
+				}
 			} else {
 				n, err = service.ReconcileScanExecutions(ctx, 100)
 			}

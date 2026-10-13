@@ -255,6 +255,9 @@ func (s *Service) GetProductPaymentDispute(ctx context.Context, actorID, dispute
 		return ProductPaymentDisputeDetail{}, err
 	}
 	detail, err := productPaymentDisputeDetailTx(ctx, tx, disputeID, false)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ProductPaymentDisputeDetail{}, ErrNotFound
+	}
 	if err != nil {
 		return ProductPaymentDisputeDetail{}, err
 	}

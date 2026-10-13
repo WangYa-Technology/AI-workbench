@@ -3,6 +3,8 @@ package marketplace_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -28,6 +30,7 @@ func TestOrderHistoryStablePaginationOwnershipAndEvents(t *testing.T) {
 	}
 	base := time.Now().UTC().Add(-time.Hour)
 	batch := &pgx.Batch{}
+	expected := make(map[uuid.UUID]int)
 	for index := 0; index < 106; index++ {
 		sourceAssetID, productID, orderID, purchasedAssetID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
 		createdAt := base.Add(-time.Duration(index) * time.Second)
@@ -36,7 +39,11 @@ func TestOrderHistoryStablePaginationOwnershipAndEvents(t *testing.T) {
 		batch.Queue(`INSERT INTO orders(id,buyer_id,product_id,amount_cents,currency,status,license_accepted_at,idempotency_key,license_version,license_terms_snapshot,product_title_snapshot,license_name_snapshot,refund_window_days_snapshot,created_at,updated_at) VALUES($1,$2,$3,1200,'USD','fulfilled',$4,$5,'1.0','Commercial test terms.','Paginated order product','HCAI Commercial Standard',7,$4,$4)`, orderID, buyerID, productID, createdAt, "order-history-"+orderID.String())
 		batch.Queue(`INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,scan_status,source_type,source_id,license_code) VALUES($1,$2,'image','Purchased order Asset','/media/order-purchase.jpg','image/jpeg','clean','purchase',$3,'hcai-commercial-standard-v1')`, purchasedAssetID, buyerID, orderID)
 		batch.Queue(`INSERT INTO entitlements(user_id,product_id,order_id,asset_id,license_code,status,granted_at) VALUES($1,$2,$3,$4,'hcai-commercial-standard-v1','active',$5)`, buyerID, productID, orderID, purchasedAssetID, createdAt)
-		batch.Queue(`INSERT INTO order_events(order_id,actor_id,to_status,reason,created_at,sequence) VALUES($1,$2,'fulfilled','Stable event evidence.',$3,1)`, orderID, buyerID, createdAt)
+		expected[orderID] = index % 3
+		// Insert out of sequence to verify grouping and ordering, including empty histories.
+		for sequence := expected[orderID]; sequence > 0; sequence-- {
+			batch.Queue("INSERT INTO order_events(order_id,actor_id,to_status,reason,created_at,sequence) VALUES($1,$2,'fulfilled',$3,$4,$5)", orderID, buyerID, fmt.Sprintf("%s:%d", orderID, sequence), createdAt, sequence)
+		}
 	}
 	results := pool.SendBatch(ctx, batch)
 	if err := results.Close(); err != nil {
@@ -55,8 +62,13 @@ func TestOrderHistoryStablePaginationOwnershipAndEvents(t *testing.T) {
 			if _, duplicate := seen[item.ID]; duplicate {
 				t.Fatalf("duplicate order %s", item.ID)
 			}
-			if len(item.Events) != 1 || item.Events[0].ToStatus != "fulfilled" {
-				t.Fatalf("order event evidence missing: %#v", item)
+			if item.Events == nil || len(item.Events) != expected[item.ID] {
+				t.Fatalf("wrong event grouping or null history: %#v", item)
+			}
+			for index, event := range item.Events {
+				if event.ToStatus != "fulfilled" || event.Reason != fmt.Sprintf("%s:%d", item.ID, index+1) {
+					t.Fatalf("wrong event identity/sequence: %#v", item)
+				}
 			}
 			seen[item.ID] = struct{}{}
 		}
@@ -73,6 +85,15 @@ func TestOrderHistoryStablePaginationOwnershipAndEvents(t *testing.T) {
 	}
 	if _, err := service.ListOrders(ctx, buyerID, marketplace.OrderListInput{Limit: 51}); !errors.Is(err, marketplace.ErrInvalidOrderFilter) {
 		t.Fatalf("oversized order page was accepted: %v", err)
+	}
+	if _, err := service.ListOrders(ctx, buyerID, marketplace.OrderListInput{Cursor: strings.Repeat("A", 513)}); !errors.Is(err, marketplace.ErrInvalidOrderFilter) {
+		t.Fatalf("oversized cursor was accepted: %v", err)
+	}
+	for id := range expected {
+		if _, err := service.GetOrder(ctx, outsiderID, id); !errors.Is(err, marketplace.ErrOrderNotFound) {
+			t.Fatalf("foreign order detail leaked: %v", err)
+		}
+		break
 	}
 	outsider, err := service.ListOrders(ctx, outsiderID, marketplace.OrderListInput{})
 	if err != nil || len(outsider.Items) != 0 {

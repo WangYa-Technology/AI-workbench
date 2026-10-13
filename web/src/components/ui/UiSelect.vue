@@ -100,8 +100,22 @@ function updateMenuPosition() {
   const viewportPadding = 8
   const gap = 6
   const preferredWidth = rect.width + (alignWithTrigger.value ? 16 : 0)
-  const minimumWidth = alignWithTrigger.value ? 144 : rect.width
-  const width = Math.min(Math.max(preferredWidth, minimumWidth), globalThis.innerWidth - viewportPadding * 2)
+  // A compact trigger can be narrower than its options, especially once the
+  // selected checkmark is added. Reserve that space for every option.
+  let contentWidth = 144
+  if (menu.value) {
+    const menuCSS = globalThis.getComputedStyle(menu.value)
+    const menuInset = parseFloat(menuCSS.paddingLeft) + parseFloat(menuCSS.paddingRight)
+      + parseFloat(menuCSS.borderLeftWidth) + parseFloat(menuCSS.borderRightWidth)
+    for (const option of menu.value.querySelectorAll<globalThis.HTMLElement>('.ui-select__option')) {
+      const label = option.querySelector<globalThis.HTMLElement>('span')
+      if (!label) continue
+      const optionCSS = globalThis.getComputedStyle(option)
+      const optionInset = parseFloat(optionCSS.paddingLeft) + parseFloat(optionCSS.paddingRight)
+      contentWidth = Math.max(contentWidth, label.scrollWidth + optionInset + parseFloat(optionCSS.columnGap) + 16 + menuInset)
+    }
+  }
+  const width = Math.min(Math.ceil(Math.max(preferredWidth, contentWidth)), globalThis.innerWidth - viewportPadding * 2)
   const estimatedHeight = Math.min(options.value.length * 36 + 16, 320)
   const roomBelow = globalThis.innerHeight - rect.bottom - gap - viewportPadding
   const placeAbove = roomBelow < Math.min(estimatedHeight, 180) && rect.top > roomBelow

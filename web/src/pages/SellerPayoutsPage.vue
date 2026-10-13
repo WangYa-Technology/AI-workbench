@@ -306,9 +306,15 @@ onBeforeUnmount(() => { generation++; bankGeneration++ })
                 </div>
                 <p>{{ t(`sellerPayouts.sourceReturn.help.${item.sourceReturn.status}`) }}</p>
                 <dl class="seller-source-return-meta">
-                  <div v-if="item.sourceReturn.observedAt"><dt>{{ t('sellerPayouts.sourceReturn.observedAt') }}</dt><dd>{{ date(item.sourceReturn.observedAt) }}</dd></div>
-                  <div v-if="item.sourceReturn.closedAt"><dt>{{ t('sellerPayouts.sourceReturn.closedAt') }}</dt><dd>{{ date(item.sourceReturn.closedAt) }}</dd></div>
-                  <div v-if="item.sourceReturn.resolution"><dt>{{ t('sellerPayouts.sourceReturn.resolution') }}</dt><dd>{{ t(`sellerPayouts.sourceReturn.resolutions.${item.sourceReturn.resolution}`) }}</dd></div>
+                  <div v-if="item.sourceReturn.observedAt">
+                    <dt>{{ t('sellerPayouts.sourceReturn.observedAt') }}</dt><dd>{{ date(item.sourceReturn.observedAt) }}</dd>
+                  </div>
+                  <div v-if="item.sourceReturn.closedAt">
+                    <dt>{{ t('sellerPayouts.sourceReturn.closedAt') }}</dt><dd>{{ date(item.sourceReturn.closedAt) }}</dd>
+                  </div>
+                  <div v-if="item.sourceReturn.resolution">
+                    <dt>{{ t('sellerPayouts.sourceReturn.resolution') }}</dt><dd>{{ t(`sellerPayouts.sourceReturn.resolutions.${item.sourceReturn.resolution}`) }}</dd>
+                  </div>
                 </dl>
               </section>
               <div v-if="cancelling === item.id" class="seller-payout-row-detail">

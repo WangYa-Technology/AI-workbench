@@ -6,7 +6,7 @@ test('publishes a standalone Community post from the Hero drawer', async ({ page
   expect(session.ok()).toBeTruthy()
 
   await page.goto('/community')
-  await expect(page.getByRole('tab', { name: 'My discussions', exact: true })).toBeVisible()
+  await expect(page.getByRole('tab', { name: 'Mine', exact: true })).toBeVisible()
   await page.locator('.ui-page-hero').getByRole('button', { name: 'Publish post', exact: true }).click()
 
   const drawer = page.getByRole('dialog', { name: 'Publish post' })
@@ -25,7 +25,7 @@ test('publishes a standalone Community post from the Hero drawer', async ({ page
   await expect(drawer).toBeHidden()
   await expect(page.getByRole('heading', { name: title, exact: true })).toBeVisible()
 
-  await page.getByRole('tab', { name: 'My discussions', exact: true }).click()
+  await page.getByRole('tab', { name: 'Mine', exact: true }).click()
   await expect(page).toHaveURL(/view=mine/)
   await expect(page.getByRole('heading', { name: title, exact: true })).toBeVisible()
   await page.getByRole('heading', { name: title, exact: true }).click()
@@ -55,7 +55,7 @@ test('returns from an empty My posts view to all Community posts', async ({ page
   expect(session.ok()).toBeTruthy()
 
   await page.goto('/community')
-  await page.getByRole('tab', { name: 'My discussions', exact: true }).click()
+  await page.getByRole('tab', { name: 'Mine', exact: true }).click()
   await expect(page).toHaveURL(/view=mine/)
   await expect(page.getByRole('heading', { name: 'You have not published a post yet', exact: true })).toBeVisible()
 

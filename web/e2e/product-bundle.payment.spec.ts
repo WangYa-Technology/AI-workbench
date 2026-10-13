@@ -125,6 +125,8 @@ test('real bundle publication, purchase, downloads and confirmed refund', async 
 
     await popup.goto('/workspace/orders')
     const orderRow = popup.locator('.order-row').filter({ hasText: checkout.orderId })
+    await orderRow.locator('.order-more-trigger').click()
+    await orderRow.locator('.order-refund-toggle').click()
     await orderRow.locator('.refund-form textarea').fill('The purchased files do not fit the requirements of my project.')
     await orderRow.getByRole('button', { name: 'Request payment gateway refund', exact: true }).click()
     await expect(orderRow).toHaveAttribute('data-order-status', 'refund_requested')

@@ -13,6 +13,7 @@ import (
 	"github.com/hcai-chat/hcai-chat/internal/assets"
 	"github.com/hcai-chat/hcai-chat/internal/authchallenges"
 	"github.com/hcai-chat/hcai-chat/internal/billing"
+	"github.com/hcai-chat/hcai-chat/internal/community"
 	"github.com/hcai-chat/hcai-chat/internal/creation"
 	"github.com/hcai-chat/hcai-chat/internal/datarights"
 	"github.com/hcai-chat/hcai-chat/internal/emailactions"
@@ -64,6 +65,7 @@ func main() {
 	}
 	reconciliationService := reconciliation.NewService(pool, costRuntime, cfg.OpenAIReconciliationOverageThresholdMicros)
 	observabilityRepository := observability.NewRepository(pool)
+	communityRepository := community.NewRepository(pool)
 	go func() {
 		ticker := time.NewTicker(10 * time.Minute)
 		defer ticker.Stop()
@@ -78,6 +80,9 @@ func main() {
 				}
 				if err := observabilityRepository.PurgeExpired(maintenanceCtx, 1000); err != nil {
 					logger.Warn("purge request observations", "error", err)
+				}
+				if err := communityRepository.PurgeExpiredFeedSnapshots(maintenanceCtx, 1000); err != nil {
+					logger.Warn("purge community feed snapshots", "error", err)
 				}
 				cancel()
 			}

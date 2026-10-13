@@ -5,8 +5,6 @@ import (
 	"errors"
 	"github.com/hcai-chat/hcai-chat/internal/testutil"
 	"io"
-	"net/url"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -15,9 +13,7 @@ import (
 	"github.com/hcai-chat/hcai-chat/internal/admin"
 	"github.com/hcai-chat/hcai-chat/internal/assets"
 	"github.com/hcai-chat/hcai-chat/internal/notifications"
-	"github.com/hcai-chat/hcai-chat/internal/platform/database"
 	"github.com/hcai-chat/hcai-chat/internal/platform/jobs"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -178,39 +174,5 @@ func claimAssetJobKind(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ow
 
 func assetTestPool(t *testing.T) (*pgxpool.Pool, func()) {
 	t.Helper()
-	ctx := context.Background()
-	baseURL := os.Getenv("TEST_DATABASE_URL")
-	if baseURL == "" {
-		baseURL = "postgres://hcai:hcai@localhost:5432/hcai?sslmode=disable"
-	}
-	root, err := pgxpool.New(ctx, baseURL)
-	if err != nil {
-		testutil.DatabaseUnavailable(t, err)
-	}
-	if err := root.Ping(ctx); err != nil {
-		root.Close()
-		testutil.DatabaseUnavailable(t, err)
-	}
-	schema := "test_assets_" + uuid.NewString()[:8]
-	if _, err := root.Exec(ctx, "CREATE SCHEMA "+pgx.Identifier{schema}.Sanitize()); err != nil {
-		t.Fatal(err)
-	}
-	parsed, _ := url.Parse(baseURL)
-	query := parsed.Query()
-	query.Set("search_path", schema)
-	parsed.RawQuery = query.Encode()
-	pool, err := database.Open(ctx, parsed.String())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := database.Migrate(ctx, pool); err != nil {
-		t.Fatal(err)
-	}
-	return pool, func() {
-		pool.Close()
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_, _ = root.Exec(cleanupCtx, "DROP SCHEMA "+pgx.Identifier{schema}.Sanitize()+" CASCADE")
-		root.Close()
-	}
+	return testutil.DatabasePool(t)
 }

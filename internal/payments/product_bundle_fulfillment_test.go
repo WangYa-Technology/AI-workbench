@@ -80,6 +80,22 @@ func TestProductBundleFulfillmentAndAuthorizedDelivery(t *testing.T) {
 	if err != nil || item.Kind != "document" || item.MimeType != "application/zip" || item.OriginAssetID != nil || item.Width != nil || item.Height != nil || item.SizeBytes == nil || *item.SizeBytes != snapshot.Size {
 		t.Fatal("package pretends to be its first member", item, err)
 	}
+	page, listErr := assetSvc.List(ctx, f.buyer, assets.ListInput{Source: "purchase"})
+	if listErr != nil {
+		t.Fatal(listErr)
+	}
+	found := false
+	for _, listed := range page.Items {
+		if listed.ID == assetID {
+			found = true
+			if listed.PurchaseAccess == nil || !listed.PurchaseAccess.CanDownload || listed.PurchaseAccess.CanReuse {
+				t.Fatalf("bundle list access: %+v", listed.PurchaseAccess)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("bundle absent from purchase list")
+	}
 	p := item.Provenance.Purchase
 	if p == nil || !p.CanDownload || p.CanReuse || p.Delivery == nil || len(p.Delivery.Files) != 2 || p.Delivery.Files[1].Name != "说明.txt" || p.Delivery.SHA256 != snapshot.SHA256 {
 		t.Fatal("wrong buyer projection", p)

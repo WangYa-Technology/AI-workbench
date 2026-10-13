@@ -1,5 +1,8 @@
 /* Shared catalog filter bar. Pages own column layouts; this owns the surface and control rhythm. */
 .ui-filter-bar.ui-filter-bar {
+  /* Preserve the resting surface and border when a filter receives focus. */
+  --field-focus-background: var(--surface);
+  --field-focus-border: var(--border);
   --control-height-toolbar: 40px;
   --community-toolbar-control-height: 40px;
   --task-filter-control-height: 40px;
@@ -8,9 +11,9 @@
   min-height: 56px;
   margin-bottom: 16px;
   padding: 6px 8px;
-  border: 1px solid var(--border);
+  border: 1px solid transparent;
   border-radius: var(--radius-surface);
-  background: var(--surface-muted);
+  background: var(--surface-neutral);
   box-shadow: none;
   overflow: visible;
 }
@@ -21,7 +24,7 @@
   padding: 6px 8px;
   border: 0;
   border-radius: var(--radius-control);
-  background: color-mix(in srgb, var(--surface-muted) 72%, var(--surface));
+  background: transparent;
   box-shadow: none;
 }
 .ui-filter-bar.ui-filter-bar--split > .view-switcher-bar { margin: 0; }
@@ -38,7 +41,8 @@
 /* Filter inputs share a neutral focus treatment, including an expanded select. */
 .ui-filter-bar .ui-select-root:not(.ui-select-root--invalid).ui-select-root--open .ui-select__trigger,
 .ui-filter-bar .ui-select-root:not(.ui-select-root--invalid) .ui-select__trigger:focus-visible {
-  border-color: var(--border-strong);
+  border-color: var(--field-focus-border);
+  background: var(--field-focus-background);
   outline: none;
   box-shadow: none;
 }
@@ -49,8 +53,8 @@
   border-radius: var(--radius-control);
   background: var(--surface);
   color: var(--text);
-  font-size: 12px;
-  font-weight: 520;
+  font-size: var(--font-size-control);
+  font-weight: 400;
   line-height: 1.4;
 }
 
@@ -93,12 +97,14 @@
   border-radius: var(--radius-control);
   background: var(--surface);
   color: var(--text-secondary);
-  transition: border-color var(--duration-quick) var(--ease-smooth-out);
+  transition: background-color var(--duration-quick) var(--ease-smooth-out);
 }
-.ui-filter-bar .ui-filter-bar__search:hover,
-.ui-filter-bar .ui-filter-bar__search:focus-within { border-color: var(--border-strong); }
+.ui-filter-bar .ui-filter-bar__search:hover { border-color: var(--border); }
+.ui-filter-bar .ui-filter-bar__search:focus-within { border-color: var(--field-focus-border); background: var(--field-focus-background); box-shadow: none; }
 .ui-filter-bar .ui-filter-bar__search > svg { flex: 0 0 auto; pointer-events: none; }
 .ui-filter-bar .ui-filter-bar__search .ui-input {
+  /* The wrapper owns focus feedback; the input must not paint a second surface. */
+  --field-focus-background: transparent;
   width: 100%;
   min-width: 0;
   height: 100%;
@@ -108,7 +114,7 @@
   border-radius: 0;
   background: transparent;
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--font-size-control);
   font-weight: 400;
   line-height: 1.4;
   box-shadow: none;
@@ -119,12 +125,15 @@
 .ui-filter-bar[data-density='compact'] { --filter-control-height: var(--control-height-md); }
 .ui-filter-bar--fields { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; }
 .ui-filter-bar--grid { display: grid; }
-.ui-filter-bar--fields > label { flex: 1 1 150px; min-width: 0; display: grid; align-content: start; gap: 6px; color: var(--text-secondary); font-size: 12px; font-weight: 600; }
+.ui-filter-bar--fields > label { flex: 1 1 150px; min-width: 0; display: grid; align-content: start; gap: 6px; color: var(--text-secondary); font-size: var(--font-size-control); font-weight: 600; }
 .ui-filter-bar--fields > label > span { min-height: 16px; line-height: 16px; }
 .ui-filter-bar--fields .ui-select-root,
 .ui-filter-bar--fields .ui-select__trigger { width: 100%; max-width: none; }
 .ui-filter-bar--fields :is(.ui-input, .ui-select-root) { --ui-height: var(--filter-control-height); }
-.ui-filter-bar--fields .ui-input { padding-inline: 10px; background: var(--surface); font-size: 12px; }
-.ui-filter-bar--fields .ui-input:not(.ui-input--invalid):focus-visible { border-color: var(--border-strong); outline: 0; box-shadow: none; }
+.ui-filter-bar--fields .ui-input { padding-inline: 10px; background: var(--surface); font-size: var(--font-size-control); }
+.ui-filter-bar--fields .ui-input:not(.ui-input--invalid):focus-visible { border-color: var(--field-focus-border); background: var(--field-focus-background); outline: 0; box-shadow: none; }
 .ui-filter-bar--fields > button { flex: 0 0 auto; }
 .ui-filter-bar--fields > .ui-icon-button { --ui-size: var(--filter-control-height); }
+
+/* Result counts belong to the selected catalog view. */
+.catalog-view-count { display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center; min-width: 22px; height: 22px; padding-inline: 3px; border: 1px solid var(--border); border-radius: var(--radius-pill); background: var(--surface-muted); color: var(--text-secondary); font-size: 11px; font-weight: 400; line-height: 1; font-variant-numeric: tabular-nums; }

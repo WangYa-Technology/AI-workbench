@@ -93,7 +93,11 @@ func (s *Service) handleSellerSourceReversalJob(ctx context.Context, job jobs.Jo
 		payload.CommandID, job.ID, recovery, state.JobID).Scan(&bound); err != nil {
 		return err
 	}
-	if !bound || recovery && !state.Started {
+	var approved bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM seller_source_reversal_dispositions WHERE command_id=$1 AND phase='approve')`, payload.CommandID).Scan(&approved); err != nil {
+		return err
+	}
+	if !bound || recovery && !state.Started && !approved {
 		return ErrSellerSourceReversalInvalid
 	}
 	if state.Parent == "cancelled" {
@@ -324,7 +328,10 @@ func validateSellerSourceReversalRead(input TransferReversalRequest, result Tran
 			(result.Outcome == "not_found" && len(result.Observations) == 0) ||
 			(result.Outcome == "ambiguous" && len(result.Observations) == 2) || result.Outcome == "incomplete")
 	}
-	review := !valid || len(result.Observations) > 1 || oneOf(sourceReversalErrorCode(callErr), "payment_response_invalid", "payment_reconciliation_required") || errors.Is(callErr, ErrCheckoutReconciliation)
+	// A return outside this command, including a partial return, is external
+	// evidence requiring review, never authority to resend or release a fraction.
+	partialOrUnowned := parentValid && parent.AmountReversed > 0 && (parent.AmountReversed != input.AmountCents || result.Outcome == "not_found")
+	review := partialOrUnowned || !valid || len(result.Observations) > 1 || oneOf(sourceReversalErrorCode(callErr), "payment_response_invalid", "payment_reconciliation_required") || errors.Is(callErr, ErrCheckoutReconciliation)
 	if len(result.Observations) > 2 {
 		result.Observations = result.Observations[:2]
 	}

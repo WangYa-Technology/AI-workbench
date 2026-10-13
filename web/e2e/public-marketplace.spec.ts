@@ -8,7 +8,7 @@ test('lets a visitor browse a task and return after creating an account', async 
 
   await expect(page.getByRole('heading', { name: 'Task marketplace', exact: true })).toBeVisible()
   const signIn = page.getByRole('link', { name: 'Sign in', exact: true }).first()
-  await expect(signIn).toHaveCSS('border-radius', '8px')
+  await expect(signIn).toHaveCSS('border-radius', '12px')
   await expect(signIn).toHaveCSS('box-shadow', 'none')
   const firstTask = page.locator('.task-row').first()
   await expect(firstTask).toBeVisible()
@@ -32,7 +32,7 @@ test('lets an anonymous visitor inspect product rights before sign-in', async ({
   await page.request.post('/api/v1/auth/logout')
   await page.goto('/market')
 
-  await expect(page.getByRole('heading', { name: 'Digital marketplace', exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Resource marketplace', exact: true })).toBeVisible()
   const firstProduct = page.locator('.product-card').first()
   await expect(firstProduct).toBeVisible()
   await firstProduct.click()
@@ -72,12 +72,12 @@ test('keeps desktop header actions separate and icon controls square', async ({ 
   expect(submitBox!.y).toBeGreaterThanOrEqual(inputBox!.y)
   expect(submitBox!.y + submitBox!.height).toBeLessThanOrEqual(inputBox!.y + inputBox!.height)
 
-  const sortSelect = page.locator('.market-filter-control').nth(1)
+  const sortSelect = page.locator('.market-sort')
   const sortTrigger = sortSelect.locator('.ui-select__trigger')
   await expect(page.locator('label.market-filter-control')).toHaveCount(0)
   await sortTrigger.focus()
   await expect(sortSelect).toHaveCSS('box-shadow', 'none')
-  await expect(sortTrigger).toHaveCSS('border-radius', '8px')
+  await expect(sortTrigger).toHaveCSS('border-radius', '12px')
 
   const iconSizes = await page.locator('.ui-icon-button').evaluateAll(elements => elements.map((element) => {
     const rect = element.getBoundingClientRect()

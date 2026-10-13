@@ -332,9 +332,9 @@ func applyFundingAdmissionMigration(t *testing.T, pool *pgxpool.Pool, direction 
 	t.Helper()
 	// Legacy fixtures must remove the empty dependent bank-command table first.
 	// Its own down migration refuses removal when commands exist.
-	migrations := []string{"0162_seller_funding_admissions.up", "0165_seller_bank_payout_commands.up", "0166_seller_bank_payout_execution.up", "0167_seller_bank_payout_resumes.up", "0168_transfer_execution_jobs.up", "0169_payment_execution_lease_locks.up", "0170_seller_source_reversal_commands.up", "0171_seller_source_reversal_execution.up", "0172_seller_source_reversal_closure.up"}
+	migrations := []string{"0162_seller_funding_admissions.up", "0165_seller_bank_payout_commands.up", "0166_seller_bank_payout_execution.up", "0167_seller_bank_payout_resumes.up", "0168_transfer_execution_jobs.up", "0169_payment_execution_lease_locks.up", "0170_seller_source_reversal_commands.up", "0171_seller_source_reversal_execution.up", "0172_seller_source_reversal_closure.up", "0179_seller_source_dispositions.up"}
 	if direction == "down" {
-		migrations = []string{"0172_seller_source_reversal_closure.down", "0171_seller_source_reversal_execution.down", "0170_seller_source_reversal_commands.down", "0169_payment_execution_lease_locks.down", "0168_transfer_execution_jobs.down", "0167_seller_bank_payout_resumes.down", "0166_seller_bank_payout_execution.down", "0165_seller_bank_payout_commands.down", "0162_seller_funding_admissions.down"}
+		migrations = []string{"0179_seller_source_dispositions.down", "0172_seller_source_reversal_closure.down", "0171_seller_source_reversal_execution.down", "0170_seller_source_reversal_commands.down", "0169_payment_execution_lease_locks.down", "0168_transfer_execution_jobs.down", "0167_seller_bank_payout_resumes.down", "0166_seller_bank_payout_execution.down", "0165_seller_bank_payout_commands.down", "0162_seller_funding_admissions.down"}
 	}
 	for _, migration := range migrations {
 		body, err := os.ReadFile("../platform/database/migrations/" + migration + ".sql")

@@ -24,8 +24,9 @@ const assignedCategory = ref('')
 const contentQuery = ref('')
 const contents = ref<{ id: string; title: string; category: string }[]>([])
 const nextCursor = ref('')
-const fresh = () => ({ code: '', nameZh: '', nameEn: '', icon: 'mixed', sortOrder: 10, scope: props.scope })
+const fresh = () => ({ code: '', nameZh: '', nameEn: '', icon: 'mixed', deliveryKind: 'mixed', sortOrder: 10, scope: props.scope })
 const form = ref(fresh())
+const deliveryKinds = ['image', 'video', 'audio', 'document', 'prompt', 'workflow', 'mixed']
 const icons = ['image', 'video', 'audio', 'prompt', 'workflow', 'mixed']
 const label = (zh: string, en: string) => locale.value.startsWith('zh') ? zh : en
 let version = 0
@@ -105,6 +106,9 @@ onBeforeUnmount(clear)
   <section v-if="allowed" class="admin-panel category-manager" :aria-busy="busy">
     <h2>{{ label('分类管理', 'Category management') }}</h2>
     <p>{{ label('分类独立于媒体格式。排序值越小越靠前；删除已使用的分类时，请选择接收内容的分类。', 'Categories are independent of media formats. Lower order values appear first. Choose a replacement when deleting a category that contains content.') }}</p>
+    <p v-if="scope === 'task'">
+      {{ label('交付类型决定新任务可提交的媒体格式；现有任务保留发布时的约定。', 'Delivery kind controls media for new tasks. Existing tasks keep their original delivery contract.') }}
+    </p>
     <p v-if="error" role="alert" class="form-error">
       {{ error }} <UiButton :disabled="busy" @click="run()">
         {{ t('actions.retry') }}
@@ -119,6 +123,7 @@ onBeforeUnmount(clear)
         <label>{{ label('中文名称', 'Chinese name') }}<UiInput v-model="form.nameZh" required maxlength="80" /></label>
         <label>{{ label('英文名称', 'English name') }}<UiInput v-model="form.nameEn" required maxlength="80" /></label>
         <label>{{ label('图标', 'Icon') }}<UiSelect v-model="form.icon"><option v-for="icon in icons" :key="icon" :value="icon">{{ icon }}</option></UiSelect></label>
+        <label v-if="scope === 'task'">{{ label('交付类型', 'Delivery kind') }}<UiSelect v-model="form.deliveryKind"><option v-for="kind in deliveryKinds" :key="kind" :value="kind">{{ t(`tasks.deliveryKinds.${kind}`) }}</option></UiSelect></label>
         <label>{{ label('排序', 'Order') }}<UiInput v-model.number="form.sortOrder" type="number" min="0" max="100000" /></label>
         <UiButton type="submit" :disabled="busy">
           {{ label('新增', 'Add') }}
@@ -129,6 +134,7 @@ onBeforeUnmount(clear)
         <label>{{ label('中文名称', 'Chinese name') }}<UiInput v-model="item.nameZh" required maxlength="80" /></label>
         <label>{{ label('英文名称', 'English name') }}<UiInput v-model="item.nameEn" required maxlength="80" /></label>
         <label>{{ label('图标', 'Icon') }}<UiSelect v-model="item.icon"><option v-for="icon in icons" :key="icon" :value="icon">{{ icon }}</option></UiSelect></label>
+        <label v-if="scope === 'task'">{{ label('交付类型', 'Delivery kind') }}<UiSelect v-model="item.deliveryKind"><option v-for="kind in deliveryKinds" :key="kind" :value="kind">{{ t(`tasks.deliveryKinds.${kind}`) }}</option></UiSelect></label>
         <label>{{ label('排序', 'Order') }}<UiInput v-model.number="item.sortOrder" type="number" min="0" max="100000" /></label>
         <div>
           <UiButton type="submit" :disabled="busy">
@@ -187,7 +193,7 @@ onBeforeUnmount(clear)
 <style scoped>
 .category-manager { padding: 22px; }
 .category-controls { min-width: 0; margin: 0; padding: 0; border: 0; }
-.category-edit-row { display: grid; grid-template-columns: repeat(3, minmax(100px, 1fr)) 110px 90px auto; gap: 12px; align-items: end; padding: 16px 0; border-bottom: 1px solid var(--border); }
+.category-edit-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 12px; align-items: end; padding: 16px 0; border-bottom: 1px solid var(--border); }
 .category-edit-row label { display: grid; gap: 6px; font-size: 12px; }
 .category-edit-row code { overflow-wrap: anywhere; align-self: center; }
 .category-delete { display: flex; flex-wrap: wrap; gap: 12px; padding-top: 20px; align-items: center; }

@@ -193,12 +193,17 @@ func (s *Service) ListOrders(ctx context.Context, buyerID uuid.UUID, input Order
 		cursor := encodeOrderCursor(page.Items[len(page.Items)-1])
 		page.NextCursor = &cursor
 	}
+	ids := make([]uuid.UUID, len(page.Items))
 	for index := range page.Items {
-		events, err := s.orderEvents(ctx, page.Items[index].ID)
-		if err != nil {
-			return OrderPage{}, err
-		}
-		page.Items[index].Events = events
+		ids[index] = page.Items[index].ID
+	}
+	// Only IDs from the buyer-scoped page enter the batched history query.
+	events, err := s.orderEventsFor(ctx, ids)
+	if err != nil {
+		return OrderPage{}, err
+	}
+	for index := range page.Items {
+		page.Items[index].Events = events[page.Items[index].ID]
 	}
 	return page, nil
 }
@@ -219,18 +224,30 @@ func (s *Service) GetOrder(ctx context.Context, buyerID, orderID uuid.UUID) (Ord
 }
 
 func (s *Service) orderEvents(ctx context.Context, orderID uuid.UUID) ([]OrderEvent, error) {
-	rows, err := s.pool.Query(ctx, `SELECT from_status,to_status,reason,created_at FROM order_events WHERE order_id=$1 ORDER BY sequence`, orderID)
+	events, err := s.orderEventsFor(ctx, []uuid.UUID{orderID})
+	return events[orderID], err
+}
+
+func (s *Service) orderEventsFor(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID][]OrderEvent, error) {
+	events := make(map[uuid.UUID][]OrderEvent, len(ids))
+	for _, id := range ids {
+		events[id] = make([]OrderEvent, 0)
+	}
+	if len(ids) == 0 {
+		return events, nil
+	}
+	rows, err := s.pool.Query(ctx, "SELECT order_id,from_status,to_status,reason,created_at FROM order_events WHERE order_id=ANY($1::uuid[]) ORDER BY order_id,sequence", ids)
 	if err != nil {
 		return nil, fmt.Errorf("list order events: %w", err)
 	}
 	defer rows.Close()
-	events := make([]OrderEvent, 0)
 	for rows.Next() {
+		var id uuid.UUID
 		var event OrderEvent
-		if err := rows.Scan(&event.FromStatus, &event.ToStatus, &event.Reason, &event.CreatedAt); err != nil {
+		if err := rows.Scan(&id, &event.FromStatus, &event.ToStatus, &event.Reason, &event.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan order event: %w", err)
 		}
-		events = append(events, event)
+		events[id] = append(events[id], event)
 	}
 	return events, rows.Err()
 }
@@ -293,6 +310,10 @@ func encodeOrderCursor(item Order) string {
 }
 
 func decodeOrderCursor(value string) (orderCursor, error) {
+	// Generated cursors are well below this bound; reject oversized input before decoding.
+	if len(value) > 512 {
+		return orderCursor{}, ErrInvalidOrderFilter
+	}
 	var cursor orderCursor
 	body, err := base64.RawURLEncoding.DecodeString(value)
 	if err != nil || json.Unmarshal(body, &cursor) != nil || cursor.CreatedAt.IsZero() || cursor.ID == uuid.Nil {

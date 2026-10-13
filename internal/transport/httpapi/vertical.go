@@ -579,6 +579,7 @@ func (s *Server) getGeneration(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listAssets(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "private, no-store")
 	user, ok := s.requireUser(w, r)
 	if !ok {
 		return
@@ -592,6 +593,15 @@ func (s *Server) listAssets(w http.ResponseWriter, r *http.Request) {
 	if len(r.URL.Query()["source"]) > 1 || len(r.URL.Query()["purpose"]) > 1 {
 		httputil.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_asset_filters", "Specify each Asset filter only once.", false)
 		return
+	}
+	input.Query = r.URL.Query().Get("q")
+	input.Kind = r.URL.Query().Get("kind")
+	input.ScanStatus = r.URL.Query().Get("scanStatus")
+	for _, key := range []string{"q", "kind", "scanStatus"} {
+		if len(r.URL.Query()[key]) > 1 {
+			httputil.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_asset_filters", "Specify each filter only once.", false)
+			return
+		}
 	}
 	page, err := s.assets.List(r.Context(), user.ID, input)
 	if errors.Is(err, assets.ErrInvalidList) {
@@ -607,6 +617,7 @@ func (s *Server) listAssets(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listSavedWorks(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "private, no-store")
 	user, ok := s.requireUser(w, r)
 	if !ok {
 		return
@@ -614,6 +625,15 @@ func (s *Server) listSavedWorks(w http.ResponseWriter, r *http.Request) {
 	input, ok := parseAssetListInput(w, r, "invalid_saved_work_filters")
 	if !ok {
 		return
+	}
+	input.Query = r.URL.Query().Get("q")
+	input.Kind = r.URL.Query().Get("kind")
+	input.ScanStatus = r.URL.Query().Get("scanStatus")
+	for _, key := range []string{"q", "kind", "scanStatus"} {
+		if len(r.URL.Query()[key]) > 1 {
+			httputil.WriteError(w, r, http.StatusUnprocessableEntity, "invalid_asset_filters", "Specify each filter only once.", false)
+			return
+		}
 	}
 	page, err := s.assets.ListSavedWorks(r.Context(), user.ID, input)
 	if errors.Is(err, assets.ErrInvalidList) {
@@ -628,6 +648,7 @@ func (s *Server) listSavedWorks(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listAssetUsages(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "private, no-store")
 	user, ok := s.requireUser(w, r)
 	if !ok {
 		return
@@ -669,6 +690,7 @@ func parseAssetListInput(w http.ResponseWriter, r *http.Request, code string) (a
 }
 
 func (s *Server) uploadAsset(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "private, no-store")
 	user, ok := s.requirePermission(w, r, "assets:upload")
 	if !ok {
 		return
@@ -724,6 +746,7 @@ func (s *Server) uploadAsset(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getAsset(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "private, no-store")
 	user, ok := s.requireUser(w, r)
 	if !ok {
 		return
@@ -746,6 +769,7 @@ func (s *Server) getAsset(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) uploadAssetVersion(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "private, no-store")
 	user, ok := s.requirePermission(w, r, "assets:upload")
 	if !ok {
 		return

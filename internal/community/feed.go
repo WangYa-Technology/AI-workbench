@@ -17,6 +17,23 @@ type feedCursor struct {
 	Position int64     `json:"position"`
 }
 
+// PurgeExpiredFeedSnapshots removes expired pagination state outside the user
+// request path. The bounded delete keeps maintenance predictable under load.
+func (r *Repository) PurgeExpiredFeedSnapshots(ctx context.Context, limit int) error {
+	if limit < 1 || limit > 10000 {
+		return ErrInvalidPostFilter
+	}
+	_, err := r.pool.Exec(ctx, `
+		DELETE FROM community_feed_snapshots
+		WHERE id IN (
+			SELECT id FROM community_feed_snapshots
+			WHERE expires_at < now()
+			ORDER BY expires_at
+			LIMIT $1
+		)`, limit)
+	return err
+}
+
 // Capture ordering once, including mutable discussion scores. Subsequent pages
 // keep the rank but recheck visibility, so withdrawn content is never exposed.
 func (r *Repository) ListPageForViewer(ctx context.Context, viewer uuid.UUID, input PostListInput) (PostPage, error) {
@@ -61,9 +78,6 @@ func (r *Repository) ListPageForViewer(ctx context.Context, viewer uuid.UUID, in
 			return PostPage{}, ErrInvalidPostFilter
 		}
 	} else {
-		if _, err = tx.Exec(ctx, `DELETE FROM community_feed_snapshots WHERE expires_at<now()`); err != nil {
-			return PostPage{}, err
-		}
 		if _, err = tx.Exec(ctx, `INSERT INTO community_feed_snapshots(id,viewer_id,scope_hash) VALUES($1,$2,$3)`, cursor.Snapshot, nullableViewer(viewer), scope); err != nil {
 			return PostPage{}, err
 		}
@@ -74,10 +88,10 @@ func (r *Repository) ListPageForViewer(ctx context.Context, viewer uuid.UUID, in
     COALESCE(p.published_at,p.created_at) DESC,p.id DESC),p.id
    FROM posts p JOIN users u ON u.id=p.author_id LEFT JOIN works w ON w.id=p.work_id
    WHERE `+feedVisibility+`
-   AND ($5='' OR strpos(lower(concat_ws(' ',p.title,w.title,p.body,u.display_name,u.handle)),lower($5))>0)
+   AND ($5='' OR p.title ILIKE '%'||$5||'%' OR w.title ILIKE '%'||$5||'%' OR p.body ILIKE '%'||$5||'%' OR u.display_name ILIKE '%'||$5||'%' OR u.handle ILIKE '%'||$5||'%')
    AND ($3<>'mine' OR p.author_id=$2)
    AND ($3<>'saved' OR EXISTS(SELECT 1 FROM post_reactions pr WHERE pr.post_id=p.id AND pr.user_id=$2 AND pr.kind='bookmark'))
-   AND ($3<>'following' OR EXISTS(SELECT 1 FROM user_follows f WHERE f.follower_id=$2 AND f.following_id=p.author_id))`, cursor.Snapshot, viewer, input.View, input.Sort, input.Query)
+   AND ($3<>'following' OR EXISTS(SELECT 1 FROM user_follows f WHERE f.follower_id=$2 AND f.following_id=p.author_id))`, cursor.Snapshot, viewer, input.View, input.Sort, strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(input.Query))
 		if err != nil {
 			return PostPage{}, err
 		}

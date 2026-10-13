@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { FileText, Music, PackageOpen } from 'lucide-vue-next'
+import { FileText, Music, PackageOpen, Play } from 'lucide-vue-next'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { inlineTextPreview, readTextPreview, TEXT_PREVIEW_BYTES } from '../../lib/textPreview'
@@ -12,6 +12,7 @@ const props = withDefaults(defineProps<{
   width?: number
   height?: number
   text?: string
+  previewOnly?: boolean
   controls?: boolean
   eager?: boolean
 }>(), {
@@ -19,6 +20,7 @@ const props = withDefaults(defineProps<{
   height: 900,
   text: '',
   mimeType: '',
+  previewOnly: false,
   controls: true,
   eager: false,
 })
@@ -84,6 +86,9 @@ watch(
       :loading="eager ? 'eager' : 'lazy'"
       @error="mediaFailed = true"
     />
+    <div v-else-if="normalizedKind === 'video' && previewOnly" class="asset-video-placeholder">
+      <Play :size="30" aria-hidden="true" /><strong>{{ alt }}</strong><span>{{ t('workspace.videoPreviewHint') }}</span>
+    </div>
     <video
       v-else-if="normalizedKind === 'video'"
       :src="src"
@@ -123,6 +128,9 @@ watch(
 </template>
 
 <style scoped>
+.asset-video-placeholder { display: grid; place-content: center; justify-items: center; gap: 8px; width: 100%; height: 100%; min-height: 120px; padding: 12px; color: var(--text-secondary); text-align: center; }
+.asset-video-placeholder strong { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.asset-video-placeholder span { font-size: 12px; }
 .asset-media-unavailable { display: grid; place-content: center; justify-items: center; gap: 12px; width: 100%; height: 100%; min-height: 140px; padding: 20px; background: var(--surface-muted); color: var(--text-secondary); font-size: 13px; text-align: center; }
 .asset-audio strong { max-width: 100%; overflow-wrap: anywhere; text-align: center; }
 </style>

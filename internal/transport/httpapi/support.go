@@ -159,6 +159,8 @@ func (s *Server) adminUpdateSupportCase(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) writeSupportResult(w http.ResponseWriter, r *http.Request, item any, err error, successStatus int) {
 	switch {
+	case errors.Is(err, support.ErrForbidden):
+		httputil.WriteError(w, r, http.StatusForbidden, "permission_required", "You do not have permission to perform this operation.", false)
 	case errors.Is(err, support.ErrNotFound), errors.Is(err, support.ErrRelatedNotFound):
 		httputil.WriteError(w, r, http.StatusNotFound, "support_resource_not_found", "The support case or related resource could not be found.", false)
 	case errors.Is(err, support.ErrConflict):

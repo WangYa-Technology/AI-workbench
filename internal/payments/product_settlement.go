@@ -601,6 +601,12 @@ func completeProductSettlementTx(ctx context.Context, tx pgx.Tx, settlementID, b
 // transaction. A refund before payout cancels the payable; a refund after a
 // payout creates an explicit recovery obligation instead of hiding the loss.
 func markProductSettlementRefundTx(ctx context.Context, tx pgx.Tx, paymentID uuid.UUID) error {
+	return markProductSettlementReversalTx(ctx, tx, paymentID, "buyer_refund", "refund.confirmed")
+}
+
+// Refunds and dispute losses share seller-funds accounting, but retain distinct
+// evidence: a dispute loss is not a second Provider refund confirmation.
+func markProductSettlementReversalTx(ctx context.Context, tx pgx.Tx, paymentID uuid.UUID, reversalReason, eventType string) error {
 	var sellerID uuid.UUID
 	if err := tx.QueryRow(ctx, `SELECT seller_id FROM product_settlements WHERE payment_id=$1`, paymentID).Scan(&sellerID); errors.Is(err, pgx.ErrNoRows) {
 		return nil
@@ -632,10 +638,10 @@ func markProductSettlementRefundTx(ctx context.Context, tx pgx.Tx, paymentID uui
 		to = "recovery_required"
 		recovery = net
 	}
-	if (!payoutAtRisk && (status == "refund_hold" || status == "cancelled")) || (status == "recovery_required" && previousRecovery == net && reason == "buyer_refund") {
+	if (!payoutAtRisk && (status == "refund_hold" || status == "cancelled")) || (status == "recovery_required" && previousRecovery == net && reason == reversalReason) {
 		return nil
 	}
-	if _, err := tx.Exec(ctx, `UPDATE product_settlements SET status=$2,recovery_amount_cents=$3,hold_reason='buyer_refund',version=version+1,updated_at=clock_timestamp() WHERE id=$1`, id, to, recovery); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE product_settlements SET status=$2,recovery_amount_cents=$3,hold_reason=$4,version=version+1,updated_at=clock_timestamp() WHERE id=$1`, id, to, recovery, reversalReason); err != nil {
 		return err
 	}
 	if recovery > 0 {
@@ -646,5 +652,5 @@ func markProductSettlementRefundTx(ctx context.Context, tx pgx.Tx, paymentID uui
 			return err
 		}
 	}
-	return recordProductSettlementEventTx(ctx, tx, id, "refund.confirmed", status, to, map[string]any{"recoveryAmountCents": recovery})
+	return recordProductSettlementEventTx(ctx, tx, id, eventType, status, to, map[string]any{"recoveryAmountCents": recovery})
 }

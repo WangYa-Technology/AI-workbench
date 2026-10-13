@@ -1565,8 +1565,25 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** @description Independent finance confirmation consuming an accepted complete source return. Rechecks original bank, refund and debt evidence and the current request version. Atomically releases the reservation or settles full refund recovery; never creates new income or contacts the provider. Same-key replay returns the original closure. Available after new external writes are disabled. Query parameters are rejected; body limit 16 KiB and exactly one Idempotency-Key required. */
+        /** @description Independent finance confirmation by an actor other than the original command maker and disposition proposers, consuming an accepted complete source return. Rechecks original bank, refund and debt evidence and the current request version. Atomically releases the reservation or settles full refund recovery; never creates new income or contacts the provider. Same-key replay returns the original closure. Available after new external writes are disabled. Query parameters are rejected; body limit 16 KiB and exactly one Idempotency-Key required. */
         post: operations["closeSellerSourceReversal"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/seller-source-reversals/{commandID}/dispositions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Finance proposes a permanent no-POST restriction, then another active finance actor approves read-only recovery against the same server evidence snapshot within 24 hours. No amounts or Provider results accepted; never releases reservations, settles debt, refreshes the original send window, or retries a POST. Unknown or partial evidence remains held. Same-key replay is authority checked. Query parameters rejected; exactly one Idempotency-Key required. All writes and audit are atomic. */
+        post: operations["disposeSellerSourceReversal"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1943,6 +1960,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
+        /** @description Buyer-scoped order history. Supply cursor and limit at most once each. */
         get: operations["listOrders"];
         put?: never;
         post?: never;
@@ -3958,7 +3976,7 @@ export interface components {
             items: components["schemas"]["ProductPaymentDispute"][];
             nextCursor?: string;
         };
-        /** @description Action and route are normalized to lowercase; reason and reference are trimmed. escalate_recovery requires collections. A successful operation increments exactly one version; provider outcome and money remain unchanged. */
+        /** @description Describes canonical client values. The server also accepts normalization of surrounding whitespace and lowercase action/route; reason and reference are trimmed. escalate_recovery requires collections. A successful operation increments exactly one version; provider outcome and money remain unchanged. */
         ProductPaymentDisputeCommand: {
             action: components["schemas"]["ProductDisputeAction"];
             route: components["schemas"]["ProductDisputeRoute"];
@@ -3977,6 +3995,11 @@ export interface components {
             replayed: boolean;
         };
         ContentCategory: {
+            /**
+             * @description Task delivery kind; omitted on create defaults from the legacy code or icon; omitted on update preserves the existing contract for new tasks
+             * @enum {string}
+             */
+            deliveryKind?: "image" | "video" | "audio" | "document" | "prompt" | "workflow" | "mixed";
             code?: string;
             /** @enum {string} */
             scope?: "task" | "community" | "marketplace";
@@ -4964,7 +4987,17 @@ export interface components {
             items: components["schemas"]["Generation"][];
             nextCursor?: string;
         };
+        PurchaseAccess: {
+            /** Format: uuid */
+            orderId?: string;
+            canDownload: boolean;
+            canReuse: boolean;
+            /** @enum {string} */
+            status: "available" | "refund_pending" | "revoked" | "scan_blocked" | "unavailable";
+        };
         Asset: {
+            /** @description Present on owned detail reads; task delivery eligibility is rechecked on submission */
+            taskDeliveryEligible?: boolean;
             /** Format: uuid */
             id: string;
             kind: string;
@@ -4994,6 +5027,7 @@ export interface components {
             supersedesAssetId?: string;
             isLatestVersion: boolean;
             versions?: components["schemas"]["AssetVersion"][];
+            purchaseAccess?: components["schemas"]["PurchaseAccess"];
             provenance?: components["schemas"]["AssetProvenance"];
             /** @description The 20 most recent owner-scoped downstream uses of any version in this Asset family. */
             usages?: components["schemas"]["AssetUsage"][];
@@ -5439,6 +5473,34 @@ export interface components {
             /** @enum {boolean} */
             confirmed: true;
         };
+        SellerSourceDispositionInput: {
+            /** @enum {string} */
+            phase: "propose" | "approve";
+            /**
+             * Format: uuid
+             * @description Required only for approve; must reference the unchanged proposal of another current finance actor.
+             */
+            proposalId?: string;
+            /** Format: date-time */
+            expectedUpdatedAt: string;
+            reason: string;
+            /** @enum {boolean} */
+            confirmed: true;
+        };
+        SellerSourceDisposition: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            commandId: string;
+            /** @enum {string} */
+            phase: "propose" | "approve";
+            /** Format: uuid */
+            proposalId?: string;
+            /** Format: date-time */
+            createdAt: string;
+            replayed: boolean;
+            reason: string;
+        };
         SellerSourceClosureInput: {
             /** Format: uuid */
             readId: string;
@@ -5492,6 +5554,9 @@ export interface components {
             requiresReview: boolean;
             canSubmit: boolean;
             canClose: boolean;
+            canProposeDisposition?: boolean;
+            canApproveDisposition?: boolean;
+            disposition?: components["schemas"]["SellerSourceDisposition"];
             /** @enum {string} */
             closeResolution?: "released" | "refund_recovered";
             bank?: {
@@ -6126,8 +6191,8 @@ export interface components {
             id: string;
             title: string;
             summary: string;
-            /** @enum {string} */
-            deliverableType: "image" | "video" | "audio" | "prompt" | "workflow" | "mixed";
+            /** @description Configured task category code */
+            deliverableType: string;
             budgetCents: number;
             /** @enum {string} */
             currency: "USD";
@@ -6266,6 +6331,11 @@ export interface components {
             alreadyCreated: boolean;
         };
         TaskDetail: components["schemas"]["TaskSummary"] & {
+            /**
+             * @description Media contract fixed when the task was published
+             * @enum {string}
+             */
+            deliveryKind?: "image" | "video" | "audio" | "document" | "prompt" | "workflow" | "mixed";
             deadlineChange?: components["schemas"]["TaskDeadlineChange"];
             /** @default false */
             allowDerivativeReuse: boolean;
@@ -6288,8 +6358,8 @@ export interface components {
             title: string;
             summary: string;
             brief: string;
-            /** @enum {string} */
-            deliverableType: "image" | "video" | "audio" | "prompt" | "workflow" | "mixed";
+            /** @description Configured task category code */
+            deliverableType: string;
             deliverables: string[];
             acceptanceRules: string[];
             rightsTerms: string;
@@ -6646,8 +6716,8 @@ export interface components {
             title: string;
             /** @enum {string} */
             status: "draft" | "open" | "assigned" | "submitted" | "revision" | "accepted" | "disputed" | "cancelled";
-            /** @enum {string} */
-            deliverableType: "image" | "video" | "audio" | "prompt" | "workflow" | "mixed";
+            /** @description Configured task category code */
+            deliverableType: string;
             amountCents: number;
             /** @enum {string} */
             currency: "USD";
@@ -10019,12 +10089,16 @@ export interface operations {
     listAssets: {
         parameters: {
             query?: {
+                /** @description Literal case-insensitive title substring applied before pagination */
+                q?: string;
+                kind?: "image" | "video" | "audio" | "document";
+                scanStatus?: "pending" | "clean" | "review" | "rejected";
                 /** @description Opaque stable Asset cursor bound to the owner and source and purpose filters */
                 cursor?: string;
-                /** @description Filter active purchased assets before pagination; omitted means all owned assets */
-                source?: "purchase";
-                /** @description Filter eligible independent product samples or private delivery originals before pagination; cannot be combined with source; selection alone does not publish anything */
-                purpose?: "product_preview" | "product_source";
+                /** @description Filter source before pagination; omitted means all owned assets */
+                source?: "upload" | "generation" | "purchase" | "delivery";
+                /** @description Filter eligible independent product samples */
+                purpose?: "product_preview" | "product_source" | "task_delivery";
                 limit?: number;
             };
             header?: never;
@@ -10049,6 +10123,9 @@ export interface operations {
     listSavedWorks: {
         parameters: {
             query?: {
+                /** @description Literal case-insensitive title substring applied before pagination */
+                q?: string;
+                kind?: "image" | "video" | "audio" | "document";
                 /** @description Opaque stable saved-work cursor */
                 cursor?: string;
                 limit?: number;
@@ -10858,6 +10935,40 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SellerSourceClosureSubmission"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    disposeSellerSourceReversal: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path: {
+                commandID: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SellerSourceDispositionInput"];
+            };
+        };
+        responses: {
+            /** @description Immutable read-only disposition */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SellerSourceDisposition"];
                 };
             };
             401: components["responses"]["Unauthorized"];

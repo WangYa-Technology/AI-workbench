@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/hcai-chat/hcai-chat/internal/datarights"
+	"github.com/hcai-chat/hcai-chat/internal/notifications"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -31,6 +33,11 @@ func handleProductDisputeEventTx(ctx context.Context, tx pgx.Tx, providerEventID
 			return err
 		} else {
 			orderID, sellerID, settlementID = &order, &seller, settlement
+			// Product financial writers lock payment, then order, then seller funds
+			// and settlement. Keep the dispute path in that order as well.
+			if _, err := tx.Exec(ctx, `SELECT id FROM orders WHERE id=$1 FOR UPDATE`, order); err != nil {
+				return err
+			}
 		}
 	}
 	action := disputeAction(*disputeStatus, orderID != nil)
@@ -42,13 +49,14 @@ func handleProductDisputeEventTx(ctx context.Context, tx pgx.Tx, providerEventID
 	var storedDueBy, storedLatestEventAt time.Time
 	var storedLatestEventID uuid.UUID
 	var storedVersion int64
+	var tupleMatches bool
 	err := tx.QueryRow(ctx, `
-		SELECT id,payment_id,order_id,seller_id,settlement_id,provider_status,action_status,due_by,latest_event_at,latest_event_id,version
+		SELECT id,payment_id,order_id,seller_id,settlement_id,provider_status,action_status,due_by,latest_event_at,latest_event_id,version,provider_payment_id=$3 AND provider_charge_id=$4 AND amount_cents=$5 AND currency=$6
 		FROM product_payment_disputes
 		WHERE provider='stripe' AND live_mode=$1 AND provider_dispute_id=$2
-		FOR UPDATE`, liveMode, disputeID).Scan(
+		FOR UPDATE`, liveMode, disputeID, *providerPaymentID, *providerChargeID, *amount, *currency).Scan(
 		&storedDisputeID, &storedPaymentID, &storedOrderID, &storedSellerID, &storedSettlementID,
-		&storedProviderStatus, &effectiveAction, &storedDueBy, &storedLatestEventAt, &storedLatestEventID, &storedVersion)
+		&storedProviderStatus, &effectiveAction, &storedDueBy, &storedLatestEventAt, &storedLatestEventID, &storedVersion, &tupleMatches)
 	newRoot := errors.Is(err, pgx.ErrNoRows)
 	if err != nil && !newRoot {
 		return err
@@ -73,13 +81,16 @@ func handleProductDisputeEventTx(ctx context.Context, tx pgx.Tx, providerEventID
 		}
 	}
 
+	if !newRoot && !tupleMatches {
+		return newProviderFailure("payment_event_conflict", 0)
+	}
 	newer := newRoot || isNewerDisputeEvent(occurredAt, providerEventID, storedLatestEventAt, storedLatestEventID)
 	if !newRoot && newer {
 		effectiveAction = action
 	}
 	// Insert the immutable evidence before changing the mutable projection. A
-	// duplicate provider event must be a complete no-op, including version and
-	// settlement events.
+	// duplicate provider event preserves the projection. A pre-0178 terminal
+	// event may still need its missing adjudication applied during upgrade replay.
 	var insertedEventID uuid.UUID
 	err = tx.QueryRow(ctx, `
 		INSERT INTO product_payment_dispute_events(dispute_id,provider_event_id,event_type,provider_status,reason,network_reason_code,due_by,occurred_at,applied)
@@ -94,7 +105,7 @@ func handleProductDisputeEventTx(ctx context.Context, tx pgx.Tx, providerEventID
 		if existingDisputeID != storedDisputeID {
 			return newProviderFailure("payment_event_conflict", 0)
 		}
-		return nil
+		err = nil
 	}
 	if err != nil {
 		return err
@@ -136,6 +147,47 @@ func handleProductDisputeEventTx(ctx context.Context, tx pgx.Tx, providerEventID
 			if storedSettlementID == nil {
 				storedSettlementID = settlementID
 			}
+		}
+	}
+	// Conflicting terminal evidence is retained, regardless of delivery order.
+	var conflict bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM product_payment_dispute_events a JOIN product_payment_dispute_events b ON a.dispute_id=b.dispute_id WHERE a.dispute_id=$1 AND a.provider_status='won' AND b.provider_status IN ('lost','charge_refunded'))`, storedDisputeID).Scan(&conflict); err != nil {
+		return err
+	}
+	if conflict {
+		effectiveAction = "requires_review"
+	}
+	if (newer || providerEventID == storedLatestEventID) && paymentID != nil && !conflict && oneOf(effectiveAction, "won", "lost", "charge_refunded") {
+		if err := applyProductDisputeAdjudicationTx(ctx, tx, storedDisputeID, providerEventID, effectiveAction, *storedPaymentID, storedOrderID, storedSellerID); err != nil {
+			return err
+		}
+	}
+	var review bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM product_payment_dispute_adjudications WHERE dispute_id=$1 AND financial_effect='requires_review')`, storedDisputeID).Scan(&review); err != nil {
+		return err
+	}
+	if effectiveAction == "won" && storedPaymentID != nil {
+		var unsafeRelease bool
+		if err := tx.QueryRow(ctx, `SELECT pi.status<>'paid' OR o.status<>'fulfilled' OR EXISTS(SELECT 1 FROM product_refund_attempts a WHERE a.payment_id=pi.id AND (a.status IN ('requested','pending') OR a.reconciliation_required)) OR EXISTS(SELECT 1 FROM product_refund_checks c WHERE c.payment_id=pi.id AND (c.status IN ('requested','observed') OR c.unresolved_count>0)) FROM payment_intents pi JOIN orders o ON o.id=pi.order_id WHERE pi.id=$1`, *storedPaymentID).Scan(&unsafeRelease); err != nil {
+			return err
+		}
+		review = review || unsafeRelease
+	}
+	if review || conflict {
+		effectiveAction = "requires_review"
+		changed, err := tx.Exec(ctx, `UPDATE product_payment_disputes SET action_status='requires_review',version=version+1,updated_at=clock_timestamp() WHERE id=$1 AND action_status<>'requires_review'`, storedDisputeID)
+		if err != nil {
+			return err
+		}
+		if changed.RowsAffected() > 0 {
+			if _, err := tx.Exec(ctx, `INSERT INTO audit_events(action,resource_type,resource_id,request_id,metadata) VALUES('marketplace.provider_dispute_review','product_payment_dispute',$1,$2,jsonb_build_object('providerEventId',$3::text,'terminalConflict',$4::boolean))`, storedDisputeID, "stripe-dispute:"+providerEventID.String(), providerEventID, conflict); err != nil {
+				return err
+			}
+		}
+	}
+	if storedSellerID != nil {
+		if err := lockSellerFundsTx(ctx, tx, *storedSellerID); err != nil {
+			return err
 		}
 	}
 	// The stored binding is authoritative. A later malformed or temporarily
@@ -194,7 +246,7 @@ func productDisputeSettlementTransition(action, settlementStatus string, availab
 	to := settlementStatus
 	holdReason := ""
 	switch action {
-	case "needs_response", "under_review", "warning_needs_response", "warning_under_review", "requires_review":
+	case "needs_response", "under_review", "warning_needs_response", "warning_under_review", "requires_review", "withdrawn":
 		if oneOf(settlementStatus, "pending_hold", "available") {
 			to = "dispute_hold"
 			holdReason = "provider_dispute"
@@ -243,7 +295,121 @@ func disputeAction(status string, bound bool) string {
 		return "charge_refunded"
 	case "prevented":
 		return "prevented"
+	case "withdrawn":
+		return "requires_review"
 	default:
 		return "requires_review"
 	}
+}
+
+func applyProductDisputeAdjudicationTx(ctx context.Context, tx pgx.Tx, disputeID, providerEventID uuid.UUID, outcome string, paymentID uuid.UUID, orderID, sellerID *uuid.UUID) error {
+	var effect string
+	var refundUnresolved bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM product_refund_attempts WHERE payment_id=$1 AND (status IN ('requested','pending') OR reconciliation_required)) OR EXISTS(SELECT 1 FROM product_refund_checks WHERE payment_id=$1 AND (status IN ('requested','observed') OR unresolved_count>0))`, paymentID).Scan(&refundUnresolved); err != nil {
+		return err
+	}
+	switch outcome {
+	case "won":
+		var paymentStatus, orderStatus string
+		if err := tx.QueryRow(ctx, `SELECT pi.status,o.status FROM payment_intents pi JOIN orders o ON o.id=pi.order_id WHERE pi.id=$1 FOR UPDATE OF pi,o`, paymentID).Scan(&paymentStatus, &orderStatus); err != nil {
+			return err
+		}
+		if paymentStatus != "paid" || orderStatus != "fulfilled" {
+			effect = "requires_review"
+		} else {
+			var canRelease bool
+			if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM product_settlements s WHERE s.payment_id=$1 AND s.status='dispute_hold' AND NOT EXISTS(SELECT 1 FROM product_payment_disputes d WHERE d.settlement_id=s.id AND d.id<>$2 AND d.action_status<>'won'))`, paymentID, disputeID).Scan(&canRelease); err != nil {
+				return err
+			}
+			effect = "no_change"
+			if canRelease {
+				effect = "release_hold"
+			}
+		}
+	case "lost", "charge_refunded":
+		var paymentStatus, orderStatus string
+		if err := tx.QueryRow(ctx, `SELECT pi.status,o.status FROM payment_intents pi JOIN orders o ON o.id=pi.order_id WHERE pi.id=$1 FOR UPDATE OF pi,o`, paymentID).Scan(&paymentStatus, &orderStatus); err != nil {
+			return err
+		}
+		switch {
+		case paymentStatus == "refunded" && orderStatus == "refunded":
+			var priorLoss bool
+			if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM payment_intent_events WHERE payment_id=$1 AND event_type='dispute.loss.applied')`, paymentID).Scan(&priorLoss); err != nil {
+				return err
+			}
+			effect = "requires_review"
+			if priorLoss {
+				effect = "no_change"
+			}
+		case paymentStatus == "paid" && orderStatus == "fulfilled":
+			effect = "loss_applied"
+		default:
+			effect = "requires_review"
+		}
+	default:
+		effect = "no_change"
+	}
+	if refundUnresolved {
+		effect = "requires_review"
+	}
+	result, err := tx.Exec(ctx, `INSERT INTO product_payment_dispute_adjudications(dispute_id,provider_event_id,outcome,financial_effect)
+		VALUES($1,$2,$3,$4) ON CONFLICT(dispute_id) DO NOTHING`, disputeID, providerEventID, outcome, effect)
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() == 0 {
+		return nil
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO audit_events(action,resource_type,resource_id,request_id,metadata) VALUES('marketplace.provider_dispute_adjudicated','product_payment_dispute',$1,$2,jsonb_build_object('providerEventId',$3::text,'outcome',$4::text,'financialEffect',$5::text))`, disputeID, "stripe-dispute:"+providerEventID.String(), providerEventID, outcome, effect); err != nil {
+		return err
+	}
+	var recorded string
+	if err := tx.QueryRow(ctx, `SELECT financial_effect FROM product_payment_dispute_adjudications WHERE dispute_id=$1`, disputeID).Scan(&recorded); err != nil {
+		return err
+	}
+	if recorded != effect || effect != "loss_applied" || (outcome != "lost" && outcome != "charge_refunded") {
+		return nil
+	}
+	if orderID == nil || sellerID == nil {
+		return nil
+	}
+	var paymentStatus, orderStatus string
+	var buyerID uuid.UUID
+	if err := tx.QueryRow(ctx, `SELECT pi.status,o.status,o.buyer_id FROM payment_intents pi JOIN orders o ON o.id=pi.order_id WHERE pi.id=$1 FOR UPDATE OF pi,o`, paymentID).Scan(&paymentStatus, &orderStatus, &buyerID); err != nil {
+		return err
+	}
+	if paymentStatus == "refunded" && orderStatus == "refunded" {
+		return nil
+	}
+	if paymentStatus != "paid" || orderStatus != "fulfilled" {
+		return nil
+	}
+	if _, err := tx.Exec(ctx, `UPDATE entitlements SET status='refunded',revoked_at=clock_timestamp() WHERE order_id=$1 AND status='active'`, *orderID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE orders SET status='refunded',refunded_at=clock_timestamp(),updated_at=clock_timestamp() WHERE id=$1`, *orderID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE payment_intents SET status='refunded',refunded_at=clock_timestamp(),updated_at=clock_timestamp(),version=version+1 WHERE id=$1`, paymentID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO order_events(order_id,from_status,to_status,reason,sequence)
+		SELECT $1,'fulfilled','refunded','Stripe dispute lost; access revoked. No additional refund was initiated.',COALESCE(max(sequence),0)+1 FROM order_events WHERE order_id=$1`, *orderID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO payment_intent_events(payment_id,provider_event_id,event_type,from_status,to_status,evidence)
+		VALUES($1,$2,'dispute.loss.applied','paid','refunded',jsonb_build_object('disputeId',$3::text,'providerOutcome',$4::text)) ON CONFLICT DO NOTHING`, paymentID, providerEventID, disputeID, outcome); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO audit_events(actor_id,action,resource_type,resource_id,request_id,metadata)
+		VALUES($1,'marketplace.provider_dispute_lost','order',$2,$3,jsonb_build_object('paymentId',$4::text,'disputeId',$5::text,'providerOutcome',$6::text,'providerRefundInitiated',false))`, buyerID, *orderID, "stripe-dispute:"+providerEventID.String(), paymentID, disputeID, outcome); err != nil {
+		return err
+	}
+	if err := datarights.EnqueueProductMediaCleanupTx(ctx, tx, *orderID); err != nil {
+		return err
+	}
+	if err := notifications.CreateTx(ctx, tx, notifications.CreateInput{UserID: buyerID, Kind: "marketplace.order_refunded", Title: "Payment dispute lost", Body: "The payment Provider confirmed the dispute loss. Access and reuse rights were revoked; no additional refund was initiated.", TargetPath: "/workspace/orders", ResourceType: "order", ResourceID: orderID, SourceKey: "marketplace:order:" + orderID.String() + ":dispute-loss"}); err != nil {
+		return err
+	}
+	return markProductSettlementReversalTx(ctx, tx, paymentID, "provider_dispute_loss", "dispute.loss.applied")
 }

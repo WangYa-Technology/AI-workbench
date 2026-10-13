@@ -80,3 +80,22 @@ it('reads source return evidence without a write key or response caching', async
   expect(fetchMock.mock.calls[0]?.[1]?.method || 'GET').toBe('GET')
   expect(keyAt(0)).toBeNull()
 })
+
+it('read-only disposition preserves confirmation and retry identity; changed reviewer cannot send it', async () => {
+  const id = crypto.randomUUID()
+  const input = { phase: 'approve' as const, proposalId: crypto.randomUUID(), expectedUpdatedAt: '2026-09-24T00:00:00Z', reason: 'Keep reservations and read original Provider evidence.', confirmed: true as const }
+  const original = { ...input }
+  fetchMock.mockRejectedValueOnce(new TypeError('Response lost'))
+  const first = api.disposeSellerSourceReversal(id, input)
+  input.reason = 'Changed after confirmation'
+  await expect(first).rejects.toThrow('Response lost')
+  expect(bodyAt(0)).toEqual(original)
+  fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ replayed: true })))
+  await api.disposeSellerSourceReversal(id, original)
+  expect(keyAt(1)).toBe(keyAt(0))
+  expect(fetchMock.mock.calls[0]?.[0]).toBe(`/api/v1/admin/seller-source-reversals/${id}/dispositions`)
+  const next = api.disposeSellerSourceReversal(id, original)
+  setTaskCommandActor(crypto.randomUUID())
+  await expect(next).rejects.toThrow('Session changed')
+  expect(fetchMock).toHaveBeenCalledTimes(2)
+})

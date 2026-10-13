@@ -210,3 +210,132 @@ func TestProductPaymentDisputeAuditFailureRollsBack(t *testing.T) {
 		t.Fatalf("failed audit left partial state: version=%d operations=%d", version, operations)
 	}
 }
+
+func TestProductPaymentDisputeConcurrentCommandsAndRevocation(t *testing.T) {
+	f := newProductDisputeFixture(t)
+	// The permission, not a role name, grants access to operational staff.
+	if _, err := f.pool.Exec(t.Context(), `UPDATE users SET role='moderator' WHERE id=$1;`, f.user); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.pool.Exec(t.Context(), `INSERT INTO role_permissions(role,permission_id) VALUES('moderator','admin:finance')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.service.GetProductPaymentDispute(t.Context(), f.user, f.disputes[0]); err != nil {
+		t.Fatal(err)
+	}
+	command := disputeCommand("route", "finance", 1)
+	type outcome struct {
+		value admin.ProductPaymentDisputeCommandResult
+		err   error
+	}
+	start := make(chan struct{})
+	outcomes := make(chan outcome, 6)
+	for range 6 {
+		go func() {
+			<-start
+			v, err := f.service.OperateProductPaymentDispute(t.Context(), f.user, f.disputes[0], command, "concurrent-replay-key", "concurrent")
+			outcomes <- outcome{v, err}
+		}()
+	}
+	close(start)
+	replays := 0
+	var operationID uuid.UUID
+	for range 6 {
+		r := <-outcomes
+		if r.err != nil || r.value.Version != 2 || len(r.value.Operations) != 1 {
+			t.Fatalf("concurrent replay: %#v %v", r.value, r.err)
+		}
+		if operationID == uuid.Nil {
+			operationID = r.value.OperationID
+		}
+		if operationID != r.value.OperationID {
+			t.Fatal("multiple operations for same key")
+		}
+		if r.value.Replayed {
+			replays++
+		}
+	}
+	if replays != 5 {
+		t.Fatalf("replays=%d", replays)
+	}
+	start = make(chan struct{})
+	outcomes = make(chan outcome, 2)
+	for _, key := range []string{"concurrent-new-key-a", "concurrent-new-key-b"} {
+		go func(key string) {
+			<-start
+			v, err := f.service.OperateProductPaymentDispute(t.Context(), f.user, f.disputes[1], command, key, "concurrent")
+			outcomes <- outcome{v, err}
+		}(key)
+	}
+	close(start)
+	success, conflicts := 0, 0
+	for range 2 {
+		r := <-outcomes
+		if r.err == nil {
+			success++
+		} else if errors.Is(r.err, admin.ErrConflict) {
+			conflicts++
+		} else {
+			t.Fatal(r.err)
+		}
+	}
+	if success != 1 || conflicts != 1 {
+		t.Fatalf("success=%d conflicts=%d", success, conflicts)
+	}
+	if _, err := f.pool.Exec(t.Context(), `DELETE FROM role_permissions WHERE role='moderator' AND permission_id='admin:finance'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.service.ListProductPaymentDisputes(t.Context(), f.user, admin.ProductPaymentDisputeListInput{}); !errors.Is(err, admin.ErrForbidden) {
+		t.Fatalf("revoked directory: %v", err)
+	}
+	if _, err := f.service.GetProductPaymentDispute(t.Context(), f.user, f.disputes[0]); !errors.Is(err, admin.ErrForbidden) {
+		t.Fatalf("revoked detail: %v", err)
+	}
+	if _, err := f.service.OperateProductPaymentDispute(t.Context(), f.user, f.disputes[0], command, "concurrent-replay-key", "revoked"); !errors.Is(err, admin.ErrForbidden) {
+		t.Fatalf("revoked replay: %v", err)
+	}
+}
+
+func TestProductPaymentDisputeEvidenceAuditRollbackAndImmutability(t *testing.T) {
+	f := newProductDisputeFixture(t)
+	id := f.disputes[0]
+	if _, err := f.service.OperateProductPaymentDispute(t.Context(), f.finance, id, disputeCommand("request_evidence", "finance", 1), "evidence-request-key", "request"); err != nil {
+		t.Fatal(err)
+	}
+	_, err := f.pool.Exec(t.Context(), `CREATE FUNCTION fail_dispute_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'test audit failure'; END; $$;
+ CREATE TRIGGER fail_dispute_audit BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION fail_dispute_audit()`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := disputeCommand("record_evidence_submission", "provider_review", 2)
+	input.EvidenceReference = "file_receipt_123"
+	if _, err := f.service.OperateProductPaymentDispute(t.Context(), f.finance, id, input, "evidence-rollback-key", "failed"); err == nil {
+		t.Fatal("audit failure accepted")
+	}
+	detail, err := f.service.GetProductPaymentDispute(t.Context(), f.finance, id)
+	if err != nil || detail.Version != 2 || detail.EvidenceStatus != "requested" || len(detail.EvidenceSubmissions) != 0 || len(detail.Operations) != 1 {
+		t.Fatalf("partial evidence commit: %#v %v", detail, err)
+	}
+	if _, err := f.pool.Exec(t.Context(), `DROP TRIGGER fail_dispute_audit ON audit_events`); err != nil {
+		t.Fatal(err)
+	}
+	result, err := f.service.OperateProductPaymentDispute(t.Context(), f.finance, id, input, "evidence-rollback-key", "retry")
+	if err != nil || result.Replayed || result.Version != 3 {
+		t.Fatalf("rollback retry: %#v %v", result, err)
+	}
+	for _, query := range []string{
+		`UPDATE product_payment_dispute_operations SET reason='Tamper with audit reason' WHERE dispute_id=$1`,
+		`DELETE FROM product_payment_dispute_operations WHERE dispute_id=$1`,
+		`UPDATE product_payment_dispute_evidence_submissions SET provider_reference='file_changed' WHERE dispute_id=$1`,
+		`DELETE FROM product_payment_dispute_evidence_submissions WHERE dispute_id=$1`,
+		`UPDATE audit_events SET reason='Tampered audit reason' WHERE resource_id=$1`,
+		`DELETE FROM audit_events WHERE resource_id=$1`,
+	} {
+		if _, err := f.pool.Exec(t.Context(), query, id); err == nil {
+			t.Fatalf("immutable evidence changed: %s", query)
+		}
+	}
+	if _, err := f.service.GetProductPaymentDispute(t.Context(), f.finance, uuid.New()); !errors.Is(err, admin.ErrNotFound) {
+		t.Fatalf("unknown detail: %v", err)
+	}
+}

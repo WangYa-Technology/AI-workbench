@@ -56,6 +56,9 @@ func assertPurchaseAccessCapabilities(t *testing.T, pool *pgxpool.Pool, f purcha
 	if err != nil || item.Provenance == nil || item.Provenance.Purchase == nil {
 		t.Fatalf("lost metadata: %+v %v", item, err)
 	}
+	if item.PurchaseAccess == nil || item.PurchaseAccess.CanDownload != allowed || item.PurchaseAccess.CanReuse != allowed {
+		t.Fatalf("purchase capability projection: %+v", item.PurchaseAccess)
+	}
 	p := item.Provenance.Purchase
 	if p.CanDownload != allowed || p.CanReuse != allowed {
 		t.Fatalf("capabilities download=%v reuse=%v; want %v", p.CanDownload, p.CanReuse, allowed)

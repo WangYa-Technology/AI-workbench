@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api, APIError, type Order } from '../../api/client'
+import { mergeOrder, orderNeedsPolling } from '../../lib/orderState'
 import { validProductReturnID } from '../../lib/productPayment'
 import { useSessionStore } from '../../stores/session'
 import UiCard from '../ui/UiCard.vue'
@@ -9,7 +10,7 @@ import UiCardActions from '../ui/UiCardActions.vue'
 import UiButton from '../ui/UiButton.vue'
 import ProductOrderDeliveryLink from './ProductOrderDeliveryLink.vue'
 
-const props = defineProps<{ orderId: string; paymentId: string; returnKind: string }>()
+const props = defineProps<{ orderId: string; paymentId: string; returnKind: string; currentOrder?: Order }>()
 const emit = defineEmits<{ updated: [order: Order] }>()
 const { t } = useI18n()
 const session = useSessionStore()
@@ -63,10 +64,15 @@ async function poll(expectedVersion: number) {
       outcome.value = 'invalid'
       return
     }
-    order.value = current
+    let previous = order.value
+    if (props.currentOrder?.id === current.id && props.currentOrder.paymentId === current.paymentId) {
+      previous = mergeOrder(previous, props.currentOrder)
+    }
+    const merged = mergeOrder(previous, current)
+    order.value = merged
     connectionFailed.value = false
-    emit('updated', current)
-    if (!['payment_pending', 'payment_paid', 'refund_requested'].includes(current.status) || current.paymentStatus === 'refund_failed') {
+    emit('updated', merged)
+    if (!orderNeedsPolling(merged)) {
       outcome.value = 'done'
       return
     }
@@ -89,7 +95,6 @@ async function poll(expectedVersion: number) {
 
 function refresh() {
   stop()
-  order.value = null
   busy.value = false
   connectionFailed.value = false
   if (!validIdentifiers.value || !session.user) { outcome.value = 'invalid'; return }
@@ -98,7 +103,28 @@ function refresh() {
   void poll(version)
 }
 
-watch(() => [props.orderId, props.paymentId, props.returnKind, session.user?.id], refresh, { immediate: true })
+watch(() => [props.orderId, props.paymentId, props.returnKind, session.user?.id], () => {
+  order.value = null
+  refresh()
+}, { immediate: true })
+watch(() => props.currentOrder, incoming => {
+  // List updates cannot revive context cleared by an authorization failure.
+  if (!incoming || !order.value || ['error', 'invalid'].includes(outcome.value)
+    || incoming.id !== props.orderId || incoming.paymentId !== props.paymentId) return
+  const merged = mergeOrder(order.value, incoming)
+  if (merged === order.value) return
+  const wasPolling = outcome.value === 'polling'
+  order.value = merged
+  stop()
+  busy.value = false
+  connectionFailed.value = false
+  if (!orderNeedsPolling(merged)) { outcome.value = 'done'; return }
+  // A new operation starts a bounded window; ordinary polling does not extend it.
+  if (!wasPolling) deadline = Date.now() + 60000
+  outcome.value = 'polling'
+  if (Date.now() >= deadline) { outcome.value = 'timeout'; return }
+  timer = globalThis.setTimeout(() => void poll(version), Math.min(2500, deadline - Date.now()))
+})
 onBeforeUnmount(stop)
 </script>
 
@@ -118,7 +144,7 @@ onBeforeUnmount(stop)
       <UiButton v-if="validIdentifiers" variant="secondary" :loading="busy" @click="refresh">
         {{ t('workspace.productPayment.refresh') }}
       </UiButton>
-      <UiButton as="RouterLink" variant="ghost" to="/support">
+      <UiButton as="RouterLink" variant="ghost" :to="validIdentifiers ? { path: '/support', query: { orderId: props.orderId } } : '/support'">
         {{ t('workspace.productPayment.support') }}
       </UiButton>
     </UiCardActions>

@@ -134,3 +134,56 @@ jobs:
             web/playwright-report
             web/test-results
           retention-days: 7
+
+  marketplace-isolated-browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: hcai
+          POSTGRES_PASSWORD: hcai
+          POSTGRES_DB: hcai_e2e_admin
+        ports:
+          - 55435:5432
+        options: >-
+          --health-cmd "pg_isready -U hcai -d hcai_e2e_admin"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      E2E_DATABASE_ADMIN_URL: postgres://hcai:hcai@127.0.0.1:55435/hcai_e2e_admin?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - run: npm --prefix web ci
+      - run: npx playwright install --with-deps chromium
+        working-directory: web
+      - name: Asset and purchased-content failure and recovery contracts
+        run: npx playwright test --config playwright.assets-ui.config.ts
+        working-directory: web
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: workspace-assets-ui
+          path: web/test-results/assets*
+          retention-days: 7
+      - name: Repeat complete acceptance after owned database and media cleanup
+        run: |
+          npm --prefix web run test:e2e:marketplace
+          npm --prefix web run test:e2e:marketplace
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: marketplace-isolated-browser
+          path: web/test-results/marketplace-runs
+          retention-days: 7

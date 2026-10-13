@@ -54,6 +54,20 @@ func TestSavedWorksRemainReferenceOnlyAndRespectVisibility(t *testing.T) {
 	if err != nil || len(items.Items) != 1 || items.Items[0].PostID != postID || items.Items[0].WorkID != workID || items.Items[0].AssetID != assetID || items.Items[0].PromptVisibility != "partial" {
 		t.Fatalf("saved projection mismatch: %#v %v", items, err)
 	}
+	for _, filter := range []assets.ListInput{{Query: items.Items[0].Title, Kind: items.Items[0].MediaKind}, {Query: "NO MATCH EVER"}, {Kind: "audio"}} {
+		page, e := service.ListSavedWorks(ctx, viewerID, filter)
+		if e != nil {
+			t.Fatal(e)
+		}
+		expected := 0
+		if filter.Query == items.Items[0].Title {
+			expected = 1
+		}
+		if len(page.Items) != expected {
+			t.Fatal("saved filter", filter, page.Items)
+		}
+	}
+
 	if outsider, err := service.ListSavedWorks(ctx, outsiderID, assets.ListInput{}); err != nil || len(outsider.Items) != 0 {
 		t.Fatalf("outsider saw another account's saves: %#v %v", outsider, err)
 	}

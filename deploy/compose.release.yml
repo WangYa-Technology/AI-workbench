@@ -1,0 +1,22 @@
+# Merge with compose.production.yml only after release gates are approved.
+# Pin every HCAI_RELEASE_*_IMAGE to registry/repository@sha256:<64 hex>.
+# Use --no-build --pull never at cutover; this override does not erase build definitions.
+services:
+  migrate:
+    image: ${HCAI_RELEASE_MIGRATE_IMAGE:?set approved immutable migrate digest}
+  api:
+    image: ${HCAI_RELEASE_API_IMAGE:?set approved immutable API digest}
+    stop_grace_period: 30s
+    mem_limit: ${HCAI_API_MEMORY_LIMIT:?set staging-validated API memory budget}
+    cpus: ${HCAI_API_CPUS:?set staging-validated API CPU budget}
+  worker:
+    image: ${HCAI_RELEASE_WORKER_IMAGE:?set approved immutable worker digest}
+    # Worker shutdown waits up to its 30s lease; Compose's default 10s is too short.
+    stop_grace_period: 60s
+    mem_limit: ${HCAI_WORKER_MEMORY_LIMIT:?set staging-validated worker memory budget}
+    cpus: ${HCAI_WORKER_CPUS:?set staging-validated worker CPU budget}
+  web:
+    image: ${HCAI_RELEASE_WEB_IMAGE:?set approved immutable web digest}
+    stop_grace_period: 30s
+    mem_limit: ${HCAI_WEB_MEMORY_LIMIT:?set staging-validated web memory budget}
+    cpus: ${HCAI_WEB_CPUS:?set staging-validated web CPU budget}

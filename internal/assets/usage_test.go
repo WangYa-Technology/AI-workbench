@@ -63,6 +63,21 @@ func TestOwnedAssetUsageGraphAcrossVersions(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// The same generation references two versions and uses a mask. It must
+	// appear once, deterministically attached to the newest referenced version.
+	if _, err := pool.Exec(ctx, `INSERT INTO generation_reference_assets(generation_id,asset_id,position) VALUES($1,$2,0),($1,$3,1)`, generationID, rootID, versionID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE generations SET mask_asset_id=$2 WHERE id=$1`, generationID, versionID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE deliveries SET asset_id=$2 WHERE id=$1`, deliveryID, rootID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO delivery_assets(delivery_id,asset_id,position) VALUES($1,$2,0),($1,$3,1)`, deliveryID, rootID, versionID); err != nil {
+		t.Fatal(err)
+	}
+
 	service := assets.NewService(pool, t.TempDir())
 	item, err := service.GetOwned(ctx, ownerID, versionID)
 	if err != nil || len(item.Usages) != 4 {
@@ -74,7 +89,7 @@ func TestOwnedAssetUsageGraphAcrossVersions(t *testing.T) {
 		version    int
 		pathPart   string
 	}{
-		"generation": {generationID, rootID, 1, generationID.String()},
+		"generation": {generationID, versionID, 2, generationID.String()},
 		"work":       {workID, rootID, 1, "/works/" + workID.String()},
 		"product":    {productID, versionID, 2, "/market/assets/" + productID.String()},
 		"delivery":   {deliveryID, versionID, 2, "/market/demands/" + demandID.String()},
@@ -89,6 +104,29 @@ func TestOwnedAssetUsageGraphAcrossVersions(t *testing.T) {
 	if len(want) != 0 {
 		t.Fatalf("missing usage kinds: %#v", want)
 	}
+	// Small pages must keep resource identity stable after deduplication.
+	cursor := ""
+	seen := map[uuid.UUID]bool{}
+	for {
+		page, err := service.ListUsages(ctx, ownerID, rootID, assets.ListInput{Limit: 1, Cursor: cursor})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, usage := range page.Items {
+			if seen[usage.ResourceID] {
+				t.Fatal("duplicate usage page", usage.ResourceID)
+			}
+			seen[usage.ResourceID] = true
+		}
+		if page.NextCursor == nil {
+			break
+		}
+		cursor = *page.NextCursor
+	}
+	if len(seen) != 4 {
+		t.Fatal("incomplete usage pages", seen)
+	}
+
 	root, err := service.GetOwned(ctx, ownerID, rootID)
 	if err != nil || len(root.Usages) != 4 {
 		t.Fatalf("root did not share family usage graph: %#v %v", root.Usages, err)

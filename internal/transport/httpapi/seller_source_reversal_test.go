@@ -141,7 +141,7 @@ func TestSellerSourceReversalHTTPConfirmationAndClosure(t *testing.T) {
 		t.Fatal(err)
 	}
 	view = read()
-	if !view.CanClose || view.AcceptedReadID == nil || view.CloseResolution == nil || *view.CloseResolution != "released" {
+	if view.CanClose || view.AcceptedReadID == nil || view.CloseResolution == nil || *view.CloseResolution != "released" {
 		t.Fatal("verified return", view)
 	}
 	closeInput.ReadID, closeInput.ExpectedUpdatedAt = *view.AcceptedReadID, view.ExpectedUpdatedAt
@@ -156,11 +156,15 @@ func TestSellerSourceReversalHTTPConfirmationAndClosure(t *testing.T) {
 		call(f.financeClient, http.MethodPost, closePath, string(closeRaw), badKeys, 422)
 	}
 	call(f.financeClient, http.MethodPost, closePath+"?%zz", string(closeRaw), closeKeys, 422)
+	call(f.financeClient, http.MethodPost, closePath, string(closeRaw), closeKeys, 409)
+	checkerClient := testHTTPClient(t)
+	checker := registerGovernanceUser(t, checkerClient, f.server.URL, "source_close_checker")
+	f.exec(`UPDATE users SET role='admin' WHERE id=$1`, checker.ID)
 	var closed, replayed payments.SellerSourceClosureSubmission
-	if err := json.Unmarshal(call(f.financeClient, http.MethodPost, closePath, string(closeRaw), closeKeys, 200), &closed); err != nil || closed.Replayed || closed.Closure.Resolution != "released" {
+	if err := json.Unmarshal(call(checkerClient, http.MethodPost, closePath, string(closeRaw), closeKeys, 200), &closed); err != nil || closed.Replayed || closed.Closure.Resolution != "released" {
 		t.Fatal("closure", closed, err)
 	}
-	if err := json.Unmarshal(call(f.financeClient, http.MethodPost, closePath, string(closeRaw), closeKeys, 200), &replayed); err != nil || !replayed.Replayed || replayed.Closure.ID != closed.Closure.ID {
+	if err := json.Unmarshal(call(checkerClient, http.MethodPost, closePath, string(closeRaw), closeKeys, 200), &replayed); err != nil || !replayed.Replayed || replayed.Closure.ID != closed.Closure.ID {
 		t.Fatal("closure replay", replayed, err)
 	}
 	call(f.financeClient, http.MethodPost, closePath, string(closeRaw), []string{"another-close-key"}, 409)
@@ -180,5 +184,59 @@ func TestSellerSourceReversalHTTPConfirmationAndClosure(t *testing.T) {
 	call(f.financeClient, http.MethodPost, closePath, string(closeRaw), closeKeys, 403)
 	if f.providerCalls.Load() != 0 || runtime.creates != 1 {
 		t.Fatal("HTTP query or confirmation sent funds", f.providerCalls.Load(), runtime.creates)
+	}
+}
+
+func TestSourceDispositionHTTPContract(t *testing.T) {
+	f := newSellerFundsHTTPFixture(t)
+	call := func(client *http.Client, path, key string, input any, want int, out any) {
+		t.Helper()
+		res := requestPaymentJSON(t, client, http.MethodPost, path, key, input, out)
+		if res.StatusCode != want {
+			t.Fatalf("status=%d want=%d", res.StatusCode, want)
+		}
+	}
+	var view payments.SellerSourceReversalOperation
+	if res := requestJSON(t, f.financeClient, http.MethodGet, f.base+"/source-reversal", nil, &view); res.StatusCode != 200 {
+		t.Fatal(res.StatusCode)
+	}
+	in := payments.SellerSourceReversalInput{SourceTransferID: view.Request.Funding.TransferID, ExpectedUpdatedAt: view.ExpectedUpdatedAt, BankCommandID: view.Bank.CommandID, BankResultID: view.Bank.ResultID, Reason: "Return source with original bank obligation checked.", Confirmed: true}
+	var command payments.SellerSourceReversalSubmission
+	call(f.financeClient, f.base+"/source-reversal", "disposition-source", in, 200, &command)
+	path := f.server.URL + "/api/v1/admin/seller-source-reversals/" + command.Command.ID.String() + "/dispositions"
+	d := payments.SellerSourceDispositionInput{Phase: "propose", ExpectedUpdatedAt: view.ExpectedUpdatedAt, Reason: "Restrict to original Provider reads and preserve the reservation.", Confirmed: true}
+	call(f.guest, path, "denied-disposition", d, 401, nil)
+	call(f.buyerClient, path, "denied-disposition", d, 403, nil)
+	for _, extra := range []string{"amountCents", "providerResult", "forceRelease"} {
+		bad := map[string]any{"phase": "propose", "expectedUpdatedAt": d.ExpectedUpdatedAt, "reason": d.Reason, "confirmed": true, extra: 100}
+		call(f.financeClient, path, "invalid-disposition", bad, 422, nil)
+	}
+	var proposal payments.SellerSourceDisposition
+	call(f.financeClient, path, "source-proposal", d, 200, &proposal)
+	d.Phase = "approve"
+	d.ProposalID = &proposal.ID
+	call(f.financeClient, path, "self-approve", d, 409, nil)
+	checkerClient := testHTTPClient(t)
+	checker := registerGovernanceUser(t, checkerClient, f.server.URL, "source_disp_checker")
+	f.exec(`UPDATE users SET role='admin' WHERE id=$1`, checker.ID)
+	var approval payments.SellerSourceDisposition
+	call(checkerClient, path, "source-approval", d, 200, &approval)
+	call(checkerClient, path, "source-approval", d, 200, &approval)
+	if !approval.Replayed {
+		t.Fatal("missing replay")
+	}
+	if res := requestJSON(t, checkerClient, http.MethodGet, f.base+"/source-reversal", nil, &view); res.StatusCode != 200 || view.Disposition == nil || view.Disposition.Phase != "approve" || view.CanClose || view.CanApproveDisposition {
+		t.Fatal("unsafe projection", view, res.StatusCode)
+	}
+	raw, _ := json.Marshal(view)
+	for _, private := range []string{"snapshot", "provider_identity", "dispatch_key"} {
+		if strings.Contains(string(raw), private) {
+			t.Fatal("private projection", private)
+		}
+	}
+	f.exec(`UPDATE users SET role='member' WHERE id=$1`, checker.ID)
+	call(checkerClient, path, "source-approval", d, 403, nil)
+	if f.providerCalls.Load() != 0 {
+		t.Fatal("HTTP called provider")
 	}
 }

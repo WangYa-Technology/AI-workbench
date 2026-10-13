@@ -69,7 +69,7 @@ test('keeps Community and Task marketplace headers and view switchers aligned', 
   for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 }]) {
     await page.setViewportSize(viewport)
     const measurements = []
-    for (const [path, tab] of [['/community', 'All discussions'], ['/market/demands', 'Available work']] as const) {
+    for (const [path, tab] of [['/community', 'All'], ['/market/demands', 'Available']] as const) {
       measurements.push(await measureLayout(page, path, tab))
       const bar = page.locator('.ui-filter-bar')
       await expect(bar).toHaveCSS('--control-height-toolbar', '40px')
@@ -101,6 +101,6 @@ test('animates both Community and Task marketplace view switchers', async ({ pag
   expect(session.ok()).toBeTruthy()
   await page.addInitScript(() => localStorage.setItem('hcai-theme', 'light'))
 
-  await expectSlidingPill(page, '/community', 'All discussions', 'My discussions')
-  await expectSlidingPill(page, '/market/demands', 'Available work', 'My activity')
+  await expectSlidingPill(page, '/community', 'All', 'Mine')
+  await expectSlidingPill(page, '/market/demands', 'Available', 'Mine')
 })

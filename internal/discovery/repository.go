@@ -190,7 +190,7 @@ func (r *Repository) List(ctx context.Context, limit int, before *time.Time, fil
 		JOIN users u ON u.id=w.author_id
 		WHERE w.status='published' AND a.scan_status='clean'
 		AND ($1::timestamptz IS NULL OR w.published_at < $1 OR ($6::uuid IS NOT NULL AND w.published_at=$1 AND w.id<$6))
-		AND ($3='' OR concat_ws(' ',w.title,w.summary,u.display_name,u.handle,w.model_name,a.license_code) ILIKE '%'||$3||'%')
+		AND ($3='' OR w.title ILIKE '%'||$3||'%' OR w.summary ILIKE '%'||$3||'%' OR u.display_name ILIKE '%'||$3||'%' OR u.handle ILIKE '%'||$3||'%' OR w.model_name ILIKE '%'||$3||'%' OR a.license_code ILIKE '%'||$3||'%')
 		AND ($4='' OR a.kind=$4)
 		AND ($5='' OR w.prompt_visibility=$5)
 		ORDER BY w.published_at DESC,w.id DESC
@@ -224,7 +224,7 @@ func (r *Repository) List(ctx context.Context, limit int, before *time.Time, fil
 		SELECT a.kind, count(*) FROM public_works w
 		JOIN assets a ON a.id=w.asset_id JOIN users u ON u.id=w.author_id
 		WHERE w.status='published' AND a.scan_status='clean'
-		AND ($1='' OR concat_ws(' ',w.title,w.summary,u.display_name,u.handle,w.model_name,a.license_code) ILIKE '%'||$1||'%')
+		AND ($1='' OR w.title ILIKE '%'||$1||'%' OR w.summary ILIKE '%'||$1||'%' OR u.display_name ILIKE '%'||$1||'%' OR u.handle ILIKE '%'||$1||'%' OR w.model_name ILIKE '%'||$1||'%' OR a.license_code ILIKE '%'||$1||'%')
 		AND ($2='' OR w.prompt_visibility=$2)
 		GROUP BY a.kind`, literalLike(filter.Query), filter.PromptVisibility)
 	if err != nil {

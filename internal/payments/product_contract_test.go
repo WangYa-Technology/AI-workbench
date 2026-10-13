@@ -104,9 +104,30 @@ func TestPurchasedContractControlsSourceMaskAndPrivateContent(t *testing.T) {
 			if err != nil || projection.Provenance == nil || projection.Provenance.Purchase == nil || !projection.Provenance.Purchase.CanDownload || projection.Provenance.Purchase.CanReuse != allowsDerivatives {
 				t.Fatalf("purchase permissions do not match accepted contract: %+v %v", projection.Provenance, err)
 			}
+			checkList := func() {
+				t.Helper()
+				page, err := assetService.List(ctx, buyer, assets.ListInput{Source: "purchase"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				found := false
+				for _, item := range page.Items {
+					if item.ID == purchased {
+						found = true
+						if item.PurchaseAccess == nil || !item.PurchaseAccess.CanDownload || item.PurchaseAccess.CanReuse != allowsDerivatives {
+							t.Fatalf("list lost accepted permission: %+v", item.PurchaseAccess)
+						}
+					}
+				}
+				if !found {
+					t.Fatal("accepted purchase missing")
+				}
+			}
+			checkList()
 			if _, err := pool.Exec(ctx, `UPDATE licenses SET allows_derivatives=$1 WHERE code='hcai-commercial-standard-v1'`, !allowsDerivatives); err != nil {
 				t.Fatal(err)
 			}
+			checkList()
 			base := uuid.New()
 			if _, err := pool.Exec(ctx, `INSERT INTO assets(id,owner_id,kind,title,media_url,mime_type,scan_status,source_type,license_code,storage_backend,storage_key)
 				VALUES($1,$2,'image','Owned base','/base','image/jpeg','clean','upload','creator-owned','local_file','base.jpg')`, base, buyer); err != nil {

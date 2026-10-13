@@ -20,7 +20,7 @@ withDefaults(defineProps<{
 </template>
 
 <style scoped>
-.ui-sidebar-item { min-width: 0; min-height: 36px; display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-radius: var(--radius-control); color: var(--sidebar-text); font-size: 12px; font-weight: 480; line-height: 1.4; overflow-wrap: anywhere; transition: background var(--duration-compact) var(--ease-smooth-out), color var(--duration-compact) var(--ease-smooth-out); }
+.ui-sidebar-item { min-width: 0; min-height: 36px; display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-radius: var(--radius-control); color: var(--sidebar-text); font-size: var(--font-size-control); font-weight: 480; line-height: 1.4; overflow-wrap: anywhere; transition: background var(--duration-compact) var(--ease-smooth-out), color var(--duration-compact) var(--ease-smooth-out); }
 .ui-sidebar-item :deep(svg) { flex: 0 0 auto; }
 .ui-sidebar-item:hover { background: var(--sidebar-raised); }
 .ui-sidebar-item.active { background: var(--accent-soft); color: var(--accent-readable); box-shadow: none; }

@@ -19,6 +19,7 @@ var productDisputeQueryParameters = map[string]struct{}{
 }
 
 func (s *Server) adminListProductPaymentDisputes(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "private, no-store")
 	actor, ok := s.requirePermission(w, r, "admin:finance")
 	if !ok {
 		return
@@ -31,6 +32,10 @@ func (s *Server) adminListProductPaymentDisputes(w http.ResponseWriter, r *http.
 	}
 	limit, ok := adminDirectoryLimit(w, r, "invalid_admin_product_dispute_filters", "product dispute")
 	if !ok {
+		return
+	}
+	if r.URL.Query().Has("limit") && (limit < 1 || limit > 50) {
+		writeInvalidProductDisputeFilters(w, r)
 		return
 	}
 	page, err := s.admin.ListProductPaymentDisputes(r.Context(), actor.ID, admin.ProductPaymentDisputeListInput{
@@ -54,6 +59,7 @@ func (s *Server) adminListProductPaymentDisputes(w http.ResponseWriter, r *http.
 }
 
 func (s *Server) adminGetProductPaymentDispute(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "private, no-store")
 	actor, ok := s.requirePermission(w, r, "admin:finance")
 	if !ok {
 		return
@@ -71,6 +77,7 @@ func (s *Server) adminGetProductPaymentDispute(w http.ResponseWriter, r *http.Re
 }
 
 func (s *Server) adminOperateProductPaymentDispute(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "private, no-store")
 	actor, ok := s.requirePermission(w, r, "admin:finance")
 	if !ok {
 		return

@@ -254,8 +254,12 @@ func (s *Service) consume(ctx context.Context, token, kind, passwordHash, reques
 		return uuid.Nil, 0, err
 	}
 	if !expiresAt.After(s.now()) {
-		_, _ = tx.Exec(ctx, `UPDATE identity_email_actions SET status='expired',token_hash=NULL,token_nonce=NULL,token_ciphertext=NULL,updated_at=now(),version=version+1 WHERE id=$1`, actionID)
-		_ = tx.Commit(ctx)
+		if _, err := tx.Exec(ctx, `UPDATE identity_email_actions SET status='expired',token_hash=NULL,token_nonce=NULL,token_ciphertext=NULL,updated_at=now(),version=version+1 WHERE id=$1`, actionID); err != nil {
+			return uuid.Nil, 0, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return uuid.Nil, 0, err
+		}
 		_ = s.removeMailbox(userID, actionID)
 		return uuid.Nil, 0, ErrExpired
 	}

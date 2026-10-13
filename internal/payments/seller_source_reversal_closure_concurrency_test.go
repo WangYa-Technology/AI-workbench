@@ -94,8 +94,8 @@ func TestSellerSourceReversalClosureBankHistoryAndReplay(t *testing.T) {
 			if err := service.HandleSellerSourceReversalJob(ctx, job); err != nil {
 				t.Fatal(err)
 			}
-			_, input := sourceClosureInput(t, pool, out.Command.ID)
-			if _, err := service.CloseSellerSourceReversal(ctx, actor, out.Command.ID, input, "close-source-with-bank", "trace"); err != nil {
+			checker, input := sourceClosureInput(t, pool, out.Command.ID)
+			if _, err := service.CloseSellerSourceReversal(ctx, checker, out.Command.ID, input, "close-source-with-bank", "trace"); err != nil {
 				t.Fatal(err)
 			}
 			posts, reads := bank.payouts.Load(), bank.bankReads.Load()

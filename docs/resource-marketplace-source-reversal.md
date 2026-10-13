@@ -1,6 +1,6 @@
 # 资源市场来源资金撤回
 
-更新时间：2026-09-23。本文补充[完整链路](resource-marketplace-complete-flow.md)中来源撤回、过期银行命令处置与资金释放的交接。**Stripe 适配、0170 内部持久命令、0171 worker／执行日志／只读恢复和 0172 账本收尾均已有隔离专项；财务 HTTP GET/POST、独立收尾入口和卖家状态投影已在当前源码接线，并有定向 HTTP 回归。真实 Stripe、银行、生产数据库和完整财务流程仍未联合验收。** 当前边界见第 7 节，不得据此启用真实撤回或修改本地余额。
+更新时间：2026-09-24。本文补充[完整链路](resource-marketplace-complete-flow.md)中来源撤回、过期银行命令处置与资金释放的交接。**Stripe 适配、0170 内部持久命令、0171 worker／执行日志／只读恢复和 0172 账本收尾均已有隔离专项；0179 补充异常处置、双人复核和未发送命令的只读恢复。财务 HTTP、页面与卖家状态投影已接线。真实 Stripe、银行、生产数据库和完整财务流程仍未联合验收。** 当前状态与验证边界见第 9 节，不得据此启用真实撤回或修改本地余额。
 
 ## 1. 为什么需要独立撤回链路
 
@@ -168,3 +168,75 @@ FAIL [build failed]
 前次测试辅助函数缺失已修复。分组隔离 Race 覆盖余额释放、退款前后及并发、债务回滚、权限等待与替代财务、幂等、银行已退回、历史查询、再次提现至银行成功和自动结算。撤回／续租扩大选择集 37 个主测试／173 个通过，来源／资金／迁移扩大选择集 62 个主测试／124 个通过；最终组合 5 个主测试／14 个通过。0172 固定源码支付全包随后取得终态：595 个主测试／2084 项结果通过，零失败／跳过，源码快照无漂移。准确范围、源码清单、原失败及新请求键修复见[11.217](resource-marketplace-flows.md#11217-来源返还账本收尾与再次划转0172)。
 
 财务 HTTP／共享页面、本人结果／通知／导出和业务指标已经接线；部分与矛盾资金处置、未执行或过期命令处置、外部对账及真实通道验收仍需继续完成。本轮没有升级运行库或执行真实资金操作。业务说明见[统一文档 7.21](resource-marketplace-complete-flow.md#721-来源返还后的账本收尾0172内部服务)；当前源码、专项测试、部署和真实通道状态见[审查记录 11.218](resource-marketplace-flows.md#11218-目标1源码基线与文档状态复核)。
+
+## 9. 目标 4：异常处置、双人复核与只读恢复（0179，2026-09-24）
+
+本节是当前源码状态；第 4、6–8 节中“部分/矛盾、未执行/过期命令尚缺处置”的文字保留为历史阶段记录。目标 4 已新增受审计的保留资金处置，不把部分返还扩展为部分释放或由人工重新定额。真实 Stripe/银行验收仍归目标 8。
+
+### 已发现并修正的边界
+
+| 源码事实 | 本次修正 |
+| --- | --- |
+| 0171 的 reads/checks 外键只接受首次发送记录，未启动的过期/停止命令无法核对 | 0179 允许关联原命令，但只有独立批准的处置才能登记无首次发送标记的 query；不伪造 dispatch |
+| 完整分页未找到本命令，但父 transfer 已部分返还时，没有明确标为复核 | `validateSellerSourceReversalRead` 将部分累计金额、非本命令的已返还资金标为 `requires_review`；不承认新 POST 或释放权限 |
+| 已接受结果之后又出现矛盾/开放读取，恢复候选因有 result 而被排除 | 恢复视图在“已有 result 但完整返还不再可证明”时继续只读核对，保留历史 result 和冲突 |
+| 0172 完整返还收尾允许命令提交人自行确认 | 数据库和财务投影要求收尾人不同于原命令 maker 及本命令全部处置提议人；Provider、银行、债务、分配证明仍须全部满足 |
+| 0172 债务收尾仅识别 buyer refund，无法消费目标 3 的判负追偿 | 明确判负的不可变裁决、完整净额债务和完整来源返还同时存在时，可原子清偿；有其他未决/冲突拒付不得消费 |
+
+### 状态机与权限
+
+`POST /admin/seller-source-reversals/{commandID}/dispositions` 仅允许当前 `admin:finance`，卖家即便拥有财务角色也不能处置自身申请。字段仅为 `phase`、`proposalId`（approve 必需）、`expectedUpdatedAt`、`reason`、`confirmed`；另须一个幂等键。禁止金额、外部结果或强制释放字段。
+
+1. **propose**：财务 A 查看原命令和观察记录，填写具体理由并明确确认。事务记录不可变提议、服务端资金证据快照、申请事件及审计。提议提交后，该原命令永久禁止 POST；提议过期、原任务重试或撤权不会重新开启发送资格。提议不调用 Provider、不变更余额/债务/分配。
+2. **approve**：另一当前财务 B 在 24 小时内确认同一提议。B 与 A 均须仍有权限，均不得为卖家；申请版本和完整服务端快照必须相同。原任务状态、观察、银行、付款、债务或分配变化均拒绝旧批准。批准、审计和一个绑定原命令的 query 作业一起提交。
+3. **原提议失效**：保留旧提议及冻结；刷新后重新提议当前快照。不能修改旧提议的时间、理由或 snapshot。批准只有一次；同键同参重放返回原事实，不再创建作业；换键不能重复批准。
+4. **只读恢复**：沿用原 merchant、端点、API 版本、模式、付款、charge、destination、transfer、命令 ID、金额和原创建时间。新写开关关闭、原任务取消/失败或命令超过 23 小时，均不妨碍已批准查询，但绝不延长首次发送窗口、换键或发送剩余差额。停止的核对任务由五分钟冷却扫描追加新 query，保留原作业。
+5. **资金收尾**：批准查询本身不是资金释放。完整、唯一、一致且最新的 Provider 返还证据，独立银行义务、原身份、全额债务和原分配核对通过后，另一合格财务才可使用原 close 接口消费证据。旧 maker 被撤权不阻断其他合格财务处理已经确认的完整返还。
+
+前端财务详情展示最新处置阶段和理由，按服务端资格提示提议或批准，提交前显示明确确认。响应未知时重试冻结的原输入和幂等键；401/403/对象变化清除私有上下文。HTTP GET 不安排任务、不写资金、不返回内部 snapshot、原始 Provider 对象、凭据或 dispatch key。
+
+### 逐项核对表
+
+| 核对项 | 事实来源和约束 | 不满足时 |
+| --- | --- | --- |
+| 原商户/环境/端点/版本 | 原 checkout identity、不可变命令、运行时认证结果一致；Stripe `/account` 与 `/balance` 校验 | 记录错误/复核，禁止 POST 或消费结果 |
+| 原来源 transfer | 原 source funding admission/dispatch、transfer ID、charge、destination、metadata、币种和原金额 | 不认领另一笔资金，不修改原绑定 |
+| 累计金额 | 完整分页、唯一 reversal、所有金额之和与重新读取的父 transfer 累计一致 | 部分/重复/缺页/累计冲突保持全部预留 |
+| 银行义务 | `seller_source_reversal_bank_state` 的命令、结果、disposition 与冻结证据一致；未知/paid 不是返还证明 | 只读核对银行，不释放来源预留 |
+| 退款/拒付债务 | paid/fulfilled 无开放债务可释放；refunded 必须有匹配的全额退款或明确判负事实及完整净额债务；无未决退款/冲突核对 | 不清零债务，不恢复可提现收入 |
+| 分配/账本 | 原申请、seller、settlement、净额、USD、未释放 allocation、原 reservation、无重复 release | 保留账本与预留；拒绝单独取消父申请 |
+| 并发/授权 | financial graph 锁、当前权限锁、immutable proposal snapshot、独立 reviewer、唯一批准和幂等键 | 返回权限拒绝/冲突，事务整体回滚 |
+
+**部分返还**：只记录观察到的累计返还并升级核对；全部预留及债务保留。不得将局部金额直接抵账、生成新命令追讨差额或手动更改父 transfer。**矛盾证据**：历史 `requires_review` 不会被后续“成功”覆盖；当前没有绕过冲突历史的人工释放命令。**不完整/超时**：允许新认证查询补证；只有后续完整证明且无真实矛盾才能进入现有收尾。**完整 not_found**：仅证明该次完整查询未找到本命令，不能当作重发或取消资金预留许可。
+
+### 运行与告警
+
+- `seller_reversal_review` 包含部分/矛盾/error/incomplete/not_found 以及尚未收尾的处置记录；当前无资金释放时应持续可见，不能通过重复读取或点击页面清零。
+- `seller_reversal_stopped` 包含原任务停止且无有效恢复，以及已过发送窗口但未发送的命令；批准 query 后恢复任务继续受独立队列监控。
+- `seller_reversal_read_unrecorded` 表示读取登记超时且无持久结果；`seller_reversal_unresolved` 的账龄仍起于原命令创建，不被重试重置。
+- `seller_reversal_reconciliation` 健康指标在存在待处理来源资金时必须完整有效。零工作量的“不适用”不等于有工作时可以缺指标。
+- 按 command ID 关联 dispositions、reads、results、closures、申请事件和 `seller_payout.source_disposition_propose/approve` 审计。批准审计或作业写入失败会整笔回滚，不能留下无审计的恢复权限。
+
+发布须先排空旧金融写入方、迁移 0179，再部署匹配 API/worker/Web。0179 下调在存在处置证据时拒绝；不得删证据绕过。原先完整返还的收尾人现在必须独立于 maker，请先安排可用财务复核角色。查询功能不是生产资金操作授权；遇到未知商户身份、累计金额、银行义务或债务分配，保留预留并升级负责人核对。
+
+源码：[处置服务](../internal/payments/seller_source_disposition.go)、[迁移](../internal/platform/database/migrations/0179_seller_source_dispositions.up.sql)、[隔离测试](../internal/payments/seller_source_disposition_test.go)、[HTTP](../internal/transport/httpapi/seller_source_reversal.go)、[财务面板](../web/src/components/domain/SellerSourceReversalPanel.vue)。
+
+### 本轮验证与边界
+
+所有数据库用例使用隔离测试库；未迁移运行站点，未发送真实 Stripe/银行请求。保留当前工作树已有目标 2/3 改动。本轮专项结果不能替代整个支付包或生产联合验收。
+
+| 验证 | 实际结果 |
+| --- | --- |
+| 来源撤回命令/执行 Race：`go test -race ./internal/payments -run 'TestSellerSourceReversal(Execution\|Command)' -count=1 -timeout=12m` | 通过，490.627 秒 |
+| 新增全部处置/拒付债务用例：`go test -race ./internal/payments -run '^Test(SourceDisposition\|SourceReturnConsumesProviderDisputeDebt)' -count=1 -timeout=4m` | 最终通过，146.087 秒；包括未发送/停止/超期恢复、部分/冲突保留、权限、快照、审计回滚、迁移及并发 |
+| 收尾、操作投影、恢复及新处置扩大 Race 选择集 | 391.257 秒运行完成；唯一失败为新增竞态用例未接受合法 `payment_settlement_pending`，其余用例通过。修正该断言后单独 `-race -count=3` 通过，21.870 秒；不将原失败运行标记为全绿 |
+| 拒付债务收尾、批准审计/自动恢复、银行历史及幂等 Race 定向回归 | 通过，42.993 秒 |
+| `TestSourceDispositionHTTPContract` 与 `TestSellerSourceReversalHTTP` | 通过，14.979 秒；覆盖权限、严格请求字段、maker 收尾拒绝与独立复核 |
+| `TestMigrateEmptySchema` | 通过，8.470 秒；0179 往返与有证据拒绝回退另由处置测试覆盖 |
+| Web 单元测试 | 33 个文件、257 项通过 |
+| 双人复核 UI：`npm --prefix web run test:ui -- payout-reviews.ui.spec.ts -g 'source disposition'` | 390px/1308px 两项通过，20.2 秒 |
+| Web 类型检查、生产构建、OpenAPI 生成 `--check` | 通过 |
+| 完整 `TestMetricsAlertScript` 告警脚本回归 | 通过，154.368 秒；包括部分/处置待复核、超期未发送和扫描器健康 |
+| payments/httpapi/observability 定向 `go vet`、API/worker `go build`、`git diff --check` | 通过 |
+
+修复过程保留：处置事件必须写入当前 `to_status`；独立财务测试用户必须匹配现有 `lower(handle)` 唯一索引；告警脚本的扫描器健康断言需要对应待处理资金夹具；首次发送与处置竞争时，安全挂起的 `payment_settlement_pending` 是允许结果，测试仍要求最多一次首次发送、提议后不再发送和零释放。这些修正均不引入资金释放捷径。

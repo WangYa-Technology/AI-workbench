@@ -4,6 +4,11 @@
   --surface: #ffffff;
   --surface-muted: #f1f4f8;
   --surface-raised: #ffffff;
+  /* Shared atmospheric surfaces for home and application pages. */
+  --surface-neutral: #edf1f6;
+  --surface-cool: #e8edf7;
+  --surface-teal: #e8eef0;
+  --surface-ink: #23354e;
   --text: #14213d;
   --text-secondary: #5f6c82;
   --text-tertiary: #5d6b80;
@@ -17,14 +22,17 @@
   --accent-secondary: #007f7a;
   /* Focus follows the primary accent; green is reserved for semantic success. */
   --focus: var(--accent);
+  --field-focus-border: transparent;
+  --field-focus-background: var(--surface-muted);
+  --field-focus-shadow: none;
   --success: #138a63;
   --success-readable: #08734f;
   --warning: #9a5b00;
   --danger: #c93648;
   --danger-contrast: #ffffff;
   --header-bg: rgb(246 248 251 / 94%);
-  --sidebar-bg: #f6f8fb;
-  --sidebar-raised: #eaf1f8;
+  --sidebar-bg: var(--canvas);
+  --sidebar-raised: var(--surface-muted);
   --sidebar-text: #243452;
   --sidebar-muted: #65738a;
   --media-overlay: rgb(7 11 18 / 54%);
@@ -38,10 +46,13 @@
   --font-sans: Geist, "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
   --font-mono: "Geist Mono", "SFMono-Regular", Consolas, monospace;
   /* Shared shape scale: controls, surfaces, and creation workspace shells. */
-  --radius-control: 8px;
-  --radius-surface: 10px;
-  --radius-workspace: 12px;
+  --radius-control: 10px;
+  --radius-button: var(--radius-control);
+  --radius-surface: 16px;
+  --radius-workspace: 20px;
   --radius-pill: 999px;
+  --font-size-control: 13px;
+  --font-size-caption: 12px;
 
   /* Appica-compatible semantic aliases. Keep product tokens above stable. */
   --color-primary: var(--accent);
@@ -79,6 +90,10 @@
   --surface: #172238;
   --surface-muted: #1d2a42;
   --surface-raised: #202f49;
+  --surface-neutral: #273247;
+  --surface-cool: #242e40;
+  --surface-teal: #273640;
+  --surface-ink: #202d41;
   --text: #f6f8fc;
   --text-secondary: #b6c0d1;
   --text-tertiary: #8e9bb1;
@@ -91,14 +106,15 @@
   --accent-contrast: #ffffff;
   --accent-secondary: #40c9c0;
   --focus: var(--accent-readable);
+  --field-focus-background: var(--surface-raised);
   --success: #4cc38a;
   --success-readable: #69d69f;
   --warning: #d7a044;
   --danger: #ef7180;
   --danger-contrast: #172238;
   --header-bg: rgb(16 24 40 / 92%);
-  --sidebar-bg: #101828;
-  --sidebar-raised: #22314b;
+  --sidebar-bg: var(--canvas);
+  --sidebar-raised: var(--surface-muted);
   --sidebar-text: #f6f8fc;
   --sidebar-muted: #a5b1c5;
   --media-overlay: rgb(3 6 11 / 62%);

@@ -197,14 +197,14 @@ func ProductOperationalMetrics(ctx context.Context, pool *pgxpool.Pool) (Operati
  JOIN jobs j ON j.id=d.execution_job_id WHERE d.started_at IS NULL AND j.status IN ('failed','cancelled','succeeded')
  UNION ALL
  SELECT 'seller_reversal_review',r.mode FROM reversals r
- WHERE EXISTS(SELECT 1 FROM seller_source_reversal_reads x WHERE x.command_id=r.id AND x.requires_review)
+ WHERE NOT EXISTS(SELECT 1 FROM seller_source_reversal_closures WHERE command_id=r.id) AND (EXISTS(SELECT 1 FROM seller_source_reversal_reads x WHERE x.command_id=r.id AND (x.requires_review OR x.outcome IN ('incomplete','ambiguous','not_found','error'))) OR EXISTS(SELECT 1 FROM seller_source_reversal_dispositions WHERE command_id=r.id))
  UNION ALL
  SELECT 'seller_reversal_read_unrecorded',r.mode FROM reversals r
  WHERE EXISTS(SELECT 1 FROM seller_source_reversal_reads x WHERE x.command_id=r.id
    AND x.finished_at IS NULL AND x.deadline_at+interval '5 seconds'<now())
  UNION ALL
  SELECT 'seller_reversal_stopped',r.mode FROM reversals r JOIN jobs original ON original.id=r.job_id
- WHERE original.status IN ('failed','cancelled','succeeded')
+ WHERE (original.status IN ('failed','cancelled','succeeded') OR (r.created_at+interval '23 hours'<=now() AND NOT EXISTS(SELECT 1 FROM seller_source_reversal_dispatches WHERE command_id=r.id)))
  AND NOT EXISTS(SELECT 1 FROM seller_source_reversal_results x WHERE x.command_id=r.id)
  AND NOT EXISTS(SELECT 1 FROM seller_source_reversal_closures x WHERE x.command_id=r.id)
  AND NOT EXISTS(SELECT 1 FROM seller_source_reversal_checks c JOIN jobs active ON active.id=c.job_id

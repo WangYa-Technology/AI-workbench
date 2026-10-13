@@ -14,16 +14,17 @@ var ErrInvalid = errors.New("invalid task type")
 var codePattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,47}$`)
 
 func validType(t Type) bool {
-	return codePattern.MatchString(t.Code) && t.NameZh != "" && t.NameEn != "" && utf8.RuneCountInString(t.NameZh) <= 80 && utf8.RuneCountInString(t.NameEn) <= 80 && t.SortOrder >= 0 && t.SortOrder <= 100000 && strings.Contains("|image|video|audio|prompt|workflow|mixed|", "|"+t.Icon+"|") && (t.Scope == "task" || t.Scope == "community" || t.Scope == "marketplace")
+	return (t.DeliveryKind == "" || strings.Contains("|image|video|audio|document|prompt|workflow|mixed|", "|"+t.DeliveryKind+"|")) && codePattern.MatchString(t.Code) && t.NameZh != "" && t.NameEn != "" && utf8.RuneCountInString(t.NameZh) <= 80 && utf8.RuneCountInString(t.NameEn) <= 80 && t.SortOrder >= 0 && t.SortOrder <= 100000 && strings.Contains("|image|video|audio|prompt|workflow|mixed|", "|"+t.Icon+"|") && (t.Scope == "task" || t.Scope == "community" || t.Scope == "marketplace")
 }
 
 type Type struct {
-	Scope     string `json:"scope"`
-	Code      string `json:"code"`
-	NameZh    string `json:"nameZh"`
-	NameEn    string `json:"nameEn"`
-	Icon      string `json:"icon"`
-	SortOrder int    `json:"sortOrder"`
+	DeliveryKind string `json:"deliveryKind"`
+	Scope        string `json:"scope"`
+	Code         string `json:"code"`
+	NameZh       string `json:"nameZh"`
+	NameEn       string `json:"nameEn"`
+	Icon         string `json:"icon"`
+	SortOrder    int    `json:"sortOrder"`
 }
 type Service struct{ pool *pgxpool.Pool }
 
@@ -82,7 +83,7 @@ func (s *Service) Assign(ctx context.Context, scope, id, category string) error 
 	return nil
 }
 func (s *Service) List(ctx context.Context, scopes ...string) ([]Type, error) {
-	query := `SELECT code,name_zh,name_en,icon,sort_order,scope FROM task_types`
+	query := `SELECT code,name_zh,name_en,icon,sort_order,scope,delivery_kind FROM task_types`
 	args := []any{}
 	scope := "task"
 	if len(scopes) > 0 && scopes[0] != "" {
@@ -99,7 +100,7 @@ func (s *Service) List(ctx context.Context, scopes ...string) ([]Type, error) {
 	out := []Type{}
 	for rows.Next() {
 		var t Type
-		if err := rows.Scan(&t.Code, &t.NameZh, &t.NameEn, &t.Icon, &t.SortOrder, &t.Scope); err != nil {
+		if err := rows.Scan(&t.Code, &t.NameZh, &t.NameEn, &t.Icon, &t.SortOrder, &t.Scope, &t.DeliveryKind); err != nil {
 			return nil, err
 		}
 		out = append(out, t)
@@ -123,7 +124,7 @@ func (s *Service) Create(ctx context.Context, t Type) (Type, error) {
 	if !validType(t) {
 		return Type{}, ErrInvalid
 	}
-	_, err := s.pool.Exec(ctx, `INSERT INTO task_types(code,name_zh,name_en,icon,sort_order,scope) VALUES($1,$2,$3,$4,$5,$6)`, t.Code, t.NameZh, t.NameEn, t.Icon, t.SortOrder, t.Scope)
+	err := s.pool.QueryRow(ctx, `INSERT INTO task_types(code,name_zh,name_en,icon,sort_order,scope,delivery_kind) VALUES($1,$2,$3,$4,$5,$6,NULLIF($7,'')) RETURNING delivery_kind`, t.Code, t.NameZh, t.NameEn, t.Icon, t.SortOrder, t.Scope, t.DeliveryKind).Scan(&t.DeliveryKind)
 	if err != nil {
 		return Type{}, fmt.Errorf("create task type: %w", err)
 	}
@@ -142,14 +143,11 @@ func (s *Service) Update(ctx context.Context, code string, t Type) (Type, error)
 	if !validType(t) {
 		return Type{}, ErrInvalid
 	}
-	result, err := s.pool.Exec(ctx, `UPDATE task_types SET name_zh=$2,name_en=$3,icon=$4,sort_order=$5 WHERE code=$1 AND scope=$6`, code, t.NameZh, t.NameEn, t.Icon, t.SortOrder, t.Scope)
+	err := s.pool.QueryRow(ctx, `UPDATE task_types SET name_zh=$2,name_en=$3,icon=$4,sort_order=$5,delivery_kind=COALESCE(NULLIF($7,''),delivery_kind) WHERE code=$1 AND scope=$6 RETURNING delivery_kind`, code, t.NameZh, t.NameEn, t.Icon, t.SortOrder, t.Scope, t.DeliveryKind).Scan(&t.DeliveryKind)
 	if err != nil {
 		return Type{}, err
 	}
 	t.Code = code
-	if result.RowsAffected() == 0 {
-		return Type{}, ErrInvalid
-	}
 	return t, nil
 }
 func (s *Service) Delete(ctx context.Context, code, replacement string, scopes ...string) error {
